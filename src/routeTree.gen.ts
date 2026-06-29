@@ -12,9 +12,13 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedUsuariosRouteImport } from './routes/_authenticated/usuarios'
 import { Route as AuthenticatedStockRouteImport } from './routes/_authenticated/stock'
+import { Route as AuthenticatedReportesRouteImport } from './routes/_authenticated/reportes'
+import { Route as AuthenticatedRemitosRouteImport } from './routes/_authenticated/remitos'
 import { Route as AuthenticatedProductosRouteImport } from './routes/_authenticated/productos'
 import { Route as AuthenticatedClientesRouteImport } from './routes/_authenticated/clientes'
+import { Route as AuthenticatedCajaRouteImport } from './routes/_authenticated/caja'
 import { Route as AuthenticatedVentasIndexRouteImport } from './routes/_authenticated/ventas.index'
 import { Route as AuthenticatedVentasNuevaRouteImport } from './routes/_authenticated/ventas.nueva'
 import { Route as AuthenticatedProductosImportarRouteImport } from './routes/_authenticated/productos.importar'
@@ -33,9 +37,24 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedUsuariosRoute = AuthenticatedUsuariosRouteImport.update({
+  id: '/usuarios',
+  path: '/usuarios',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedStockRoute = AuthenticatedStockRouteImport.update({
   id: '/stock',
   path: '/stock',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedReportesRoute = AuthenticatedReportesRouteImport.update({
+  id: '/reportes',
+  path: '/reportes',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedRemitosRoute = AuthenticatedRemitosRouteImport.update({
+  id: '/remitos',
+  path: '/remitos',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedProductosRoute = AuthenticatedProductosRouteImport.update({
@@ -46,6 +65,11 @@ const AuthenticatedProductosRoute = AuthenticatedProductosRouteImport.update({
 const AuthenticatedClientesRoute = AuthenticatedClientesRouteImport.update({
   id: '/clientes',
   path: '/clientes',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCajaRoute = AuthenticatedCajaRouteImport.update({
+  id: '/caja',
+  path: '/caja',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedVentasIndexRoute =
@@ -70,18 +94,26 @@ const AuthenticatedProductosImportarRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/productos': typeof AuthenticatedProductosRouteWithChildren
+  '/remitos': typeof AuthenticatedRemitosRoute
+  '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
+  '/usuarios': typeof AuthenticatedUsuariosRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/ventas/': typeof AuthenticatedVentasIndexRoute
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
+  '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/productos': typeof AuthenticatedProductosRouteWithChildren
+  '/remitos': typeof AuthenticatedRemitosRoute
+  '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
+  '/usuarios': typeof AuthenticatedUsuariosRoute
   '/': typeof AuthenticatedIndexRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
@@ -91,9 +123,13 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/caja': typeof AuthenticatedCajaRoute
   '/_authenticated/clientes': typeof AuthenticatedClientesRoute
   '/_authenticated/productos': typeof AuthenticatedProductosRouteWithChildren
+  '/_authenticated/remitos': typeof AuthenticatedRemitosRoute
+  '/_authenticated/reportes': typeof AuthenticatedReportesRoute
   '/_authenticated/stock': typeof AuthenticatedStockRoute
+  '/_authenticated/usuarios': typeof AuthenticatedUsuariosRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/_authenticated/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
@@ -104,18 +140,26 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/caja'
     | '/clientes'
     | '/productos'
+    | '/remitos'
+    | '/reportes'
     | '/stock'
+    | '/usuarios'
     | '/productos/importar'
     | '/ventas/nueva'
     | '/ventas/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
+    | '/caja'
     | '/clientes'
     | '/productos'
+    | '/remitos'
+    | '/reportes'
     | '/stock'
+    | '/usuarios'
     | '/'
     | '/productos/importar'
     | '/ventas/nueva'
@@ -124,9 +168,13 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/caja'
     | '/_authenticated/clientes'
     | '/_authenticated/productos'
+    | '/_authenticated/remitos'
+    | '/_authenticated/reportes'
     | '/_authenticated/stock'
+    | '/_authenticated/usuarios'
     | '/_authenticated/'
     | '/_authenticated/productos/importar'
     | '/_authenticated/ventas/nueva'
@@ -161,11 +209,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/usuarios': {
+      id: '/_authenticated/usuarios'
+      path: '/usuarios'
+      fullPath: '/usuarios'
+      preLoaderRoute: typeof AuthenticatedUsuariosRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/stock': {
       id: '/_authenticated/stock'
       path: '/stock'
       fullPath: '/stock'
       preLoaderRoute: typeof AuthenticatedStockRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/reportes': {
+      id: '/_authenticated/reportes'
+      path: '/reportes'
+      fullPath: '/reportes'
+      preLoaderRoute: typeof AuthenticatedReportesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/remitos': {
+      id: '/_authenticated/remitos'
+      path: '/remitos'
+      fullPath: '/remitos'
+      preLoaderRoute: typeof AuthenticatedRemitosRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/productos': {
@@ -180,6 +249,13 @@ declare module '@tanstack/react-router' {
       path: '/clientes'
       fullPath: '/clientes'
       preLoaderRoute: typeof AuthenticatedClientesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/caja': {
+      id: '/_authenticated/caja'
+      path: '/caja'
+      fullPath: '/caja'
+      preLoaderRoute: typeof AuthenticatedCajaRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/ventas/': {
@@ -221,18 +297,26 @@ const AuthenticatedProductosRouteWithChildren =
   )
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedCajaRoute: typeof AuthenticatedCajaRoute
   AuthenticatedClientesRoute: typeof AuthenticatedClientesRoute
   AuthenticatedProductosRoute: typeof AuthenticatedProductosRouteWithChildren
+  AuthenticatedRemitosRoute: typeof AuthenticatedRemitosRoute
+  AuthenticatedReportesRoute: typeof AuthenticatedReportesRoute
   AuthenticatedStockRoute: typeof AuthenticatedStockRoute
+  AuthenticatedUsuariosRoute: typeof AuthenticatedUsuariosRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedVentasNuevaRoute: typeof AuthenticatedVentasNuevaRoute
   AuthenticatedVentasIndexRoute: typeof AuthenticatedVentasIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedCajaRoute: AuthenticatedCajaRoute,
   AuthenticatedClientesRoute: AuthenticatedClientesRoute,
   AuthenticatedProductosRoute: AuthenticatedProductosRouteWithChildren,
+  AuthenticatedRemitosRoute: AuthenticatedRemitosRoute,
+  AuthenticatedReportesRoute: AuthenticatedReportesRoute,
   AuthenticatedStockRoute: AuthenticatedStockRoute,
+  AuthenticatedUsuariosRoute: AuthenticatedUsuariosRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedVentasNuevaRoute: AuthenticatedVentasNuevaRoute,
   AuthenticatedVentasIndexRoute: AuthenticatedVentasIndexRoute,

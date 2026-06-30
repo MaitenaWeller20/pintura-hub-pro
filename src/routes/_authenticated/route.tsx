@@ -27,6 +27,8 @@ const menu = [
   { to: "/productos", label: "Productos", icon: Package, adminOnly: false },
   { to: "/stock", label: "Stock", icon: Package, adminOnly: false },
   { to: "/clientes", label: "Clientes", icon: Users, adminOnly: false },
+  { to: "/cuentas-corrientes", label: "Cta Corriente", icon: Receipt, adminOnly: false },
+
   { to: "/remitos", label: "Remitos", icon: Truck, adminOnly: false },
   { to: "/caja", label: "Rendición caja", icon: Wallet, adminOnly: false },
   { to: "/reportes", label: "Reportes", icon: BarChart3, adminOnly: true },

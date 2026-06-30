@@ -7,7 +7,7 @@ import {
   SidebarHeader, SidebarFooter,
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, ShoppingCart, Package, Users, Truck, Wallet, BarChart3, UserCog, Paintbrush, LogOut, Building2,
+  LayoutDashboard, ShoppingCart, Package, Users, Truck, Wallet, BarChart3, UserCog, Paintbrush, LogOut, Building2, Receipt,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

@@ -35,6 +35,7 @@ export type Database = {
       clientes: {
         Row: {
           activo: boolean
+          condicion_cta_cte: boolean
           created_at: string
           cuit_dni: string | null
           direccion: string | null
@@ -50,6 +51,7 @@ export type Database = {
         }
         Insert: {
           activo?: boolean
+          condicion_cta_cte?: boolean
           created_at?: string
           cuit_dni?: string | null
           direccion?: string | null
@@ -65,6 +67,7 @@ export type Database = {
         }
         Update: {
           activo?: boolean
+          condicion_cta_cte?: boolean
           created_at?: string
           cuit_dni?: string | null
           direccion?: string | null
@@ -82,6 +85,63 @@ export type Database = {
           {
             foreignKeyName: "clientes_sucursal_habitual_id_fkey"
             columns: ["sucursal_habitual_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cobranzas_cta_cte: {
+        Row: {
+          cliente_id: string
+          created_at: string
+          detalle: Json
+          fecha: string
+          forma_pago: string
+          id: string
+          monto: number
+          observaciones: string | null
+          sucursal_id: string
+          updated_at: string
+          usuario_id: string
+        }
+        Insert: {
+          cliente_id: string
+          created_at?: string
+          detalle?: Json
+          fecha?: string
+          forma_pago: string
+          id?: string
+          monto: number
+          observaciones?: string | null
+          sucursal_id: string
+          updated_at?: string
+          usuario_id: string
+        }
+        Update: {
+          cliente_id?: string
+          created_at?: string
+          detalle?: Json
+          fecha?: string
+          forma_pago?: string
+          id?: string
+          monto?: number
+          observaciones?: string | null
+          sucursal_id?: string
+          updated_at?: string
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobranzas_cta_cte_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobranzas_cta_cte_sucursal_id_fkey"
+            columns: ["sucursal_id"]
             isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
@@ -146,7 +206,9 @@ export type Database = {
           id: string
           iva_porcentaje: number
           marca_id: string | null
+          markup_porcentaje: number | null
           nombre: string
+          precio_fabrica: number
           precio_sin_iva: number
           stock_minimo: number
           unidad_medida: string
@@ -162,7 +224,9 @@ export type Database = {
           id?: string
           iva_porcentaje?: number
           marca_id?: string | null
+          markup_porcentaje?: number | null
           nombre: string
+          precio_fabrica?: number
           precio_sin_iva?: number
           stock_minimo?: number
           unidad_medida?: string
@@ -178,7 +242,9 @@ export type Database = {
           id?: string
           iva_porcentaje?: number
           marca_id?: string | null
+          markup_porcentaje?: number | null
           nombre?: string
+          precio_fabrica?: number
           precio_sin_iva?: number
           stock_minimo?: number
           unidad_medida?: string
@@ -342,6 +408,8 @@ export type Database = {
         Row: {
           created_at: string
           diferencia: number
+          efectivo_dejado: number
+          efectivo_retirado: number
           fecha: string
           id: string
           observaciones: string | null
@@ -362,6 +430,8 @@ export type Database = {
         Insert: {
           created_at?: string
           diferencia?: number
+          efectivo_dejado?: number
+          efectivo_retirado?: number
           fecha: string
           id?: string
           observaciones?: string | null
@@ -382,6 +452,8 @@ export type Database = {
         Update: {
           created_at?: string
           diferencia?: number
+          efectivo_dejado?: number
+          efectivo_retirado?: number
           fecha?: string
           id?: string
           observaciones?: string | null
@@ -408,6 +480,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      settings: {
+        Row: {
+          id: boolean
+          markup_default_porcentaje: number
+          updated_at: string
+        }
+        Insert: {
+          id?: boolean
+          markup_default_porcentaje?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: boolean
+          markup_default_porcentaje?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       stock_movimientos: {
         Row: {
@@ -670,6 +760,7 @@ export type Database = {
           fecha: string
           id: string
           iva_total: number
+          nombre_obra: string | null
           numero_comprobante: string
           observaciones: string | null
           percepciones: number
@@ -691,6 +782,7 @@ export type Database = {
           fecha?: string
           id?: string
           iva_total?: number
+          nombre_obra?: string | null
           numero_comprobante: string
           observaciones?: string | null
           percepciones?: number
@@ -712,6 +804,7 @@ export type Database = {
           fecha?: string
           id?: string
           iva_total?: number
+          nombre_obra?: string | null
           numero_comprobante?: string
           observaciones?: string | null
           percepciones?: number
@@ -790,7 +883,14 @@ export type Database = {
         | "RESPONSABLE_INSCRIPTO"
         | "MONOTRIBUTISTA"
         | "EXENTO"
-      tipo_comprobante: "FACTURA_A" | "FACTURA_B" | "NOTA_CREDITO" | "REMITO"
+      tipo_comprobante:
+        | "FACTURA_A"
+        | "FACTURA_B"
+        | "NOTA_CREDITO"
+        | "REMITO"
+        | "NOTA_DEBITO"
+        | "FAC_INTERNA_CTA_CTE"
+        | "REMITO_OBRA"
       tipo_movimiento_stock:
         | "VENTA"
         | "AJUSTE"
@@ -946,7 +1046,15 @@ export const Constants = {
         "MONOTRIBUTISTA",
         "EXENTO",
       ],
-      tipo_comprobante: ["FACTURA_A", "FACTURA_B", "NOTA_CREDITO", "REMITO"],
+      tipo_comprobante: [
+        "FACTURA_A",
+        "FACTURA_B",
+        "NOTA_CREDITO",
+        "REMITO",
+        "NOTA_DEBITO",
+        "FAC_INTERNA_CTA_CTE",
+        "REMITO_OBRA",
+      ],
       tipo_movimiento_stock: [
         "VENTA",
         "AJUSTE",

@@ -63,16 +63,22 @@ export const crearVenta = createServerFn({ method: "POST" })
       };
     });
     const total = +(subSinIva + ivaTotal + (data.percepciones ?? 0)).toFixed(2);
-    const totalPagado = +data.pagos.reduce((a,p) => a + p.monto, 0).toFixed(2);
-    const estadoPago = totalPagado >= total ? "PAGADO" : totalPagado > 0 ? "PARCIAL" : "PENDIENTE";
+    const esCtaCte = TIPOS_CTA_CTE.has(data.tipo_comprobante) || data.condicion_venta === "CTA_CTE";
 
-    // Numero comprobante
+    // Si va a cuenta corriente, no se aceptan pagos al emitir (se cobran después)
+    const pagosEfectivos = esCtaCte ? [] : data.pagos;
+    const totalPagado = +pagosEfectivos.reduce((a,p) => a + p.monto, 0).toFixed(2);
+    const estadoPago = esCtaCte
+      ? "PENDIENTE"
+      : totalPagado + 0.001 >= total
+        ? "PAGADO"
+        : totalPagado > 0 ? "PARCIAL" : "PENDIENTE";
+
     const { data: numero, error: numErr } = await supabase.rpc("next_comprobante_numero", {
       _sucursal_id: data.sucursal_id, _tipo: data.tipo_comprobante,
     });
     if (numErr) throw new Error(numErr.message);
 
-    // Insertar venta
     const { data: venta, error: vErr } = await supabase.from("ventas").insert({
       sucursal_id: data.sucursal_id,
       cliente_id: data.cliente_id,
@@ -80,7 +86,7 @@ export const crearVenta = createServerFn({ method: "POST" })
       fecha: data.fecha ?? new Date().toISOString(),
       numero_comprobante: numero as unknown as string,
       tipo_comprobante: data.tipo_comprobante,
-      condicion_venta: data.condicion_venta,
+      condicion_venta: esCtaCte ? "CTA_CTE" : data.condicion_venta,
       subtotal_sin_iva: +subSinIva.toFixed(2),
       iva_total: +ivaTotal.toFixed(2),
       percepciones: data.percepciones ?? 0,
@@ -88,26 +94,28 @@ export const crearVenta = createServerFn({ method: "POST" })
       total_pagado: totalPagado,
       estado_pago: estadoPago,
       observaciones: data.observaciones ?? null,
+      nombre_obra: data.nombre_obra ?? null,
     }).select().single();
     if (vErr) throw new Error(vErr.message);
 
-    // Items
-    const { error: iErr } = await supabase.from("venta_items").insert(
-      itemsCalc.map((it) => ({ ...it, venta_id: venta.id }))
-    );
-    if (iErr) throw new Error(iErr.message);
+    if (itemsCalc.length) {
+      const { error: iErr } = await supabase.from("venta_items").insert(
+        itemsCalc.map((it) => ({ ...it, venta_id: venta.id }))
+      );
+      if (iErr) throw new Error(iErr.message);
+    }
 
-    // Pagos
-    if (data.pagos.length) {
+    if (pagosEfectivos.length) {
       const { error: pErr } = await supabase.from("venta_pagos").insert(
-        data.pagos.map((p) => ({ ...p, venta_id: venta.id }))
+        pagosEfectivos.map((p) => ({ ...p, venta_id: venta.id }))
       );
       if (pErr) throw new Error(pErr.message);
     }
 
-    // Descontar stock + registrar movimientos (sólo si no es REMITO; un remito de venta sale aparte)
-    if (data.tipo_comprobante !== "REMITO") {
+    // Descontar stock excepto Notas de Crédito/Débito (no mueven mercadería)
+    if (!TIPOS_SIN_STOCK.has(data.tipo_comprobante)) {
       for (const it of data.items) {
+        if (!it.cantidad) continue;
         const { data: row } = await supabase.from("stock_sucursal")
           .select("cantidad").eq("producto_id", it.producto_id).eq("sucursal_id", data.sucursal_id).maybeSingle();
         const anterior = Number(row?.cantidad ?? 0);
@@ -116,21 +124,18 @@ export const crearVenta = createServerFn({ method: "POST" })
           producto_id: it.producto_id, sucursal_id: data.sucursal_id, cantidad: nueva,
         }, { onConflict: "producto_id,sucursal_id" });
         await supabase.from("stock_movimientos").insert({
-          producto_id: it.producto_id,
-          sucursal_id: data.sucursal_id,
-          tipo: "VENTA",
-          cantidad: -it.cantidad,
-          cantidad_anterior: anterior,
-          cantidad_nueva: nueva,
-          referencia_id: venta.id,
-          usuario_id: userId,
-          motivo: `Venta ${numero}`,
+          producto_id: it.producto_id, sucursal_id: data.sucursal_id,
+          tipo: "VENTA", cantidad: -it.cantidad,
+          cantidad_anterior: anterior, cantidad_nueva: nueva,
+          referencia_id: venta.id, usuario_id: userId,
+          motivo: `${data.tipo_comprobante} ${numero}`,
         });
       }
     }
 
-    return { id: venta.id, numero: numero as unknown as string };
+    return { id: venta.id, numero: numero as unknown as string, cta_cte: esCtaCte };
   });
+
 
 export const anularVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

@@ -11,7 +11,7 @@ const itemSchema = z.object({
   producto_id: z.string().uuid(),
   codigo: z.string(),
   descripcion: z.string(),
-  cantidad: z.number().positive(),
+  cantidad: z.number().nonnegative(),
   precio_unitario_sin_iva: z.number().nonnegative(),
   iva_porcentaje: z.number().nonnegative(),
   descuento_porcentaje: z.number().min(0).max(100).default(0),
@@ -19,21 +19,27 @@ const itemSchema = z.object({
 
 const pagoSchema = z.object({
   forma_pago: z.enum(["EFECTIVO","TRANSFERENCIA","TARJETA_DEBITO","TARJETA_CREDITO","MERCADO_PAGO","CHEQUE","CTA_CTE"]),
-  monto: z.number().positive(),
+  monto: z.number().nonnegative(),
   detalle: z.record(z.string(), z.any()).default({}),
 });
 
 const ventaSchema = z.object({
   sucursal_id: z.string().uuid(),
   cliente_id: z.string().uuid(),
-  tipo_comprobante: z.enum(["FACTURA_A","FACTURA_B","NOTA_CREDITO","REMITO"]),
+  tipo_comprobante: z.enum(["FACTURA_A","FACTURA_B","NOTA_CREDITO","NOTA_DEBITO","REMITO","REMITO_OBRA","FAC_INTERNA_CTA_CTE"]),
   condicion_venta: z.enum(["CONTADO","CTA_CTE"]),
   fecha: z.string().optional(),
   percepciones: z.number().nonnegative().default(0),
   observaciones: z.string().optional().nullable(),
-  items: z.array(itemSchema).min(1),
+  nombre_obra: z.string().optional().nullable(),
+  items: z.array(itemSchema).min(0),
   pagos: z.array(pagoSchema).default([]),
 });
+
+// Tipos que NO descuentan stock al emitirse (no salen mercaderías)
+const TIPOS_SIN_STOCK = new Set(["NOTA_CREDITO","NOTA_DEBITO"]);
+// Tipos que NO impactan en caja (van a cuenta corriente del cliente)
+const TIPOS_CTA_CTE = new Set(["REMITO","REMITO_OBRA","FAC_INTERNA_CTA_CTE"]);
 
 export const crearVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

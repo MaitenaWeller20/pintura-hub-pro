@@ -56,7 +56,8 @@ function ClientesPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Razón social</TableHead><TableHead>CUIT/DNI</TableHead>
-              <TableHead>Tipo</TableHead><TableHead>Teléfono</TableHead>
+              <TableHead>Tipo</TableHead><TableHead>Cta Cte</TableHead>
+              <TableHead>Teléfono</TableHead>
               <TableHead>Sucursal</TableHead><TableHead></TableHead>
             </TableRow>
           </TableHeader>
@@ -69,6 +70,7 @@ function ClientesPage() {
                 </TableCell>
                 <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground text-xs">{tipoClienteLabel[c.tipo]}</TableCell>
+                <TableCell>{c.condicion_cta_cte ? <Badge>Sí</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                 <TableCell>{c.telefono ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{c.sucursal?.nombre ?? "—"}</TableCell>
                 <TableCell>
@@ -90,6 +92,7 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
   const [form, setForm] = useState<any>(editing ?? {
     razon_social: "", cuit_dni: "", tipo: "CONSUMIDOR_FINAL",
     telefono: "", email: "", direccion: "", sucursal_habitual_id: null,
+    condicion_cta_cte: false,
   });
   const set = (k:string,v:any) => setForm((f:any)=>({ ...f, [k]: v }));
   const m = useMutation({
@@ -140,6 +143,10 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
               </SelectContent>
             </Select>
           </div>
+          <label className="col-span-2 flex items-center gap-2 text-sm border border-border rounded p-2 bg-muted/30">
+            <input type="checkbox" checked={!!form.condicion_cta_cte} onChange={(e)=>set("condicion_cta_cte", e.target.checked)} />
+            <span><strong>Cliente con Cuenta Corriente</strong> — puede llevar mercadería sin pagar en el momento. Gestionar deuda en la pestaña Cta Cte.</span>
+          </label>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>

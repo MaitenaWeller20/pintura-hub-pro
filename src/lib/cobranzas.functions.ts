@@ -57,5 +57,5 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
     if (data.setear_como_default) {
       await supabase.from("settings").update({ markup_default_porcentaje: data.markup_porcentaje }).eq("id", true);
     }
-    return { actualizados: prods.length };
+    return { actualizados: lista.length };
   });

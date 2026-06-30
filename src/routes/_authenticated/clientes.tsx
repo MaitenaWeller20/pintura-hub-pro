@@ -56,7 +56,8 @@ function ClientesPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Razón social</TableHead><TableHead>CUIT/DNI</TableHead>
-              <TableHead>Tipo</TableHead><TableHead>Teléfono</TableHead>
+              <TableHead>Tipo</TableHead><TableHead>Cta Cte</TableHead>
+              <TableHead>Teléfono</TableHead>
               <TableHead>Sucursal</TableHead><TableHead></TableHead>
             </TableRow>
           </TableHeader>
@@ -69,6 +70,7 @@ function ClientesPage() {
                 </TableCell>
                 <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground text-xs">{tipoClienteLabel[c.tipo]}</TableCell>
+                <TableCell>{c.condicion_cta_cte ? <Badge>Sí</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                 <TableCell>{c.telefono ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{c.sucursal?.nombre ?? "—"}</TableCell>
                 <TableCell>

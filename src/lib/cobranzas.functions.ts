@@ -43,10 +43,11 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
     const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
     if (!isAdmin) throw new Error("Solo admin");
 
-    const { data: prods = [] } = await supabase.from("productos")
+    const { data: prods } = await supabase.from("productos")
       .select("id, precio_fabrica, markup_porcentaje").in("id", data.producto_ids);
+    const lista = (prods ?? []) as any[];
 
-    for (const p of prods as any[]) {
+    for (const p of lista) {
       const fabrica = Number(p.precio_fabrica ?? 0);
       const nuevoPrecio = +(fabrica * (1 + data.markup_porcentaje / 100)).toFixed(2);
       const patch: any = { precio_sin_iva: nuevoPrecio };

@@ -92,6 +92,7 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
   const [form, setForm] = useState<any>(editing ?? {
     razon_social: "", cuit_dni: "", tipo: "CONSUMIDOR_FINAL",
     telefono: "", email: "", direccion: "", sucursal_habitual_id: null,
+    condicion_cta_cte: false,
   });
   const set = (k:string,v:any) => setForm((f:any)=>({ ...f, [k]: v }));
   const m = useMutation({

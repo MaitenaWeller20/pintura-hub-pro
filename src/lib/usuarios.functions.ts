@@ -44,3 +44,33 @@ export const toggleUsuarioActivo = createServerFn({ method: "POST" })
     await supabaseAdmin.auth.admin.updateUserById(data.user_id, { ban_duration: data.activo ? "none" : "876000h" });
     return { ok: true };
   });
+
+/**
+ * Cambia la contraseña de un usuario.
+ *
+ * Existe porque las 5 contraseñas originales estuvieron publicadas en la pantalla
+ * de login (admin1234 / emp1234), así que están todas quemadas y hay que poder
+ * rotarlas sin meterse en la base.
+ */
+export const resetearPassword = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        user_id: z.string().uuid(),
+        password: z.string().min(10, "Mínimo 10 caracteres"),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
+    if (!isAdmin) throw new Error("Solo admin");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(data.user_id, {
+      password: data.password,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });

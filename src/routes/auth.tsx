@@ -7,8 +7,6 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Paintbrush, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { useServerFn } from "@tanstack/react-start";
-import { seedInitialUsers } from "@/lib/setup.functions";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -23,8 +21,6 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [seeding, setSeeding] = useState(false);
-  const seedFn = useServerFn(seedInitialUsers);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,18 +33,6 @@ function AuthPage() {
     }
     toast.success("Bienvenido/a");
     window.location.href = "/";
-  };
-
-  const onSeed = async () => {
-    setSeeding(true);
-    try {
-      const r = await seedFn();
-      toast.success(`Usuarios listos (${r.results.filter((x) => x.status === "creado").length} nuevos)`);
-    } catch (e: any) {
-      toast.error(e.message ?? "Error inicializando usuarios");
-    } finally {
-      setSeeding(false);
-    }
   };
 
   return (
@@ -81,21 +65,9 @@ function AuthPage() {
           </form>
         </Card>
 
-        <div className="mt-6 text-center text-xs text-muted-foreground space-y-2">
-          <p>Primera vez usando el sistema? Inicializá los usuarios precargados:</p>
-          <Button variant="outline" size="sm" onClick={onSeed} disabled={seeding}>
-            {seeding && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
-            Crear usuarios iniciales
-          </Button>
-          <div className="mt-4 text-left bg-muted/40 p-3 rounded text-[11px] leading-relaxed">
-            <strong>Usuarios precargados:</strong><br />
-            • Admin: <code>maitenaweller2004@gmail.com</code> / <code>admin1234</code><br />
-            • O'Higgins 1: <code>silvia@casa-forma.com</code> / <code>emp1234</code><br />
-            • O'Higgins 2: <code>ohiggins2@casaforma.local</code> / <code>emp1234</code><br />
-            • Gral. Paz 1: <code>generalpaz1@casaforma.local</code> / <code>emp1234</code><br />
-            • Gral. Paz 2: <code>generalpaz2@casaforma.local</code> / <code>emp1234</code>
-          </div>
-        </div>
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          ¿No tenés acceso? Pedile a un administrador que te dé de alta desde Usuarios.
+        </p>
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import { Route as AuthenticatedUsuariosRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedStockRouteImport } from './routes/_authenticated/stock'
 import { Route as AuthenticatedReportesRouteImport } from './routes/_authenticated/reportes'
 import { Route as AuthenticatedRemitosRouteImport } from './routes/_authenticated/remitos'
+import { Route as AuthenticatedFacturacionRouteImport } from './routes/_authenticated/facturacion'
 import { Route as AuthenticatedCuentasCorrientesRouteImport } from './routes/_authenticated/cuentas-corrientes'
 import { Route as AuthenticatedClientesRouteImport } from './routes/_authenticated/clientes'
 import { Route as AuthenticatedCajaRouteImport } from './routes/_authenticated/caja'
@@ -58,6 +59,12 @@ const AuthenticatedRemitosRoute = AuthenticatedRemitosRouteImport.update({
   path: '/remitos',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedFacturacionRoute =
+  AuthenticatedFacturacionRouteImport.update({
+    id: '/facturacion',
+    path: '/facturacion',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedCuentasCorrientesRoute =
   AuthenticatedCuentasCorrientesRouteImport.update({
     id: '/cuentas-corrientes',
@@ -105,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
+  '/facturacion': typeof AuthenticatedFacturacionRoute
   '/remitos': typeof AuthenticatedRemitosRoute
   '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
@@ -119,6 +127,7 @@ export interface FileRoutesByTo {
   '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
+  '/facturacion': typeof AuthenticatedFacturacionRoute
   '/remitos': typeof AuthenticatedRemitosRoute
   '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
@@ -136,6 +145,7 @@ export interface FileRoutesById {
   '/_authenticated/caja': typeof AuthenticatedCajaRoute
   '/_authenticated/clientes': typeof AuthenticatedClientesRoute
   '/_authenticated/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
+  '/_authenticated/facturacion': typeof AuthenticatedFacturacionRoute
   '/_authenticated/remitos': typeof AuthenticatedRemitosRoute
   '/_authenticated/reportes': typeof AuthenticatedReportesRoute
   '/_authenticated/stock': typeof AuthenticatedStockRoute
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
     | '/caja'
     | '/clientes'
     | '/cuentas-corrientes'
+    | '/facturacion'
     | '/remitos'
     | '/reportes'
     | '/stock'
@@ -168,6 +179,7 @@ export interface FileRouteTypes {
     | '/caja'
     | '/clientes'
     | '/cuentas-corrientes'
+    | '/facturacion'
     | '/remitos'
     | '/reportes'
     | '/stock'
@@ -184,6 +196,7 @@ export interface FileRouteTypes {
     | '/_authenticated/caja'
     | '/_authenticated/clientes'
     | '/_authenticated/cuentas-corrientes'
+    | '/_authenticated/facturacion'
     | '/_authenticated/remitos'
     | '/_authenticated/reportes'
     | '/_authenticated/stock'
@@ -251,6 +264,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRemitosRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/facturacion': {
+      id: '/_authenticated/facturacion'
+      path: '/facturacion'
+      fullPath: '/facturacion'
+      preLoaderRoute: typeof AuthenticatedFacturacionRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/cuentas-corrientes': {
       id: '/_authenticated/cuentas-corrientes'
       path: '/cuentas-corrientes'
@@ -307,6 +327,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCajaRoute: typeof AuthenticatedCajaRoute
   AuthenticatedClientesRoute: typeof AuthenticatedClientesRoute
   AuthenticatedCuentasCorrientesRoute: typeof AuthenticatedCuentasCorrientesRoute
+  AuthenticatedFacturacionRoute: typeof AuthenticatedFacturacionRoute
   AuthenticatedRemitosRoute: typeof AuthenticatedRemitosRoute
   AuthenticatedReportesRoute: typeof AuthenticatedReportesRoute
   AuthenticatedStockRoute: typeof AuthenticatedStockRoute
@@ -322,6 +343,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCajaRoute: AuthenticatedCajaRoute,
   AuthenticatedClientesRoute: AuthenticatedClientesRoute,
   AuthenticatedCuentasCorrientesRoute: AuthenticatedCuentasCorrientesRoute,
+  AuthenticatedFacturacionRoute: AuthenticatedFacturacionRoute,
   AuthenticatedRemitosRoute: AuthenticatedRemitosRoute,
   AuthenticatedReportesRoute: AuthenticatedReportesRoute,
   AuthenticatedStockRoute: AuthenticatedStockRoute,
@@ -343,3 +365,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

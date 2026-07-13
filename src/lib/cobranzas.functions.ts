@@ -1,6 +1,10 @@
-/** Cobranza de cuenta corriente: registra pago de un cliente sobre su deuda.
- *  - NO toca stock (los productos ya salieron al emitir el remito/factura interna).
- *  - SÍ aparece en la caja del día con su forma de pago.
+/** Cobranza de cuenta corriente: registra el pago de un cliente sobre su deuda.
+ *  - NO toca stock (la mercadería ya salió al emitir el remito / factura interna).
+ *  - SÍ entra a la caja del día con su forma de pago.
+ *  - IMPUTA contra los comprobantes abiertos del cliente, del más viejo al más
+ *    nuevo (FIFO). Antes no lo hacía: el cobro quedaba en un libro paralelo que
+ *    nunca tocaba ventas.total_pagado, así que la solapa "Cuentas corrientes" de
+ *    Reportes mostraba deuda que no bajaba nunca aunque el cliente pagara todo.
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -19,14 +23,24 @@ export const registrarCobranza = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => cobranzaSchema.parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    const { data: row, error } = await supabase.from("cobranzas_cta_cte").insert({
-      cliente_id: data.cliente_id, sucursal_id: data.sucursal_id, usuario_id: userId,
-      monto: data.monto, forma_pago: data.forma_pago,
-      detalle: data.detalle, observaciones: data.observaciones ?? null,
-    }).select().single();
+    const { supabase } = context;
+
+    const { data: r, error } = await supabase.rpc("registrar_cobranza", {
+      p_cliente_id: data.cliente_id,
+      p_sucursal_id: data.sucursal_id,
+      p_monto: data.monto,
+      p_forma_pago: data.forma_pago,
+      p_detalle: data.detalle,
+      p_observaciones: data.observaciones ?? undefined,
+    });
     if (error) throw new Error(error.message);
-    return { id: row.id };
+
+    const row: any = Array.isArray(r) ? r[0] : r;
+    return {
+      id: row.cobranza_id as string,
+      // Saldo del cliente después del cobro (negativo = saldo a favor).
+      saldo: Number(row.saldo),
+    };
   });
 
 /** Aplica un nuevo % de markup a un set de productos (recalcula precio_sin_iva). */

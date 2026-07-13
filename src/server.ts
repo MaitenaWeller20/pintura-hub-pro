@@ -1,3 +1,9 @@
+// Da WebSocket a Node antes de que cualquier server function construya un cliente
+// de Supabase. (En el build, el polyfill lo garantiza cada factory de cliente, no
+// este entry — que Nitro no carga; ver src/lib/ws-polyfill.ts.)
+import { ensureNodeWebSocket } from "./lib/ws-polyfill";
+ensureNodeWebSocket();
+
 import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";

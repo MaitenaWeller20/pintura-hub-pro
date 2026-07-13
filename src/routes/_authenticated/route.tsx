@@ -7,7 +7,7 @@ import {
   SidebarHeader, SidebarFooter,
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, ShoppingCart, Package, Users, Truck, Wallet, BarChart3, UserCog, Paintbrush, LogOut, Building2, Receipt,
+  LayoutDashboard, ShoppingCart, Package, Users, Truck, Wallet, BarChart3, UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +32,7 @@ const menu = [
   { to: "/remitos", label: "Remitos", icon: Truck, adminOnly: false },
   { to: "/caja", label: "Rendición caja", icon: Wallet, adminOnly: false },
   { to: "/reportes", label: "Reportes", icon: BarChart3, adminOnly: true },
+  { to: "/facturacion", label: "Facturación AFIP", icon: FileCheck2, adminOnly: true },
   { to: "/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true },
 ];
 

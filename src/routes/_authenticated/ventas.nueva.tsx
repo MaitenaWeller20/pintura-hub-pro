@@ -32,6 +32,10 @@ interface ItemRow {
   iva_porcentaje: number;
   descuento_porcentaje: number;
   stock_disponible?: number;
+  // Precio de catálogo al momento de agregar el producto. Sirve para saber si el
+  // cajero pisó el precio: sólo en ese caso se lo mandamos al servidor. Si no, el
+  // servidor lo resuelve solo contra el catálogo y no confía en el navegador.
+  precio_lista: number;
 }
 interface PagoRow {
   id: string;
@@ -98,6 +102,7 @@ function NuevaVenta() {
     setItems(prev => [...prev, {
       producto_id: p.id, codigo: p.codigo, descripcion: p.nombre,
       cantidad: 1, precio_unitario_sin_iva: Number(p.precio_sin_iva),
+      precio_lista: Number(p.precio_sin_iva),
       iva_porcentaje: Number(p.iva_porcentaje), descuento_porcentaje: 0,
       stock_disponible: Number(stock),
     }]);
@@ -109,16 +114,41 @@ function NuevaVenta() {
   };
   const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i));
 
+  // Una nota de crédito RESTA (es una devolución). Lo mostramos con el mismo signo
+  // con el que se va a guardar, así el cajero ve lo que realmente va a pasar.
+  const esNotaCredito = tipoComp === "NOTA_CREDITO";
+  const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
+  const signo = esNotaCredito ? -1 : 1;
+
+  // Una nota de crédito/débito rectifica una factura concreta. AFIP lo exige
+  // (CbtesAsoc) y sin eso la nota no se puede emitir.
+  const [cbteAsocId, setCbteAsocId] = useState<string>("");
+  const { data: facturasDelCliente = [] } = useQuery({
+    queryKey: ["facturas-cliente", clienteId],
+    enabled: esNota && !!clienteId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("ventas")
+        .select("id, numero_comprobante, tipo_comprobante, fecha, total")
+        .eq("cliente_id", clienteId)
+        .in("tipo_comprobante", ["FACTURA_A", "FACTURA_B", "FACTURA_C"])
+        .eq("estado", "ACTIVA")
+        .order("fecha", { ascending: false })
+        .limit(30);
+      return (data ?? []) as any[];
+    },
+  });
+
   const totales = useMemo(() => {
     let sub = 0, iva = 0;
     items.forEach(it => {
       const base = (it.precio_unitario_sin_iva || 0) * (1 - (it.descuento_porcentaje ?? 0) / 100) * (it.cantidad || 0);
       sub += base; iva += base * ((it.iva_porcentaje || 0) / 100);
     });
-    const total = sub + iva + Number(percepciones || 0);
-    const pagado = esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0);
-    return { sub, iva, total, pagado, saldo: total - pagado };
-  }, [items, percepciones, pagos, esCtaCte]);
+    const total = (sub + iva + Number(percepciones || 0)) * signo;
+    const pagado = esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0) * signo;
+    return { sub: sub * signo, iva: iva * signo, total, pagado, saldo: total - pagado };
+  }, [items, percepciones, pagos, esCtaCte, signo]);
 
   // Cuenta Cte: limpio pagos al cambiar de tipo
   useEffect(() => {
@@ -128,8 +158,10 @@ function NuevaVenta() {
   const addPago = () => setPagos(p => [...p, {
     id: crypto.randomUUID(),
     forma_pago: "EFECTIVO",
-    // por defecto, el saldo que falta cubrir
-    monto: Math.max(0, totales.saldo),
+    // Por defecto, lo que falta cubrir. En una nota de crédito el saldo es
+    // negativo (es una devolución), así que precargamos el importe a devolver:
+    // el signo lo pone la base, el cajero siempre tipea un número positivo.
+    monto: Math.abs(Math.min(0, totales.saldo)) || Math.max(0, totales.saldo),
     detalle: {},
   }]);
   const updPago = (id: string, k: string, v: any) => setPagos(p => p.map(x => x.id === id ? { ...x, [k]: v } : x));
@@ -144,12 +176,25 @@ function NuevaVenta() {
         condicion_venta: esCtaCte ? "CTA_CTE" : condVenta,
         percepciones: Number(percepciones || 0), observaciones,
         nombre_obra: esRemitoObra ? nombreObra : null,
-        items: items.map(({ stock_disponible: _, ...rest }) => ({
-          ...rest, cantidad: Number(rest.cantidad || 0),
-          precio_unitario_sin_iva: Number(rest.precio_unitario_sin_iva || 0),
-          iva_porcentaje: Number(rest.iva_porcentaje || 0),
-          descuento_porcentaje: Number(rest.descuento_porcentaje || 0),
-        })),
+        cbte_asoc_id: esNota ? cbteAsocId || null : null,
+        items: items.map((it) => {
+          // Un campo de precio vacío (null) NO es "precio 0": es "usá el de lista".
+          // Sólo mandamos el precio cuando el cajero tipeó un valor distinto al de
+          // catálogo. Si no, el servidor lo resuelve solo.
+          const precioTipeado =
+            it.precio_unitario_sin_iva === null || it.precio_unitario_sin_iva === undefined
+              ? null
+              : Number(it.precio_unitario_sin_iva);
+          const pisado =
+            precioTipeado !== null &&
+            Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005;
+          return {
+            producto_id: it.producto_id,
+            cantidad: Number(it.cantidad || 0),
+            descuento_porcentaje: Number(it.descuento_porcentaje || 0),
+            ...(pisado ? { precio_unitario_sin_iva: precioTipeado } : {}),
+          };
+        }),
         pagos: pagos
           .filter(p => Number(p.monto || 0) > 0)
           .map(p => ({ forma_pago: p.forma_pago as any, monto: Number(p.monto), detalle: p.detalle })),
@@ -164,8 +209,10 @@ function NuevaVenta() {
 
   const canSave =
     !!effSucursal && !!clienteId &&
-    (items.length > 0 || tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO") &&
-    (!esRemitoObra || nombreObra.trim().length > 0);
+    items.length > 0 &&
+    (!esRemitoObra || nombreObra.trim().length > 0) &&
+    // Una nota sin factura asociada no se puede emitir en AFIP.
+    (!esNota || !!cbteAsocId);
 
   return (
     <div className="space-y-4">
@@ -248,6 +295,31 @@ function NuevaVenta() {
                 <Input placeholder="Nombre / dirección de la obra" value={nombreObra} onChange={(e) => setNombreObra(e.target.value)} />
               </div>
             )}
+            {esNota && (
+              <div className="col-span-2">
+                <Label>Factura que rectifica *</Label>
+                <Select value={cbteAsocId} onValueChange={setCbteAsocId} disabled={!clienteId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={clienteId ? "Elegí la factura…" : "Elegí primero el cliente"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {facturasDelCliente.map((f: any) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.numero_comprobante} · {fmtMoney(f.total)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {clienteId && facturasDelCliente.length === 0 && (
+                  <p className="text-[11px] text-warning mt-1">
+                    Este cliente no tiene facturas activas. Una nota siempre rectifica una factura.
+                  </p>
+                )}
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  AFIP exige que toda nota indique el comprobante que corrige.
+                </p>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -261,8 +333,14 @@ function NuevaVenta() {
               <NumberInput value={percepciones} onValueChange={setPercepciones} className="h-7 w-28 text-right" />
             </div>
             <div className="flex justify-between text-lg font-bold border-t border-border pt-2 mt-2">
-              <span>TOTAL:</span><span className="font-mono">{fmtMoney(totales.total)}</span>
+              <span>TOTAL:</span>
+              <span className={`font-mono ${esNotaCredito ? "text-destructive" : ""}`}>{fmtMoney(totales.total)}</span>
             </div>
+            {esNotaCredito && (
+              <p className="text-[11px] text-muted-foreground">
+                Es una devolución: baja la deuda del cliente y sale plata de la caja.
+              </p>
+            )}
             {!esCtaCte && (
               <>
                 <div className="flex justify-between text-success"><span>Pagado:</span><span className="font-mono">{fmtMoney(totales.pagado)}</span></div>
@@ -324,7 +402,14 @@ function NuevaVenta() {
                         {stockWarn && <Badge variant="outline" className="mt-1 text-[10px] border-warning text-warning"><AlertTriangle className="h-2.5 w-2.5 mr-1" />Excede stock ({it.stock_disponible})</Badge>}
                       </TableCell>
                       <TableCell><NumberInput className="h-8 w-20" value={it.cantidad} onValueChange={(v) => updateItem(i, "cantidad", v ?? 0)} /></TableCell>
-                      <TableCell><NumberInput className="h-8 w-28" value={it.precio_unitario_sin_iva} onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v ?? 0)} /></TableCell>
+                      <TableCell>
+                        <NumberInput className="h-8 w-28" value={it.precio_unitario_sin_iva} onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v ?? 0)} />
+                        {Math.abs(Number(it.precio_unitario_sin_iva || 0) - Number(it.precio_lista || 0)) > 0.005 && (
+                          <div className="text-[10px] text-warning mt-0.5" title="El precio fue modificado a mano">
+                            lista: {fmtMoney(it.precio_lista)}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell><NumberInput className="h-8 w-20" value={it.descuento_porcentaje} onValueChange={(v) => updateItem(i, "descuento_porcentaje", v ?? 0)} /></TableCell>
                       <TableCell className="text-xs">{it.iva_porcentaje}%</TableCell>
                       <TableCell className="text-right font-mono">{fmtMoney(sub)}</TableCell>

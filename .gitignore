@@ -30,3 +30,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Secretos y entorno — NUNCA commitear
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# Backup local de la data de Supabase
+.backup-supabase/
+.tmp/
+.vercel
+
+# Artefactos locales del CLI de Supabase
+supabase/.branches/
+supabase/.temp/
+
+# Artefactos de test (Playwright MCP) y temporales
+.playwright-mcp/
+.tmp_check.txt
+*.tmp

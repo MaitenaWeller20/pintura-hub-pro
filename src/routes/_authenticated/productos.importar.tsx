@@ -20,6 +20,7 @@ type Row = Record<string, any>;
 const fieldsTarget = [
   { key: "codigo", label: "Código *" },
   { key: "nombre", label: "Nombre *" },
+  { key: "precio_fabrica", label: "Precio fábrica" },
   { key: "precio_sin_iva", label: "Precio s/IVA" },
   { key: "iva_porcentaje", label: "IVA %" },
   { key: "stock_minimo", label: "Stock mínimo" },
@@ -29,6 +30,44 @@ const fieldsTarget = [
   { key: "stock_ohi", label: "Stock O'Higgins" },
   { key: "stock_gpz", label: "Stock General Paz" },
 ];
+
+// Las planillas reales traen cabeceras con acentos, puntos y abreviaturas
+// ("Código", "P. Unit s/IVA", "Stock O'Higgins"). Normalizamos y probamos
+// varios sinónimos por campo en vez de exigir que la cabecera contenga la clave.
+const normalizar = (s: string) =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const sinonimos: Record<string, string[]> = {
+  codigo: ["codigo", "cod", "sku", "articulo"],
+  nombre: ["nombre", "descripcion", "detalle", "producto"],
+  precio_fabrica: ["preciofabrica", "fabrica", "costo", "preciocosto"],
+  precio_sin_iva: ["preciosiniva", "preciosiva", "preciounitario", "precioneto", "precio", "punit"],
+  iva_porcentaje: ["iva", "alicuota", "ivaporcentaje"],
+  stock_minimo: ["stockminimo", "minimo", "stockmin"],
+  unidad_medida: ["unidad", "unidadmedida", "um", "medida"],
+  categoria: ["categoria", "rubro"],
+  marca: ["marca", "fabricante"],
+  stock_ohi: ["stockohiggins", "ohiggins", "ohi", "stockohi"],
+  stock_gpz: ["stockgeneralpaz", "generalpaz", "gpz", "stockgpz"],
+};
+
+function autoMapear(headers: string[]): Record<string, string> {
+  const auto: Record<string, string> = {};
+  const usados = new Set<string>();
+  for (const t of fieldsTarget) {
+    const candidatos = sinonimos[t.key] ?? [t.key];
+    // Coincidencia exacta primero; si no, la cabecera que contenga el sinónimo.
+    const exacto = headers.find((h) => !usados.has(h) && candidatos.includes(normalizar(h)));
+    const parcial =
+      exacto ??
+      headers.find((h) => !usados.has(h) && candidatos.some((c) => normalizar(h).includes(c)));
+    if (parcial) {
+      auto[t.key] = parcial;
+      usados.add(parcial);
+    }
+  }
+  return auto;
+}
 
 function ImportarProductos() {
   const navigate = useNavigate();
@@ -44,21 +83,21 @@ function ImportarProductos() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const data = ev.target?.result;
+      let parsedRows: Row[] = [];
+      let parsedHeaders: string[] = [];
       if (ext === "csv") {
         const parsed = Papa.parse<Row>(data as string, { header: true, skipEmptyLines: true });
-        setRows(parsed.data); setHeaders(parsed.meta.fields ?? []);
+        parsedRows = parsed.data;
+        parsedHeaders = parsed.meta.fields ?? [];
       } else {
         const wb = XLSX.read(data, { type: "binary" });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json<Row>(ws, { defval: "" });
-        setRows(json); setHeaders(Object.keys(json[0] ?? {}));
+        parsedRows = XLSX.utils.sheet_to_json<Row>(ws, { defval: "" });
+        parsedHeaders = Object.keys(parsedRows[0] ?? {});
       }
-      const auto: Record<string,string> = {};
-      fieldsTarget.forEach(t => {
-        const m = headers.find(h => h.toLowerCase().includes(t.key));
-        if (m) auto[t.key] = m;
-      });
-      setMapping(auto);
+      setRows(parsedRows);
+      setHeaders(parsedHeaders);
+      setMapping(autoMapear(parsedHeaders));
     };
     if (ext === "csv") reader.readAsText(f);
     else reader.readAsBinaryString(f);
@@ -71,6 +110,8 @@ function ImportarProductos() {
     const { data: cats = [] } = await supabase.from("categorias").select("*");
     const { data: mks = [] } = await supabase.from("marcas").select("*");
     const { data: sucs = [] } = await supabase.from("sucursales").select("id, codigo");
+    const { data: settings } = await supabase.from("settings").select("markup_default_porcentaje").maybeSingle();
+    const markupDefault = Number(settings?.markup_default_porcentaje ?? 50);
     const sucMap = new Map((sucs ?? []).map((s:any) => [s.codigo, s.id]));
     const catMap = new Map((cats ?? []).map((c:any) => [c.nombre.toLowerCase(), c.id]));
     const mkMap = new Map((mks ?? []).map((m:any) => [m.nombre.toLowerCase(), m.id]));
@@ -105,11 +146,21 @@ function ImportarProductos() {
           }
         }
 
+        // Precio de venta: si la planilla trae precio s/IVA se respeta; si sólo trae
+        // precio de fábrica, se deriva aplicando el markup default (fábrica × (1 + %)),
+        // que es el mismo modelo de precios que usa la pantalla de Productos.
+        const precioFabrica = mapping.precio_fabrica ? Number(r[mapping.precio_fabrica] ?? 0) : 0;
+        const precioSinIvaPlanilla = mapping.precio_sin_iva ? Number(r[mapping.precio_sin_iva] ?? 0) : NaN;
+        const precioSinIva = Number.isFinite(precioSinIvaPlanilla) && precioSinIvaPlanilla > 0
+          ? precioSinIvaPlanilla
+          : +(precioFabrica * (1 + markupDefault / 100)).toFixed(2);
+
         const payload = {
           codigo, nombre,
           categoria_id: cat_id ?? null, marca_id: mk_id ?? null,
           unidad_medida: String(r[mapping.unidad_medida] ?? "unidad") || "unidad",
-          precio_sin_iva: Number(r[mapping.precio_sin_iva] ?? 0),
+          precio_fabrica: precioFabrica,
+          precio_sin_iva: precioSinIva,
           iva_porcentaje: Number(r[mapping.iva_porcentaje] ?? 21),
           stock_minimo: Number(r[mapping.stock_minimo] ?? 0),
         };

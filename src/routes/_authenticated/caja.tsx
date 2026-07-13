@@ -94,13 +94,18 @@ function CajaPage() {
   });
   const saldoInicialEfectivo = Number(rendicionAyer?.efectivo_dejado ?? 0);
 
-  // Totales por forma de pago
+  // Totales por forma de pago.
+  //
+  // Los pagos se guardan YA CON SIGNO: la devolución de una nota de crédito entra
+  // como monto negativo, así que basta con sumar. Antes acá había un hack que
+  // invertía el signo al leer, y tenía dos bugs: sólo lo aplicaba al EFECTIVO (una
+  // nota de crédito devuelta por transferencia SUMABA a la caja en vez de restar),
+  // y también invertía las notas de DÉBITO, que son un cargo extra y deben sumar.
   const totalesSistema = useMemo(() => {
     const t: Record<string, number> = Object.fromEntries(FORMAS.map(f => [f, 0]));
     ventasDia.forEach((v: any) => {
-      const sign = v.tipo_comprobante === "NOTA_CREDITO" || v.tipo_comprobante === "NOTA_DEBITO" ? -1 : 1;
       (v.pagos ?? []).forEach((p: any) => {
-        if (t[p.forma_pago] !== undefined) t[p.forma_pago] += Number(p.monto) * (p.forma_pago === "EFECTIVO" ? sign : 1);
+        if (t[p.forma_pago] !== undefined) t[p.forma_pago] += Number(p.monto);
       });
     });
     cobranzasDia.forEach((c: any) => { if (t[c.forma_pago] !== undefined) t[c.forma_pago] += Number(c.monto); });

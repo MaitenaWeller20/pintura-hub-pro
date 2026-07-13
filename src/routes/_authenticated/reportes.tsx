@@ -45,11 +45,12 @@ function ReportesPage() {
     },
   });
 
+  // Saldos de cuenta corriente por cliente, derivados del libro de movimientos.
   const { data: ctaCte = [] } = useQuery({
     queryKey: ["rep-ctacte"],
-    queryFn: async () => ((await supabase.from("ventas").select(`
-      id, numero_comprobante, fecha, total, total_pagado, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre)
-    `).neq("estado_pago","PAGADO").eq("estado","ACTIVA").order("fecha", { ascending:false })).data ?? []) as any[],
+    queryFn: async () => ((await supabase.from("cuenta_corriente_saldos")
+      .select("cliente_id, razon_social, cuit_dni, total_debe, total_pagado, saldo")
+      .order("saldo", { ascending: false })).data ?? []) as any[],
   });
 
   const { data: movs = [] } = useQuery({
@@ -169,23 +170,29 @@ function ReportesPage() {
           <Card className="overflow-x-auto">
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Comprob.</TableHead><TableHead>Cliente</TableHead>
-                <TableHead>Sucursal</TableHead>
-                <TableHead className="text-right">Total</TableHead>
+                <TableHead>Cliente</TableHead><TableHead>CUIT/DNI</TableHead>
+                <TableHead className="text-right">Debe</TableHead>
                 <TableHead className="text-right">Pagado</TableHead>
-                <TableHead className="text-right">Pendiente</TableHead>
+                <TableHead className="text-right">Saldo</TableHead>
               </TableRow></TableHeader>
               <TableBody>
-                {ctaCte.map((v:any)=>(
-                  <TableRow key={v.id}>
-                    <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
-                    <TableCell>{v.cliente?.razon_social}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>
-                    <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
-                    <TableCell className="text-right font-mono">{fmtMoney(v.total_pagado)}</TableCell>
-                    <TableCell className="text-right font-mono text-destructive">{fmtMoney(Number(v.total)-Number(v.total_pagado))}</TableCell>
-                  </TableRow>
-                ))}
+                {ctaCte.filter((c:any)=>Math.abs(Number(c.saldo))>0.01).map((c:any)=>{
+                  const saldo = Number(c.saldo);
+                  return (
+                    <TableRow key={c.cliente_id}>
+                      <TableCell>{c.razon_social}</TableCell>
+                      <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
+                      <TableCell className="text-right font-mono">{fmtMoney(c.total_debe)}</TableCell>
+                      <TableCell className="text-right font-mono text-success">{fmtMoney(c.total_pagado)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${saldo>0.01?"text-destructive":"text-success"}`}>
+                        {fmtMoney(saldo)}{saldo<-0.01 && " a favor"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {ctaCte.filter((c:any)=>Math.abs(Number(c.saldo))>0.01).length===0 && (
+                  <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">Ningún cliente con saldo pendiente.</TableCell></TableRow>
+                )}
               </TableBody>
             </Table>
           </Card>

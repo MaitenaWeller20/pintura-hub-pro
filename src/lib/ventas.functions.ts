@@ -1,7 +1,15 @@
 /**
- * Server function: crearVenta
- * Toma el formulario completo, genera número de comprobante,
- * inserta venta + items + pagos en transacción lógica y descuenta stock.
+ * Ventas: creación y anulación.
+ *
+ * La lógica vive en dos funciones de Postgres (crear_venta / anular_venta), no acá.
+ * La razón es la atomicidad: esto antes eran 4 llamadas sueltas a la base
+ * (venta -> items -> pagos -> stock) sin transacción, así que un fallo a mitad de
+ * camino dejaba datos a medio escribir. Y el stock se descontaba leyendo-y-
+ * escribiendo desde JS, lo que permite que dos cajas vendan la misma última lata.
+ *
+ * Dentro de la función de Postgres todo eso es una única transacción, el descuento
+ * de stock es atómico con guarda anti-negativo, y los precios se resuelven contra
+ * el catálogo en vez de confiar en lo que manda el navegador.
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -9,16 +17,19 @@ import { z } from "zod";
 
 const itemSchema = z.object({
   producto_id: z.string().uuid(),
-  codigo: z.string(),
-  descripcion: z.string(),
   cantidad: z.number().nonnegative(),
-  precio_unitario_sin_iva: z.number().nonnegative(),
-  iva_porcentaje: z.number().nonnegative(),
   descuento_porcentaje: z.number().min(0).max(100).default(0),
+  // Opcional: el cajero puede pisar el precio de lista (es una necesidad real del
+  // mostrador, se negocia en el momento). Si no viene, la base usa el del catálogo.
+  // Si viene, se guardan los dos y la diferencia queda auditada.
+  precio_unitario_sin_iva: z.number().nonnegative().optional(),
 });
 
 const pagoSchema = z.object({
-  forma_pago: z.enum(["EFECTIVO","TRANSFERENCIA","TARJETA_DEBITO","TARJETA_CREDITO","MERCADO_PAGO","CHEQUE","CTA_CTE"]),
+  forma_pago: z.enum([
+    "EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO",
+    "MERCADO_PAGO", "CHEQUE", "CTA_CTE",
+  ]),
   monto: z.number().nonnegative(),
   detalle: z.record(z.string(), z.any()).default({}),
 });
@@ -26,159 +37,60 @@ const pagoSchema = z.object({
 const ventaSchema = z.object({
   sucursal_id: z.string().uuid(),
   cliente_id: z.string().uuid(),
-  tipo_comprobante: z.enum(["FACTURA_A","FACTURA_B","NOTA_CREDITO","NOTA_DEBITO","REMITO","REMITO_OBRA","FAC_INTERNA_CTA_CTE"]),
-  condicion_venta: z.enum(["CONTADO","CTA_CTE"]),
+  tipo_comprobante: z.enum([
+    "FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO", "NOTA_DEBITO",
+    "REMITO", "REMITO_OBRA", "FAC_INTERNA_CTA_CTE",
+  ]),
+  condicion_venta: z.enum(["CONTADO", "CTA_CTE"]),
   fecha: z.string().optional(),
   percepciones: z.number().nonnegative().default(0),
   observaciones: z.string().optional().nullable(),
   nombre_obra: z.string().optional().nullable(),
+  // El comprobante que rectifica una nota de crédito/débito. AFIP lo exige
+  // (CbtesAsoc): una nota sin comprobante asociado no se puede emitir.
+  cbte_asoc_id: z.string().uuid().optional().nullable(),
   items: z.array(itemSchema).min(0),
   pagos: z.array(pagoSchema).default([]),
 });
-
-// Tipos que NO descuentan stock al emitirse (no salen mercaderías)
-const TIPOS_SIN_STOCK = new Set(["NOTA_CREDITO","NOTA_DEBITO"]);
-// Tipos que NO impactan en caja (van a cuenta corriente del cliente)
-const TIPOS_CTA_CTE = new Set(["REMITO","REMITO_OBRA","FAC_INTERNA_CTA_CTE"]);
 
 export const crearVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => ventaSchema.parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+    const { supabase } = context;
 
-    // Calcular totales
-    let subSinIva = 0, ivaTotal = 0;
-    const itemsCalc = data.items.map((it) => {
-      const baseConDesc = it.precio_unitario_sin_iva * (1 - (it.descuento_porcentaje ?? 0) / 100);
-      const subItem = baseConDesc * it.cantidad;
-      const ivaItem = subItem * (it.iva_porcentaje / 100);
-      subSinIva += subItem;
-      ivaTotal += ivaItem;
-      return {
-        ...it,
-        subtotal_sin_iva: +subItem.toFixed(2),
-        iva_monto: +ivaItem.toFixed(2),
-        subtotal_con_iva: +(subItem + ivaItem).toFixed(2),
-      };
+    const { data: r, error } = await supabase.rpc("crear_venta", {
+      p_sucursal_id: data.sucursal_id,
+      p_cliente_id: data.cliente_id,
+      p_tipo_comprobante: data.tipo_comprobante,
+      p_condicion_venta: data.condicion_venta,
+      p_items: data.items,
+      p_pagos: data.pagos,
+      p_percepciones: data.percepciones ?? 0,
+      p_observaciones: data.observaciones ?? undefined,
+      p_nombre_obra: data.nombre_obra ?? undefined,
+      p_fecha: data.fecha ?? undefined,
+      p_cbte_asoc_id: data.cbte_asoc_id ?? undefined,
     });
-    const total = +(subSinIva + ivaTotal + (data.percepciones ?? 0)).toFixed(2);
-    const esCtaCte = TIPOS_CTA_CTE.has(data.tipo_comprobante) || data.condicion_venta === "CTA_CTE";
 
-    // Si va a cuenta corriente, no se aceptan pagos al emitir (se cobran después)
-    const pagosEfectivos = esCtaCte ? [] : data.pagos;
-    const totalPagado = +pagosEfectivos.reduce((a,p) => a + p.monto, 0).toFixed(2);
-    const estadoPago = esCtaCte
-      ? "PENDIENTE"
-      : totalPagado + 0.001 >= total
-        ? "PAGADO"
-        : totalPagado > 0 ? "PARCIAL" : "PENDIENTE";
+    if (error) throw new Error(error.message);
 
-    const { data: numero, error: numErr } = await supabase.rpc("next_comprobante_numero", {
-      _sucursal_id: data.sucursal_id, _tipo: data.tipo_comprobante,
-    });
-    if (numErr) throw new Error(numErr.message);
-
-    const { data: venta, error: vErr } = await supabase.from("ventas").insert({
-      sucursal_id: data.sucursal_id,
-      cliente_id: data.cliente_id,
-      usuario_id: userId,
-      fecha: data.fecha ?? new Date().toISOString(),
-      numero_comprobante: numero as unknown as string,
-      tipo_comprobante: data.tipo_comprobante,
-      condicion_venta: esCtaCte ? "CTA_CTE" : data.condicion_venta,
-      subtotal_sin_iva: +subSinIva.toFixed(2),
-      iva_total: +ivaTotal.toFixed(2),
-      percepciones: data.percepciones ?? 0,
-      total,
-      total_pagado: totalPagado,
-      estado_pago: estadoPago,
-      observaciones: data.observaciones ?? null,
-      nombre_obra: data.nombre_obra ?? null,
-    }).select().single();
-    if (vErr) throw new Error(vErr.message);
-
-    if (itemsCalc.length) {
-      const { error: iErr } = await supabase.from("venta_items").insert(
-        itemsCalc.map((it) => ({ ...it, venta_id: venta.id }))
-      );
-      if (iErr) throw new Error(iErr.message);
-    }
-
-    if (pagosEfectivos.length) {
-      const { error: pErr } = await supabase.from("venta_pagos").insert(
-        pagosEfectivos.map((p) => ({ ...p, venta_id: venta.id }))
-      );
-      if (pErr) throw new Error(pErr.message);
-    }
-
-    // Descontar stock excepto Notas de Crédito/Débito (no mueven mercadería)
-    if (!TIPOS_SIN_STOCK.has(data.tipo_comprobante)) {
-      for (const it of data.items) {
-        if (!it.cantidad) continue;
-        const { data: row } = await supabase.from("stock_sucursal")
-          .select("cantidad").eq("producto_id", it.producto_id).eq("sucursal_id", data.sucursal_id).maybeSingle();
-        const anterior = Number(row?.cantidad ?? 0);
-        const nueva = anterior - it.cantidad;
-        await supabase.from("stock_sucursal").upsert({
-          producto_id: it.producto_id, sucursal_id: data.sucursal_id, cantidad: nueva,
-        }, { onConflict: "producto_id,sucursal_id" });
-        await supabase.from("stock_movimientos").insert({
-          producto_id: it.producto_id, sucursal_id: data.sucursal_id,
-          tipo: "VENTA", cantidad: -it.cantidad,
-          cantidad_anterior: anterior, cantidad_nueva: nueva,
-          referencia_id: venta.id, usuario_id: userId,
-          motivo: `${data.tipo_comprobante} ${numero}`,
-        });
-      }
-    }
-
-    return { id: venta.id, numero: numero as unknown as string, cta_cte: esCtaCte };
+    const row: any = Array.isArray(r) ? r[0] : r;
+    return { id: row.venta_id as string, numero: row.numero as string, cta_cte: row.es_cta_cte as boolean };
   });
-
 
 export const anularVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ venta_id: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+    const { supabase } = context;
 
-    const { data: v } = await supabase.from("ventas").select("*").eq("id", data.venta_id).single();
-    if (!v) throw new Error("Venta no encontrada");
-    if (v.estado === "ANULADA") throw new Error("La venta ya fue anulada");
-
-    // Generar NC
-    const { data: numero } = await supabase.rpc("next_comprobante_numero", {
-      _sucursal_id: v.sucursal_id, _tipo: "NOTA_CREDITO" as const,
+    const { data: r, error } = await supabase.rpc("anular_venta", {
+      p_venta_id: data.venta_id,
     });
-    const { data: nc } = await supabase.from("ventas").insert({
-      sucursal_id: v.sucursal_id, cliente_id: v.cliente_id, usuario_id: userId,
-      numero_comprobante: numero as unknown as string, tipo_comprobante: "NOTA_CREDITO",
-      condicion_venta: v.condicion_venta,
-      subtotal_sin_iva: -Number(v.subtotal_sin_iva), iva_total: -Number(v.iva_total),
-      percepciones: -Number(v.percepciones), total: -Number(v.total), total_pagado: 0,
-      estado_pago: "PENDIENTE", observaciones: `Nota de crédito por anulación de ${v.numero_comprobante}`,
-    }).select().single();
 
-    await supabase.from("ventas").update({ estado: "ANULADA", venta_anulada_por: nc?.id }).eq("id", v.id);
+    if (error) throw new Error(error.message);
 
-    // Devolver stock
-    const { data: items = [] } = await supabase.from("venta_items").select("*").eq("venta_id", v.id);
-    for (const it of items as any[]) {
-      const { data: row } = await supabase.from("stock_sucursal")
-        .select("cantidad").eq("producto_id", it.producto_id).eq("sucursal_id", v.sucursal_id).maybeSingle();
-      const anterior = Number(row?.cantidad ?? 0);
-      const nueva = anterior + Number(it.cantidad);
-      await supabase.from("stock_sucursal").upsert({
-        producto_id: it.producto_id, sucursal_id: v.sucursal_id, cantidad: nueva,
-      }, { onConflict: "producto_id,sucursal_id" });
-      await supabase.from("stock_movimientos").insert({
-        producto_id: it.producto_id, sucursal_id: v.sucursal_id,
-        tipo: "ANULACION_VENTA", cantidad: Number(it.cantidad),
-        cantidad_anterior: anterior, cantidad_nueva: nueva,
-        referencia_id: v.id, usuario_id: userId, motivo: `Anulación ${v.numero_comprobante}`,
-      });
-    }
-
-    return { ok: true, nc_numero: numero };
+    const row: any = Array.isArray(r) ? r[0] : r;
+    return { ok: true, nc_id: row.nc_id as string, nc_numero: row.nc_numero as string };
   });

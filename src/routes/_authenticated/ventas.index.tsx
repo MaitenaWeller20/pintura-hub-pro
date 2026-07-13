@@ -11,10 +11,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
-import { Plus, Eye, Ban, Printer, FileSpreadsheet } from "lucide-react";
+import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { anularVenta } from "@/lib/ventas.functions";
+import { emitirComprobante } from "@/lib/fiscal.functions";
+import { esComprobanteFiscal } from "@/lib/fiscal/codigos";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -59,6 +61,21 @@ function VentasList() {
     mutationFn: async (id: string) => anularFn({ data: { venta_id: id } }),
     onSuccess: () => { toast.success("Venta anulada"); qc.invalidateQueries({ queryKey: ["ventas"] }); setAnularDlg(null); },
     onError: (e:any) => toast.error(e.message),
+  });
+
+  const emitirFn = useServerFn(emitirComprobante);
+  const emitir = useMutation({
+    mutationFn: async (id: string) => emitirFn({ data: { venta_id: id } }),
+    onSuccess: (r: any) => {
+      toast.success(
+        r.recuperado
+          ? `AFIP ya lo había autorizado. CAE ${r.cae} recuperado.`
+          : `CAE ${r.cae} obtenido${r.modo === "HOMOLOGACION" ? " (homologación)" : ""}.`,
+      );
+      qc.invalidateQueries({ queryKey: ["ventas"] });
+    },
+    // Los errores de AFIP son largos y hay que poder leerlos.
+    onError: (e: any) => toast.error(e.message, { duration: 12000 }),
   });
 
   const exportar = () => {
@@ -114,7 +131,9 @@ function VentasList() {
               <TableHead>Fecha</TableHead><TableHead>Cliente</TableHead>
               {cu?.isAdmin && <TableHead>Sucursal</TableHead>}
               <TableHead className="text-right">Total</TableHead>
-              <TableHead>Estado</TableHead><TableHead></TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead>AFIP</TableHead>
+              <TableHead></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -133,8 +152,24 @@ function VentasList() {
                     </Badge>
                   )}
                 </TableCell>
+                <TableCell><EstadoAfip venta={v} /></TableCell>
                 <TableCell>
                   <Button size="sm" variant="ghost" onClick={()=>setVerVenta(v)}><Eye className="h-3.5 w-3.5"/></Button>
+                  {/* Sólo se factura lo que es un comprobante fiscal. Los remitos y la
+                      factura interna son documentos internos: no van a AFIP. */}
+                  {v.estado === "ACTIVA" && esComprobanteFiscal(v.tipo_comprobante) && !v.cae && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="Emitir en AFIP"
+                      onClick={() => emitir.mutate(v.id)}
+                      disabled={emitir.isPending}
+                    >
+                      {emitir.isPending && emitir.variables === v.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
+                    </Button>
+                  )}
                   {v.estado === "ACTIVA" && v.tipo_comprobante !== "NOTA_CREDITO" && (
                     <Button size="sm" variant="ghost" onClick={()=>setAnularDlg(v)}><Ban className="h-3.5 w-3.5 text-destructive"/></Button>
                   )}
@@ -159,6 +194,34 @@ function VentasList() {
       </Dialog>
     </div>
   );
+}
+
+/** Estado fiscal del comprobante: si tiene CAE, si falló, o si ni siquiera aplica. */
+function EstadoAfip({ venta }: { venta: any }) {
+  if (!esComprobanteFiscal(venta.tipo_comprobante)) {
+    return <span className="text-xs text-muted-foreground" title="Documento interno: no se declara a AFIP">Interno</span>;
+  }
+  if (venta.cae) {
+    return (
+      <div className="text-xs">
+        <div className="font-mono">{venta.cae}</div>
+        <div className="text-muted-foreground">
+          {venta.afip_modo === "HOMOLOGACION" ? "homologación" : `PV ${venta.afip_punto_venta}-${venta.afip_numero}`}
+        </div>
+      </div>
+    );
+  }
+  if (venta.afip_estado === "ERROR") {
+    return (
+      <Badge variant="outline" className="border-destructive text-destructive gap-1 text-[10px]" title={venta.afip_error ?? ""}>
+        <AlertTriangle className="h-2.5 w-2.5" /> ERROR
+      </Badge>
+    );
+  }
+  if (venta.afip_estado === "PENDIENTE") {
+    return <Badge variant="outline" className="border-warning text-warning text-[10px]">PENDIENTE</Badge>;
+  }
+  return <span className="text-xs text-muted-foreground">Sin emitir</span>;
 }
 
 function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {

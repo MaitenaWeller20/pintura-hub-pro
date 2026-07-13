@@ -7,13 +7,60 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
+      afip_ta: {
+        Row: {
+          cuit: string
+          expires_at: string
+          production: boolean
+          service_name: string
+          ticket_enc: string
+          updated_at: string
+        }
+        Insert: {
+          cuit: string
+          expires_at: string
+          production: boolean
+          service_name: string
+          ticket_enc: string
+          updated_at?: string
+        }
+        Update: {
+          cuit?: string
+          expires_at?: string
+          production?: boolean
+          service_name?: string
+          ticket_enc?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       categorias: {
         Row: {
           created_at: string
@@ -140,6 +187,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "cobranzas_cta_cte_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
             foreignKeyName: "cobranzas_cta_cte_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
@@ -176,6 +230,135 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      cuenta_corriente_movimientos: {
+        Row: {
+          cliente_id: string
+          cobranza_id: string | null
+          created_at: string
+          descripcion: string | null
+          estado: Database["public"]["Enums"]["cc_mov_estado"]
+          forma_pago: string | null
+          id: string
+          monto: number
+          sucursal_id: string
+          tipo: Database["public"]["Enums"]["cc_mov_tipo"]
+          usuario_id: string | null
+          venta_id: string | null
+        }
+        Insert: {
+          cliente_id: string
+          cobranza_id?: string | null
+          created_at?: string
+          descripcion?: string | null
+          estado?: Database["public"]["Enums"]["cc_mov_estado"]
+          forma_pago?: string | null
+          id?: string
+          monto: number
+          sucursal_id: string
+          tipo: Database["public"]["Enums"]["cc_mov_tipo"]
+          usuario_id?: string | null
+          venta_id?: string | null
+        }
+        Update: {
+          cliente_id?: string
+          cobranza_id?: string | null
+          created_at?: string
+          descripcion?: string | null
+          estado?: Database["public"]["Enums"]["cc_mov_estado"]
+          forma_pago?: string | null
+          id?: string
+          monto?: number
+          sucursal_id?: string
+          tipo?: Database["public"]["Enums"]["cc_mov_tipo"]
+          usuario_id?: string | null
+          venta_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_cobranza_id_fkey"
+            columns: ["cobranza_id"]
+            isOneToOne: true
+            referencedRelation: "cobranzas_cta_cte"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: true
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fiscal_config: {
+        Row: {
+          arca_cert_enc: string | null
+          arca_key_enc: string | null
+          cert_alias: string | null
+          cert_vence_at: string | null
+          condicion_iva: string
+          cuit: string | null
+          domicilio_fiscal: string | null
+          habilitada: boolean
+          id: boolean
+          inicio_actividades: string | null
+          nombre_fantasia: string | null
+          razon_social: string | null
+          updated_at: string
+        }
+        Insert: {
+          arca_cert_enc?: string | null
+          arca_key_enc?: string | null
+          cert_alias?: string | null
+          cert_vence_at?: string | null
+          condicion_iva?: string
+          cuit?: string | null
+          domicilio_fiscal?: string | null
+          habilitada?: boolean
+          id?: boolean
+          inicio_actividades?: string | null
+          nombre_fantasia?: string | null
+          razon_social?: string | null
+          updated_at?: string
+        }
+        Update: {
+          arca_cert_enc?: string | null
+          arca_key_enc?: string | null
+          cert_alias?: string | null
+          cert_vence_at?: string | null
+          condicion_iva?: string
+          cuit?: string | null
+          domicilio_fiscal?: string | null
+          habilitada?: boolean
+          id?: boolean
+          inicio_actividades?: string | null
+          nombre_fantasia?: string | null
+          razon_social?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       marcas: {
         Row: {
@@ -300,6 +483,44 @@ export type Database = {
             foreignKeyName: "profiles_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      puntos_venta: {
+        Row: {
+          activo: boolean
+          created_at: string
+          id: string
+          modo: string
+          numero: number
+          sucursal_id: string
+          updated_at: string
+        }
+        Insert: {
+          activo?: boolean
+          created_at?: string
+          id?: string
+          modo?: string
+          numero: number
+          sucursal_id: string
+          updated_at?: string
+        }
+        Update: {
+          activo?: boolean
+          created_at?: string
+          id?: string
+          modo?: string
+          numero?: number
+          sucursal_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "puntos_venta_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: true
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -485,16 +706,19 @@ export type Database = {
         Row: {
           id: boolean
           markup_default_porcentaje: number
+          permitir_stock_negativo: boolean
           updated_at: string
         }
         Insert: {
           id?: boolean
           markup_default_porcentaje?: number
+          permitir_stock_negativo?: boolean
           updated_at?: string
         }
         Update: {
           id?: boolean
           markup_default_porcentaje?: number
+          permitir_stock_negativo?: boolean
           updated_at?: string
         }
         Relationships: []
@@ -662,6 +886,7 @@ export type Database = {
           id: string
           iva_monto: number
           iva_porcentaje: number
+          precio_lista_sin_iva: number | null
           precio_unitario_sin_iva: number
           producto_id: string
           subtotal_con_iva: number
@@ -677,6 +902,7 @@ export type Database = {
           id?: string
           iva_monto: number
           iva_porcentaje: number
+          precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva: number
           producto_id: string
           subtotal_con_iva: number
@@ -692,6 +918,7 @@ export type Database = {
           id?: string
           iva_monto?: number
           iva_porcentaje?: number
+          precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva?: number
           producto_id?: string
           subtotal_con_iva?: number
@@ -752,6 +979,18 @@ export type Database = {
       }
       ventas: {
         Row: {
+          afip_cbte_asoc_id: string | null
+          afip_cbte_tipo: number | null
+          afip_emitido_at: string | null
+          afip_error: string | null
+          afip_estado: string
+          afip_imp_total: number | null
+          afip_intentos: number
+          afip_modo: string | null
+          afip_numero: number | null
+          afip_punto_venta: number | null
+          cae: string | null
+          cae_vencimiento: string | null
           cliente_id: string
           condicion_venta: Database["public"]["Enums"]["condicion_venta"]
           created_at: string
@@ -774,6 +1013,18 @@ export type Database = {
           venta_anulada_por: string | null
         }
         Insert: {
+          afip_cbte_asoc_id?: string | null
+          afip_cbte_tipo?: number | null
+          afip_emitido_at?: string | null
+          afip_error?: string | null
+          afip_estado?: string
+          afip_imp_total?: number | null
+          afip_intentos?: number
+          afip_modo?: string | null
+          afip_numero?: number | null
+          afip_punto_venta?: number | null
+          cae?: string | null
+          cae_vencimiento?: string | null
           cliente_id: string
           condicion_venta?: Database["public"]["Enums"]["condicion_venta"]
           created_at?: string
@@ -796,6 +1047,18 @@ export type Database = {
           venta_anulada_por?: string | null
         }
         Update: {
+          afip_cbte_asoc_id?: string | null
+          afip_cbte_tipo?: number | null
+          afip_emitido_at?: string | null
+          afip_error?: string | null
+          afip_estado?: string
+          afip_imp_total?: number | null
+          afip_intentos?: number
+          afip_modo?: string | null
+          afip_numero?: number | null
+          afip_punto_venta?: number | null
+          cae?: string | null
+          cae_vencimiento?: string | null
           cliente_id?: string
           condicion_venta?: Database["public"]["Enums"]["condicion_venta"]
           created_at?: string
@@ -819,11 +1082,25 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "ventas_afip_cbte_asoc_id_fkey"
+            columns: ["afip_cbte_asoc_id"]
+            isOneToOne: false
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "ventas_cliente_id_fkey"
             columns: ["cliente_id"]
             isOneToOne: false
             referencedRelation: "clientes"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ventas_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
           },
           {
             foreignKeyName: "ventas_sucursal_id_fkey"
@@ -843,9 +1120,95 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      cuenta_corriente_saldos: {
+        Row: {
+          cliente_id: string | null
+          cuit_dni: string | null
+          limite_credito: number | null
+          razon_social: string | null
+          saldo: number | null
+          telefono: string | null
+          total_debe: number | null
+          total_pagado: number | null
+        }
+        Relationships: []
+      }
+      fiscal_config_publica: {
+        Row: {
+          cert_alias: string | null
+          cert_vence_at: string | null
+          condicion_iva: string | null
+          cuit: string | null
+          domicilio_fiscal: string | null
+          habilitada: boolean | null
+          inicio_actividades: string | null
+          nombre_fantasia: string | null
+          razon_social: string | null
+          tiene_certificado: boolean | null
+          tiene_clave: boolean | null
+        }
+        Insert: {
+          cert_alias?: string | null
+          cert_vence_at?: string | null
+          condicion_iva?: string | null
+          cuit?: string | null
+          domicilio_fiscal?: string | null
+          habilitada?: boolean | null
+          inicio_actividades?: string | null
+          nombre_fantasia?: string | null
+          razon_social?: string | null
+          tiene_certificado?: never
+          tiene_clave?: never
+        }
+        Update: {
+          cert_alias?: string | null
+          cert_vence_at?: string | null
+          condicion_iva?: string | null
+          cuit?: string | null
+          domicilio_fiscal?: string | null
+          habilitada?: boolean | null
+          inicio_actividades?: string | null
+          nombre_fantasia?: string | null
+          razon_social?: string | null
+          tiene_certificado?: never
+          tiene_clave?: never
+        }
+        Relationships: []
+      }
     }
     Functions: {
+      anular_venta: {
+        Args: { p_venta_id: string }
+        Returns: {
+          nc_id: string
+          nc_numero: string
+        }[]
+      }
+      cc_registrar_por_venta: {
+        Args: { _venta_id: string }
+        Returns: undefined
+      }
+      cc_saldo: { Args: { _cliente_id: string }; Returns: number }
+      crear_venta: {
+        Args: {
+          p_cbte_asoc_id?: string
+          p_cliente_id: string
+          p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
+          p_fecha?: string
+          p_items: Json
+          p_nombre_obra?: string
+          p_observaciones?: string
+          p_pagos: Json
+          p_percepciones?: number
+          p_sucursal_id: string
+          p_tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
       current_sucursal_id: { Args: never; Returns: string }
       has_role: {
         Args: {
@@ -862,9 +1225,25 @@ export type Database = {
         }
         Returns: string
       }
+      registrar_cobranza: {
+        Args: {
+          p_cliente_id: string
+          p_detalle?: Json
+          p_forma_pago: string
+          p_monto: number
+          p_observaciones?: string
+          p_sucursal_id: string
+        }
+        Returns: {
+          cobranza_id: string
+          saldo: number
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "empleado"
+      cc_mov_estado: "CONFIRMADO" | "ANULADO"
+      cc_mov_tipo: "DEBITO" | "CREDITO"
       condicion_venta: "CONTADO" | "CTA_CTE"
       estado_pago: "PAGADO" | "PARCIAL" | "PENDIENTE"
       estado_remito: "PENDIENTE" | "APROBADO" | "RECHAZADO"
@@ -891,6 +1270,7 @@ export type Database = {
         | "NOTA_DEBITO"
         | "FAC_INTERNA_CTA_CTE"
         | "REMITO_OBRA"
+        | "FACTURA_C"
       tipo_movimiento_stock:
         | "VENTA"
         | "AJUSTE"
@@ -1023,9 +1403,14 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       app_role: ["admin", "empleado"],
+      cc_mov_estado: ["CONFIRMADO", "ANULADO"],
+      cc_mov_tipo: ["DEBITO", "CREDITO"],
       condicion_venta: ["CONTADO", "CTA_CTE"],
       estado_pago: ["PAGADO", "PARCIAL", "PENDIENTE"],
       estado_remito: ["PENDIENTE", "APROBADO", "RECHAZADO"],
@@ -1054,6 +1439,7 @@ export const Constants = {
         "NOTA_DEBITO",
         "FAC_INTERNA_CTA_CTE",
         "REMITO_OBRA",
+        "FACTURA_C",
       ],
       tipo_movimiento_stock: [
         "VENTA",
@@ -1066,3 +1452,4 @@ export const Constants = {
     },
   },
 } as const
+

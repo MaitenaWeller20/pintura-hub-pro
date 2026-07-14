@@ -7,7 +7,8 @@ import {
   SidebarHeader, SidebarFooter,
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, ShoppingCart, Package, Users, Truck, Wallet, BarChart3, UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2,
+  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Truck, Wallet, Coins, BarChart3,
+  UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,20 +22,48 @@ export const Route = createFileRoute("/_authenticated")({
   component: AuthenticatedLayout,
 });
 
-const menu = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
-  { to: "/ventas", label: "Ventas", icon: ShoppingCart, adminOnly: false },
-  { to: "/productos", label: "Productos", icon: Package, adminOnly: false },
-  { to: "/stock", label: "Stock", icon: Package, adminOnly: false },
-  { to: "/clientes", label: "Clientes", icon: Users, adminOnly: false },
-  { to: "/cuentas-corrientes", label: "Cta Corriente", icon: Receipt, adminOnly: false },
+type MenuItem = { to: string; label: string; icon: typeof LayoutDashboard; adminOnly: boolean };
 
-  { to: "/remitos", label: "Remitos", icon: Truck, adminOnly: false },
-  { to: "/caja", label: "Rendición caja", icon: Wallet, adminOnly: false },
-  { to: "/reportes", label: "Reportes", icon: BarChart3, adminOnly: true },
-  { to: "/facturacion", label: "Facturación AFIP", icon: FileCheck2, adminOnly: true },
-  { to: "/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true },
+const groups: Array<{ label: string; items: MenuItem[] }> = [
+  {
+    label: "Operación",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
+      { to: "/ventas", label: "Ventas", icon: ShoppingCart, adminOnly: false },
+      { to: "/remitos", label: "Remitos", icon: Truck, adminOnly: false },
+    ],
+  },
+  {
+    label: "Catálogo",
+    items: [
+      { to: "/productos", label: "Productos", icon: Package, adminOnly: false },
+      { to: "/stock", label: "Stock", icon: Boxes, adminOnly: false },
+      { to: "/clientes", label: "Clientes", icon: Users, adminOnly: false },
+    ],
+  },
+  {
+    label: "Cobranzas",
+    items: [
+      { to: "/pagos", label: "Pagos", icon: Wallet, adminOnly: false },
+      { to: "/cuentas-corrientes", label: "Cuentas corrientes", icon: Receipt, adminOnly: false },
+      { to: "/caja", label: "Rendición caja", icon: Coins, adminOnly: false },
+    ],
+  },
+  {
+    label: "Administración",
+    items: [
+      { to: "/reportes", label: "Reportes", icon: BarChart3, adminOnly: true },
+      { to: "/facturacion", label: "Facturación AFIP", icon: FileCheck2, adminOnly: true },
+      { to: "/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true },
+    ],
+  },
 ];
+
+const allItems = groups.flatMap((g) => g.items);
+
+function isActive(to: string, path: string) {
+  return to === "/" ? path === "/" : path.startsWith(to);
+}
 
 function AuthenticatedLayout() {
   const { data: cu, loading } = useCurrentUser();
@@ -50,6 +79,8 @@ function AuthenticatedLayout() {
     await supabase.auth.signOut();
     navigate({ to: "/auth" });
   };
+
+  const current = allItems.find((i) => isActive(i.to, path));
 
   return (
     <SidebarProvider>
@@ -68,26 +99,29 @@ function AuthenticatedLayout() {
           </SidebarHeader>
 
           <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>Operación</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {menu.filter((i) => !i.adminOnly || cu.isAdmin).map((item) => {
-                    const active = item.to === "/" ? path === "/" : path.startsWith(item.to);
-                    return (
-                      <SidebarMenuItem key={item.to}>
-                        <SidebarMenuButton asChild isActive={active}>
-                          <Link to={item.to}>
-                            <item.icon className="h-4 w-4" />
-                            <span>{item.label}</span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            {groups.map((group) => {
+              const items = group.items.filter((i) => !i.adminOnly || cu.isAdmin);
+              if (items.length === 0) return null;
+              return (
+                <SidebarGroup key={group.label}>
+                  <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+                  <SidebarGroupContent>
+                    <SidebarMenu>
+                      {items.map((item) => (
+                        <SidebarMenuItem key={item.to}>
+                          <SidebarMenuButton asChild isActive={isActive(item.to, path)}>
+                            <Link to={item.to}>
+                              <item.icon className="h-4 w-4" />
+                              <span>{item.label}</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      ))}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </SidebarGroup>
+              );
+            })}
           </SidebarContent>
 
           <SidebarFooter>
@@ -113,6 +147,15 @@ function AuthenticatedLayout() {
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-12 flex items-center border-b border-border px-3 gap-2 bg-card">
             <SidebarTrigger />
+            <nav className="flex items-center gap-1.5 text-sm min-w-0">
+              <span className="text-muted-foreground">CasaForma</span>
+              {current && (
+                <>
+                  <span className="text-muted-foreground/50">/</span>
+                  <span className="font-medium truncate">{current.label}</span>
+                </>
+              )}
+            </nav>
             <div className="flex-1" />
             {cu.sucursal && !cu.isAdmin && (
               <Badge variant="outline" className="gap-1"><Building2 className="h-3 w-3" />{cu.sucursal.nombre}</Badge>

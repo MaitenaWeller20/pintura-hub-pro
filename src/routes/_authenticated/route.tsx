@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/sidebar";
 import {
   LayoutDashboard, ShoppingCart, Package, Boxes, Users, Truck, Wallet, Coins, BarChart3,
-  UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2,
+  UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2, Calculator,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,7 @@ const groups: Array<{ label: string; items: MenuItem[] }> = [
     items: [
       { to: "/pagos", label: "Pagos", icon: Wallet, adminOnly: false },
       { to: "/cuentas-corrientes", label: "Cuentas corrientes", icon: Receipt, adminOnly: false },
+      { to: "/arqueo", label: "Arqueo de caja", icon: Calculator, adminOnly: false },
       { to: "/caja", label: "Rendición caja", icon: Coins, adminOnly: false },
     ],
   },

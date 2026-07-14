@@ -37,6 +37,33 @@ const fieldsTarget = [
 const normalizar = (s: string) =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+// Excel en espa\u00f1ol exporta los precios en formato argentino: el PUNTO es
+// separador de miles y la COMA es el decimal ("45.000,50"). Con Number() directo,
+// "45.000" daba 45 y "45.000,50" daba NaN \u2192 precios corrompidos en silencio.
+// Regla: si hay coma, es el decimal (los puntos son miles); si no hay coma, un
+// punto seguido de 3 d\u00edgitos tambi\u00e9n es separador de miles ("45.000" \u2192 45000),
+// pero "45.50" se respeta como decimal.
+function parseNumAr(v: unknown): number {
+  if (v == null) return NaN;
+  if (typeof v === "number") return v;
+  let s = String(v).trim().replace(/[^\d.,-]/g, "");
+  if (s === "") return NaN;
+  if (s.includes(",")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(".")) {
+    const parts = s.split(".");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/\./g, "");
+    }
+  }
+  return Number(s);
+}
+// parseNumAr con valor por defecto cuando la celda est\u00e1 vac\u00eda o no es un n\u00famero.
+const numOr = (v: unknown, def: number) => {
+  const n = parseNumAr(v);
+  return Number.isFinite(n) ? n : def;
+};
+
 const sinonimos: Record<string, string[]> = {
   codigo: ["codigo", "cod", "sku", "articulo"],
   nombre: ["nombre", "descripcion", "detalle", "producto"],
@@ -149,8 +176,8 @@ function ImportarProductos() {
         // Precio de venta: si la planilla trae precio s/IVA se respeta; si sólo trae
         // precio de fábrica, se deriva aplicando el markup default (fábrica × (1 + %)),
         // que es el mismo modelo de precios que usa la pantalla de Productos.
-        const precioFabrica = mapping.precio_fabrica ? Number(r[mapping.precio_fabrica] ?? 0) : 0;
-        const precioSinIvaPlanilla = mapping.precio_sin_iva ? Number(r[mapping.precio_sin_iva] ?? 0) : NaN;
+        const precioFabrica = mapping.precio_fabrica ? numOr(r[mapping.precio_fabrica], 0) : 0;
+        const precioSinIvaPlanilla = mapping.precio_sin_iva ? parseNumAr(r[mapping.precio_sin_iva]) : NaN;
         const precioSinIva = Number.isFinite(precioSinIvaPlanilla) && precioSinIvaPlanilla > 0
           ? precioSinIvaPlanilla
           : +(precioFabrica * (1 + markupDefault / 100)).toFixed(2);
@@ -161,16 +188,16 @@ function ImportarProductos() {
           unidad_medida: String(r[mapping.unidad_medida] ?? "unidad") || "unidad",
           precio_fabrica: precioFabrica,
           precio_sin_iva: precioSinIva,
-          iva_porcentaje: Number(r[mapping.iva_porcentaje] ?? 21),
-          stock_minimo: Number(r[mapping.stock_minimo] ?? 0),
+          iva_porcentaje: numOr(r[mapping.iva_porcentaje], 21),
+          stock_minimo: numOr(r[mapping.stock_minimo], 0),
         };
         const { data: up, error } = await supabase.from("productos")
           .upsert(payload, { onConflict: "codigo" }).select().single();
         if (error) throw error;
 
         // Stock por sucursal
-        const stockOhi = Number(r[mapping.stock_ohi] ?? 0);
-        const stockGpz = Number(r[mapping.stock_gpz] ?? 0);
+        const stockOhi = numOr(r[mapping.stock_ohi], 0);
+        const stockGpz = numOr(r[mapping.stock_gpz], 0);
         if (mapping.stock_ohi && sucMap.get("OHIGGINS")) {
           await supabase.from("stock_sucursal").upsert({
             producto_id: up.id, sucursal_id: sucMap.get("OHIGGINS"), cantidad: stockOhi,

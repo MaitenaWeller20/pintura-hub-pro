@@ -61,15 +61,24 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
       .select("id, precio_fabrica, markup_porcentaje").in("id", data.producto_ids);
     const lista = (prods ?? []) as any[];
 
+    // El markup recalcula el precio de venta A PARTIR DEL COSTO. Un producto sin
+    // precio_fabrica cargado (0 o null) daría precio de venta $0 —vender gratis—,
+    // así que se saltea y se informa cuántos quedaron sin costo. Nunca se escribe
+    // un precio de venta en 0.
+    let actualizados = 0;
+    let sinCosto = 0;
     for (const p of lista) {
       const fabrica = Number(p.precio_fabrica ?? 0);
+      if (!(fabrica > 0)) { sinCosto++; continue; }
       const nuevoPrecio = +(fabrica * (1 + data.markup_porcentaje / 100)).toFixed(2);
+      if (!(nuevoPrecio > 0)) { sinCosto++; continue; }
       const patch: any = { precio_sin_iva: nuevoPrecio };
       if (data.sobrescribir_individual) patch.markup_porcentaje = data.markup_porcentaje;
       await supabase.from("productos").update(patch).eq("id", p.id);
+      actualizados++;
     }
     if (data.setear_como_default) {
       await supabase.from("settings").update({ markup_default_porcentaje: data.markup_porcentaje }).eq("id", true);
     }
-    return { actualizados: lista.length };
+    return { actualizados, sin_costo: sinCosto };
   });

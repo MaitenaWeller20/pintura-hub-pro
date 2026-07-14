@@ -77,7 +77,10 @@ function ClientesPage() {
         ))}
       </DataTable>
 
-      <ClienteDialog open={open} onClose={()=>setOpen(false)} editing={editing} sucs={sucs}
+      {/* key: fuerza remontar el diálogo al abrirlo o al cambiar de cliente, para que
+          el form se inicialice con los datos del cliente. Sin esto, useState(editing…)
+          se evaluaba una sola vez (con editing=null) y editar guardaba campos vacíos. */}
+      <ClienteDialog key={`${editing?.id ?? "nuevo"}-${open}`} open={open} onClose={()=>setOpen(false)} editing={editing} sucs={sucs}
         onSaved={()=>{ qc.invalidateQueries({ queryKey:["clientes"] }); setOpen(false); }}/>
     </div>
   );

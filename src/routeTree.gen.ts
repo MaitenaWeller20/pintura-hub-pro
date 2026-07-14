@@ -21,6 +21,7 @@ import { Route as AuthenticatedFacturacionRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCuentasCorrientesRouteImport } from './routes/_authenticated/cuentas-corrientes'
 import { Route as AuthenticatedClientesRouteImport } from './routes/_authenticated/clientes'
 import { Route as AuthenticatedCajaRouteImport } from './routes/_authenticated/caja'
+import { Route as AuthenticatedArqueoRouteImport } from './routes/_authenticated/arqueo'
 import { Route as AuthenticatedVentasIndexRouteImport } from './routes/_authenticated/ventas.index'
 import { Route as AuthenticatedProductosIndexRouteImport } from './routes/_authenticated/productos.index'
 import { Route as AuthenticatedVentasNuevaRouteImport } from './routes/_authenticated/ventas.nueva'
@@ -87,6 +88,11 @@ const AuthenticatedCajaRoute = AuthenticatedCajaRouteImport.update({
   path: '/caja',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedArqueoRoute = AuthenticatedArqueoRouteImport.update({
+  id: '/arqueo',
+  path: '/arqueo',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedVentasIndexRoute =
   AuthenticatedVentasIndexRouteImport.update({
     id: '/ventas/',
@@ -115,6 +121,7 @@ const AuthenticatedProductosImportarRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/arqueo': typeof AuthenticatedArqueoRoute
   '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
@@ -131,6 +138,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
+  '/arqueo': typeof AuthenticatedArqueoRoute
   '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
@@ -150,6 +158,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/arqueo': typeof AuthenticatedArqueoRoute
   '/_authenticated/caja': typeof AuthenticatedCajaRoute
   '/_authenticated/clientes': typeof AuthenticatedClientesRoute
   '/_authenticated/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
@@ -170,6 +179,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/arqueo'
     | '/caja'
     | '/clientes'
     | '/cuentas-corrientes'
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
+    | '/arqueo'
     | '/caja'
     | '/clientes'
     | '/cuentas-corrientes'
@@ -204,6 +215,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/arqueo'
     | '/_authenticated/caja'
     | '/_authenticated/clientes'
     | '/_authenticated/cuentas-corrientes'
@@ -311,6 +323,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCajaRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/arqueo': {
+      id: '/_authenticated/arqueo'
+      path: '/arqueo'
+      fullPath: '/arqueo'
+      preLoaderRoute: typeof AuthenticatedArqueoRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/ventas/': {
       id: '/_authenticated/ventas/'
       path: '/ventas'
@@ -343,6 +362,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedArqueoRoute: typeof AuthenticatedArqueoRoute
   AuthenticatedCajaRoute: typeof AuthenticatedCajaRoute
   AuthenticatedClientesRoute: typeof AuthenticatedClientesRoute
   AuthenticatedCuentasCorrientesRoute: typeof AuthenticatedCuentasCorrientesRoute
@@ -360,6 +380,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedArqueoRoute: AuthenticatedArqueoRoute,
   AuthenticatedCajaRoute: AuthenticatedCajaRoute,
   AuthenticatedClientesRoute: AuthenticatedClientesRoute,
   AuthenticatedCuentasCorrientesRoute: AuthenticatedCuentasCorrientesRoute,

@@ -61,6 +61,115 @@ export type Database = {
         }
         Relationships: []
       }
+      caja_movimientos: {
+        Row: {
+          caja_sesion_id: string
+          created_at: string
+          descripcion: string
+          forma_pago: Database["public"]["Enums"]["forma_pago"]
+          id: string
+          monto: number
+          tipo: Database["public"]["Enums"]["caja_mov_tipo"]
+          usuario_id: string | null
+        }
+        Insert: {
+          caja_sesion_id: string
+          created_at?: string
+          descripcion: string
+          forma_pago?: Database["public"]["Enums"]["forma_pago"]
+          id?: string
+          monto: number
+          tipo: Database["public"]["Enums"]["caja_mov_tipo"]
+          usuario_id?: string | null
+        }
+        Update: {
+          caja_sesion_id?: string
+          created_at?: string
+          descripcion?: string
+          forma_pago?: Database["public"]["Enums"]["forma_pago"]
+          id?: string
+          monto?: number
+          tipo?: Database["public"]["Enums"]["caja_mov_tipo"]
+          usuario_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "caja_movimientos_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      caja_sesiones: {
+        Row: {
+          abierta_en: string
+          abierta_por: string
+          cerrada_en: string | null
+          cerrada_por: string | null
+          contado: Json | null
+          created_at: string
+          diferencia: Json | null
+          esperado: Json | null
+          estado: Database["public"]["Enums"]["caja_sesion_estado"]
+          fondo_inicial: number
+          id: string
+          notas: string | null
+          sucursal_id: string
+          total_contado: number | null
+          total_diferencia: number | null
+          total_esperado: number | null
+          updated_at: string
+        }
+        Insert: {
+          abierta_en?: string
+          abierta_por: string
+          cerrada_en?: string | null
+          cerrada_por?: string | null
+          contado?: Json | null
+          created_at?: string
+          diferencia?: Json | null
+          esperado?: Json | null
+          estado?: Database["public"]["Enums"]["caja_sesion_estado"]
+          fondo_inicial?: number
+          id?: string
+          notas?: string | null
+          sucursal_id: string
+          total_contado?: number | null
+          total_diferencia?: number | null
+          total_esperado?: number | null
+          updated_at?: string
+        }
+        Update: {
+          abierta_en?: string
+          abierta_por?: string
+          cerrada_en?: string | null
+          cerrada_por?: string | null
+          contado?: Json | null
+          created_at?: string
+          diferencia?: Json | null
+          esperado?: Json | null
+          estado?: Database["public"]["Enums"]["caja_sesion_estado"]
+          fondo_inicial?: number
+          id?: string
+          notas?: string | null
+          sucursal_id?: string
+          total_contado?: number | null
+          total_diferencia?: number | null
+          total_esperado?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "caja_sesiones_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       categorias: {
         Row: {
           created_at: string
@@ -140,6 +249,7 @@ export type Database = {
       }
       cobranzas_cta_cte: {
         Row: {
+          caja_sesion_id: string | null
           cliente_id: string
           created_at: string
           detalle: Json
@@ -153,6 +263,7 @@ export type Database = {
           usuario_id: string
         }
         Insert: {
+          caja_sesion_id?: string | null
           cliente_id: string
           created_at?: string
           detalle?: Json
@@ -166,6 +277,7 @@ export type Database = {
           usuario_id: string
         }
         Update: {
+          caja_sesion_id?: string | null
           cliente_id?: string
           created_at?: string
           detalle?: Json
@@ -179,6 +291,13 @@ export type Database = {
           usuario_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "cobranzas_cta_cte_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "cobranzas_cta_cte_cliente_id_fkey"
             columns: ["cliente_id"]
@@ -991,6 +1110,7 @@ export type Database = {
           afip_punto_venta: number | null
           cae: string | null
           cae_vencimiento: string | null
+          caja_sesion_id: string | null
           cliente_id: string
           condicion_venta: Database["public"]["Enums"]["condicion_venta"]
           created_at: string
@@ -1025,6 +1145,7 @@ export type Database = {
           afip_punto_venta?: number | null
           cae?: string | null
           cae_vencimiento?: string | null
+          caja_sesion_id?: string | null
           cliente_id: string
           condicion_venta?: Database["public"]["Enums"]["condicion_venta"]
           created_at?: string
@@ -1059,6 +1180,7 @@ export type Database = {
           afip_punto_venta?: number | null
           cae?: string | null
           cae_vencimiento?: string | null
+          caja_sesion_id?: string | null
           cliente_id?: string
           condicion_venta?: Database["public"]["Enums"]["condicion_venta"]
           created_at?: string
@@ -1086,6 +1208,13 @@ export type Database = {
             columns: ["afip_cbte_asoc_id"]
             isOneToOne: false
             referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ventas_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
             referencedColumns: ["id"]
           },
           {
@@ -1177,6 +1306,10 @@ export type Database = {
       }
     }
     Functions: {
+      abrir_caja: {
+        Args: { p_fondo_inicial?: number; p_sucursal_id: string }
+        Returns: string
+      }
       anular_venta: {
         Args: { p_venta_id: string }
         Returns: {
@@ -1184,11 +1317,20 @@ export type Database = {
           nc_numero: string
         }[]
       }
+      caja_esperado: { Args: { _sesion_id: string }; Returns: Json }
       cc_registrar_por_venta: {
         Args: { _venta_id: string }
         Returns: undefined
       }
       cc_saldo: { Args: { _cliente_id: string }; Returns: number }
+      cerrar_caja: {
+        Args: { p_contado?: Json; p_notas?: string; p_sesion_id: string }
+        Returns: {
+          total_contado: number
+          total_diferencia: number
+          total_esperado: number
+        }[]
+      }
       crear_venta: {
         Args: {
           p_cbte_asoc_id?: string
@@ -1239,9 +1381,21 @@ export type Database = {
           saldo: number
         }[]
       }
+      registrar_movimiento_caja: {
+        Args: {
+          p_descripcion: string
+          p_forma_pago: Database["public"]["Enums"]["forma_pago"]
+          p_monto: number
+          p_sesion_id: string
+          p_tipo: Database["public"]["Enums"]["caja_mov_tipo"]
+        }
+        Returns: string
+      }
     }
     Enums: {
       app_role: "admin" | "empleado"
+      caja_mov_tipo: "INICIAL" | "INGRESO" | "GASTO" | "RETIRO"
+      caja_sesion_estado: "ABIERTA" | "CERRADA"
       cc_mov_estado: "CONFIRMADO" | "ANULADO"
       cc_mov_tipo: "DEBITO" | "CREDITO"
       condicion_venta: "CONTADO" | "CTA_CTE"
@@ -1409,6 +1563,8 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "empleado"],
+      caja_mov_tipo: ["INICIAL", "INGRESO", "GASTO", "RETIRO"],
+      caja_sesion_estado: ["ABIERTA", "CERRADA"],
       cc_mov_estado: ["CONFIRMADO", "ANULADO"],
       cc_mov_tipo: ["DEBITO", "CREDITO"],
       condicion_venta: ["CONTADO", "CTA_CTE"],

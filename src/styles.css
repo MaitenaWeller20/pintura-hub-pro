@@ -141,3 +141,24 @@
   background: linear-gradient(135deg, var(--color-card), color-mix(in oklch, var(--color-card) 70%, var(--color-primary) 8%));
   border: 1px solid var(--color-border);
 }
+
+@utility shadow-card {
+  box-shadow: 0 1px 3px color-mix(in oklch, black 22%, transparent);
+}
+
+@utility shadow-card-hover {
+  box-shadow: 0 6px 20px color-mix(in oklch, black 30%, transparent);
+}
+
+/* Chip cuadrado redondeado para íconos de KPI, con fondo tenue del color dado.
+   Uso: <div class="stat-chip" style="--chip: var(--color-success)"> */
+@utility stat-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--chip, var(--color-primary)) 16%, var(--color-card));
+  color: var(--chip, var(--color-primary));
+}

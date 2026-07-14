@@ -145,7 +145,10 @@ function VentasList() {
             {cu?.isAdmin && <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>}
             <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
             <TableCell>
-              {v.estado === "ANULADA" ? <StatusPill tone="danger">ANULADA</StatusPill> : (
+              {v.estado === "ANULADA" ? <StatusPill tone="danger">ANULADA</StatusPill>
+                : v.tipo_comprobante === "NOTA_CREDITO" ? <StatusPill tone="neutral">N. Crédito</StatusPill>
+                : v.condicion_venta === "CTA_CTE" ? <StatusPill tone="info">Cta Cte</StatusPill>
+                : (
                 <StatusPill tone={v.estado_pago === "PAGADO" ? "success" : "warning"}>
                   {v.estado_pago}
                 </StatusPill>
@@ -297,7 +300,12 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
               <Card className="p-3">
                 <h4 className="font-semibold text-sm mb-2">Pagos</h4>
-                {(detail?.pagos ?? []).length === 0 ? <p className="text-xs text-muted-foreground">Sin pagos registrados.</p> :
+                {venta.condicion_venta === "CTA_CTE" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Venta a cuenta corriente. Los cobros de esta venta se registran y se ven en{" "}
+                    <Link to="/cuentas-corrientes" className="text-primary underline">Cuentas Corrientes</Link>.
+                  </p>
+                ) : (detail?.pagos ?? []).length === 0 ? <p className="text-xs text-muted-foreground">Sin pagos registrados.</p> :
                   <ul className="space-y-1 text-sm">
                     {detail!.pagos.map((p:any,i)=>(
                       <li key={i} className="flex justify-between">
@@ -314,9 +322,15 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
                   <li className="flex justify-between"><span>IVA:</span><span className="font-mono">{fmtMoney(venta.iva_total)}</span></li>
                   <li className="flex justify-between"><span>Percepciones:</span><span className="font-mono">{fmtMoney(venta.percepciones)}</span></li>
                   <li className="flex justify-between font-bold border-t border-border pt-1 mt-1"><span>TOTAL:</span><span className="font-mono">{fmtMoney(venta.total)}</span></li>
-                  <li className="flex justify-between text-success"><span>Pagado:</span><span className="font-mono">{fmtMoney(venta.total_pagado)}</span></li>
-                  {Number(venta.total) - Number(venta.total_pagado) > 0 && (
-                    <li className="flex justify-between text-destructive"><span>Pendiente:</span><span className="font-mono">{fmtMoney(Number(venta.total)-Number(venta.total_pagado))}</span></li>
+                  {venta.condicion_venta === "CTA_CTE" ? (
+                    <li className="flex justify-between text-warning"><span>Condición:</span><span>A cuenta corriente</span></li>
+                  ) : (
+                    <>
+                      <li className="flex justify-between text-success"><span>Pagado:</span><span className="font-mono">{fmtMoney(venta.total_pagado)}</span></li>
+                      {Number(venta.total) - Number(venta.total_pagado) > 0.01 && (
+                        <li className="flex justify-between text-destructive"><span>Pendiente:</span><span className="font-mono">{fmtMoney(Number(venta.total)-Number(venta.total_pagado))}</span></li>
+                      )}
+                    </>
                   )}
                 </ul>
               </Card>

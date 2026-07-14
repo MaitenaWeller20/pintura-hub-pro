@@ -29,7 +29,8 @@ interface ItemRow {
   codigo: string;
   descripcion: string;
   cantidad: number;
-  precio_unitario_sin_iva: number;
+  // null = "usá el precio de lista". Vacío en el input NO es 0.
+  precio_unitario_sin_iva: number | null;
   iva_porcentaje: number;
   descuento_porcentaje: number;
   stock_disponible?: number;
@@ -143,7 +144,9 @@ function NuevaVenta() {
   const totales = useMemo(() => {
     let sub = 0, iva = 0;
     items.forEach(it => {
-      const base = (it.precio_unitario_sin_iva || 0) * (1 - (it.descuento_porcentaje ?? 0) / 100) * (it.cantidad || 0);
+      // Precio vacío (null) = usa el de lista, no 0.
+      const precio = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
+      const base = precio * (1 - (it.descuento_porcentaje ?? 0) / 100) * (it.cantidad || 0);
       sub += base; iva += base * ((it.iva_porcentaje || 0) / 100);
     });
     const total = (sub + iva + Number(percepciones || 0)) * signo;
@@ -155,6 +158,14 @@ function NuevaVenta() {
   useEffect(() => {
     if (esCtaCte && pagos.length) setPagos([]);
   }, [esCtaCte, pagos.length]);
+
+  // Al cambiar de cliente, limpio lo que era específico del cliente anterior: la
+  // factura que rectifica una nota (no puede pertenecer a otro cliente) y el
+  // nombre de obra tipeado para el borrador previo. Evita asociaciones cruzadas.
+  useEffect(() => {
+    setCbteAsocId("");
+    setNombreObra("");
+  }, [clienteId]);
 
   const addPago = () => setPagos(p => [...p, {
     id: crypto.randomUUID(),
@@ -252,7 +263,7 @@ function NuevaVenta() {
                   <SelectItem value="FACTURA_B">Factura B</SelectItem>
                   <SelectItem value="NOTA_CREDITO">Nota de Crédito</SelectItem>
                   <SelectItem value="NOTA_DEBITO">Nota de Débito</SelectItem>
-                  <SelectItem value="REMITO">Remito interno</SelectItem>
+                  <SelectItem value="REMITO">Remito Cta Cte</SelectItem>
                   <SelectItem value="REMITO_OBRA">Remito de Obra (Cta Cte)</SelectItem>
                   <SelectItem value="FAC_INTERNA_CTA_CTE">Fac. interna Cta Cte</SelectItem>
                 </SelectContent>
@@ -395,8 +406,10 @@ function NuevaVenta() {
               </TableRow></TableHeader>
               <TableBody>
                 {items.map((it, i) => {
-                  const sub = (it.precio_unitario_sin_iva || 0) * (1 - (it.descuento_porcentaje || 0) / 100) * (it.cantidad || 0) * (1 + (it.iva_porcentaje || 0) / 100);
+                  const precioEfectivo = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
+                  const sub = precioEfectivo * (1 - (it.descuento_porcentaje || 0) / 100) * (it.cantidad || 0) * (1 + (it.iva_porcentaje || 0) / 100);
                   const stockWarn = it.stock_disponible !== undefined && it.cantidad > it.stock_disponible;
+                  const pisado = it.precio_unitario_sin_iva !== null && Math.abs(Number(it.precio_unitario_sin_iva) - Number(it.precio_lista || 0)) > 0.005;
                   return (
                     <TableRow key={i}>
                       <TableCell className="font-mono text-xs">{it.codigo}</TableCell>
@@ -406,8 +419,8 @@ function NuevaVenta() {
                       </TableCell>
                       <TableCell><NumberInput className="h-8 w-20" value={it.cantidad} onValueChange={(v) => updateItem(i, "cantidad", v ?? 0)} /></TableCell>
                       <TableCell>
-                        <NumberInput className="h-8 w-28" value={it.precio_unitario_sin_iva} onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v ?? 0)} />
-                        {Math.abs(Number(it.precio_unitario_sin_iva || 0) - Number(it.precio_lista || 0)) > 0.005 && (
+                        <NumberInput className="h-8 w-28" value={it.precio_unitario_sin_iva} onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v)} />
+                        {pisado && (
                           <div className="text-[10px] text-warning mt-0.5" title="El precio fue modificado a mano">
                             lista: {fmtMoney(it.precio_lista)}
                           </div>

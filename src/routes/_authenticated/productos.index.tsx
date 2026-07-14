@@ -207,7 +207,7 @@ function Productos() {
         </div>
       </div>
 
-      <ProductoDialog open={open} onClose={() => setOpen(false)} editing={editing}
+      <ProductoDialog key={`${editing?.id ?? "nuevo"}-${open}`} open={open} onClose={() => setOpen(false)} editing={editing}
         categorias={categorias} marcas={marcas} markupDefault={markupDefault}
         onSaved={() => { qc.invalidateQueries({ queryKey: ["productos"] }); setOpen(false); }} />
 

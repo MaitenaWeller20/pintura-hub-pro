@@ -6,6 +6,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -203,7 +204,7 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
                 <TableRow key={i}>
                   <TableCell className="font-mono text-xs">{it.codigo}</TableCell>
                   <TableCell>{it.nombre}</TableCell>
-                  <TableCell><Input type="number" step="0.01" className="h-8 w-20" value={it.cantidad} onChange={(e)=>setItems(is=>is.map((x,idx)=>idx===i?{...x, cantidad:Number(e.target.value)}:x))}/></TableCell>
+                  <TableCell><NumberInput className="h-8 w-20" value={it.cantidad} onValueChange={(v)=>setItems(is=>is.map((x,idx)=>idx===i?{...x, cantidad: v ?? 0}:x))}/></TableCell>
                   <TableCell><Button size="sm" variant="ghost" onClick={()=>setItems(is=>is.filter((_,idx)=>idx!==i))}><Trash2 className="h-3.5 w-3.5 text-destructive"/></Button></TableCell>
                 </TableRow>
               ))}

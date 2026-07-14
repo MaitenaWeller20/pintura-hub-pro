@@ -27,8 +27,10 @@ function Dashboard() {
       const { gte: hoyGte, lt: hoyLt } = rangeToUtc(hoyISO, hoyISO);
       const start30 = new Date(); start30.setDate(start30.getDate() - 30); start30.setHours(0, 0, 0, 0);
 
+      // Excluye NOTA_CREDITO: una venta anulada no debe restar del facturado (su NC
+      // autogenerada queda ACTIVA con total negativo). Consistente con Reportes.
       let ventasQ = supabase.from("ventas").select("id, sucursal_id, fecha, total, total_pagado, estado")
-        .gte("fecha", start30.toISOString()).eq("estado", "ACTIVA");
+        .gte("fecha", start30.toISOString()).eq("estado", "ACTIVA").neq("tipo_comprobante", "NOTA_CREDITO");
       if (!cu!.isAdmin && cu!.sucursal) ventasQ = ventasQ.eq("sucursal_id", cu!.sucursal.id);
       const ventas = ((await ventasQ).data ?? []) as any[];
 

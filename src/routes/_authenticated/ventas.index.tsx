@@ -274,7 +274,7 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
                 <Button size="sm" variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1"/> PDF</Button>
               </DialogTitle>
             </DialogHeader>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div><strong>Fecha:</strong> {fmtDateTime(venta.fecha)}</div>
               <div><strong>Sucursal:</strong> {venta.sucursal?.nombre}</div>
               <div><strong>Cliente:</strong> {venta.cliente?.razon_social}</div>
@@ -294,7 +294,7 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
               </DataTable>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 mt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
               <Card className="p-3">
                 <h4 className="font-semibold text-sm mb-2">Pagos</h4>
                 {(detail?.pagos ?? []).length === 0 ? <p className="text-xs text-muted-foreground">Sin pagos registrados.</p> :

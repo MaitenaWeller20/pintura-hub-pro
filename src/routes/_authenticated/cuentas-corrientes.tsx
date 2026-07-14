@@ -202,7 +202,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
       <DialogContent>
         <DialogHeader><DialogTitle>Registrar cobro · {cliente.razon_social}</DialogTitle></DialogHeader>
         <SectionCard title="Datos del cobro">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {cu?.isAdmin && (
             <div className="col-span-2"><Label>Sucursal (caja donde entra)</Label>
               <Select value={sucId} onValueChange={setSucId}>

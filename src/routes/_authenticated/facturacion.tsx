@@ -147,7 +147,7 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
 
   return (
     <SectionCard title="1. Datos del emisor" className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label>CUIT *</Label>
           <Input value={form.cuit} onChange={(e) => set("cuit", e.target.value)} placeholder="30712345678" />

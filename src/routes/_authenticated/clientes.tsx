@@ -110,7 +110,7 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
     <Dialog open={open} onOpenChange={(v)=>!v && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>{editing ? "Editar" : "Nuevo"} cliente</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="col-span-2"><Label>Razón social / Nombre *</Label><Input value={form.razon_social} onChange={(e)=>set("razon_social", e.target.value)}/></div>
           <div><Label>CUIT / DNI</Label><Input value={form.cuit_dni ?? ""} onChange={(e)=>set("cuit_dni", e.target.value)}/></div>
           <div>

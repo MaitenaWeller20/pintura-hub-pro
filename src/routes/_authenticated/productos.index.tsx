@@ -270,7 +270,7 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>{editing ? "Editar" : "Nuevo"} producto</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><Label>Código *</Label><Input value={form.codigo} onChange={(e) => set("codigo", e.target.value)} /></div>
           <div><Label>Unidad</Label><Input value={form.unidad_medida} onChange={(e) => set("unidad_medida", e.target.value)} /></div>
           <div className="col-span-2"><Label>Nombre *</Label><Input value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></div>

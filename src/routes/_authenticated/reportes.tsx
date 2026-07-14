@@ -12,7 +12,7 @@ import { PeriodFilters } from "@/components/app/period-filters";
 import { DataTable } from "@/components/app/data-table";
 import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
 import { rangeToUtc, todayLocalISO } from "@/lib/dates";
-import { FileSpreadsheet, FileText, TrendingUp, Wallet, Receipt, CircleDollarSign, Hash } from "lucide-react";
+import { FileSpreadsheet, FileText, TrendingUp, Wallet, Receipt, CircleDollarSign, Hash, Undo2 } from "lucide-react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
 } from "recharts";
@@ -92,30 +92,38 @@ function ReportesPage() {
     },
   });
 
+  // "Ventas" = comprobantes de venta (facturas, remitos, notas de débito). Las
+  // notas de crédito son devoluciones y se contabilizan aparte, no restan del
+  // facturado ni invierten el gráfico diario.
+  const ventasSales = useMemo(() => ventas.filter((v) => v.tipo_comprobante !== "NOTA_CREDITO"), [ventas]);
+  const notasCredito = useMemo(
+    () => ventas.filter((v) => v.tipo_comprobante === "NOTA_CREDITO").reduce((a, v) => a + Math.abs(Number(v.total)), 0),
+    [ventas],
+  );
+
   const resumen = useMemo(() => {
-    const facturado = ventas.reduce((a, v) => a + Number(v.total), 0);
+    const facturado = ventasSales.reduce((a, v) => a + Number(v.total), 0);
     const cobradoVentas = ventas.reduce((a, v) => a + Number(v.total_pagado), 0);
     const cobradoCtaCte = cobranzas.reduce((a, c) => a + Number(c.monto), 0);
     const cobrado = cobradoVentas + cobradoCtaCte;
     const porPago: Record<string, number> = {};
     ventas.forEach((v) => v.pagos?.forEach((p: any) => { porPago[p.forma_pago] = (porPago[p.forma_pago] ?? 0) + Number(p.monto); }));
     cobranzas.forEach((c) => { porPago[c.forma_pago] = (porPago[c.forma_pago] ?? 0) + Number(c.monto); });
-    const positivas = ventas.filter((v) => Number(v.total) > 0);
-    const ticket = positivas.length ? positivas.reduce((a, v) => a + Number(v.total), 0) / positivas.length : 0;
+    const ticket = ventasSales.length ? facturado / ventasSales.length : 0;
     const pendienteCtaCte = ctaCte.reduce((a: number, c: any) => a + Math.max(0, Number(c.saldo)), 0);
-    return { facturado, cobrado, ticket, cantidad: ventas.length, pendienteCtaCte, porPago };
-  }, [ventas, cobranzas, ctaCte]);
+    return { facturado, cobrado, ticket, cantidad: ventasSales.length, pendienteCtaCte, porPago };
+  }, [ventas, ventasSales, cobranzas, ctaCte]);
 
   const porDia = useMemo(() => {
     const m = new Map<string, number>();
     const order: string[] = [];
-    [...ventas].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach((v) => {
+    [...ventasSales].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach((v) => {
       const k = new Date(v.fecha).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit" });
       if (!m.has(k)) order.push(k);
       m.set(k, (m.get(k) ?? 0) + Number(v.total));
     });
     return order.map((fecha) => ({ fecha, total: m.get(fecha)! }));
-  }, [ventas]);
+  }, [ventasSales]);
 
   const donut = useMemo(
     () => Object.entries(resumen.porPago).map(([formaPago, total]) => ({ formaPago, total: Number(total) })).filter((x) => x.total > 0).sort((a, b) => b.total - a.total),
@@ -158,10 +166,11 @@ function ReportesPage() {
         sucursalId={sucId} onSucursal={setSucId} sucursales={sucs}
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        <StatCard label="Facturado" value={fmtMoney(resumen.facturado)} icon={TrendingUp} tone="primary" />
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
+        <StatCard label="Facturado" value={fmtMoney(resumen.facturado)} icon={TrendingUp} tone="primary" hint="ventas (sin NC)" />
         <StatCard label="Cobrado" value={fmtMoney(resumen.cobrado)} icon={Wallet} tone="success" hint="ventas + cta cte" />
         <StatCard label="Pendiente cta cte" value={fmtMoney(resumen.pendienteCtaCte)} icon={CircleDollarSign} tone="warning" />
+        <StatCard label="Devoluciones (NC)" value={fmtMoney(notasCredito)} icon={Undo2} tone="destructive" />
         <StatCard label="Ticket promedio" value={fmtMoney(resumen.ticket)} icon={Receipt} tone="info" />
         <StatCard label="Comprobantes" value={String(resumen.cantidad)} icon={Hash} tone="muted" />
       </div>

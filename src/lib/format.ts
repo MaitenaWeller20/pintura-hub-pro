@@ -21,16 +21,19 @@ export const fmtNum = (n: number | string | null | undefined) => {
   return NUM.format(isNaN(v) ? 0 : v);
 };
 
+const AR_TZ = "America/Argentina/Buenos_Aires";
+
 export const fmtDate = (d: string | Date | null | undefined) => {
   if (!d) return "";
   const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return dt.toLocaleDateString("es-AR", { timeZone: AR_TZ, day: "2-digit", month: "2-digit", year: "numeric" });
 };
 
 export const fmtDateTime = (d: string | Date | null | undefined) => {
   if (!d) return "";
   const dt = typeof d === "string" ? new Date(d) : d;
   return dt.toLocaleString("es-AR", {
+    timeZone: AR_TZ,
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });

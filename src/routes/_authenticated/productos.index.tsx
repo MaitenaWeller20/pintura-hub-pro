@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useState, useMemo } from "react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { NumberInput } from "@/components/ui/number-input";
+import { PageHeader } from "@/components/app/page-header";
+import { SectionCard } from "@/components/app/section-card";
+import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
 import { toast } from "sonner";
 import { Plus, Upload, Pencil, Printer, Percent } from "lucide-react";
@@ -117,42 +119,47 @@ function Productos() {
   if (!cu) return null;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Productos</h1>
-          <p className="text-sm text-muted-foreground">
+      <PageHeader
+        title="Productos"
+        subtitle={
+          <>
             {filtered.length} de {productos.length} · Markup por defecto: <strong>{markupDefault}%</strong>
             {seleccion.size > 0 && <> · {seleccion.size} seleccionados</>}
-          </p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1" /> PDF</Button>
-          <Button variant="outline" onClick={exportar}><Upload className="h-4 w-4 mr-1" /> Excel</Button>
-          {cu.isAdmin && (
-            <>
-              <Button variant="outline" onClick={() => setOpenMarkup(true)}><Percent className="h-4 w-4 mr-1" /> Aplicar markup</Button>
-              <Button variant="outline" asChild><Link to="/productos/importar">Importar</Link></Button>
-              <Button onClick={() => { setEditing(null); setOpen(true); }}>
-                <Plus className="h-4 w-4 mr-1" /> Nuevo
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            <Button variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1" /> PDF</Button>
+            <Button variant="outline" onClick={exportar}><Upload className="h-4 w-4 mr-1" /> Excel</Button>
+            {cu.isAdmin && (
+              <>
+                <Button variant="outline" onClick={() => setOpenMarkup(true)}><Percent className="h-4 w-4 mr-1" /> Aplicar markup</Button>
+                <Button variant="outline" asChild><Link to="/productos/importar">Importar</Link></Button>
+                <Button onClick={() => { setEditing(null); setOpen(true); }}>
+                  <Plus className="h-4 w-4 mr-1" /> Nuevo
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
 
-      <Card className="p-3 flex flex-wrap gap-2 items-center">
-        <Input placeholder="Buscar por código, nombre o marca…" value={q} onChange={(e) => setQ(e.target.value)}
-          className="max-w-xs" />
-        <Select value={catFilter} onValueChange={setCatFilter}>
-          <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todas las categorías</SelectItem>
-            {categorias.map((c: any) => (<SelectItem key={c.id} value={c.id}>{c.nombre}</SelectItem>))}
-          </SelectContent>
-        </Select>
-      </Card>
+      <SectionCard>
+        <div className="flex flex-wrap gap-2 items-center">
+          <Input placeholder="Buscar por código, nombre o marca…" value={q} onChange={(e) => setQ(e.target.value)}
+            className="max-w-xs" />
+          <Select value={catFilter} onValueChange={setCatFilter}>
+            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las categorías</SelectItem>
+              {categorias.map((c: any) => (<SelectItem key={c.id} value={c.id}>{c.nombre}</SelectItem>))}
+            </SelectContent>
+          </Select>
+        </div>
+      </SectionCard>
 
-      <Card className="overflow-x-auto">
+      <div className="rounded-2xl border border-border overflow-hidden shadow-card">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -176,7 +183,7 @@ function Productos() {
                 <TableRow key={p.id}>
                   {cu.isAdmin && <TableCell><Checkbox checked={seleccion.has(p.id)} onCheckedChange={() => toggleSel(p.id)} /></TableCell>}
                   <TableCell className="font-mono text-xs">{p.codigo}</TableCell>
-                  <TableCell>{p.nombre} {!p.activo && <Badge variant="outline" className="ml-2 text-xs">Inactivo</Badge>}</TableCell>
+                  <TableCell>{p.nombre} {!p.activo && <span className="ml-2 align-middle"><StatusPill tone="neutral">Inactivo</StatusPill></span>}</TableCell>
                   <TableCell className="text-muted-foreground">{p.marca?.nombre}</TableCell>
                   <TableCell className="text-right font-mono">{fmtMoney(p.precio_fabrica ?? 0)}</TableCell>
                   <TableCell className="text-right">
@@ -197,7 +204,8 @@ function Productos() {
             })}
           </TableBody>
         </Table>
-      </Card>
+        </div>
+      </div>
 
       <ProductoDialog open={open} onClose={() => setOpen(false)} editing={editing}
         categorias={categorias} marcas={marcas} markupDefault={markupDefault}
@@ -262,7 +270,7 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>{editing ? "Editar" : "Nuevo"} producto</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><Label>Código *</Label><Input value={form.codigo} onChange={(e) => set("codigo", e.target.value)} /></div>
           <div><Label>Unidad</Label><Input value={form.unidad_medida} onChange={(e) => set("unidad_medida", e.target.value)} /></div>
           <div className="col-span-2"><Label>Nombre *</Label><Input value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></div>

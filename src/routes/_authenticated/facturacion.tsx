@@ -13,7 +13,8 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/app/page-header";
+import { SectionCard } from "@/components/app/section-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,12 +60,10 @@ function FacturacionPage() {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div>
-        <h1 className="text-2xl font-bold">Facturación electrónica</h1>
-        <p className="text-sm text-muted-foreground">
-          Configuración de AFIP/ARCA para emitir comprobantes con validez legal.
-        </p>
-      </div>
+      <PageHeader
+        title="Facturación electrónica"
+        subtitle="Configuración de AFIP/ARCA para emitir comprobantes con validez legal."
+      />
 
       <EstadoGeneral cfg={cfg} listo={listo} />
 
@@ -79,7 +78,7 @@ function EstadoGeneral({ cfg, listo }: { cfg: any; listo: boolean }) {
   const porVencer = cfg.dias_para_vencer !== null && cfg.dias_para_vencer < 30;
 
   return (
-    <Card className="p-4 space-y-3">
+    <SectionCard className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         {cfg.mock_mode ? (
           <Badge className="bg-warning text-warning-foreground gap-1">
@@ -115,7 +114,7 @@ function EstadoGeneral({ cfg, listo }: { cfg: any; listo: boolean }) {
           </div>
         </div>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -147,9 +146,8 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
   });
 
   return (
-    <Card className="p-4 space-y-3">
-      <h3 className="font-semibold">1. Datos del emisor</h3>
-      <div className="grid grid-cols-2 gap-3">
+    <SectionCard title="1. Datos del emisor" className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label>CUIT *</Label>
           <Input value={form.cuit} onChange={(e) => set("cuit", e.target.value)} placeholder="30712345678" />
@@ -203,7 +201,7 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
           {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Guardar
         </Button>
       </div>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -224,8 +222,7 @@ function PuntosVenta({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
   });
 
   return (
-    <Card className="p-4 space-y-3">
-      <h3 className="font-semibold">2. Puntos de venta</h3>
+    <SectionCard title="2. Puntos de venta" className="space-y-3">
       <p className="text-sm text-muted-foreground">
         Cada sucursal necesita su propio punto de venta dado de alta en AFIP con el sistema{" "}
         <strong>"Web Services - Factura Electrónica - WSFE"</strong>. No sirve "Factura en Línea" ni
@@ -247,7 +244,7 @@ function PuntosVenta({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
           ))}
         </TableBody>
       </Table>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -323,9 +320,7 @@ function Certificado({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
   });
 
   return (
-    <Card className="p-4 space-y-3">
-      <h3 className="font-semibold">3. Certificado digital</h3>
-
+    <SectionCard title="3. Certificado digital" className="space-y-3">
       {cfg.tiene_certificado ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2 p-3 rounded border border-success/40 bg-success/5 text-sm">
@@ -404,6 +399,6 @@ function Certificado({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
           )}
         </div>
       )}
-    </Card>
+    </SectionCard>
   );
 }

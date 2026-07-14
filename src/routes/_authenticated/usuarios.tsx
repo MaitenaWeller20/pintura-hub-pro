@@ -2,14 +2,15 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { PageHeader } from "@/components/app/page-header";
+import { DataTable } from "@/components/app/data-table";
+import { StatusPill } from "@/components/app/status-pill";
 import { Plus, Power, KeyRound, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
@@ -32,7 +33,7 @@ function UsuariosPage() {
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
 
-  const { data: usuarios = [] } = useQuery({
+  const { data: usuarios = [], isLoading } = useQuery({
     queryKey: ["usuarios"],
     queryFn: async () => {
       const { data: profiles = [] } = await supabase.from("profiles")
@@ -70,41 +71,37 @@ function UsuariosPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl font-bold">Usuarios</h1>
-        <Button onClick={()=>setOpen(true)}><Plus className="h-4 w-4 mr-1"/> Nuevo</Button>
-      </div>
+      <PageHeader
+        title="Usuarios"
+        actions={<Button onClick={()=>setOpen(true)}><Plus className="h-4 w-4 mr-1"/> Nuevo</Button>}
+      />
 
-      <Card className="overflow-x-auto">
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>Usuario</TableHead><TableHead>Nombre</TableHead>
-            <TableHead>Rol</TableHead><TableHead>Sucursal</TableHead>
-            <TableHead>Estado</TableHead><TableHead></TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {usuarios.map((u:any)=>(
-              <TableRow key={u.id}>
-                <TableCell className="font-mono text-xs">{u.username}</TableCell>
-                <TableCell>{u.nombre_completo ?? "—"}</TableCell>
-                <TableCell>
-                  <Badge variant={u.role === "admin" ? "default" : "secondary"}>{u.role ?? "—"}</Badge>
-                </TableCell>
-                <TableCell className="text-muted-foreground text-sm">{u.sucursal?.nombre ?? "—"}</TableCell>
-                <TableCell>{u.activo ? <Badge className="bg-success text-success-foreground">Activo</Badge> : <Badge variant="outline">Inactivo</Badge>}</TableCell>
-                <TableCell className="flex gap-1">
-                  <Button size="sm" variant="ghost" title="Cambiar contraseña" onClick={()=>setResetUser(u)}>
-                    <KeyRound className="h-3.5 w-3.5"/>
-                  </Button>
-                  <Button size="sm" variant="ghost" title={u.activo ? "Desactivar" : "Activar"} onClick={()=>togg.mutate({ user_id: u.id, activo: !u.activo })}>
-                    <Power className="h-3.5 w-3.5"/>
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
+      <DataTable
+        columns={["Usuario", "Nombre", "Rol", "Sucursal", "Estado", ""]}
+        loading={isLoading}
+        isEmpty={usuarios.length === 0}
+        empty={{ text: "No hay usuarios." }}
+      >
+        {usuarios.map((u:any)=>(
+          <TableRow key={u.id}>
+            <TableCell className="font-mono text-xs">{u.username}</TableCell>
+            <TableCell>{u.nombre_completo ?? "—"}</TableCell>
+            <TableCell>
+              <StatusPill tone={u.role === "admin" ? "info" : "neutral"}>{u.role ?? "—"}</StatusPill>
+            </TableCell>
+            <TableCell className="text-muted-foreground text-sm">{u.sucursal?.nombre ?? "—"}</TableCell>
+            <TableCell>{u.activo ? <StatusPill tone="success">Activo</StatusPill> : <StatusPill tone="neutral">Inactivo</StatusPill>}</TableCell>
+            <TableCell className="flex gap-1">
+              <Button size="sm" variant="ghost" title="Cambiar contraseña" onClick={()=>setResetUser(u)}>
+                <KeyRound className="h-3.5 w-3.5"/>
+              </Button>
+              <Button size="sm" variant="ghost" title={u.activo ? "Desactivar" : "Activar"} onClick={()=>togg.mutate({ user_id: u.id, activo: !u.activo })}>
+                <Power className="h-3.5 w-3.5"/>
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

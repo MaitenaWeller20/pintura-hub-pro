@@ -3,15 +3,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/app/page-header";
+import { DataTable } from "@/components/app/data-table";
+import { SectionCard } from "@/components/app/section-card";
+import { StatusPill } from "@/components/app/status-pill";
 import { fmtNum } from "@/lib/format";
 import { useServerFn } from "@tanstack/react-start";
 import { ajusteStock } from "@/lib/stock.functions";
@@ -40,7 +42,7 @@ function Stock() {
 
   const sucId = sucFilter || (cu?.isAdmin ? "" : cu?.sucursal?.id ?? "");
 
-  const { data: stock = [] } = useQuery({
+  const { data: stock = [], isLoading } = useQuery({
     queryKey: ["stock", sucId],
     enabled: !!cu,
     queryFn: async () => {
@@ -85,73 +87,67 @@ function Stock() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Inventario</h1>
-          <p className="text-sm text-muted-foreground">{filtered.length} ítems</p>
+      <PageHeader
+        title="Inventario"
+        subtitle={`${filtered.length} ítems`}
+        actions={
+          <Button variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1"/> Imprimir PDF</Button>
+        }
+      />
+
+      <SectionCard>
+        <div className="flex flex-wrap gap-2 items-center">
+          <Input placeholder="Buscar producto…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-xs"/>
+          {cu?.isAdmin && (
+            <Select value={sucFilter || "__all__"} onValueChange={(v)=>setSucFilter(v==="__all__"?"":v)}>
+              <SelectTrigger className="w-48"><SelectValue/></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todas las sucursales</SelectItem>
+                {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          )}
+          <label className="flex items-center gap-2 text-sm ml-2">
+            <input type="checkbox" checked={bajoSolo} onChange={(e)=>setBajoSolo(e.target.checked)}/> Solo stock bajo
+          </label>
         </div>
-        <Button variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1"/> Imprimir PDF</Button>
-      </div>
+      </SectionCard>
 
-      <Card className="p-3 flex flex-wrap gap-2 items-center">
-        <Input placeholder="Buscar producto…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-xs"/>
-        {cu?.isAdmin && (
-          <Select value={sucFilter || "__all__"} onValueChange={(v)=>setSucFilter(v==="__all__"?"":v)}>
-            <SelectTrigger className="w-48"><SelectValue/></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Todas las sucursales</SelectItem>
-              {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
-            </SelectContent>
-          </Select>
-        )}
-        <label className="flex items-center gap-2 text-sm ml-2">
-          <input type="checkbox" checked={bajoSolo} onChange={(e)=>setBajoSolo(e.target.checked)}/> Solo stock bajo
-        </label>
-      </Card>
-
-      <Card className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Código</TableHead><TableHead>Producto</TableHead>
-              <TableHead>Sucursal</TableHead>
-              <TableHead className="text-right">Cantidad</TableHead>
-              <TableHead className="text-right">Mínimo</TableHead>
-              <TableHead>Estado</TableHead><TableHead></TableHead>
+      <DataTable
+        columns={["Código", "Producto", "Sucursal", "Cantidad", "Mínimo", "Estado", ""]}
+        loading={isLoading}
+        isEmpty={filtered.length === 0}
+        empty={{ text: "No hay ítems de stock para mostrar." }}
+      >
+        {filtered.map((s:any) => {
+          const cant = Number(s.cantidad), min = Number(s.producto.stock_minimo);
+          const estado = cant <= 0 ? "destructive" : cant <= min ? "warning" : "success";
+          const txt = cant <= 0 ? "Sin stock" : cant <= min ? "Bajo" : "OK";
+          return (
+            <TableRow key={`${s.producto.id}-${s.sucursal_id}`}>
+              <TableCell className="font-mono text-xs">{s.producto.codigo}</TableCell>
+              <TableCell>{s.producto.nombre}</TableCell>
+              <TableCell className="text-muted-foreground">{s.sucursal?.nombre}</TableCell>
+              <TableCell className="text-right font-mono">{fmtNum(cant)}</TableCell>
+              <TableCell className="text-right font-mono text-muted-foreground">{fmtNum(min)}</TableCell>
+              <TableCell>
+                <StatusPill tone={estado === "success" ? "success" : estado === "warning" ? "warning" : "danger"}>
+                  {txt}
+                </StatusPill>
+              </TableCell>
+              <TableCell>
+                {cu?.isAdmin && (
+                  <Button size="sm" variant="ghost" onClick={()=>setAjuste({
+                    producto_id: s.producto.id, sucursal_id: s.sucursal_id,
+                    producto_nombre: s.producto.nombre, sucursal_nombre: s.sucursal?.nombre,
+                    cantidad_actual: cant,
+                  })}><Pencil className="h-3.5 w-3.5"/></Button>
+                )}
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((s:any) => {
-              const cant = Number(s.cantidad), min = Number(s.producto.stock_minimo);
-              const estado = cant <= 0 ? "destructive" : cant <= min ? "warning" : "success";
-              const txt = cant <= 0 ? "Sin stock" : cant <= min ? "Bajo" : "OK";
-              return (
-                <TableRow key={`${s.producto.id}-${s.sucursal_id}`}>
-                  <TableCell className="font-mono text-xs">{s.producto.codigo}</TableCell>
-                  <TableCell>{s.producto.nombre}</TableCell>
-                  <TableCell className="text-muted-foreground">{s.sucursal?.nombre}</TableCell>
-                  <TableCell className="text-right font-mono">{fmtNum(cant)}</TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">{fmtNum(min)}</TableCell>
-                  <TableCell>
-                    <Badge className={estado === "success" ? "bg-success text-success-foreground" : estado === "warning" ? "bg-warning text-warning-foreground" : "bg-destructive text-destructive-foreground"}>
-                      {txt}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {cu?.isAdmin && (
-                      <Button size="sm" variant="ghost" onClick={()=>setAjuste({
-                        producto_id: s.producto.id, sucursal_id: s.sucursal_id,
-                        producto_nombre: s.producto.nombre, sucursal_nombre: s.sucursal?.nombre,
-                        cantidad_actual: cant,
-                      })}><Pencil className="h-3.5 w-3.5"/></Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </Card>
+          );
+        })}
+      </DataTable>
 
       <Dialog open={!!ajuste} onOpenChange={(v)=>!v && setAjuste(null)}>
         <DialogContent>

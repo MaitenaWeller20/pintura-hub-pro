@@ -164,7 +164,7 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(v)=>!v && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Nuevo remito de transferencia</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><Label>Origen *</Label>
             <Select value={origen} onValueChange={setOrigen}>
               <SelectTrigger><SelectValue placeholder="—"/></SelectTrigger>
@@ -183,7 +183,7 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
           <div className="flex justify-between mb-2"><Label>Productos *</Label>
             <Popover open={showP} onOpenChange={setShowP}>
               <PopoverTrigger asChild><Button size="sm" variant="outline"><Plus className="h-3 w-3 mr-1"/> Agregar</Button></PopoverTrigger>
-              <PopoverContent className="w-[400px] p-2">
+              <PopoverContent className="w-[92vw] sm:w-[400px] p-2">
                 <Input placeholder="Buscar…" value={pq} onChange={(e)=>setPq(e.target.value)} autoFocus/>
                 <div className="max-h-60 overflow-auto mt-2">
                   {prods.map((p:any)=>(

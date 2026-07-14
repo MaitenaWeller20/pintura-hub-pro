@@ -3,7 +3,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/app/page-header";
+import { SectionCard } from "@/components/app/section-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -216,20 +217,23 @@ function NuevaVenta() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/ventas" })}><ArrowLeft className="h-4 w-4" /></Button>
-          <h1 className="text-2xl font-bold">Nuevo comprobante</h1>
-        </div>
-        <Button onClick={() => m.mutate()} disabled={!canSave || m.isPending}>
-          {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Guardar
-        </Button>
-      </div>
+      <PageHeader
+        title="Nuevo comprobante"
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => navigate({ to: "/ventas" })}>
+              <ArrowLeft className="h-4 w-4 mr-1" /> Volver
+            </Button>
+            <Button onClick={() => m.mutate()} disabled={!canSave || m.isPending}>
+              {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Guardar
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="p-4 space-y-3 lg:col-span-2">
-          <h3 className="font-semibold">Datos generales</h3>
-          <div className="grid grid-cols-2 gap-3">
+        <SectionCard title="Datos generales" className="lg:col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <Label>Sucursal *</Label>
               {cu?.isAdmin ? (
@@ -273,7 +277,7 @@ function NuevaVenta() {
                     {clienteSel ? clienteSel.razon_social : "Buscar cliente…"}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[400px] p-2">
+                <PopoverContent className="w-[92vw] sm:w-[400px] p-2">
                   <Input placeholder="Nombre o CUIT…" value={clienteQuery} onChange={(e) => setClienteQuery(e.target.value)} autoFocus />
                   <div className="max-h-64 overflow-auto mt-2">
                     {clientes.map((c: any) => (
@@ -321,10 +325,9 @@ function NuevaVenta() {
               </div>
             )}
           </div>
-        </Card>
+        </SectionCard>
 
-        <Card className="p-4 space-y-3">
-          <h3 className="font-semibold">Totales</h3>
+        <SectionCard title="Totales">
           <div className="space-y-1 text-sm">
             <div className="flex justify-between"><span>Subtotal:</span><span className="font-mono">{fmtMoney(totales.sub)}</span></div>
             <div className="flex justify-between"><span>IVA:</span><span className="font-mono">{fmtMoney(totales.iva)}</span></div>
@@ -356,15 +359,15 @@ function NuevaVenta() {
               </div>
             )}
           </div>
-        </Card>
+        </SectionCard>
       </div>
 
-      <Card className="p-4 space-y-3">
+      <SectionCard className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Productos</h3>
+          <h3 className="font-semibold text-sm">Productos</h3>
           <Popover open={showProd} onOpenChange={setShowProd}>
             <PopoverTrigger asChild><Button size="sm" disabled={!effSucursal}><Plus className="h-4 w-4 mr-1" /> Agregar</Button></PopoverTrigger>
-            <PopoverContent className="w-[450px] p-2">
+            <PopoverContent className="w-[92vw] sm:w-[450px] p-2">
               <Input placeholder="Código o nombre…" value={prodQuery} onChange={(e) => setProdQuery(e.target.value)} autoFocus />
               <div className="max-h-72 overflow-auto mt-2">
                 {productosBusqueda.map((p: any) => {
@@ -421,18 +424,18 @@ function NuevaVenta() {
             </Table>
           </div>
         }
-      </Card>
+      </SectionCard>
 
       {!esCtaCte && (
-        <Card className="p-4 space-y-3">
+        <SectionCard className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold">Formas de pago</h3>
+            <h3 className="font-semibold text-sm">Formas de pago</h3>
             <Button size="sm" variant="outline" onClick={addPago}><Plus className="h-4 w-4 mr-1" /> Agregar pago</Button>
           </div>
           {pagos.length === 0 ? <p className="text-sm text-muted-foreground py-4 text-center">Sin pagos. La venta puede ser $0 o quedar pendiente.</p> :
             <div className="space-y-2">
               {pagos.map(p => (
-                <div key={p.id} className="grid grid-cols-12 gap-2 items-end p-2 border border-border rounded">
+                <div key={p.id} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-2 border border-border rounded">
                   <div className="col-span-3">
                     <Label className="text-xs">Forma</Label>
                     <Select value={p.forma_pago} onValueChange={(v) => updPago(p.id, "forma_pago", v)}>
@@ -466,13 +469,13 @@ function NuevaVenta() {
               ))}
             </div>
           }
-        </Card>
+        </SectionCard>
       )}
 
-      <Card className="p-4">
+      <SectionCard>
         <Label>Observaciones</Label>
-        <Textarea value={observaciones} onChange={(e) => setObservaciones(e.target.value)} rows={2} />
-      </Card>
+        <Textarea value={observaciones} onChange={(e) => setObservaciones(e.target.value)} rows={2} className="mt-1" />
+      </SectionCard>
     </div>
   );
 }

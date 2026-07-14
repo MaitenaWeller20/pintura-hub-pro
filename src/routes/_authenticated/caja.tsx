@@ -15,8 +15,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { NumberInput } from "@/components/ui/number-input";
+import { PageHeader } from "@/components/app/page-header";
+import { DataTable } from "@/components/app/data-table";
+import { SectionCard } from "@/components/app/section-card";
 import { Printer, Save } from "lucide-react";
 import { toast } from "sonner";
 import { fmtMoney, fmtDate, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
@@ -241,16 +244,16 @@ function CajaPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Rendición de caja</h1>
-          <p className="text-sm text-muted-foreground">Cierre diario por sucursal · CasaForma</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={imprimir} disabled={!effSucId}><Printer className="h-4 w-4 mr-1" /> PDF detallado</Button>
-          <Button onClick={() => guardar.mutate()} disabled={!effSucId || guardar.isPending}><Save className="h-4 w-4 mr-1" /> Guardar</Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Rendición de caja"
+        subtitle="Cierre diario por sucursal · CasaForma"
+        actions={
+          <>
+            <Button variant="outline" onClick={imprimir} disabled={!effSucId}><Printer className="h-4 w-4 mr-1" /> PDF detallado</Button>
+            <Button onClick={() => guardar.mutate()} disabled={!effSucId || guardar.isPending}><Save className="h-4 w-4 mr-1" /> Guardar</Button>
+          </>
+        }
+      />
 
       <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         {cu?.isAdmin && (
@@ -265,29 +268,23 @@ function CajaPage() {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-4">
+        <div>
           <h3 className="font-semibold mb-3">Totales por forma de pago</h3>
-          <Table>
-            <TableHeader><TableRow>
-              <TableHead>Forma</TableHead><TableHead className="text-right">Importe</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {FORMAS.map(f => (
-                <TableRow key={f}>
-                  <TableCell>{formaPagoLabel[f]}</TableCell>
-                  <TableCell className="text-right font-mono">{fmtMoney(totalesSistema[f])}</TableCell>
-                </TableRow>
-              ))}
-              <TableRow className="font-bold border-t-2 border-border">
-                <TableCell>TOTAL DEL DÍA</TableCell>
-                <TableCell className="text-right font-mono">{fmtMoney(totalSistema)}</TableCell>
+          <DataTable columns={["Forma", "Importe"]}>
+            {FORMAS.map(f => (
+              <TableRow key={f}>
+                <TableCell>{formaPagoLabel[f]}</TableCell>
+                <TableCell className="text-right font-mono">{fmtMoney(totalesSistema[f])}</TableCell>
               </TableRow>
-            </TableBody>
-          </Table>
-        </Card>
+            ))}
+            <TableRow className="font-bold border-t-2 border-border">
+              <TableCell>TOTAL DEL DÍA</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(totalSistema)}</TableCell>
+            </TableRow>
+          </DataTable>
+        </div>
 
-        <Card className="p-4">
-          <h3 className="font-semibold mb-3">Caja en efectivo</h3>
+        <SectionCard title="Caja en efectivo">
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span>Saldo inicial (efectivo dejado ayer):</span>
@@ -310,18 +307,32 @@ function CajaPage() {
             <Label>Observaciones</Label>
             <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} />
           </div>
-        </Card>
+        </SectionCard>
       </div>
 
-      <Card className="p-4">
+      <div>
         <h3 className="font-semibold mb-3">Ventas del día — Contado ({ventasContado.length})</h3>
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>Tipo</TableHead><TableHead>Número</TableHead><TableHead>Cliente</TableHead>
-            <TableHead className="text-right">Total</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {ventasContado.map((v: any) => (
+        <DataTable
+          columns={["Tipo", "Número", "Cliente", "Total"]}
+          isEmpty={ventasContado.length === 0}
+          empty={{ text: "Sin ventas de contado en el día." }}
+        >
+          {ventasContado.map((v: any) => (
+            <TableRow key={v.id}>
+              <TableCell className="text-xs">{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
+              <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
+              <TableCell>{v.cliente?.razon_social}</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
+            </TableRow>
+          ))}
+        </DataTable>
+      </div>
+
+      {ventasCtaCte.length > 0 && (
+        <div>
+          <h3 className="font-semibold mb-3">Ventas del día — Cuenta Corriente ({ventasCtaCte.length})</h3>
+          <DataTable columns={["Tipo", "Número", "Cliente", "Total"]}>
+            {ventasCtaCte.map((v: any) => (
               <TableRow key={v.id}>
                 <TableCell className="text-xs">{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
                 <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
@@ -329,75 +340,42 @@ function CajaPage() {
                 <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
               </TableRow>
             ))}
-            {ventasContado.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground text-sm">—</TableCell></TableRow>}
-          </TableBody>
-        </Table>
-      </Card>
-
-      {ventasCtaCte.length > 0 && (
-        <Card className="p-4">
-          <h3 className="font-semibold mb-3">Ventas del día — Cuenta Corriente ({ventasCtaCte.length})</h3>
-          <Table>
-            <TableHeader><TableRow>
-              <TableHead>Tipo</TableHead><TableHead>Número</TableHead><TableHead>Cliente</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {ventasCtaCte.map((v: any) => (
-                <TableRow key={v.id}>
-                  <TableCell className="text-xs">{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
-                  <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
-                  <TableCell>{v.cliente?.razon_social}</TableCell>
-                  <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+          </DataTable>
+        </div>
       )}
 
       {cobranzasDia.length > 0 && (
-        <Card className="p-4">
+        <div>
           <h3 className="font-semibold mb-3">Cobranzas Cta Cte del día ({cobranzasDia.length})</h3>
-          <Table>
-            <TableHeader><TableRow>
-              <TableHead>Cliente</TableHead><TableHead>Forma</TableHead>
-              <TableHead className="text-right">Monto</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {cobranzasDia.map((c: any) => (
-                <TableRow key={c.id}>
-                  <TableCell>{c.cliente?.razon_social}</TableCell>
-                  <TableCell className="text-xs">{formaPagoLabel[c.forma_pago]}</TableCell>
-                  <TableCell className="text-right font-mono text-success">{fmtMoney(c.monto)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
-
-      <Card className="p-4">
-        <h3 className="font-semibold mb-3">Historial</h3>
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>Fecha</TableHead>
-            <TableHead className="text-right">Total día</TableHead>
-            <TableHead className="text-right">Efectivo retirado</TableHead>
-            <TableHead className="text-right">Efectivo dejado</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {historial.map((h: any) => (
-              <TableRow key={h.id}>
-                <TableCell>{fmtDate(h.fecha)}</TableCell>
-                <TableCell className="text-right font-mono">{fmtMoney(h.total_sistema)}</TableCell>
-                <TableCell className="text-right font-mono">{fmtMoney(h.efectivo_retirado)}</TableCell>
-                <TableCell className="text-right font-mono">{fmtMoney(h.efectivo_dejado)}</TableCell>
+          <DataTable columns={["Cliente", "Forma", "Monto"]}>
+            {cobranzasDia.map((c: any) => (
+              <TableRow key={c.id}>
+                <TableCell>{c.cliente?.razon_social}</TableCell>
+                <TableCell className="text-xs">{formaPagoLabel[c.forma_pago]}</TableCell>
+                <TableCell className="text-right font-mono text-success">{fmtMoney(c.monto)}</TableCell>
               </TableRow>
             ))}
-          </TableBody>
-        </Table>
-      </Card>
+          </DataTable>
+        </div>
+      )}
+
+      <div>
+        <h3 className="font-semibold mb-3">Historial</h3>
+        <DataTable
+          columns={["Fecha", "Total día", "Efectivo retirado", "Efectivo dejado"]}
+          isEmpty={historial.length === 0}
+          empty={{ text: "Sin rendiciones registradas." }}
+        >
+          {historial.map((h: any) => (
+            <TableRow key={h.id}>
+              <TableCell>{fmtDate(h.fecha)}</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(h.total_sistema)}</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(h.efectivo_retirado)}</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(h.efectivo_dejado)}</TableCell>
+            </TableRow>
+          ))}
+        </DataTable>
+      </div>
     </div>
   );
 }

@@ -6,10 +6,13 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { PageHeader } from "@/components/app/page-header";
+import { DataTable } from "@/components/app/data-table";
+import { StatusPill } from "@/components/app/status-pill";
+import { SectionCard } from "@/components/app/section-card";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -40,7 +43,7 @@ function VentasList() {
     queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[],
   });
 
-  const { data: ventas = [] } = useQuery({
+  const { data: ventas = [], isLoading: loadingVentas } = useQuery({
     queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
     enabled: !!cu,
     queryFn: async () => {
@@ -90,95 +93,89 @@ function VentasList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Ventas</h1>
-          <p className="text-sm text-muted-foreground">{filtered.length} comprobantes</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={exportar}><FileSpreadsheet className="h-4 w-4 mr-1"/> Excel</Button>
-          <Button asChild><Link to="/ventas/nueva"><Plus className="h-4 w-4 mr-1"/> Nueva venta</Link></Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Ventas"
+        subtitle={`${filtered.length} comprobantes`}
+        actions={
+          <>
+            <Button variant="outline" onClick={exportar}><FileSpreadsheet className="h-4 w-4 mr-1"/> Excel</Button>
+            <Button asChild><Link to="/ventas/nueva"><Plus className="h-4 w-4 mr-1"/> Nueva venta</Link></Button>
+          </>
+        }
+      />
 
-      <Card className="p-3 flex flex-wrap gap-2">
-        <Input placeholder="Buscar comprobante o cliente…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-xs"/>
-        {cu?.isAdmin && (
-          <Select value={sucFilter || "__all__"} onValueChange={(v)=>setSucFilter(v==="__all__"?"":v)}>
+      <SectionCard>
+        <div className="flex flex-wrap gap-2">
+          <Input placeholder="Buscar comprobante o cliente…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-xs"/>
+          {cu?.isAdmin && (
+            <Select value={sucFilter || "__all__"} onValueChange={(v)=>setSucFilter(v==="__all__"?"":v)}>
+              <SelectTrigger className="w-44"><SelectValue/></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todas las sucursales</SelectItem>
+                {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          )}
+          <Select value={pagoFilter} onValueChange={setPagoFilter}>
             <SelectTrigger className="w-44"><SelectValue/></SelectTrigger>
             <SelectContent>
-              <SelectItem value="__all__">Todas las sucursales</SelectItem>
-              {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
+              <SelectItem value="all">Todos los estados</SelectItem>
+              <SelectItem value="PAGADO">Pagado</SelectItem>
+              <SelectItem value="PARCIAL">Pago parcial</SelectItem>
+              <SelectItem value="PENDIENTE">Pendiente</SelectItem>
             </SelectContent>
           </Select>
-        )}
-        <Select value={pagoFilter} onValueChange={setPagoFilter}>
-          <SelectTrigger className="w-44"><SelectValue/></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los estados</SelectItem>
-            <SelectItem value="PAGADO">Pagado</SelectItem>
-            <SelectItem value="PARCIAL">Pago parcial</SelectItem>
-            <SelectItem value="PENDIENTE">Pendiente</SelectItem>
-          </SelectContent>
-        </Select>
-      </Card>
+        </div>
+      </SectionCard>
 
-      <Card className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Comprobante</TableHead><TableHead>Tipo</TableHead>
-              <TableHead>Fecha</TableHead><TableHead>Cliente</TableHead>
-              {cu?.isAdmin && <TableHead>Sucursal</TableHead>}
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead>Estado</TableHead>
-              <TableHead>AFIP</TableHead>
-              <TableHead></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((v:any) => (
-              <TableRow key={v.id} className={v.estado === "ANULADA" ? "opacity-50" : ""}>
-                <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
-                <TableCell>{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
-                <TableCell className="text-xs">{fmtDateTime(v.fecha)}</TableCell>
-                <TableCell>{v.cliente?.razon_social}</TableCell>
-                {cu?.isAdmin && <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>}
-                <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
-                <TableCell>
-                  {v.estado === "ANULADA" ? <Badge variant="outline">ANULADA</Badge> : (
-                    <Badge className={v.estado_pago === "PAGADO" ? "bg-success text-success-foreground" : v.estado_pago === "PARCIAL" ? "bg-warning text-warning-foreground" : "bg-destructive text-destructive-foreground"}>
-                      {v.estado_pago}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell><EstadoAfip venta={v} /></TableCell>
-                <TableCell>
-                  <Button size="sm" variant="ghost" onClick={()=>setVerVenta(v)}><Eye className="h-3.5 w-3.5"/></Button>
-                  {/* Sólo se factura lo que es un comprobante fiscal. Los remitos y la
-                      factura interna son documentos internos: no van a AFIP. */}
-                  {v.estado === "ACTIVA" && esComprobanteFiscal(v.tipo_comprobante) && !v.cae && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      title="Emitir en AFIP"
-                      onClick={() => emitir.mutate(v.id)}
-                      disabled={emitir.isPending}
-                    >
-                      {emitir.isPending && emitir.variables === v.id
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
-                    </Button>
-                  )}
-                  {v.estado === "ACTIVA" && v.tipo_comprobante !== "NOTA_CREDITO" && (
-                    <Button size="sm" variant="ghost" onClick={()=>setAnularDlg(v)}><Ban className="h-3.5 w-3.5 text-destructive"/></Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
+      <DataTable
+        columns={cu?.isAdmin
+          ? ["Comprobante", "Tipo", "Fecha", "Cliente", "Sucursal", "Total", "Estado", "AFIP", ""]
+          : ["Comprobante", "Tipo", "Fecha", "Cliente", "Total", "Estado", "AFIP", ""]}
+        loading={loadingVentas}
+        isEmpty={filtered.length === 0}
+        empty={{ text: "No hay comprobantes para este filtro.", icon: <FileSpreadsheet className="h-7 w-7" /> }}
+      >
+        {filtered.map((v:any) => (
+          <TableRow key={v.id} className={v.estado === "ANULADA" ? "opacity-50" : ""}>
+            <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
+            <TableCell>{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
+            <TableCell className="text-xs">{fmtDateTime(v.fecha)}</TableCell>
+            <TableCell>{v.cliente?.razon_social}</TableCell>
+            {cu?.isAdmin && <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>}
+            <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
+            <TableCell>
+              {v.estado === "ANULADA" ? <StatusPill tone="danger">ANULADA</StatusPill> : (
+                <StatusPill tone={v.estado_pago === "PAGADO" ? "success" : "warning"}>
+                  {v.estado_pago}
+                </StatusPill>
+              )}
+            </TableCell>
+            <TableCell><EstadoAfip venta={v} /></TableCell>
+            <TableCell>
+              <Button size="sm" variant="ghost" onClick={()=>setVerVenta(v)}><Eye className="h-3.5 w-3.5"/></Button>
+              {/* Sólo se factura lo que es un comprobante fiscal. Los remitos y la
+                  factura interna son documentos internos: no van a AFIP. */}
+              {v.estado === "ACTIVA" && esComprobanteFiscal(v.tipo_comprobante) && !v.cae && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title="Emitir en AFIP"
+                  onClick={() => emitir.mutate(v.id)}
+                  disabled={emitir.isPending}
+                >
+                  {emitir.isPending && emitir.variables === v.id
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
+                </Button>
+              )}
+              {v.estado === "ACTIVA" && v.tipo_comprobante !== "NOTA_CREDITO" && (
+                <Button size="sm" variant="ghost" onClick={()=>setAnularDlg(v)}><Ban className="h-3.5 w-3.5 text-destructive"/></Button>
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
 
       <DetalleVenta venta={verVenta} onClose={()=>setVerVenta(null)}/>
 
@@ -199,12 +196,16 @@ function VentasList() {
 /** Estado fiscal del comprobante: si tiene CAE, si falló, o si ni siquiera aplica. */
 function EstadoAfip({ venta }: { venta: any }) {
   if (!esComprobanteFiscal(venta.tipo_comprobante)) {
-    return <span className="text-xs text-muted-foreground" title="Documento interno: no se declara a AFIP">Interno</span>;
+    return (
+      <span title="Documento interno: no se declara a AFIP">
+        <StatusPill tone="info">Interno</StatusPill>
+      </span>
+    );
   }
   if (venta.cae) {
     return (
-      <div className="text-xs">
-        <div className="font-mono">{venta.cae}</div>
+      <div className="text-xs space-y-0.5">
+        <StatusPill tone="success"><span className="font-mono">{venta.cae}</span></StatusPill>
         <div className="text-muted-foreground">
           {venta.afip_modo === "HOMOLOGACION" ? "homologación" : `PV ${venta.afip_punto_venta}-${venta.afip_numero}`}
         </div>
@@ -213,15 +214,15 @@ function EstadoAfip({ venta }: { venta: any }) {
   }
   if (venta.afip_estado === "ERROR") {
     return (
-      <Badge variant="outline" className="border-destructive text-destructive gap-1 text-[10px]" title={venta.afip_error ?? ""}>
-        <AlertTriangle className="h-2.5 w-2.5" /> ERROR
-      </Badge>
+      <span title={venta.afip_error ?? ""}>
+        <StatusPill tone="danger" icon={<AlertTriangle className="h-2.5 w-2.5" />}>ERROR</StatusPill>
+      </span>
     );
   }
   if (venta.afip_estado === "PENDIENTE") {
-    return <Badge variant="outline" className="border-warning text-warning text-[10px]">PENDIENTE</Badge>;
+    return <StatusPill tone="warning">PENDIENTE</StatusPill>;
   }
-  return <span className="text-xs text-muted-foreground">Sin emitir</span>;
+  return <StatusPill tone="neutral">Sin emitir</StatusPill>;
 }
 
 function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
@@ -279,26 +280,19 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
               <div><strong>Cliente:</strong> {venta.cliente?.razon_social}</div>
               <div><strong>CUIT/DNI:</strong> {venta.cliente?.cuit_dni ?? "—"}</div>
             </div>
-            <Card className="overflow-x-auto mt-2">
-              <Table>
-                <TableHeader><TableRow>
-                  <TableHead>Cód.</TableHead><TableHead>Descripción</TableHead>
-                  <TableHead className="text-right">Cant.</TableHead><TableHead className="text-right">P. unit.</TableHead>
-                  <TableHead className="text-right">Subtotal</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {(detail?.items ?? []).map((i:any,idx)=>(
-                    <TableRow key={idx}>
-                      <TableCell className="font-mono text-xs">{i.codigo}</TableCell>
-                      <TableCell>{i.descripcion}</TableCell>
-                      <TableCell className="text-right">{i.cantidad}</TableCell>
-                      <TableCell className="text-right font-mono">{fmtMoney(i.precio_unitario_sin_iva)}</TableCell>
-                      <TableCell className="text-right font-mono">{fmtMoney(i.subtotal_con_iva)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
+            <div className="mt-2">
+              <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
+                {(detail?.items ?? []).map((i:any,idx)=>(
+                  <TableRow key={idx}>
+                    <TableCell className="font-mono text-xs">{i.codigo}</TableCell>
+                    <TableCell>{i.descripcion}</TableCell>
+                    <TableCell className="text-right">{i.cantidad}</TableCell>
+                    <TableCell className="text-right font-mono">{fmtMoney(i.precio_unitario_sin_iva)}</TableCell>
+                    <TableCell className="text-right font-mono">{fmtMoney(i.subtotal_con_iva)}</TableCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </div>
 
             <div className="grid grid-cols-2 gap-4 mt-3">
               <Card className="p-3">

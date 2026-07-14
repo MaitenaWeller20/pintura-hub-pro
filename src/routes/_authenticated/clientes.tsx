@@ -2,14 +2,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { PageHeader } from "@/components/app/page-header";
+import { DataTable } from "@/components/app/data-table";
+import { SectionCard } from "@/components/app/section-card";
+import { StatusPill } from "@/components/app/status-pill";
 import { toast } from "sonner";
 import { Plus, Pencil } from "lucide-react";
 import { tipoClienteLabel } from "@/lib/format";
@@ -24,7 +26,7 @@ function ClientesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any>(null);
 
-  const { data: clientes = [] } = useQuery({
+  const { data: clientes = [], isLoading } = useQuery({
     queryKey: ["clientes"],
     queryFn: async () => ((await supabase.from("clientes").select("*, sucursal:sucursales(nombre)").order("razon_social")).data ?? []) as any[],
   });
@@ -39,48 +41,41 @@ function ClientesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Clientes</h1>
-          <p className="text-sm text-muted-foreground">{filtered.length} de {clientes.length}</p>
-        </div>
-        <Button onClick={()=>{ setEditing(null); setOpen(true); }}><Plus className="h-4 w-4 mr-1"/> Nuevo</Button>
-      </div>
+      <PageHeader
+        title="Clientes"
+        subtitle={`${filtered.length} de ${clientes.length}`}
+        actions={
+          <Button onClick={()=>{ setEditing(null); setOpen(true); }}><Plus className="h-4 w-4 mr-1"/> Nuevo</Button>
+        }
+      />
 
-      <Card className="p-3">
+      <SectionCard>
         <Input placeholder="Buscar por nombre o CUIT…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-sm"/>
-      </Card>
+      </SectionCard>
 
-      <Card className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Razón social</TableHead><TableHead>CUIT/DNI</TableHead>
-              <TableHead>Tipo</TableHead><TableHead>Cta Cte</TableHead>
-              <TableHead>Teléfono</TableHead>
-              <TableHead>Sucursal</TableHead><TableHead></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((c:any) => (
-              <TableRow key={c.id}>
-                <TableCell>
-                  {c.razon_social}
-                  {c.es_generico && <Badge variant="outline" className="ml-2 text-xs">Genérico</Badge>}
-                </TableCell>
-                <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
-                <TableCell className="text-muted-foreground text-xs">{tipoClienteLabel[c.tipo]}</TableCell>
-                <TableCell>{c.condicion_cta_cte ? <Badge>Sí</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
-                <TableCell>{c.telefono ?? "—"}</TableCell>
-                <TableCell className="text-muted-foreground">{c.sucursal?.nombre ?? "—"}</TableCell>
-                <TableCell>
-                  <Button size="sm" variant="ghost" onClick={()=>{ setEditing(c); setOpen(true); }}><Pencil className="h-3.5 w-3.5"/></Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
+      <DataTable
+        columns={["Razón social", "CUIT/DNI", "Tipo", "Cta Cte", "Teléfono", "Sucursal", ""]}
+        loading={isLoading}
+        isEmpty={filtered.length === 0}
+        empty={{ text: "No hay clientes para mostrar." }}
+      >
+        {filtered.map((c:any) => (
+          <TableRow key={c.id}>
+            <TableCell>
+              {c.razon_social}
+              {c.es_generico && <span className="ml-2 align-middle"><StatusPill tone="neutral">Genérico</StatusPill></span>}
+            </TableCell>
+            <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
+            <TableCell className="text-muted-foreground text-xs">{tipoClienteLabel[c.tipo]}</TableCell>
+            <TableCell>{c.condicion_cta_cte ? <StatusPill tone="success">Sí</StatusPill> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+            <TableCell>{c.telefono ?? "—"}</TableCell>
+            <TableCell className="text-muted-foreground">{c.sucursal?.nombre ?? "—"}</TableCell>
+            <TableCell>
+              <Button size="sm" variant="ghost" onClick={()=>{ setEditing(c); setOpen(true); }}><Pencil className="h-3.5 w-3.5"/></Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
 
       <ClienteDialog open={open} onClose={()=>setOpen(false)} editing={editing} sucs={sucs}
         onSaved={()=>{ qc.invalidateQueries({ queryKey:["clientes"] }); setOpen(false); }}/>

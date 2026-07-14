@@ -8,11 +8,14 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { TableRow, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { NumberInput } from "@/components/ui/number-input";
+import { PageHeader } from "@/components/app/page-header";
+import { DataTable } from "@/components/app/data-table";
+import { SectionCard } from "@/components/app/section-card";
+import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney, fmtDate, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { toast } from "sonner";
 import { Wallet, Receipt } from "lucide-react";
@@ -42,53 +45,38 @@ function CtaCtePage() {
   ), [saldos, q]);
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">Cuentas Corrientes</h1>
-        <p className="text-sm text-muted-foreground">Deuda por cliente y registro de cobros.</p>
-      </div>
+    <div>
+      <PageHeader title="Cuentas Corrientes" subtitle="Deuda por cliente y registro de cobros." />
 
-      <Card className="p-3">
+      <Card className="p-3 mb-4">
         <Input placeholder="Buscar cliente…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
       </Card>
 
-      <Card className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Cliente</TableHead><TableHead>CUIT/DNI</TableHead>
-              <TableHead className="text-right">Debe</TableHead>
-              <TableHead className="text-right">Pagado</TableHead>
-              <TableHead className="text-right">Saldo</TableHead>
-              <TableHead></TableHead>
+      <DataTable
+        columns={["Cliente", "CUIT/DNI", "Debe", "Pagado", "Saldo", ""]}
+        isEmpty={filtered.length === 0}
+        empty={{ text: "No hay clientes con cuenta corriente.", icon: <Wallet className="h-7 w-7" /> }}
+      >
+        {filtered.map((c: any) => {
+          const saldo = Number(c.saldo);
+          return (
+            <TableRow key={c.cliente_id}>
+              <TableCell className="font-medium">{c.razon_social}</TableCell>
+              <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(c.total_debe)}</TableCell>
+              <TableCell className="text-right font-mono text-success">{fmtMoney(c.total_pagado)}</TableCell>
+              <TableCell className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : "text-muted-foreground"}`}>
+                {fmtMoney(saldo)}{saldo < -0.01 && " (a favor)"}
+              </TableCell>
+              <TableCell>
+                <Button size="sm" variant="outline" onClick={() => setSel({ id: c.cliente_id, razon_social: c.razon_social, cuit_dni: c.cuit_dni })}>
+                  <Receipt className="h-3.5 w-3.5 mr-1" /> Ver
+                </Button>
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((c: any) => {
-              const saldo = Number(c.saldo);
-              return (
-                <TableRow key={c.cliente_id}>
-                  <TableCell className="font-medium">{c.razon_social}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
-                  <TableCell className="text-right font-mono">{fmtMoney(c.total_debe)}</TableCell>
-                  <TableCell className="text-right font-mono text-success">{fmtMoney(c.total_pagado)}</TableCell>
-                  <TableCell className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : "text-muted-foreground"}`}>
-                    {fmtMoney(saldo)}{saldo < -0.01 && " (a favor)"}
-                  </TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="outline" onClick={() => setSel({ id: c.cliente_id, razon_social: c.razon_social, cuit_dni: c.cuit_dni })}>
-                      <Receipt className="h-3.5 w-3.5 mr-1" /> Ver
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">No hay clientes con cuenta corriente.</TableCell></TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+          );
+        })}
+      </DataTable>
 
       {sel && (
         <DetalleCliente cliente={sel} onClose={() => setSel(null)}
@@ -127,45 +115,48 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
             <Button size="sm" onClick={onPagar}><Wallet className="h-4 w-4 mr-1" /> Registrar pago</Button>
           </DialogTitle>
         </DialogHeader>
-        <div className="grid grid-cols-3 gap-3 text-sm">
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Debe</div><div className="font-mono font-bold">{fmtMoney(totalDebe)}</div></Card>
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Pagado</div><div className="font-mono font-bold text-success">{fmtMoney(totalPagado)}</div></Card>
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Saldo</div>
-            <div className={`font-mono font-bold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : ""}`}>
-              {fmtMoney(saldo)}{saldo < -0.01 && " a favor"}
+        <SectionCard title="Resumen de la cuenta">
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div>
+              <div className="text-xs text-muted-foreground">Debe</div>
+              <div className="font-mono font-bold text-lg">{fmtMoney(totalDebe)}</div>
             </div>
-          </Card>
-        </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Pagado</div>
+              <div className="font-mono font-bold text-lg text-success">{fmtMoney(totalPagado)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Saldo</div>
+              <div className={`font-mono font-bold text-lg ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : ""}`}>
+                {fmtMoney(saldo)}{saldo < -0.01 && " a favor"}
+              </div>
+            </div>
+          </div>
+        </SectionCard>
 
-        <h4 className="font-semibold mt-2">Movimientos de la cuenta</h4>
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>Fecha</TableHead><TableHead>Detalle</TableHead>
-            <TableHead>Sucursal</TableHead>
-            <TableHead className="text-right">Debe</TableHead>
-            <TableHead className="text-right">Haber</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {movs.map((m: any) => {
-              const anulado = m.estado === "ANULADO";
-              return (
-                <TableRow key={m.id} className={anulado ? "opacity-40 line-through" : ""}>
-                  <TableCell className="text-xs">{fmtDate(m.created_at)}</TableCell>
-                  <TableCell className="text-sm">
-                    {m.descripcion}
-                    {m.forma_pago && <span className="text-xs text-muted-foreground"> · {formaPagoLabel[m.forma_pago] ?? m.forma_pago}</span>}
-                    {anulado && <Badge variant="outline" className="ml-2 text-[10px]">anulado</Badge>}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{m.sucursal?.nombre}</TableCell>
-                  <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
-                  <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
-                </TableRow>
-              );
-            })}
-            {movs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-sm py-4">Sin movimientos</TableCell></TableRow>}
-          </TableBody>
-        </Table>
+        <h4 className="font-semibold">Movimientos de la cuenta</h4>
+        <DataTable
+          columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber"]}
+          isEmpty={movs.length === 0}
+          empty={{ text: "Sin movimientos" }}
+        >
+          {movs.map((m: any) => {
+            const anulado = m.estado === "ANULADO";
+            return (
+              <TableRow key={m.id} className={anulado ? "opacity-40 line-through" : ""}>
+                <TableCell className="text-xs">{fmtDate(m.created_at)}</TableCell>
+                <TableCell className="text-sm">
+                  {m.descripcion}
+                  {m.forma_pago && <span className="text-xs text-muted-foreground"> · {formaPagoLabel[m.forma_pago] ?? m.forma_pago}</span>}
+                  {anulado && <span className="ml-2"><StatusPill tone="neutral">anulado</StatusPill></span>}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs">{m.sucursal?.nombre}</TableCell>
+                <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
+                <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
+              </TableRow>
+            );
+          })}
+        </DataTable>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cerrar</Button></DialogFooter>
       </DialogContent>
     </Dialog>
@@ -210,6 +201,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>Registrar cobro · {cliente.razon_social}</DialogTitle></DialogHeader>
+        <SectionCard title="Datos del cobro">
         <div className="grid grid-cols-2 gap-3">
           {cu?.isAdmin && (
             <div className="col-span-2"><Label>Sucursal (caja donde entra)</Label>
@@ -241,6 +233,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
             <Input value={obs} onChange={(e) => setObs(e.target.value)} />
           </div>
         </div>
+        </SectionCard>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button onClick={() => m.mutate()} disabled={!effSuc || !monto || monto <= 0 || m.isPending}>Registrar cobro</Button>

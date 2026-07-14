@@ -1,7 +1,7 @@
 # Rediseño de UI — PinturaGest / CasaForma
 
 **Fecha:** 2026-07-14
-**Estado:** Aprobado el rumbo; pendiente revisión del spec.
+**Estado:** Aprobado el rumbo; revisado con Codex (ajustes incorporados); pendiente OK final del usuario.
 **Alcance:** Rediseño visual de toda la app, dashboard como resumen + accesos, reportes con datos útiles, y una sección nueva de Pagos estilo MesaYa 2.0. Se conserva el tema oscuro (navy + naranja CasaForma). No se toca la lógica de negocio ni el backend.
 
 ---
@@ -45,14 +45,14 @@ Cada uno con una única responsabilidad y una interfaz clara. Son de presentaci�
   - Props: `data: number[]`, `color`, `width?`, `height?`.
 - **`SectionCard`** — tarjeta contenedora estándar (título opcional + subtítulo + slot de acciones + children). Usa `rounded-2xl`, borde y `shadow-card`.
   - Props: `title?`, `subtitle?`, `actions?`, `className?`, `children`.
-- **`DataTable`** (shell fino) — envoltura sobre la `Table` de shadcn con: header sticky opcional, estado vacío (`emptyText`/`emptyIcon`), estado de carga (skeleton rows) y scroll horizontal contenido. No es una tabla "inteligente" con sorting genérico (YAGNI); cada página define sus columnas.
-  - Props: `columns` (para header + estados), `children` (filas), `loading?`, `empty?`.
+- **`DataTable`** (shell fino) — envoltura sobre la `Table` de shadcn con: header sticky opcional, estado vacío (`emptyText`/`emptyIcon`/`emptyAction?`), estado de carga (skeleton rows con columnas estables), estado de error (`error?`/`onRetry?`) y scroll horizontal contenido. No es una tabla "inteligente" con sorting genérico (YAGNI); cada página define sus columnas.
+  - Props: `columns` (para header + skeleton), `children` (filas), `loading?`, `empty?`, `error?`, `onRetry?`.
 - **`StatusPill`** — pill de estado con variantes de color (`success`|`warning`|`danger`|`info`|`neutral`) para estados de venta/pago/AFIP.
   - Props: `tone`, `children`, `icon?`.
 - **`PeriodFilters`** — barra reutilizable de filtros: rango de fecha (desde/hasta), sucursal, y slots extra. La usan Reportes y Pagos.
   - Props: `from`, `to`, `onFrom`, `onTo`, `sucursalId?`, `onSucursal?`, `sucursales?`, `children?` (filtros extra).
-- **`ChartCard`** — `SectionCard` + `ResponsiveContainer` de recharts con estilos de eje/tooltip/grid ya alineados a los tokens del tema (evita repetir la config de recharts en cada página).
-  - Props: `title`, `subtitle?`, `height?`, `children` (el chart de recharts).
+- **`ChartCard`** — solo layout: `SectionCard` (título/subtítulo/acciones) que **compone el `ChartContainer` de shadcn** (`src/components/ui/chart.tsx`, que ya trae `ResponsiveContainer`, tooltip y legend con tokens del tema). No crea una API paralela de charts ni reimplementa la config de recharts.
+  - Props: `title`, `subtitle?`, `height?`, `config` (ChartConfig de shadcn), `children` (el chart de recharts).
 
 Estos componentes se testean de forma aislada (render + props) y se reutilizan en todas las pantallas. Cuando una página crece mucho, se extraen sub-componentes a un archivo `-components.tsx` junto a la ruta.
 
@@ -100,19 +100,32 @@ Estructura:
 
 ### 4.3 Pagos (`_authenticated/pagos.tsx`) — NUEVO, estilo MesaYa 2.0
 Sección de **historial de cobros** (solo lectura). Unifica dos fuentes:
-- **`venta_pagos`** (pagos de ventas): `forma_pago, monto, detalle, created_at`, con `venta → sucursal, cliente, numero_comprobante`. Origen = "Venta".
-- **`cobranzas_cta_cte`** (cobros de cuenta corriente): `cliente_id, sucursal_id, fecha, monto, forma_pago`, con join a cliente/sucursal. Origen = "Cta Cte".
+- **`venta_pagos`** (pagos de ventas): `forma_pago (enum public.forma_pago), monto, detalle, created_at`. Se consulta **a través de `ventas`** (`ventas.select("fecha, numero_comprobante, tipo_comprobante, cliente:clientes(razon_social), sucursal_id, pagos:venta_pagos(forma_pago, monto)")`) filtrando por **`ventas.fecha`** (tiene índice `idx_ventas_fecha`; `venta_pagos.created_at` no lo tiene) y `estado = ACTIVA`. La fecha del cobro es `ventas.fecha`. Origen = "Venta".
+- **`cobranzas_cta_cte`** (cobros de cuenta corriente): `cliente_id, sucursal_id, fecha, monto, forma_pago (text)`, con join a cliente/sucursal, filtrando por `fecha`. Origen = "Cta Cte".
 
-Se normalizan a un tipo común `Cobro { fecha, origen, cliente, sucursal, forma_pago, monto, comprobante? }` y se combinan/ordenan por fecha en el cliente. Medios de pago: enum `forma_pago` (EFECTIVO, TRANSFERENCIA, TARJETA_CREDITO, TARJETA_DEBITO, MERCADO_PAGO, CHEQUE).
+**Fecha canónica:** `ventas.fecha` para pagos de venta y `cobranzas_cta_cte.fecha` para cta cte (fecha contable/caja, consistente con `caja.tsx`). Rangos **half-open** en hora local AR: `[desde 00:00, hasta+1día 00:00)`.
+
+**Signo (importante):** las notas de crédito guardan `monto` **negativo** en `venta_pagos` (devoluciones). Se modela:
+```
+type Cobro = {
+  fecha: string; origen: "VENTA" | "CTA_CTE";
+  cliente?: string; sucursalId: string;
+  formaPago: FormaPago | string;   // enum conocido o string (cobranzas es text) → label con formaPagoLabel[x] ?? x
+  monto: number;                   // firmado: negativo = devolución (NC)
+  tipo: "COBRO" | "DEVOLUCION";    // derivado de monto >= 0
+  comprobante?: string;
+};
+```
+Se combinan/ordenan por fecha en el cliente. `forma_pago` **no se castea** al enum (cobranzas es `text`); se usa `formaPagoLabel[x] ?? x`.
 
 Estructura (espejo de MesaYa 2.0, adaptado):
 1. **PageHeader** con badge "HISTÓRICO" + subtítulo ("N cobros · período").
-2. **Filtros** (`PeriodFilters` + extras): rango de fecha, sucursal, **medio de pago**, **origen** (Todos / Ventas / Cta Cte). Botón **Exportar** (Excel/CSV).
-3. **StatCards** (4): Total cobrado, Efectivo, Electrónico (transf+tarjetas+MP), Ticket promedio — con sparkline y **tendencia vs período anterior** (se calcula pidiendo el período previo del mismo largo).
-4. **Charts:** donut **Cobrado por medio de pago** (con leyenda + %) + barras **Cobrado por día** (o por sucursal). Vía `ChartCard`.
-5. **Tabla paginada responsive:** columnas Fecha · Origen · Cliente · Sucursal · Medio · Monto. Card list en mobile, tabla en desktop. **Paginado del lado cliente** (el volumen esperado por período es chico; el rango de fecha ya acota los datos). Pills para origen y medio.
+2. **Filtros** (`PeriodFilters` + extras): rango de fecha, **medio de pago**, **origen** (Todos / Ventas / Cta Cte). El filtro de **sucursal solo se muestra para admin**; el no-admin ve únicamente su sucursal (lo fuerza la RLS). Botón **Exportar** (Excel/CSV).
+3. **StatCards** (4): **Total neto cobrado** (Σ montos firmados = cobros − devoluciones), **Efectivo**, **Electrónico** (transf + tarjetas + MP + cheque), **Ticket promedio** (Σ cobros positivos / cantidad de cobros positivos; **excluye devoluciones**). Con sparkline y **tendencia vs período anterior** (segunda query del período previo del mismo largo). Cada card aclara en su `hint` que es neto.
+4. **Charts:** donut **Cobrado por medio de pago** (con leyenda + %; usa montos positivos para no distorsionar la distribución) + barras **Cobrado por día** (neto). Vía `ChartCard` → `ChartContainer`.
+5. **Tabla paginada responsive:** columnas Fecha · Origen · Cliente · Sucursal · Medio · Monto (las devoluciones se muestran con `StatusPill` "Devolución" y monto en rojo). Card list en mobile, tabla en desktop. **Paginado del lado cliente** (el volumen por período es chico; el rango de fecha ya acota). Pills para origen y medio.
 
-Permisos: visible para todos los roles, filtrada por sucursal para no-admin (igual que ventas/dashboard). Admin ve todas las sucursales.
+**Permisos y estados:** visible para todos los roles. Para no-admin la RLS filtra por su sucursal (`venta_pagos` por la sucursal de la venta vía `EXISTS`; `cobranzas_cta_cte` por `sucursal_id`). Si el empleado **no tiene sucursal asignada** (`current_sucursal_id()` = null) no lee filas: se muestra un estado vacío explícito ("Tu usuario no tiene sucursal asignada; pedí a un admin que te la asigne") en vez de un cero engañoso.
 
 Ruta nueva: `src/routes/_authenticated/pagos.tsx` (+ entrada en `routeTree.gen.ts` regenerada por el router). Item de menú en grupo "Cobranzas".
 
@@ -131,8 +144,10 @@ Aplican el mismo lenguaje: `PageHeader`, `SectionCard`, `DataTable`, `StatusPill
 ## 5. Consideraciones técnicas
 
 - **SSR:** las rutas autenticadas ya usan `ssr: false`; Pagos también (usa el cliente supabase del browser con RLS, igual que dashboard/reportes). No pasa por server functions → no toca CSRF ni el polyfill.
-- **Formato:** se reutilizan `fmtMoney`, `fmtDateTime`, `formaPagoLabel` de `src/lib/format`. Si falta un label de medio de pago, se agrega ahí.
-- **RLS:** todas las tablas leídas (`venta_pagos`, `cobranzas_cta_cte`, `ventas`, etc.) ya tienen políticas para `authenticated`. Verificar en implementación que `venta_pagos`/`cobranzas_cta_cte` permitan SELECT del rol y filtren por sucursal correctamente.
+- **Formato / timezone:** se reutilizan `fmtMoney`, `fmtDateTime`, `formaPagoLabel` de `src/lib/format`. **Antes de usarlos, fijar `America/Argentina/Buenos_Aires`** en los helpers de fecha (hoy `fmtDate`/`fmtDateTime` no fijan tz) — se puede reusar el patrón de `src/lib/fiscal/fecha.ts`, que ya lo hace. Los defaults de rango **no deben** usar `toISOString().slice(0,10)` (se corre de día por UTC); usar un helper de fecha local. Rangos **half-open** `[desde 00:00 local, hasta+1día 00:00 local)`. Si falta un label de medio de pago, se agrega en `formaPagoLabel`.
+- **RLS:** todas las tablas leídas (`venta_pagos`, `cobranzas_cta_cte`, `ventas`, etc.) ya tienen políticas para `authenticated`. Confirmado en review: `venta_pagos` filtra por la sucursal de la venta (vía `EXISTS`) y `cobranzas_cta_cte` por `sucursal_id`; un no-admin no lee de más. Caso borde: `current_sucursal_id()` null → no lee filas (ver estado vacío en 4.3).
+- **Semántica única de "Cobrado":** "Cobrado" = fondos que entraron = pagos de venta (`venta_pagos`) **+** cobranzas de cta cte (`cobranzas_cta_cte`), **neto de devoluciones**. Pagos, Reportes y el KPI "Cobrado hoy" del Dashboard usan esta misma definición (hoy el dashboard suma solo `ventas.total_pagado`; se alinea para no dar números distintos entre pantallas). Es un ajuste de métrica de UI, no de lógica de negocio.
+- **`routeTree.gen.ts` (generado):** no se edita a mano. Para agregar `pagos.tsx`: crear la ruta, correr `bun run dev`/`build` para que el plugin del router regenere el árbol, y commitear el resultado. El `<Link to="/pagos">` del menú solo typechequea **después** de regenerar; por eso Pagos se implementa como una unidad (ruta + regen + menú) antes de correr typecheck.
 - **Sin dependencias nuevas:** recharts, lucide, xlsx, jspdf ya están. Sparkline es SVG propio.
 - **Accesibilidad:** foco visible, contraste (tema oscuro ya lo cumple), labels en filtros.
 
@@ -140,7 +155,7 @@ Aplican el mismo lenguaje: `PageHeader`, `SectionCard`, `DataTable`, `StatusPill
 
 ## 6. Validación / testing
 
-- **Typecheck** (`bun run typecheck`) y **tests** (`bun run test`, 46 actuales) deben seguir en verde. Los componentes nuevos son presentacionales; se agregan tests unitarios simples de render para `StatCard`, `Sparkline`, `StatusPill` y de la normalización de cobros de Pagos (merge/orden/totales por medio).
+- **Typecheck** (`bun run typecheck`) y **tests** (`bun run test`, 46 actuales) deben seguir en verde. El repo **no tiene** `@testing-library/react` ni `jsdom` y el spec mantiene "sin dependencias nuevas", así que los tests nuevos son de **lógica pura** (funciones extraídas, no render de componentes React): normalización/merge/orden de cobros y totales por medio (Pagos), cálculo de puntos del `Sparkline`, y `computeKpiTrend` (tendencia vs período anterior, incl. casos previo=0/undefined). Los componentes presentacionales se validan por el recorrido Playwright, no por unit test de render.
 - **Build** (`bun run build:vercel`) exit 0.
 - **Prueba visual con Playwright** contra el build local (como se hizo antes): recorrer dashboard, reportes, pagos, ventas y cta cte; confirmar que renderizan, que los datos cargan y que crear venta / registrar cobro siguen funcionando.
 

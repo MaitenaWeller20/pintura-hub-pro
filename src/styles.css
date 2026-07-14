@@ -55,64 +55,67 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* DARK por defecto. Es una app interna; mantenemos esquema oscuro siempre. */
-:root,
-.dark {
-  --radius: 0.6rem;
+/*
+ * Tema CLARO "mostrador": contenido claro y legible + sidebar navy oscuro para
+ * dar contraste, jerarquía y personalidad. Naranja CasaForma como acento de acción.
+ */
+:root {
+  --radius: 0.7rem;
 
-  /* Azul marino profundo */
-  --background: oklch(0.18 0.04 250);
-  --foreground: oklch(0.96 0.01 250);
+  /* Superficie clara, cool, no blanco puro */
+  --background: oklch(0.975 0.004 250);
+  --foreground: oklch(0.24 0.03 255);
 
-  --card: oklch(0.22 0.04 250);
-  --card-foreground: oklch(0.96 0.01 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.03 255);
 
-  --popover: oklch(0.22 0.04 250);
-  --popover-foreground: oklch(0.96 0.01 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.03 255);
 
-  /* Primary = naranja CasaForma */
-  --primary: oklch(0.72 0.17 50);
-  --primary-foreground: oklch(0.15 0.04 250);
+  /* Primary = naranja CasaForma (más profundo para contraste sobre blanco) */
+  --primary: oklch(0.63 0.19 45);
+  --primary-foreground: oklch(0.99 0.01 60);
 
-  --secondary: oklch(0.28 0.05 250);
-  --secondary-foreground: oklch(0.96 0.01 250);
+  --secondary: oklch(0.95 0.008 250);
+  --secondary-foreground: oklch(0.30 0.03 255);
 
-  --muted: oklch(0.26 0.04 250);
-  --muted-foreground: oklch(0.7 0.02 250);
+  --muted: oklch(0.955 0.006 250);
+  --muted-foreground: oklch(0.50 0.02 255);
 
-  --accent: oklch(0.32 0.06 250);
-  --accent-foreground: oklch(0.96 0.01 250);
+  --accent: oklch(0.94 0.02 250);
+  --accent-foreground: oklch(0.28 0.03 255);
 
-  --destructive: oklch(0.62 0.22 27);
-  --destructive-foreground: oklch(0.98 0.01 250);
+  --destructive: oklch(0.58 0.21 27);
+  --destructive-foreground: oklch(0.99 0.01 60);
 
-  --success: oklch(0.65 0.16 145);
-  --success-foreground: oklch(0.12 0.04 250);
+  --success: oklch(0.56 0.14 150);
+  --success-foreground: oklch(0.99 0.01 150);
 
-  --warning: oklch(0.78 0.15 85);
-  --warning-foreground: oklch(0.15 0.04 250);
+  --warning: oklch(0.72 0.15 70);
+  --warning-foreground: oklch(0.28 0.05 70);
 
-  --info: oklch(0.68 0.13 240);
-  --info-foreground: oklch(0.12 0.04 250);
+  --info: oklch(0.55 0.15 250);
+  --info-foreground: oklch(0.99 0.01 250);
 
-  --border: oklch(0.32 0.04 250);
-  --input: oklch(0.28 0.04 250);
-  --ring: oklch(0.72 0.17 50);
+  --border: oklch(0.905 0.008 250);
+  --input: oklch(0.905 0.008 250);
+  --ring: oklch(0.63 0.19 45);
 
-  --chart-1: oklch(0.72 0.17 50);   /* naranja */
-  --chart-2: oklch(0.68 0.13 240);  /* azul */
-  --chart-3: oklch(0.65 0.16 145);  /* verde */
-  --chart-4: oklch(0.78 0.15 85);   /* amarillo */
-  --chart-5: oklch(0.62 0.22 350);  /* magenta */
+  --chart-1: oklch(0.63 0.19 45);   /* naranja */
+  --chart-2: oklch(0.55 0.15 250);  /* azul */
+  --chart-3: oklch(0.56 0.14 150);  /* verde */
+  --chart-4: oklch(0.74 0.15 70);   /* ámbar */
+  --chart-5: oklch(0.55 0.20 350);  /* magenta */
 
-  --sidebar: oklch(0.15 0.04 250);
+  /* Sidebar oscuro (navy) — contraste y personalidad "mostrador" */
+  --sidebar: oklch(0.24 0.035 255);
   --sidebar-foreground: oklch(0.92 0.01 250);
-  --sidebar-primary: oklch(0.72 0.17 50);
-  --sidebar-primary-foreground: oklch(0.15 0.04 250);
-  --sidebar-accent: oklch(0.24 0.04 250);
-  --sidebar-accent-foreground: oklch(0.96 0.01 250);
-  --sidebar-border: oklch(0.28 0.04 250);
-  --sidebar-ring: oklch(0.72 0.17 50);
+  --sidebar-primary: oklch(0.70 0.18 48);
+  --sidebar-primary-foreground: oklch(0.20 0.03 255);
+  --sidebar-accent: oklch(0.31 0.035 255);
+  --sidebar-accent-foreground: oklch(0.97 0.01 250);
+  --sidebar-border: oklch(0.33 0.035 255);
+  --sidebar-ring: oklch(0.70 0.18 48);
 }
 
 @layer base {
@@ -143,11 +146,12 @@
 }
 
 @utility shadow-card {
-  box-shadow: 0 1px 3px color-mix(in oklch, black 22%, transparent);
+  box-shadow: 0 1px 2px color-mix(in oklch, oklch(0.24 0.03 255) 6%, transparent),
+              0 1px 3px color-mix(in oklch, oklch(0.24 0.03 255) 5%, transparent);
 }
 
 @utility shadow-card-hover {
-  box-shadow: 0 6px 20px color-mix(in oklch, black 30%, transparent);
+  box-shadow: 0 6px 20px color-mix(in oklch, oklch(0.24 0.03 255) 12%, transparent);
 }
 
 /* Chip cuadrado redondeado para íconos de KPI, con fondo tenue del color dado.

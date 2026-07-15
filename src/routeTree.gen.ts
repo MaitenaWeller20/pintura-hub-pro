@@ -16,6 +16,7 @@ import { Route as AuthenticatedUsuariosRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedStockRouteImport } from './routes/_authenticated/stock'
 import { Route as AuthenticatedReportesRouteImport } from './routes/_authenticated/reportes'
 import { Route as AuthenticatedRemitosRouteImport } from './routes/_authenticated/remitos'
+import { Route as AuthenticatedProveedoresRouteImport } from './routes/_authenticated/proveedores'
 import { Route as AuthenticatedPagosRouteImport } from './routes/_authenticated/pagos'
 import { Route as AuthenticatedFacturacionRouteImport } from './routes/_authenticated/facturacion'
 import { Route as AuthenticatedCuentasCorrientesRouteImport } from './routes/_authenticated/cuentas-corrientes'
@@ -24,8 +25,10 @@ import { Route as AuthenticatedCajaRouteImport } from './routes/_authenticated/c
 import { Route as AuthenticatedArqueoRouteImport } from './routes/_authenticated/arqueo'
 import { Route as AuthenticatedVentasIndexRouteImport } from './routes/_authenticated/ventas.index'
 import { Route as AuthenticatedProductosIndexRouteImport } from './routes/_authenticated/productos.index'
+import { Route as AuthenticatedComprasIndexRouteImport } from './routes/_authenticated/compras.index'
 import { Route as AuthenticatedVentasNuevaRouteImport } from './routes/_authenticated/ventas.nueva'
 import { Route as AuthenticatedProductosImportarRouteImport } from './routes/_authenticated/productos.importar'
+import { Route as AuthenticatedComprasNuevaRouteImport } from './routes/_authenticated/compras.nueva'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -61,6 +64,12 @@ const AuthenticatedRemitosRoute = AuthenticatedRemitosRouteImport.update({
   path: '/remitos',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedProveedoresRoute =
+  AuthenticatedProveedoresRouteImport.update({
+    id: '/proveedores',
+    path: '/proveedores',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedPagosRoute = AuthenticatedPagosRouteImport.update({
   id: '/pagos',
   path: '/pagos',
@@ -105,6 +114,12 @@ const AuthenticatedProductosIndexRoute =
     path: '/productos/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedComprasIndexRoute =
+  AuthenticatedComprasIndexRouteImport.update({
+    id: '/compras/',
+    path: '/compras/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedVentasNuevaRoute =
   AuthenticatedVentasNuevaRouteImport.update({
     id: '/ventas/nueva',
@@ -117,6 +132,12 @@ const AuthenticatedProductosImportarRoute =
     path: '/productos/importar',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedComprasNuevaRoute =
+  AuthenticatedComprasNuevaRouteImport.update({
+    id: '/compras/nueva',
+    path: '/compras/nueva',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -127,12 +148,15 @@ export interface FileRoutesByFullPath {
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
   '/facturacion': typeof AuthenticatedFacturacionRoute
   '/pagos': typeof AuthenticatedPagosRoute
+  '/proveedores': typeof AuthenticatedProveedoresRoute
   '/remitos': typeof AuthenticatedRemitosRoute
   '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
   '/usuarios': typeof AuthenticatedUsuariosRoute
+  '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
+  '/compras/': typeof AuthenticatedComprasIndexRoute
   '/productos/': typeof AuthenticatedProductosIndexRoute
   '/ventas/': typeof AuthenticatedVentasIndexRoute
 }
@@ -144,13 +168,16 @@ export interface FileRoutesByTo {
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
   '/facturacion': typeof AuthenticatedFacturacionRoute
   '/pagos': typeof AuthenticatedPagosRoute
+  '/proveedores': typeof AuthenticatedProveedoresRoute
   '/remitos': typeof AuthenticatedRemitosRoute
   '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
   '/usuarios': typeof AuthenticatedUsuariosRoute
   '/': typeof AuthenticatedIndexRoute
+  '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
+  '/compras': typeof AuthenticatedComprasIndexRoute
   '/productos': typeof AuthenticatedProductosIndexRoute
   '/ventas': typeof AuthenticatedVentasIndexRoute
 }
@@ -164,13 +191,16 @@ export interface FileRoutesById {
   '/_authenticated/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
   '/_authenticated/facturacion': typeof AuthenticatedFacturacionRoute
   '/_authenticated/pagos': typeof AuthenticatedPagosRoute
+  '/_authenticated/proveedores': typeof AuthenticatedProveedoresRoute
   '/_authenticated/remitos': typeof AuthenticatedRemitosRoute
   '/_authenticated/reportes': typeof AuthenticatedReportesRoute
   '/_authenticated/stock': typeof AuthenticatedStockRoute
   '/_authenticated/usuarios': typeof AuthenticatedUsuariosRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/compras/nueva': typeof AuthenticatedComprasNuevaRoute
   '/_authenticated/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/_authenticated/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
+  '/_authenticated/compras/': typeof AuthenticatedComprasIndexRoute
   '/_authenticated/productos/': typeof AuthenticatedProductosIndexRoute
   '/_authenticated/ventas/': typeof AuthenticatedVentasIndexRoute
 }
@@ -185,12 +215,15 @@ export interface FileRouteTypes {
     | '/cuentas-corrientes'
     | '/facturacion'
     | '/pagos'
+    | '/proveedores'
     | '/remitos'
     | '/reportes'
     | '/stock'
     | '/usuarios'
+    | '/compras/nueva'
     | '/productos/importar'
     | '/ventas/nueva'
+    | '/compras/'
     | '/productos/'
     | '/ventas/'
   fileRoutesByTo: FileRoutesByTo
@@ -202,13 +235,16 @@ export interface FileRouteTypes {
     | '/cuentas-corrientes'
     | '/facturacion'
     | '/pagos'
+    | '/proveedores'
     | '/remitos'
     | '/reportes'
     | '/stock'
     | '/usuarios'
     | '/'
+    | '/compras/nueva'
     | '/productos/importar'
     | '/ventas/nueva'
+    | '/compras'
     | '/productos'
     | '/ventas'
   id:
@@ -221,13 +257,16 @@ export interface FileRouteTypes {
     | '/_authenticated/cuentas-corrientes'
     | '/_authenticated/facturacion'
     | '/_authenticated/pagos'
+    | '/_authenticated/proveedores'
     | '/_authenticated/remitos'
     | '/_authenticated/reportes'
     | '/_authenticated/stock'
     | '/_authenticated/usuarios'
     | '/_authenticated/'
+    | '/_authenticated/compras/nueva'
     | '/_authenticated/productos/importar'
     | '/_authenticated/ventas/nueva'
+    | '/_authenticated/compras/'
     | '/_authenticated/productos/'
     | '/_authenticated/ventas/'
   fileRoutesById: FileRoutesById
@@ -288,6 +327,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRemitosRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/proveedores': {
+      id: '/_authenticated/proveedores'
+      path: '/proveedores'
+      fullPath: '/proveedores'
+      preLoaderRoute: typeof AuthenticatedProveedoresRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/pagos': {
       id: '/_authenticated/pagos'
       path: '/pagos'
@@ -344,6 +390,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProductosIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/compras/': {
+      id: '/_authenticated/compras/'
+      path: '/compras'
+      fullPath: '/compras/'
+      preLoaderRoute: typeof AuthenticatedComprasIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/ventas/nueva': {
       id: '/_authenticated/ventas/nueva'
       path: '/ventas/nueva'
@@ -358,6 +411,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProductosImportarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/compras/nueva': {
+      id: '/_authenticated/compras/nueva'
+      path: '/compras/nueva'
+      fullPath: '/compras/nueva'
+      preLoaderRoute: typeof AuthenticatedComprasNuevaRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -368,13 +428,16 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCuentasCorrientesRoute: typeof AuthenticatedCuentasCorrientesRoute
   AuthenticatedFacturacionRoute: typeof AuthenticatedFacturacionRoute
   AuthenticatedPagosRoute: typeof AuthenticatedPagosRoute
+  AuthenticatedProveedoresRoute: typeof AuthenticatedProveedoresRoute
   AuthenticatedRemitosRoute: typeof AuthenticatedRemitosRoute
   AuthenticatedReportesRoute: typeof AuthenticatedReportesRoute
   AuthenticatedStockRoute: typeof AuthenticatedStockRoute
   AuthenticatedUsuariosRoute: typeof AuthenticatedUsuariosRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedComprasNuevaRoute: typeof AuthenticatedComprasNuevaRoute
   AuthenticatedProductosImportarRoute: typeof AuthenticatedProductosImportarRoute
   AuthenticatedVentasNuevaRoute: typeof AuthenticatedVentasNuevaRoute
+  AuthenticatedComprasIndexRoute: typeof AuthenticatedComprasIndexRoute
   AuthenticatedProductosIndexRoute: typeof AuthenticatedProductosIndexRoute
   AuthenticatedVentasIndexRoute: typeof AuthenticatedVentasIndexRoute
 }
@@ -386,13 +449,16 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCuentasCorrientesRoute: AuthenticatedCuentasCorrientesRoute,
   AuthenticatedFacturacionRoute: AuthenticatedFacturacionRoute,
   AuthenticatedPagosRoute: AuthenticatedPagosRoute,
+  AuthenticatedProveedoresRoute: AuthenticatedProveedoresRoute,
   AuthenticatedRemitosRoute: AuthenticatedRemitosRoute,
   AuthenticatedReportesRoute: AuthenticatedReportesRoute,
   AuthenticatedStockRoute: AuthenticatedStockRoute,
   AuthenticatedUsuariosRoute: AuthenticatedUsuariosRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedComprasNuevaRoute: AuthenticatedComprasNuevaRoute,
   AuthenticatedProductosImportarRoute: AuthenticatedProductosImportarRoute,
   AuthenticatedVentasNuevaRoute: AuthenticatedVentasNuevaRoute,
+  AuthenticatedComprasIndexRoute: AuthenticatedComprasIndexRoute,
   AuthenticatedProductosIndexRoute: AuthenticatedProductosIndexRoute,
   AuthenticatedVentasIndexRoute: AuthenticatedVentasIndexRoute,
 }

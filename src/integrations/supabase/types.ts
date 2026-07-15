@@ -321,6 +321,148 @@ export type Database = {
           },
         ]
       }
+      compra_items: {
+        Row: {
+          cantidad: number
+          codigo: string
+          compra_id: string
+          costo_unitario_sin_iva: number
+          descripcion: string
+          id: string
+          iva_monto: number
+          iva_porcentaje: number
+          producto_id: string
+          subtotal_con_iva: number
+          subtotal_sin_iva: number
+        }
+        Insert: {
+          cantidad: number
+          codigo: string
+          compra_id: string
+          costo_unitario_sin_iva: number
+          descripcion: string
+          id?: string
+          iva_monto: number
+          iva_porcentaje: number
+          producto_id: string
+          subtotal_con_iva: number
+          subtotal_sin_iva: number
+        }
+        Update: {
+          cantidad?: number
+          codigo?: string
+          compra_id?: string
+          costo_unitario_sin_iva?: number
+          descripcion?: string
+          id?: string
+          iva_monto?: number
+          iva_porcentaje?: number
+          producto_id?: string
+          subtotal_con_iva?: number
+          subtotal_sin_iva?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compra_items_compra_id_fkey"
+            columns: ["compra_id"]
+            isOneToOne: false
+            referencedRelation: "compras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compra_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      compras: {
+        Row: {
+          caja_sesion_id: string | null
+          condicion: string
+          created_at: string
+          estado: string
+          fecha_carga: string
+          fecha_comprobante: string
+          fecha_vencimiento: string | null
+          id: string
+          iva_total: number
+          numero_comprobante: string
+          observaciones: string | null
+          percepciones: number
+          proveedor_id: string
+          subtotal_sin_iva: number
+          sucursal_id: string
+          tipo_comprobante: string
+          total: number
+          usuario_id: string
+        }
+        Insert: {
+          caja_sesion_id?: string | null
+          condicion: string
+          created_at?: string
+          estado?: string
+          fecha_carga?: string
+          fecha_comprobante: string
+          fecha_vencimiento?: string | null
+          id?: string
+          iva_total?: number
+          numero_comprobante: string
+          observaciones?: string | null
+          percepciones?: number
+          proveedor_id: string
+          subtotal_sin_iva?: number
+          sucursal_id: string
+          tipo_comprobante?: string
+          total?: number
+          usuario_id: string
+        }
+        Update: {
+          caja_sesion_id?: string | null
+          condicion?: string
+          created_at?: string
+          estado?: string
+          fecha_carga?: string
+          fecha_comprobante?: string
+          fecha_vencimiento?: string | null
+          id?: string
+          iva_total?: number
+          numero_comprobante?: string
+          observaciones?: string | null
+          percepciones?: number
+          proveedor_id?: string
+          subtotal_sin_iva?: number
+          sucursal_id?: string
+          tipo_comprobante?: string
+          total?: number
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compras_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compras_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compras_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       comprobante_secuencias: {
         Row: {
           id: string
@@ -606,6 +748,183 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      proveedor_cc_movimientos: {
+        Row: {
+          compra_id: string | null
+          created_at: string
+          descripcion: string | null
+          estado: string
+          forma_pago: string | null
+          id: string
+          monto: number
+          pago_id: string | null
+          proveedor_id: string
+          sucursal_id: string
+          tipo: Database["public"]["Enums"]["proveedor_cc_tipo"]
+          usuario_id: string | null
+        }
+        Insert: {
+          compra_id?: string | null
+          created_at?: string
+          descripcion?: string | null
+          estado?: string
+          forma_pago?: string | null
+          id?: string
+          monto: number
+          pago_id?: string | null
+          proveedor_id: string
+          sucursal_id: string
+          tipo: Database["public"]["Enums"]["proveedor_cc_tipo"]
+          usuario_id?: string | null
+        }
+        Update: {
+          compra_id?: string | null
+          created_at?: string
+          descripcion?: string | null
+          estado?: string
+          forma_pago?: string | null
+          id?: string
+          monto?: number
+          pago_id?: string | null
+          proveedor_id?: string
+          sucursal_id?: string
+          tipo?: Database["public"]["Enums"]["proveedor_cc_tipo"]
+          usuario_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proveedor_cc_movimientos_compra_id_fkey"
+            columns: ["compra_id"]
+            isOneToOne: true
+            referencedRelation: "compras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_cc_movimientos_pago_id_fkey"
+            columns: ["pago_id"]
+            isOneToOne: true
+            referencedRelation: "proveedor_pagos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_cc_movimientos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_cc_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proveedor_pagos: {
+        Row: {
+          caja_sesion_id: string | null
+          created_at: string
+          detalle: Json
+          fecha: string
+          forma_pago: string
+          id: string
+          monto: number
+          proveedor_id: string
+          sucursal_id: string
+          usuario_id: string
+        }
+        Insert: {
+          caja_sesion_id?: string | null
+          created_at?: string
+          detalle?: Json
+          fecha?: string
+          forma_pago: string
+          id?: string
+          monto: number
+          proveedor_id: string
+          sucursal_id: string
+          usuario_id: string
+        }
+        Update: {
+          caja_sesion_id?: string | null
+          created_at?: string
+          detalle?: Json
+          fecha?: string
+          forma_pago?: string
+          id?: string
+          monto?: number
+          proveedor_id?: string
+          sucursal_id?: string
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proveedor_pagos_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_pagos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_pagos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proveedores: {
+        Row: {
+          activo: boolean
+          condicion_cta_cte: boolean
+          condicion_iva: Database["public"]["Enums"]["tipo_cliente"]
+          created_at: string
+          cuit_dni: string | null
+          direccion: string | null
+          email: string | null
+          id: string
+          razon_social: string
+          telefono: string | null
+          updated_at: string
+        }
+        Insert: {
+          activo?: boolean
+          condicion_cta_cte?: boolean
+          condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
+          created_at?: string
+          cuit_dni?: string | null
+          direccion?: string | null
+          email?: string | null
+          id?: string
+          razon_social: string
+          telefono?: string | null
+          updated_at?: string
+        }
+        Update: {
+          activo?: boolean
+          condicion_cta_cte?: boolean
+          condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
+          created_at?: string
+          cuit_dni?: string | null
+          direccion?: string | null
+          email?: string | null
+          id?: string
+          razon_social?: string
+          telefono?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       puntos_venta: {
         Row: {
@@ -1422,6 +1741,7 @@ export type Database = {
         | "MERCADO_PAGO"
         | "CHEQUE"
         | "CTA_CTE"
+      proveedor_cc_tipo: "DEBITO" | "CREDITO"
       sucursal_codigo: "OHIGGINS" | "GENERALPAZ"
       tipo_cliente:
         | "CONSUMIDOR_FINAL"
@@ -1444,6 +1764,8 @@ export type Database = {
         | "TRANSFERENCIA_IN"
         | "INGRESO_INICIAL"
         | "ANULACION_VENTA"
+        | "COMPRA"
+        | "ANULACION_COMPRA"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1592,6 +1914,7 @@ export const Constants = {
         "CHEQUE",
         "CTA_CTE",
       ],
+      proveedor_cc_tipo: ["DEBITO", "CREDITO"],
       sucursal_codigo: ["OHIGGINS", "GENERALPAZ"],
       tipo_cliente: [
         "CONSUMIDOR_FINAL",
@@ -1616,6 +1939,8 @@ export const Constants = {
         "TRANSFERENCIA_IN",
         "INGRESO_INICIAL",
         "ANULACION_VENTA",
+        "COMPRA",
+        "ANULACION_COMPRA",
       ],
     },
   },

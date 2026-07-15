@@ -826,8 +826,10 @@ export type Database = {
       proveedor_pagos: {
         Row: {
           caja_sesion_id: string | null
+          compra_id: string | null
           created_at: string
           detalle: Json
+          estado: string
           fecha: string
           forma_pago: string
           id: string
@@ -838,8 +840,10 @@ export type Database = {
         }
         Insert: {
           caja_sesion_id?: string | null
+          compra_id?: string | null
           created_at?: string
           detalle?: Json
+          estado?: string
           fecha?: string
           forma_pago: string
           id?: string
@@ -850,8 +854,10 @@ export type Database = {
         }
         Update: {
           caja_sesion_id?: string | null
+          compra_id?: string | null
           created_at?: string
           detalle?: Json
+          estado?: string
           fecha?: string
           forma_pago?: string
           id?: string
@@ -866,6 +872,13 @@ export type Database = {
             columns: ["caja_sesion_id"]
             isOneToOne: false
             referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_pagos_compra_id_fkey"
+            columns: ["compra_id"]
+            isOneToOne: false
+            referencedRelation: "compras"
             referencedColumns: ["id"]
           },
           {
@@ -1641,6 +1654,8 @@ export type Database = {
           cantidad_nueva: number
         }[]
       }
+      anular_compra: { Args: { p_compra_id: string }; Returns: undefined }
+      anular_pago_proveedor: { Args: { p_pago_id: string }; Returns: undefined }
       anular_venta: {
         Args: { p_venta_id: string }
         Returns: {
@@ -1660,6 +1675,24 @@ export type Database = {
           total_contado: number
           total_diferencia: number
           total_esperado: number
+        }[]
+      }
+      crear_compra: {
+        Args: {
+          p_condicion?: string
+          p_fecha_comprobante: string
+          p_fecha_vencimiento: string
+          p_items: Json
+          p_numero: string
+          p_observaciones?: string
+          p_pagos: Json
+          p_percepciones?: number
+          p_proveedor_id: string
+          p_sucursal_id: string
+          p_tipo_comprobante: string
+        }
+        Returns: {
+          compra_id: string
         }[]
       }
       crear_venta: {
@@ -1698,6 +1731,7 @@ export type Database = {
         }
         Returns: string
       }
+      proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
       registrar_cobranza: {
         Args: {
           p_cliente_id: string
@@ -1719,6 +1753,16 @@ export type Database = {
           p_monto: number
           p_sesion_id: string
           p_tipo: Database["public"]["Enums"]["caja_mov_tipo"]
+        }
+        Returns: string
+      }
+      registrar_pago_proveedor: {
+        Args: {
+          p_detalle?: Json
+          p_forma_pago: string
+          p_monto: number
+          p_proveedor_id: string
+          p_sucursal_id: string
         }
         Returns: string
       }

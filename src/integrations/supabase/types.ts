@@ -1310,6 +1310,18 @@ export type Database = {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
       }
+      ajustar_stock: {
+        Args: {
+          p_motivo: string
+          p_nueva_cantidad: number
+          p_producto_id: string
+          p_sucursal_id: string
+        }
+        Returns: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+        }[]
+      }
       anular_venta: {
         Args: { p_venta_id: string }
         Returns: {

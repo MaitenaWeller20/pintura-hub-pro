@@ -40,12 +40,24 @@ function Dashboard() {
       if (!cu!.isAdmin && cu!.sucursal) cobrQ = cobrQ.eq("sucursal_id", cu!.sucursal.id);
       const cobranzasHoy = ((await cobrQ).data ?? []) as any[];
 
-      // Stock bajo
+      // Stock bajo. El mínimo es POR SUCURSAL (igual que en /stock), así que primero
+      // marcamos las filas bajas (cantidad <= mínimo) y recién después deduplicamos por
+      // producto, quedándonos con la sucursal más crítica. Así un producto con stock
+      // bajo en las dos sucursales aparece una sola vez (no duplicado, y el KPI cuenta
+      // productos) pero SIGUE alertando aunque el total entre sucursales supere el mínimo.
       let stockQ = supabase.from("stock_sucursal")
         .select("cantidad, sucursal_id, producto:productos!inner(id, nombre, codigo, stock_minimo)");
       if (!cu!.isAdmin && cu!.sucursal) stockQ = stockQ.eq("sucursal_id", cu!.sucursal.id);
       const stocks = ((await stockQ).data ?? []) as any[];
-      const stockBajo = stocks.filter((s) => Number(s.cantidad) <= Number(s.producto?.stock_minimo ?? 0));
+      const bajasPorFila = stocks.filter((s) => Number(s.cantidad) <= Number(s.producto?.stock_minimo ?? 0));
+      const peorPorProducto = new Map<string, { producto: any; cantidad: number }>();
+      for (const s of bajasPorFila) {
+        const pid = s.producto?.id;
+        if (!pid) continue;
+        const prev = peorPorProducto.get(pid);
+        if (!prev || Number(s.cantidad) < prev.cantidad) peorPorProducto.set(pid, { producto: s.producto, cantidad: Number(s.cantidad) });
+      }
+      const stockBajo = [...peorPorProducto.values()].sort((a, b) => a.cantidad - b.cantidad);
 
       // Serie 7 días (para sparkline).
       const dayKey = (d: string) => new Date(d).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit" });

@@ -148,6 +148,42 @@ export function docNroAfip(cuitDni: string | null | undefined): number {
 }
 
 /**
+ * Valida un CUIT argentino con el dígito verificador (módulo 11).
+ * Un CUIT válido tiene 11 dígitos; el último es el verificador calculado sobre
+ * los primeros 10 con los coeficientes [5,4,3,2,7,6,5,4,3,2].
+ */
+export function cuitValido(valor: string | null | undefined): boolean {
+  const limpio = (valor ?? "").replace(/\D/g, "");
+  if (limpio.length !== 11) return false;
+  const coef = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  let suma = 0;
+  for (let i = 0; i < 10; i++) suma += Number(limpio[i]) * coef[i];
+  const resto = suma % 11;
+  let verificador = 11 - resto;
+  if (verificador === 11) verificador = 0;
+  else if (verificador === 10) verificador = 9;
+  return verificador === Number(limpio[10]);
+}
+
+/**
+ * Valida el identificador de un cliente para el form.
+ *   - vacío         -> válido (consumidor final sin identificar)
+ *   - 7 u 8 dígitos -> DNI, se acepta sin chequeo de verificador
+ *   - 11 dígitos    -> CUIT, debe pasar el módulo 11
+ *   - cualquier otra longitud -> inválido
+ * Devuelve el mensaje de error, o null si es válido.
+ */
+export function validarCuitDni(valor: string | null | undefined): string | null {
+  const limpio = (valor ?? "").replace(/\D/g, "");
+  if (limpio.length === 0) return null;
+  if (limpio.length === 7 || limpio.length === 8) return null;
+  if (limpio.length === 11) {
+    return cuitValido(limpio) ? null : "El CUIT no es válido (dígito verificador incorrecto).";
+  }
+  return "Ingresá un CUIT (11 dígitos) o un DNI (7 u 8 dígitos).";
+}
+
+/**
  * CondicionIVAReceptorId — obligatorio desde 2025 (RG 5616).
  * Sin esto AFIP rechaza el comprobante.
  */

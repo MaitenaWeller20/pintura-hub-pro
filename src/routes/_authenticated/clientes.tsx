@@ -16,6 +16,7 @@ import { StatusPill } from "@/components/app/status-pill";
 import { toast } from "sonner";
 import { Plus, Pencil, Receipt } from "lucide-react";
 import { tipoClienteLabel } from "@/lib/format";
+import { validarCuitDni } from "@/lib/fiscal/codigos";
 
 export const Route = createFileRoute("/_authenticated/clientes")({
   component: ClientesPage,
@@ -101,9 +102,15 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
     condicion_cta_cte: false,
   });
   const set = (k:string,v:any) => setForm((f:any)=>({ ...f, [k]: v }));
+  const cuitError = validarCuitDni(form.cuit_dni);
   const m = useMutation({
     mutationFn: async () => {
-      const payload = { ...form, sucursal_habitual_id: form.sucursal_habitual_id || null };
+      const errCuit = validarCuitDni(form.cuit_dni);
+      if (errCuit) throw new Error(errCuit);
+      // Se guarda normalizado (sólo dígitos); vacío -> null para que el índice
+      // único parcial lo ignore (consumidor final sin identificar).
+      const cuitNorm = (form.cuit_dni ?? "").replace(/\D/g, "");
+      const payload = { ...form, cuit_dni: cuitNorm || null, sucursal_habitual_id: form.sucursal_habitual_id || null };
       delete payload.sucursal; delete payload.created_at; delete payload.updated_at; delete payload.es_generico; delete payload.activo;
       if (editing) {
         const { error } = await supabase.from("clientes").update(payload).eq("id", editing.id);
@@ -114,7 +121,12 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
       }
     },
     onSuccess: () => { toast.success("Cliente guardado"); onSaved(); },
-    onError: (e:any) => toast.error(e.message),
+    onError: (e:any) => toast.error(
+      // El índice único de CUIT choca con código 23505; mensaje legible.
+      e?.code === "23505" || /duplicate key|uq_clientes_cuit/.test(e?.message ?? "")
+        ? "Ya existe un cliente con ese CUIT/DNI."
+        : e.message,
+    ),
   });
 
   return (
@@ -123,7 +135,12 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
         <DialogHeader><DialogTitle>{editing ? "Editar" : "Nuevo"} cliente</DialogTitle></DialogHeader>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="col-span-2"><Label>Razón social / Nombre *</Label><Input value={form.razon_social} onChange={(e)=>set("razon_social", e.target.value)}/></div>
-          <div><Label>CUIT / DNI</Label><Input value={form.cuit_dni ?? ""} onChange={(e)=>set("cuit_dni", e.target.value)}/></div>
+          <div>
+            <Label>CUIT / DNI</Label>
+            <Input value={form.cuit_dni ?? ""} onChange={(e)=>set("cuit_dni", e.target.value)}
+              className={cuitError ? "border-destructive" : undefined}/>
+            {cuitError && <p className="text-xs text-destructive mt-1">{cuitError}</p>}
+          </div>
           <div>
             <Label>Tipo impositivo</Label>
             <Select value={form.tipo} onValueChange={(v)=>set("tipo", v)}>
@@ -163,7 +180,7 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={()=>m.mutate()} disabled={m.isPending || !form.razon_social.trim()}>Guardar</Button>
+          <Button onClick={()=>m.mutate()} disabled={m.isPending || !form.razon_social.trim() || !!cuitError}>Guardar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

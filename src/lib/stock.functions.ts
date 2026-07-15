@@ -121,20 +121,16 @@ export const ajusteStock = createServerFn({ method: "POST" })
     const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
     if (!isAdmin) throw new Error("Sólo admin puede ajustar stock");
 
-    const { data: row } = await supabase.from("stock_sucursal").select("cantidad")
-      .eq("producto_id", data.producto_id).eq("sucursal_id", data.sucursal_id).maybeSingle();
-    const anterior = Number(row?.cantidad ?? 0);
-
-    await supabase.from("stock_sucursal").upsert({
-      producto_id: data.producto_id, sucursal_id: data.sucursal_id, cantidad: data.nueva_cantidad,
-    }, { onConflict: "producto_id,sucursal_id" });
-
-    await supabase.from("stock_movimientos").insert({
-      producto_id: data.producto_id, sucursal_id: data.sucursal_id,
-      tipo: "AJUSTE", cantidad: data.nueva_cantidad - anterior,
-      cantidad_anterior: anterior, cantidad_nueva: data.nueva_cantidad,
-      usuario_id: userId, motivo: data.motivo,
+    // Ajuste atómico: la RPC bloquea la fila (FOR UPDATE) y escribe stock +
+    // movimiento en una transacción. Antes eran 3 statements sueltos (lost-update
+    // si una venta concurrente descontaba stock entre el read y el write).
+    const { error } = await supabase.rpc("ajustar_stock", {
+      p_producto_id: data.producto_id,
+      p_sucursal_id: data.sucursal_id,
+      p_nueva_cantidad: data.nueva_cantidad,
+      p_motivo: data.motivo,
     });
+    if (error) throw new Error(error.message);
 
     return { ok: true };
   });

@@ -451,6 +451,13 @@ export type Database = {
             foreignKeyName: "compras_proveedor_id_fkey"
             columns: ["proveedor_id"]
             isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "compras_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
             referencedRelation: "proveedores"
             referencedColumns: ["id"]
           },
@@ -811,6 +818,13 @@ export type Database = {
             foreignKeyName: "proveedor_cc_movimientos_proveedor_id_fkey"
             columns: ["proveedor_id"]
             isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "proveedor_cc_movimientos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
             referencedRelation: "proveedores"
             referencedColumns: ["id"]
           },
@@ -880,6 +894,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "compras"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_pagos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
           },
           {
             foreignKeyName: "proveedor_pagos_proveedor_id_fkey"
@@ -1633,6 +1654,17 @@ export type Database = {
           razon_social?: string | null
           tiene_certificado?: never
           tiene_clave?: never
+        }
+        Relationships: []
+      }
+      proveedor_cc_saldos: {
+        Row: {
+          cuit_dni: string | null
+          proveedor_id: string | null
+          razon_social: string | null
+          saldo: number | null
+          total_debe: number | null
+          total_pagado: number | null
         }
         Relationships: []
       }

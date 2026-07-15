@@ -132,21 +132,15 @@ function ProveedoresCtaCte() {
   const [sel, setSel] = useState<any>(null);
   const [openPago, setOpenPago] = useState(false);
 
-  // Saldo por proveedor derivado del libro (Σ DEBITO − Σ CREDITO, confirmados).
+  // Saldo por proveedor desde la vista (agrega en SQL: no se trunca por paginación
+  // y muestra también a los proveedores con cta cte sin movimientos aún).
   const { data: saldos = [] } = useQuery({
     queryKey: ["prov-cc-saldos"],
-    queryFn: async () => {
-      const { data } = await supabase.from("proveedor_cc_movimientos")
-        .select("proveedor_id, tipo, monto, estado, proveedor:proveedores(razon_social, cuit_dni)")
-        .eq("estado", "CONFIRMADO");
-      const byProv = new Map<string, any>();
-      for (const m of (data ?? []) as any[]) {
-        const p = byProv.get(m.proveedor_id) ?? { proveedor_id: m.proveedor_id, razon_social: m.proveedor?.razon_social, cuit_dni: m.proveedor?.cuit_dni, debe: 0, pagado: 0 };
-        if (m.tipo === "DEBITO") p.debe += Number(m.monto); else p.pagado += Number(m.monto);
-        byProv.set(m.proveedor_id, p);
-      }
-      return [...byProv.values()].sort((a, b) => (a.razon_social ?? "").localeCompare(b.razon_social ?? ""));
-    },
+    queryFn: async () => ((await supabase.from("proveedor_cc_saldos")
+      .select("*").order("razon_social")).data ?? []).map((p: any) => ({
+        proveedor_id: p.proveedor_id, razon_social: p.razon_social, cuit_dni: p.cuit_dni,
+        debe: Number(p.total_debe), pagado: Number(p.total_pagado),
+      })),
   });
 
   const filtered = useMemo(() => saldos.filter((p: any) =>
@@ -193,6 +187,7 @@ function ProveedoresCtaCte() {
 
 function DetalleProveedor({ proveedor, onClose, onPagar }: any) {
   const qc = useQueryClient();
+  const { data: cu } = useCurrentUser();
   const { data: movs = [] } = useQuery({
     queryKey: ["prov-cc-mov", proveedor.id],
     queryFn: async () => ((await supabase.from("proveedor_cc_movimientos")
@@ -247,7 +242,7 @@ function DetalleProveedor({ proveedor, onClose, onPagar }: any) {
                 <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                 <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                 <TableCell>
-                  {m.tipo === "CREDITO" && !anulado && m.pago_id && (
+                  {cu?.isAdmin && m.tipo === "CREDITO" && !anulado && m.pago_id && (
                     <Button size="sm" variant="ghost" onClick={() => anularPago.mutate(m.pago_id)} title="Anular pago">×</Button>
                   )}
                 </TableCell>

@@ -94,13 +94,17 @@ function NuevaCompra() {
   const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i));
 
   const totales = useMemo(() => {
+    // Redondeo por ítem, igual que crear_compra en el server (ROUND(sub,2), ROUND(iva,2)),
+    // para que el total mostrado coincida exactamente con el que se guarda/exige.
+    const r2 = (n: number) => Math.round(n * 100) / 100;
     let sub = 0, iva = 0;
     items.forEach(it => {
       const costo = it.costo_unitario_sin_iva ?? 0;
-      const base = costo * (it.cantidad || 0);
-      sub += base; iva += base * ((it.iva_porcentaje || 0) / 100);
+      const subItem = r2(costo * (it.cantidad || 0));
+      sub += subItem;
+      iva += r2(subItem * (it.iva_porcentaje || 0) / 100);
     });
-    const total = sub + iva + Number(percepciones || 0);
+    const total = r2(sub + iva + r2(Number(percepciones || 0)));
     const pagado = esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0);
     return { sub, iva, total, pagado, saldo: total - pagado };
   }, [items, percepciones, pagos, esCtaCte]);
@@ -144,7 +148,7 @@ function NuevaCompra() {
   });
 
   const pagosOk = esCtaCte || Math.abs(totales.pagado - totales.total) <= 0.01;
-  const canSave = !!effSucursal && !!proveedorId && !!numero.trim() && items.length > 0 &&
+  const canSave = !!effSucursal && !!proveedorId && !!numero.trim() && !!fechaComp && items.length > 0 &&
     items.every(it => (it.cantidad || 0) > 0 && (it.costo_unitario_sin_iva ?? -1) >= 0) && pagosOk;
 
   return (

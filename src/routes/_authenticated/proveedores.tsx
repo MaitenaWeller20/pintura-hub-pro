@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Plus, Pencil } from "lucide-react";
 import { tipoClienteLabel } from "@/lib/format";
 import { validarCuitDni } from "@/lib/fiscal/codigos";
+import { useCurrentUser } from "@/hooks/use-current-user";
 
 export const Route = createFileRoute("/_authenticated/proveedores")({
   component: ProveedoresPage,
@@ -81,6 +82,7 @@ function ProveedoresPage() {
 }
 
 function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
+  const { data: cu } = useCurrentUser();
   const [form, setForm] = useState<any>(editing ?? {
     razon_social: "", cuit_dni: "", condicion_iva: "RESPONSABLE_INSCRIPTO",
     telefono: "", email: "", direccion: "", condicion_cta_cte: false, activo: true,
@@ -138,8 +140,10 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
           <div><Label>Email</Label><Input value={form.email ?? ""} onChange={(e) => set("email", e.target.value)} /></div>
           <div className="col-span-2"><Label>Dirección</Label><Input value={form.direccion ?? ""} onChange={(e) => set("direccion", e.target.value)} /></div>
           <label className="col-span-2 flex items-center gap-2 text-sm border border-border rounded p-2 bg-muted/30">
-            <input type="checkbox" checked={!!form.condicion_cta_cte} onChange={(e) => set("condicion_cta_cte", e.target.checked)} />
-            <span><strong>Proveedor con Cuenta Corriente</strong> — se le puede comprar a crédito y llevar la deuda. Gestionar en Cuentas corrientes → Proveedores.</span>
+            <input type="checkbox" checked={!!form.condicion_cta_cte} disabled={!cu?.isAdmin}
+              onChange={(e) => set("condicion_cta_cte", e.target.checked)} />
+            <span><strong>Proveedor con Cuenta Corriente</strong> — se le puede comprar a crédito y llevar la deuda. Gestionar en Cuentas corrientes → Proveedores.
+              {!cu?.isAdmin && <span className="text-muted-foreground"> (sólo un administrador puede habilitarla)</span>}</span>
           </label>
           {editing && (
             <label className="col-span-2 flex items-center gap-2 text-sm">

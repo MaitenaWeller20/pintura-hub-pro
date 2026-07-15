@@ -35,6 +35,8 @@ export const Route = createFileRoute("/_authenticated/arqueo")({
 
 // Formas de pago que son plata en la caja (todas menos cuenta corriente).
 const FORMAS = ["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"] as const;
+type CajaForma = { entra: number; sale: number; neto: number };
+const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
 const TIPO_MOV_LABEL: Record<string, string> = { INGRESO: "Ingreso", GASTO: "Gasto", RETIRO: "Retiro", INICIAL: "Fondo inicial" };
 
 function ArqueoPage() {
@@ -130,12 +132,12 @@ function CajaAbierta({ sesion, sucId, onChange }: { sesion: any; sucId: string; 
     onChange();
   };
 
-  // Esperado en vivo por forma de pago.
+  // Esperado en vivo por forma de pago: { forma: { entra, sale, neto } }.
   const { data: esperado = {} } = useQuery({
     queryKey: ["caja-esperado", sesion.id],
     queryFn: async () => {
       const { data } = await supabase.rpc("caja_esperado", { _sesion_id: sesion.id });
-      return (data ?? {}) as Record<string, number>;
+      return (data ?? {}) as Record<string, CajaForma>;
     },
   });
 
@@ -146,21 +148,24 @@ function CajaAbierta({ sesion, sucId, onChange }: { sesion: any; sucId: string; 
   });
 
   const totalEsperado = useMemo(
-    () => FORMAS.reduce((a, f) => a + Number(esperado[f] ?? 0), 0),
+    () => FORMAS.reduce((a, f) => a + neto(esperado[f]), 0),
     [esperado],
   );
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {FORMAS.filter((f) => Number(esperado[f] ?? 0) !== 0 || f === "EFECTIVO").map((f) => (
+        {FORMAS.filter((f) => neto(esperado[f]) !== 0 || Number(esperado[f]?.sale ?? 0) !== 0 || f === "EFECTIVO").map((f) => (
           <SectionCard key={f} className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">{formaPagoLabel[f]}</span>
               <Wallet className="h-4 w-4 text-muted-foreground" />
             </div>
-            <div className="text-xl font-bold tabular-nums mt-1">{fmtMoney(esperado[f] ?? 0)}</div>
-            <div className="text-[11px] text-muted-foreground">esperado en caja</div>
+            <div className="text-xl font-bold tabular-nums mt-1">{fmtMoney(neto(esperado[f]))}</div>
+            <div className="text-[11px] text-muted-foreground flex gap-2">
+              <span className="text-success">+{fmtMoney(esperado[f]?.entra ?? 0)}</span>
+              <span className="text-destructive">−{fmtMoney(esperado[f]?.sale ?? 0)}</span>
+            </div>
           </SectionCard>
         ))}
       </div>
@@ -281,7 +286,7 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
 
 // ---------------- Cierre con conteo ----------------
 function CerrarDialog({ sesion, esperado, onClose, onClosed }:
-  { sesion: any; esperado: Record<string, number>; onClose: () => void; onClosed: () => void }) {
+  { sesion: any; esperado: Record<string, CajaForma>; onClose: () => void; onClosed: () => void }) {
   const [contado, setContado] = useState<Record<string, number | null>>({});
   const [notas, setNotas] = useState("");
 
@@ -309,20 +314,21 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           <DialogTitle>Cerrar caja — conteo</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Contá lo que hay físicamente por forma de pago. El sistema calcula la diferencia contra lo esperado.
+          Contá lo que hay físicamente por forma de pago. El esperado es lo que entró menos lo que salió (compras, pagos a proveedor, gastos).
         </p>
         <div className="space-y-2 mt-1">
-          <div className="grid grid-cols-[1fr_auto_auto] gap-3 items-center text-xs text-muted-foreground font-medium px-1">
-            <span>Forma</span><span className="w-32 text-right">Contado</span><span className="w-24 text-right">Diferencia</span>
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center text-xs text-muted-foreground font-medium px-1">
+            <span>Forma</span><span className="w-24 text-right">Esperado</span><span className="w-28 text-right">Contado</span><span className="w-24 text-right">Diferencia</span>
           </div>
           {formasCierre.map((f) => {
-            const esp = Number(esperado[f] ?? 0);
+            const esp = neto(esperado[f]);
             const cont = contado[f];
             const dif = cont == null ? null : Number(cont) - esp;
             return (
-              <div key={f} className="grid grid-cols-[1fr_auto_auto] gap-3 items-center">
+              <div key={f} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
                 <span className="text-sm">{formaPagoLabel[f]}</span>
-                <div className="w-32">
+                <span className="w-24 text-right font-mono tabular-nums text-sm text-muted-foreground">{fmtMoney(esp)}</span>
+                <div className="w-28">
                   <NumberInput value={cont ?? null} onValueChange={(v) => setContado((c) => ({ ...c, [f]: v }))} className="h-8 text-right" />
                 </div>
                 <span className={`w-24 text-right font-mono tabular-nums text-sm ${

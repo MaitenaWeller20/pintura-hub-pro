@@ -1,9 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Label } from "@/components/ui/label";
 import { TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,7 +14,7 @@ import { DataTable } from "@/components/app/data-table";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { toast } from "sonner";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Receipt } from "lucide-react";
 import { tipoClienteLabel } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/clientes")({
@@ -71,7 +72,14 @@ function ClientesPage() {
             <TableCell>{c.telefono ?? "—"}</TableCell>
             <TableCell className="text-muted-foreground">{c.sucursal?.nombre ?? "—"}</TableCell>
             <TableCell>
-              <Button size="sm" variant="ghost" onClick={()=>{ setEditing(c); setOpen(true); }}><Pencil className="h-3.5 w-3.5"/></Button>
+              <div className="flex gap-1 justify-end">
+                {c.condicion_cta_cte && (
+                  <Button size="sm" variant="ghost" asChild title="Ver cuenta corriente">
+                    <Link to="/cuentas-corrientes" search={{ cliente: c.id }}><Receipt className="h-3.5 w-3.5"/></Link>
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={()=>{ setEditing(c); setOpen(true); }}><Pencil className="h-3.5 w-3.5"/></Button>
+              </div>
             </TableCell>
           </TableRow>
         ))}
@@ -145,6 +153,13 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
             <input type="checkbox" checked={!!form.condicion_cta_cte} onChange={(e)=>set("condicion_cta_cte", e.target.checked)} />
             <span><strong>Cliente con Cuenta Corriente</strong> — puede llevar mercadería sin pagar en el momento. Gestionar deuda en la pestaña Cta Cte.</span>
           </label>
+          {form.condicion_cta_cte && (
+            <div className="col-span-2">
+              <Label>Límite de crédito (opcional)</Label>
+              <NumberInput value={form.limite_credito ?? null} onValueChange={(v)=>set("limite_credito", v)} className="max-w-xs" />
+              <p className="text-[11px] text-muted-foreground mt-1">Deuda máxima que se le permite acumular. Vacío = sin límite.</p>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>

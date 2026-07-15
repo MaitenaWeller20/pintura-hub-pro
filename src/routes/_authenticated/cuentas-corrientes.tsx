@@ -1,7 +1,7 @@
 /** Cuenta Corriente: lista clientes habilitados, su deuda y permite cobrar. */
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, Fragment } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
@@ -18,16 +18,21 @@ import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney, fmtDate, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { toast } from "sonner";
-import { Wallet, Receipt } from "lucide-react";
+import { Wallet, Receipt, ChevronRight } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 import { registrarCobranza } from "@/lib/cobranzas.functions";
 
 export const Route = createFileRoute("/_authenticated/cuentas-corrientes")({
+  // Permite entrar directo a la cuenta de un cliente: /cuentas-corrientes?cliente=<id>
+  validateSearch: (search: Record<string, unknown>): { cliente?: string } => ({
+    cliente: typeof search.cliente === "string" ? search.cliente : undefined,
+  }),
   component: CtaCtePage,
 });
 
 function CtaCtePage() {
   const qc = useQueryClient();
+  const { cliente: clienteParam } = Route.useSearch();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<any>(null);
   const [openPago, setOpenPago] = useState(false);
@@ -43,6 +48,22 @@ function CtaCtePage() {
   const filtered = useMemo(() => saldos.filter((c: any) =>
     !q || `${c.razon_social} ${c.cuit_dni ?? ""}`.toLowerCase().includes(q.toLowerCase())
   ), [saldos, q]);
+
+  // Si venimos de Clientes con ?cliente=<id>, abrimos su detalle automáticamente.
+  // Si el cliente todavía no tiene movimientos (no está en la vista de saldos),
+  // traemos sus datos básicos de la tabla clientes.
+  useEffect(() => {
+    if (!clienteParam || sel) return;
+    const found = saldos.find((c: any) => c.cliente_id === clienteParam);
+    if (found) {
+      setSel({ id: found.cliente_id, razon_social: found.razon_social, cuit_dni: found.cuit_dni });
+      return;
+    }
+    let cancel = false;
+    supabase.from("clientes").select("id, razon_social, cuit_dni").eq("id", clienteParam).maybeSingle()
+      .then(({ data }) => { if (!cancel && data) setSel({ id: data.id, razon_social: data.razon_social, cuit_dni: data.cuit_dni }); });
+    return () => { cancel = true; };
+  }, [clienteParam, saldos, sel]);
 
   return (
     <div>
@@ -91,11 +112,15 @@ function CtaCtePage() {
 }
 
 function DetalleCliente({ cliente, onClose, onPagar }: any) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (id: string) => setExpanded((s) => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
   // Extracto: el libro de movimientos del cliente (débitos y créditos), cronológico.
   const { data: movs = [] } = useQuery({
     queryKey: ["ctacte-cliente", cliente.id],
     queryFn: async () => ((await supabase.from("cuenta_corriente_movimientos")
-      .select("id, created_at, tipo, monto, estado, forma_pago, descripcion, sucursal:sucursales(nombre)")
+      .select("id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, sucursal:sucursales(nombre)")
       .eq("cliente_id", cliente.id)
       .order("created_at", { ascending: false })).data ?? []) as any[],
   });
@@ -142,24 +167,64 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
         >
           {movs.map((m: any) => {
             const anulado = m.estado === "ANULADO";
+            const tieneVenta = m.tipo === "DEBITO" && !!m.venta_id;
+            const abierto = expanded.has(m.id);
             return (
-              <TableRow key={m.id} className={anulado ? "opacity-40 line-through" : ""}>
-                <TableCell className="text-xs">{fmtDate(m.created_at)}</TableCell>
-                <TableCell className="text-sm">
-                  {m.descripcion}
-                  {m.forma_pago && <span className="text-xs text-muted-foreground"> · {formaPagoLabel[m.forma_pago] ?? m.forma_pago}</span>}
-                  {anulado && <span className="ml-2"><StatusPill tone="neutral">anulado</StatusPill></span>}
-                </TableCell>
-                <TableCell className="text-muted-foreground text-xs">{m.sucursal?.nombre}</TableCell>
-                <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
-                <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
-              </TableRow>
+              <Fragment key={m.id}>
+                <TableRow className={anulado ? "opacity-40 line-through" : ""}>
+                  <TableCell className="text-xs">{fmtDate(m.created_at)}</TableCell>
+                  <TableCell className="text-sm">
+                    {tieneVenta ? (
+                      <button className="inline-flex items-center gap-1 hover:text-primary" onClick={() => toggle(m.id)}>
+                        <ChevronRight className={`h-3.5 w-3.5 transition-transform ${abierto ? "rotate-90" : ""}`} />
+                        {m.descripcion}
+                      </button>
+                    ) : m.descripcion}
+                    {m.forma_pago && <span className="text-xs text-muted-foreground"> · {formaPagoLabel[m.forma_pago] ?? m.forma_pago}</span>}
+                    {anulado && <span className="ml-2"><StatusPill tone="neutral">anulado</StatusPill></span>}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{m.sucursal?.nombre}</TableCell>
+                  <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
+                  <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
+                </TableRow>
+                {tieneVenta && abierto && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="bg-muted/40 p-0">
+                      <ItemsVenta ventaId={m.venta_id} />
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
             );
           })}
         </DataTable>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cerrar</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ItemsVenta({ ventaId }: { ventaId: string }) {
+  const { data: items = [], isLoading } = useQuery({
+    queryKey: ["venta-items", ventaId],
+    queryFn: async () => ((await supabase.from("venta_items")
+      .select("descripcion, cantidad, precio_unitario_sin_iva, subtotal_con_iva")
+      .eq("venta_id", ventaId)).data ?? []) as any[],
+  });
+  if (isLoading) return <div className="px-4 py-2 text-xs text-muted-foreground">Cargando productos…</div>;
+  if (items.length === 0) return <div className="px-4 py-2 text-xs text-muted-foreground">Sin productos.</div>;
+  return (
+    <div className="px-4 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Productos que llevó</div>
+      <ul className="space-y-0.5 text-xs">
+        {items.map((it: any, i: number) => (
+          <li key={i} className="flex justify-between gap-3">
+            <span className="truncate"><span className="font-mono">{it.cantidad}×</span> {it.descripcion}</span>
+            <span className="font-mono text-muted-foreground shrink-0">{fmtMoney(it.subtotal_con_iva)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

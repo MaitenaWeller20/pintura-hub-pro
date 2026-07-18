@@ -1695,6 +1695,7 @@ export type Database = {
           nc_numero: string
         }[]
       }
+      aprobar_remito: { Args: { p_remito_id: string }; Returns: undefined }
       caja_esperado: { Args: { _sesion_id: string }; Returns: Json }
       cc_registrar_por_venta: {
         Args: { _venta_id: string }

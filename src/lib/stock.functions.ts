@@ -7,54 +7,13 @@ export const aprobarRemito = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ remito_id: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    // Verificar admin
-    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-    if (!isAdmin) throw new Error("Sólo el administrador puede aprobar remitos");
-
-    const { data: rem } = await supabase.from("remitos").select("*").eq("id", data.remito_id).single();
-    if (!rem) throw new Error("Remito no encontrado");
-    if (rem.estado !== "PENDIENTE") throw new Error("El remito ya fue procesado");
-
-    const { data: items = [] } = await supabase.from("remito_items").select("*").eq("remito_id", rem.id);
-
-    for (const it of items as any[]) {
-      // Salida origen
-      const { data: rowO } = await supabase.from("stock_sucursal").select("cantidad")
-        .eq("producto_id", it.producto_id).eq("sucursal_id", rem.sucursal_origen_id).maybeSingle();
-      const antO = Number(rowO?.cantidad ?? 0);
-      const nvO = antO - Number(it.cantidad);
-      await supabase.from("stock_sucursal").upsert({
-        producto_id: it.producto_id, sucursal_id: rem.sucursal_origen_id, cantidad: nvO,
-      }, { onConflict: "producto_id,sucursal_id" });
-      await supabase.from("stock_movimientos").insert({
-        producto_id: it.producto_id, sucursal_id: rem.sucursal_origen_id,
-        tipo: "TRANSFERENCIA_OUT", cantidad: -Number(it.cantidad),
-        cantidad_anterior: antO, cantidad_nueva: nvO,
-        referencia_id: rem.id, usuario_id: userId, motivo: `Remito ${rem.numero}`,
-      });
-
-      // Entrada destino
-      const { data: rowD } = await supabase.from("stock_sucursal").select("cantidad")
-        .eq("producto_id", it.producto_id).eq("sucursal_id", rem.sucursal_destino_id).maybeSingle();
-      const antD = Number(rowD?.cantidad ?? 0);
-      const nvD = antD + Number(it.cantidad);
-      await supabase.from("stock_sucursal").upsert({
-        producto_id: it.producto_id, sucursal_id: rem.sucursal_destino_id, cantidad: nvD,
-      }, { onConflict: "producto_id,sucursal_id" });
-      await supabase.from("stock_movimientos").insert({
-        producto_id: it.producto_id, sucursal_id: rem.sucursal_destino_id,
-        tipo: "TRANSFERENCIA_IN", cantidad: Number(it.cantidad),
-        cantidad_anterior: antD, cantidad_nueva: nvD,
-        referencia_id: rem.id, usuario_id: userId, motivo: `Remito ${rem.numero}`,
-      });
-    }
-
-    await supabase.from("remitos").update({
-      estado: "APROBADO", aprobado_por: userId, fecha_aprobacion: new Date().toISOString(),
-    }).eq("id", rem.id);
-
+    const { supabase } = context;
+    // Toda la transferencia (validación admin + estado, descuento/ingreso de stock
+    // con guarda de negativo y kardex por ambos lados, y el pase a APROBADO) es
+    // atómica en la RPC aprobar_remito. Antes eran select→upsert sueltos por
+    // PostgREST: lost-update, stock negativo posible y doble-aprobación.
+    const { error } = await supabase.rpc("aprobar_remito", { p_remito_id: data.remito_id });
+    if (error) throw new Error(error.message);
     return { ok: true };
   });
 

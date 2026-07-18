@@ -101,8 +101,8 @@ function RemitosPage() {
                 <TableCell className="flex gap-1">
                   <Button size="sm" variant="ghost" onClick={()=>imprimir(r)}><Printer className="h-3.5 w-3.5"/></Button>
                   {cu?.isAdmin && r.estado === "PENDIENTE" && (<>
-                    <Button size="sm" variant="ghost" onClick={()=>aprobar.mutate(r.id)}><Check className="h-3.5 w-3.5 text-success"/></Button>
-                    <Button size="sm" variant="ghost" onClick={()=>setRechazar(r)}><X className="h-3.5 w-3.5 text-destructive"/></Button>
+                    <Button size="sm" variant="ghost" disabled={aprobar.isPending || rech.isPending} onClick={()=>aprobar.mutate(r.id)}><Check className="h-3.5 w-3.5 text-success"/></Button>
+                    <Button size="sm" variant="ghost" disabled={aprobar.isPending || rech.isPending} onClick={()=>setRechazar(r)}><X className="h-3.5 w-3.5 text-destructive"/></Button>
                   </>)}
                 </TableCell>
               </TableRow>

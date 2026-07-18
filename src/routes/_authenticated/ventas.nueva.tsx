@@ -92,16 +92,26 @@ function NuevaVenta() {
   });
   const clienteSel = useMemo(() => clientes.find((c: any) => c.id === clienteId), [clientes, clienteId]);
 
-  const { data: productosBusqueda = [] } = useQuery({
-    queryKey: ["prods-search", prodQuery, effSucursal],
-    enabled: !!prodQuery && prodQuery.length >= 2,
+  // Traemos TODOS los productos activos una sola vez (el catálogo es chico) y
+  // filtramos en el cliente: así el picker muestra la lista completa apenas se
+  // abre y filtra al instante mientras escribís, sin un round-trip por tecla.
+  const { data: productosCatalogo = [] } = useQuery({
+    queryKey: ["prods-catalogo"],
     queryFn: async () => {
       const { data } = await supabase.from("productos")
-        .select("id,codigo,nombre,precio_sin_iva,iva_porcentaje,stock_sucursal!inner(cantidad,sucursal_id)")
-        .or(`codigo.ilike.%${prodQuery}%,nombre.ilike.%${prodQuery}%`).eq("activo", true).limit(10);
+        .select("id,codigo,nombre,precio_sin_iva,iva_porcentaje,stock_sucursal(cantidad,sucursal_id)")
+        .eq("activo", true).order("nombre");
       return (data ?? []) as any[];
     },
   });
+
+  const productosBusqueda = useMemo(() => {
+    const q = prodQuery.trim().toLowerCase();
+    if (!q) return productosCatalogo;
+    return productosCatalogo.filter((p: any) =>
+      p.codigo?.toLowerCase().includes(q) || p.nombre?.toLowerCase().includes(q),
+    );
+  }, [productosCatalogo, prodQuery]);
 
   const addProducto = (p: any) => {
     const stock = (p.stock_sucursal as any[])?.find((s) => s.sucursal_id === effSucursal)?.cantidad ?? 0;
@@ -423,7 +433,11 @@ function NuevaVenta() {
                     </button>
                   );
                 })}
-                {prodQuery.length < 2 && <p className="text-xs text-muted-foreground p-2">Escribí al menos 2 caracteres…</p>}
+                {productosBusqueda.length === 0 && (
+                  <p className="text-xs text-muted-foreground p-2">
+                    {productosCatalogo.length === 0 ? "No hay productos activos." : "Ningún producto coincide con la búsqueda."}
+                  </p>
+                )}
               </div>
             </PopoverContent>
           </Popover>

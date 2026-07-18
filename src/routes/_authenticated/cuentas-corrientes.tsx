@@ -119,7 +119,7 @@ function CtaCtePage() {
       )}
       {sel && (
         <PagoDialog open={openPago} onClose={() => setOpenPago(false)} cliente={sel}
-          onSaved={() => { qc.invalidateQueries({ queryKey: ["ctacte-saldos"] }); qc.invalidateQueries({ queryKey: ["ctacte-cliente", sel.id] }); setOpenPago(false); }} />
+          onSaved={() => { qc.invalidateQueries({ queryKey: ["ctacte-saldos"] }); qc.invalidateQueries({ queryKey: ["ctacte-cliente", sel.id] }); qc.invalidateQueries({ queryKey: ["ctacte-resumen", sel.id] }); setOpenPago(false); }} />
       )}
     </div>
   );
@@ -315,11 +315,14 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
 }
 
 function DetalleCliente({ cliente, onClose, onPagar }: any) {
+  const { data: cu } = useCurrentUser();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setExpanded((s) => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
-  // Extracto: el libro de movimientos del cliente (débitos y créditos), cronológico.
+  // Extracto: libro de movimientos del cliente. OJO: la RLS filtra por sucursal,
+  // así que para un cajero NO-admin esta lista muestra solo SU sucursal (a
+  // propósito: no filtra qué compró el cliente en otra sucursal).
   const { data: movs = [] } = useQuery({
     queryKey: ["ctacte-cliente", cliente.id],
     queryFn: async () => ((await supabase.from("cuenta_corriente_movimientos")
@@ -328,11 +331,19 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       .order("created_at", { ascending: false })).data ?? []) as any[],
   });
 
-  // Saldo = Σ débitos − Σ créditos, sobre los confirmados.
-  const confirmados = movs.filter((m: any) => m.estado === "CONFIRMADO");
-  const totalDebe = confirmados.filter((m: any) => m.tipo === "DEBITO").reduce((a: number, m: any) => a + Number(m.monto), 0);
-  const totalPagado = confirmados.filter((m: any) => m.tipo === "CREDITO").reduce((a: number, m: any) => a + Number(m.monto), 0);
-  const saldo = totalDebe - totalPagado;
+  // Resumen GLOBAL (todas las sucursales) vía RPC SECURITY DEFINER. NO se
+  // recomputa desde `movs` (RLS-filtrado): un cajero vería un saldo parcial.
+  const { data: resumen } = useQuery({
+    queryKey: ["ctacte-resumen", cliente.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("cc_resumen", { _cliente_id: cliente.id });
+      if (error) throw error;
+      return ((Array.isArray(data) ? data[0] : data) ?? {}) as { total_debe: number; total_pagado: number; saldo: number };
+    },
+  });
+  const totalDebe = Number(resumen?.total_debe ?? 0);
+  const totalPagado = Number(resumen?.total_pagado ?? 0);
+  const saldo = Number(resumen?.saldo ?? 0);
 
   return (
     <Dialog open={true} onOpenChange={(v) => !v && onClose()}>
@@ -362,6 +373,11 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
           </div>
         </SectionCard>
 
+        {cu && !cu.isAdmin && (
+          <p className="text-[11px] text-muted-foreground">
+            El saldo es el total del cliente en todas las sucursales. La lista muestra solo los movimientos de tu sucursal.
+          </p>
+        )}
         <h4 className="font-semibold">Movimientos de la cuenta</h4>
         <DataTable
           columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber"]}

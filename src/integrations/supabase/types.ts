@@ -1704,6 +1704,14 @@ export type Database = {
         Args: { _venta_id: string }
         Returns: undefined
       }
+      cc_resumen: {
+        Args: { _cliente_id: string }
+        Returns: {
+          saldo: number
+          total_debe: number
+          total_pagado: number
+        }[]
+      }
       cc_saldo: { Args: { _cliente_id: string }; Returns: number }
       cerrar_caja: {
         Args: { p_contado?: Json; p_notas?: string; p_sesion_id: string }

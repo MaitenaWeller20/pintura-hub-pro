@@ -82,6 +82,23 @@ function CajaPage() {
     },
   });
 
+  // Salidas de caja del día: pagos a proveedor CONFIRMADOS. Incluye tanto los
+  // pagos de una compra al contado (crear_compra inserta proveedor_pagos con
+  // compra_id) como los pagos directos de cuenta corriente. Por eso NO se suma
+  // además la tabla `compras`: sería doble conteo.
+  const { data: pagosProvDia = [] } = useQuery({
+    queryKey: ["caja-pagos-prov", effSucId, fecha],
+    enabled: !!effSucId,
+    queryFn: async () => {
+      const { data } = await supabase.from("proveedor_pagos")
+        .select("id, fecha, monto, forma_pago, estado, proveedor:proveedores(razon_social)")
+        .eq("sucursal_id", effSucId).eq("estado", "CONFIRMADO")
+        .gte("fecha", range.start).lte("fecha", range.end)
+        .order("fecha");
+      return (data ?? []) as any[];
+    },
+  });
+
   // Saldo inicial: efectivo dejado por la rendición del día anterior en la MISMA sucursal
   const { data: rendicionAyer } = useQuery({
     queryKey: ["rendicion-ayer", effSucId, fecha],
@@ -116,7 +133,20 @@ function CajaPage() {
   }, [ventasDia, cobranzasDia]);
 
   const totalSistema = Object.values(totalesSistema).reduce((a, b) => a + b, 0);
-  const efectivoFinal = saldoInicialEfectivo + totalesSistema.EFECTIVO - Number(efectivoRetirado || 0);
+
+  // Salidas por forma de pago (pagos a proveedor / compras contado del día).
+  const salidasSistema = useMemo(() => {
+    const t: Record<string, number> = Object.fromEntries(FORMAS.map(f => [f, 0]));
+    pagosProvDia.forEach((p: any) => { if (t[p.forma_pago] !== undefined) t[p.forma_pago] += Number(p.monto); });
+    return t;
+  }, [pagosProvDia]);
+  const totalSalidas = Object.values(salidasSistema).reduce((a, b) => a + b, 0);
+
+  // Neto = entradas − salidas por forma (mismo criterio que el arqueo: neto = entra − sale).
+  const netoSistema = Object.fromEntries(FORMAS.map(f => [f, totalesSistema[f] - salidasSistema[f]])) as Record<string, number>;
+  const totalNeto = totalSistema - totalSalidas;
+
+  const efectivoFinal = saldoInicialEfectivo + netoSistema.EFECTIVO - Number(efectivoRetirado || 0);
 
   // Ventas contado vs cta cte
   const ventasContado = ventasDia.filter((v: any) => v.condicion_venta === "CONTADO");
@@ -134,15 +164,15 @@ function CajaPage() {
       const payload = {
         sucursal_id: effSucId, fecha, usuario_id: cu!.user.id,
         saldo_inicial: saldoInicialEfectivo,
-        total_efectivo: totalesSistema.EFECTIVO,
-        total_transferencia: totalesSistema.TRANSFERENCIA,
-        total_debito: totalesSistema.TARJETA_DEBITO,
-        total_credito: totalesSistema.TARJETA_CREDITO,
-        total_mp: totalesSistema.MERCADO_PAGO,
-        total_cheque: totalesSistema.CHEQUE,
+        total_efectivo: netoSistema.EFECTIVO,
+        total_transferencia: netoSistema.TRANSFERENCIA,
+        total_debito: netoSistema.TARJETA_DEBITO,
+        total_credito: netoSistema.TARJETA_CREDITO,
+        total_mp: netoSistema.MERCADO_PAGO,
+        total_cheque: netoSistema.CHEQUE,
         total_cta_cte: ventasCtaCte.reduce((a: number, v: any) => a + Number(v.total), 0),
-        total_sistema: totalSistema,
-        total_declarado: totalSistema,
+        total_sistema: totalNeto,
+        total_declarado: totalNeto,
         diferencia: 0,
         efectivo_retirado: Number(efectivoRetirado || 0),
         efectivo_dejado: efectivoFinal,
@@ -202,6 +232,7 @@ function CajaPage() {
       body: [
         ["Saldo inicial (efectivo dejado día anterior)", { content: fmtMoney(saldoInicialEfectivo), styles: { halign: "right" } }],
         ["+ Ingresos en efectivo del día", { content: fmtMoney(totalesSistema.EFECTIVO), styles: { halign: "right" } }],
+        ["- Pagos a proveedor / compras contado (efectivo)", { content: fmtMoney(salidasSistema.EFECTIVO), styles: { halign: "right" } }],
         ["- Efectivo retirado", { content: fmtMoney(Number(efectivoRetirado || 0)), styles: { halign: "right" } }],
         ["= Efectivo dejado (saldo inicial mañana)", { content: fmtMoney(efectivoFinal), styles: { halign: "right", fontStyle: "bold" } }],
       ],
@@ -270,16 +301,20 @@ function CajaPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div>
           <h3 className="font-semibold mb-3">Totales por forma de pago</h3>
-          <DataTable columns={["Forma", "Importe"]}>
+          <DataTable columns={["Forma", "Entradas", "Salidas", "Neto"]}>
             {FORMAS.map(f => (
               <TableRow key={f}>
                 <TableCell>{formaPagoLabel[f]}</TableCell>
-                <TableCell className="text-right font-mono">{fmtMoney(totalesSistema[f])}</TableCell>
+                <TableCell className="text-right font-mono text-success">{fmtMoney(totalesSistema[f])}</TableCell>
+                <TableCell className="text-right font-mono text-destructive">{salidasSistema[f] ? `−${fmtMoney(salidasSistema[f])}` : fmtMoney(0)}</TableCell>
+                <TableCell className="text-right font-mono">{fmtMoney(netoSistema[f])}</TableCell>
               </TableRow>
             ))}
             <TableRow className="font-bold border-t-2 border-border">
               <TableCell>TOTAL DEL DÍA</TableCell>
-              <TableCell className="text-right font-mono">{fmtMoney(totalSistema)}</TableCell>
+              <TableCell className="text-right font-mono text-success">{fmtMoney(totalSistema)}</TableCell>
+              <TableCell className="text-right font-mono text-destructive">{totalSalidas ? `−${fmtMoney(totalSalidas)}` : fmtMoney(0)}</TableCell>
+              <TableCell className="text-right font-mono">{fmtMoney(totalNeto)}</TableCell>
             </TableRow>
           </DataTable>
         </div>
@@ -293,6 +328,10 @@ function CajaPage() {
             <div className="flex justify-between text-success">
               <span>+ Ingresos en efectivo:</span>
               <span className="font-mono">{fmtMoney(totalesSistema.EFECTIVO)}</span>
+            </div>
+            <div className="flex justify-between text-destructive">
+              <span>− Pagos a proveedor (efectivo):</span>
+              <span className="font-mono">{fmtMoney(salidasSistema.EFECTIVO)}</span>
             </div>
             <div className="flex justify-between items-center gap-2">
               <Label className="m-0">– Efectivo retirado:</Label>
@@ -353,6 +392,21 @@ function CajaPage() {
                 <TableCell>{c.cliente?.razon_social}</TableCell>
                 <TableCell className="text-xs">{formaPagoLabel[c.forma_pago]}</TableCell>
                 <TableCell className="text-right font-mono text-success">{fmtMoney(c.monto)}</TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+        </div>
+      )}
+
+      {pagosProvDia.length > 0 && (
+        <div>
+          <h3 className="font-semibold mb-3">Salidas — Pagos a proveedor / compras contado ({pagosProvDia.length})</h3>
+          <DataTable columns={["Proveedor", "Forma", "Monto"]}>
+            {pagosProvDia.map((p: any) => (
+              <TableRow key={p.id}>
+                <TableCell>{p.proveedor?.razon_social}</TableCell>
+                <TableCell className="text-xs">{formaPagoLabel[p.forma_pago]}</TableCell>
+                <TableCell className="text-right font-mono text-destructive">−{fmtMoney(p.monto)}</TableCell>
               </TableRow>
             ))}
           </DataTable>

@@ -9,11 +9,14 @@ import {
   condicionIvaReceptorId,
   esComprobanteFiscal,
   letraDeFactura,
+  letraDeCbteTipo,
+  puedeForzarConsumidorFinal,
   TIPOS_C,
 } from "./codigos";
 import { calcularTotales, round2 } from "./iva";
 import { fmtFechaAfip, fmtFechaIsoAr, parseFechaAfip } from "./fecha";
 import { urlQrAfip } from "./qr";
+import { detalleRechazoAfip } from "./arca";
 
 describe("tipo de comprobante (matriz A/B/C)", () => {
   it("emisor monotributista siempre emite C", () => {
@@ -316,5 +319,64 @@ describe("QR de AFIP (RG 4892)", () => {
       "ver", "fecha", "cuit", "ptoVta", "tipoCmp", "nroCmp", "importe",
       "moneda", "ctz", "tipoDocRec", "nroDocRec", "tipoCodAut", "codAut",
     ]);
+  });
+});
+
+describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
+  it("extrae las Observaciones por comprobante con su código", () => {
+    // Forma real de FECAESolicitarResult cuando AFIP observa un comprobante.
+    const response = {
+      FeDetResp: {
+        FECAEDetResponse: [
+          { Observaciones: { Obs: [{ Code: 10016, Msg: "El CondicionIVAReceptorId no se corresponde con el DocTipo" }] } },
+        ],
+      },
+    };
+    expect(detalleRechazoAfip(response)).toBe(
+      "[10016] El CondicionIVAReceptorId no se corresponde con el DocTipo",
+    );
+  });
+
+  it("extrae los Errors de nivel request y junta varios motivos", () => {
+    const response = {
+      Errors: { Err: [{ Code: 10013, Msg: "DocTipo debe ser 80 (CUIT)" }] },
+      FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [{ Code: 15, Msg: "Campo X inválido" }] } }] },
+    };
+    expect(detalleRechazoAfip(response)).toBe("[10013] DocTipo debe ser 80 (CUIT) · [15] Campo X inválido");
+  });
+
+  it("no rompe con respuestas vacías, nulas o sin observaciones", () => {
+    expect(detalleRechazoAfip(null)).toBe("");
+    expect(detalleRechazoAfip(undefined)).toBe("");
+    expect(detalleRechazoAfip({})).toBe("");
+    expect(detalleRechazoAfip({ FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [] } }] } })).toBe("");
+  });
+});
+
+describe("selector Factura A/B (RI puede emitir B a un cliente RI)", () => {
+  it("sólo se puede forzar Consumidor Final cuando emisor Y receptor son RI", () => {
+    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", "RESPONSABLE_INSCRIPTO")).toBe(true);
+    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL")).toBe(false);
+    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", "MONOTRIBUTO")).toBe(false);
+    expect(puedeForzarConsumidorFinal("MONOTRIBUTO", "RESPONSABLE_INSCRIPTO")).toBe(false);
+    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", null)).toBe(false);
+  });
+
+  it("forzar CF sobre un receptor RI baja la letra de A a B", () => {
+    // Sin forzar: RI + RI = A.
+    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "RESPONSABLE_INSCRIPTO")).toBe("A");
+    // Forzado: la condición efectiva pasa a CONSUMIDOR_FINAL -> B.
+    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL")).toBe("B");
+  });
+
+  it("la letra de la NC sale del CbteTipo REALMENTE emitido, no del tipo tipeado", () => {
+    // Una venta FACTURA_A emitida como B (forzado) tiene cbte 6 -> su NC es B.
+    expect(letraDeCbteTipo(6)).toBe("B");   // Factura B
+    expect(letraDeCbteTipo(1)).toBe("A");   // Factura A
+    expect(letraDeCbteTipo(11)).toBe("C");  // Factura C
+    expect(letraDeCbteTipo(8)).toBe("B");   // NC B
+    expect(letraDeCbteTipo(3)).toBe("A");   // NC A
+    expect(letraDeCbteTipo(13)).toBe("C");  // NC C
+    expect(letraDeCbteTipo(null)).toBe("A"); // sin dato: default A
   });
 });

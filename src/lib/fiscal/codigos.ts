@@ -72,6 +72,33 @@ export function letraDeFactura(tipo: string): Letra {
 }
 
 /**
+ * Letra REAL emitida, derivada del CbteTipo de AFIP guardado en la venta
+ * (afip_cbte_tipo). Es la fuente de verdad para la letra de una nota de crédito:
+ * una venta tipeada FACTURA_A pero emitida como B (ver puedeForzarConsumidorFinal)
+ * tiene afip_cbte_tipo=6, y su NC debe salir B, no A.
+ *   A: 1 (Fac), 2 (ND), 3 (NC)  ·  B: 6, 7, 8  ·  C: 11, 12, 13, 15
+ */
+export function letraDeCbteTipo(cbteTipo: number | null | undefined): Letra {
+  if (cbteTipo != null && [6, 7, 8].includes(cbteTipo)) return "B";
+  if (cbteTipo != null && TIPOS_C.has(cbteTipo)) return "C";
+  return "A";
+}
+
+/**
+ * ¿Se puede emitir Factura B (Consumidor Final) a un cliente RESPONSABLE INSCRIPTO?
+ * Sólo cuando emisor Y receptor son RI: ahí la matriz daría A, pero el negocio a
+ * veces quiere B. Para cualquier otra condición del receptor la letra ya es B (o C),
+ * así que el "forzado" no aplica. Es server-authoritative: sólo habilita el
+ * downgrade A→B, nunca al revés.
+ */
+export function puedeForzarConsumidorFinal(
+  condEmisor: CondicionIva,
+  condReceptor: CondicionIva | null | undefined,
+): boolean {
+  return condEmisor === "RESPONSABLE_INSCRIPTO" && condReceptor === "RESPONSABLE_INSCRIPTO";
+}
+
+/**
  * Código de comprobante de AFIP (CbteTipo).
  * Las notas de crédito/débito heredan la letra del comprobante que rectifican.
  */

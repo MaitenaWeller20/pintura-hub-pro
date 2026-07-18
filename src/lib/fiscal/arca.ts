@@ -256,18 +256,48 @@ export async function solicitarCae(
     "solicitar el CAE",
   );
 
-  const r = result as { cae?: string; caeFchVto?: string; observaciones?: unknown; errores?: unknown };
+  const r = result as { cae?: string; caeFchVto?: string; response?: unknown };
 
   // EL CHEQUE MÁS IMPORTANTE DEL ARCHIVO: cuando AFIP RECHAZA un comprobante, el
   // SDK igual resuelve bien, pero con cae vacío. Sin esto guardaríamos una
   // factura "válida" sin CAE.
   if (!r.cae || String(r.cae).trim() === "") {
-    const obs = r.observaciones ?? r.errores;
+    // El motivo NO está en el primer nivel del resultado (el SDK expone
+    // { response, cae, caeFchVto }): está en `response` (FECAESolicitarResult).
+    // Antes leíamos r.observaciones ?? r.errores —claves inexistentes—, así que
+    // TODO rechazo caía al mensaje genérico y se perdía el código de AFIP.
+    const detalle = detalleRechazoAfip(r.response);
     throw new Error(
-      "AFIP no autorizó el comprobante" +
-        (obs ? `: ${JSON.stringify(obs)}` : ". Revisá los datos fiscales e intentá de nuevo."),
+      detalle
+        ? `AFIP no autorizó el comprobante: ${detalle}`
+        : "AFIP no autorizó el comprobante. Revisá los datos fiscales e intentá de nuevo.",
     );
   }
 
   return { cae: String(r.cae), vencimiento: parseFechaAfip(r.caeFchVto), modo: pv.modo };
+}
+
+/**
+ * Arma el motivo legible del rechazo de AFIP desde la respuesta cruda de
+ * FECAESolicitar. Junta los errores de nivel request (`Errors.Err[]`) y las
+ * observaciones por comprobante (`FeDetResp.FECAEDetResponse[].Observaciones.Obs[]`),
+ * cada uno como "[código] mensaje". No se dumpea la respuesta cruda: trae el
+ * CUIT/documento del receptor y no queremos filtrarlo en logs ni en el toast.
+ */
+export function detalleRechazoAfip(response: unknown): string {
+  const r = response as
+    | {
+        FeDetResp?: { FECAEDetResponse?: Array<{ Observaciones?: { Obs?: Array<{ Code?: number; Msg?: string }> } }> };
+        Errors?: { Err?: Array<{ Code?: number; Msg?: string }> };
+      }
+    | null
+    | undefined;
+  const partes: string[] = [];
+  const push = (c?: number, m?: string) => {
+    const msg = (m ?? "").trim();
+    if (msg) partes.push(c != null ? `[${c}] ${msg}` : msg);
+  };
+  for (const e of r?.Errors?.Err ?? []) push(e?.Code, e?.Msg);
+  for (const det of r?.FeDetResp?.FECAEDetResponse ?? []) for (const o of det?.Observaciones?.Obs ?? []) push(o?.Code, o?.Msg);
+  return partes.join(" · ");
 }

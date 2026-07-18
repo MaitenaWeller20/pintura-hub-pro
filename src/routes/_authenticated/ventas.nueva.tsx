@@ -167,6 +167,19 @@ function NuevaVenta() {
     setNombreObra("");
   }, [clienteId]);
 
+  // El comprobante por defecto tiene que reflejar la letra que le corresponde al
+  // cliente: a un Responsable Inscripto le corresponde Factura A. El default global
+  // es FACTURA_B (caso mostrador / consumidor final), así que al elegir un cliente
+  // RI lo pasamos a A. Emitir B a un RI queda como una decisión EXPLÍCITA (el
+  // operador cambia el selector a mano), nunca por omisión.
+  useEffect(() => {
+    if (esNota) return; // no tocar el tipo de una nota de crédito/débito
+    const esRI = clienteSel?.tipo === "RESPONSABLE_INSCRIPTO";
+    if (esRI && tipoComp === "FACTURA_B") setTipoComp("FACTURA_A");
+    else if (!esRI && tipoComp === "FACTURA_A") setTipoComp("FACTURA_B");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clienteSel?.tipo]);
+
   const addPago = () => setPagos(p => [...p, {
     id: crypto.randomUUID(),
     forma_pago: "EFECTIVO",

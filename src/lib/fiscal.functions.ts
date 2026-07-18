@@ -11,10 +11,12 @@ import { z } from "zod";
 import {
   determinarLetra,
   cbteTipoAfip,
-  letraDeFactura,
+  letraDeCbteTipo,
+  puedeForzarConsumidorFinal,
   esComprobanteFiscal,
   docTipoAfip,
   docNroAfip,
+  cuitValido,
   condicionIvaReceptorId,
   CONDICION_IVA_CLIENTE,
   type CondicionIva,
@@ -325,20 +327,43 @@ export const emitirComprobante = createServerFn({ method: "POST" })
           "La nota de crédito/débito tiene que estar asociada a un comprobante que ya tenga CAE.",
         );
       }
-      letra = letraDeFactura(orig.tipo_comprobante);
+      // La letra de la NC sale del comprobante REALMENTE emitido (afip_cbte_tipo),
+      // no del tipo_comprobante tipeado: una venta FACTURA_A emitida como B (por
+      // el forzado a Consumidor Final) tiene cbte 6, y su NC debe salir B.
+      letra = letraDeCbteTipo(orig.afip_cbte_tipo);
       cbtesAsoc = [
         { tipo: orig.afip_cbte_tipo!, ptoVta: orig.afip_punto_venta!, nro: orig.afip_numero! },
       ];
     } else {
-      letra = determinarLetra(emisor.condicion_iva, condReceptor);
+      // Un RI que le vende a un RI factura A por defecto, pero puede elegir emitir
+      // B (Consumidor Final) tipeando la venta como FACTURA_B. Server-authoritative:
+      // sólo se permite el downgrade A→B cuando emisor y receptor son RI.
+      const condEfectiva =
+        venta.tipo_comprobante === "FACTURA_B" &&
+        puedeForzarConsumidorFinal(emisor.condicion_iva, condReceptor)
+          ? "CONSUMIDOR_FINAL"
+          : condReceptor;
+      letra = determinarLetra(emisor.condicion_iva, condEfectiva);
     }
 
     const cuitCliente = venta.cliente?.cuit_dni ?? null;
 
-    // Factura A al que no está identificado = rechazo seguro de AFIP.
-    if (letra === "A" && docTipoAfip(cuitCliente) !== 80) {
+    // La condición del receptor que se DECLARA a AFIP (RG 5616) tiene que ser
+    // coherente con la letra emitida: si salió B pero el cliente es RI, es porque
+    // se emitió como Consumidor Final (forzado, o NC de una factura forzada), y el
+    // CondicionIVAReceptorId debe ser 5, no 1 — si no, AFIP rechaza (10016).
+    const condReceptorEfectiva: CondicionIva | null =
+      letra === "B" && condReceptor === "RESPONSABLE_INSCRIPTO" ? "CONSUMIDOR_FINAL" : condReceptor;
+
+    // Factura A exige DocTipo 80 = CUIT VÁLIDO (con dígito verificador). Un CUIT
+    // de 11 dígitos con verificador mal (o un CUIL cargado como CUIT) pasaba el
+    // chequeo de longitud y AFIP lo rechazaba con un 10013/10016 críptico,
+    // quemando un viaje y dejando un número reservado. Se valida acá, antes de ir
+    // a AFIP, con un mensaje accionable que ofrece la salida por Factura B.
+    if (letra === "A" && (docTipoAfip(cuitCliente) !== 80 || !cuitValido(cuitCliente))) {
       throw new Error(
-        "Para Factura A el cliente (Responsable Inscripto) necesita tener el CUIT cargado.",
+        "Para Factura A el cliente necesita un CUIT válido. Corregí el CUIT en la ficha del cliente, " +
+          "o cambiá su condición de IVA a Consumidor Final para emitir Factura B.",
       );
     }
 
@@ -476,7 +501,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
           iva: totales.iva,
           tributos: totales.tributos,
           total: totales.total,
-          condicionIvaReceptorId: condicionIvaReceptorId(condReceptor),
+          condicionIvaReceptorId: condicionIvaReceptorId(condReceptorEfectiva),
           alicuotas: totales.alicuotas,
           comprobantesAsociados: cbtesAsoc,
         },

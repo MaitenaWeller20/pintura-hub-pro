@@ -1471,6 +1471,7 @@ export type Database = {
           estado_pago: Database["public"]["Enums"]["estado_pago"]
           fecha: string
           id: string
+          idempotency_key: string | null
           iva_total: number
           nombre_obra: string | null
           numero_comprobante: string
@@ -1506,6 +1507,7 @@ export type Database = {
           estado_pago?: Database["public"]["Enums"]["estado_pago"]
           fecha?: string
           id?: string
+          idempotency_key?: string | null
           iva_total?: number
           nombre_obra?: string | null
           numero_comprobante: string
@@ -1541,6 +1543,7 @@ export type Database = {
           estado_pago?: Database["public"]["Enums"]["estado_pago"]
           fecha?: string
           id?: string
+          idempotency_key?: string | null
           iva_total?: number
           nombre_obra?: string | null
           numero_comprobante?: string
@@ -1734,6 +1737,7 @@ export type Database = {
           p_cliente_id: string
           p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
           p_fecha?: string
+          p_idempotency_key?: string
           p_items: Json
           p_nombre_obra?: string
           p_observaciones?: string
@@ -1843,6 +1847,7 @@ export type Database = {
         | "ANULACION_VENTA"
         | "COMPRA"
         | "ANULACION_COMPRA"
+        | "DEVOLUCION"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2018,6 +2023,7 @@ export const Constants = {
         "ANULACION_VENTA",
         "COMPRA",
         "ANULACION_COMPRA",
+        "DEVOLUCION",
       ],
     },
   },

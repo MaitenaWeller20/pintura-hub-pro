@@ -1,0 +1,11 @@
+-- ============================================================
+-- G4 (2) — Valor de enum para el kardex de devoluciones.
+--
+-- Una NOTA_CREDITO creada a mano con ítems representa una DEVOLUCIÓN de mercadería
+-- y debe reintegrar stock (ver crear_venta en la migración siguiente). El
+-- movimiento de stock necesita un tipo propio en el kardex. Se agrega en una
+-- migración separada y committeada ANTES de la que define la función, porque en
+-- Postgres un valor de enum recién agregado no puede USARSE en la misma
+-- transacción que lo crea. Idempotente: IF NOT EXISTS.
+-- ============================================================
+ALTER TYPE public.tipo_movimiento_stock ADD VALUE IF NOT EXISTS 'DEVOLUCION';

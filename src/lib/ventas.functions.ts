@@ -49,6 +49,9 @@ const ventaSchema = z.object({
   // El comprobante que rectifica una nota de crédito/débito. AFIP lo exige
   // (CbtesAsoc): una nota sin comprobante asociado no se puede emitir.
   cbte_asoc_id: z.string().uuid().optional().nullable(),
+  // Clave de idempotencia generada al montar el formulario. Un doble-submit con la
+  // misma key devuelve la venta ya creada en vez de duplicarla (defensa server-side).
+  idempotency_key: z.string().uuid().optional(),
   items: z.array(itemSchema).min(0),
   pagos: z.array(pagoSchema).default([]),
 });
@@ -71,6 +74,7 @@ export const crearVenta = createServerFn({ method: "POST" })
       p_nombre_obra: data.nombre_obra ?? undefined,
       p_fecha: data.fecha ?? undefined,
       p_cbte_asoc_id: data.cbte_asoc_id ?? undefined,
+      p_idempotency_key: data.idempotency_key ?? undefined,
     });
 
     if (error) throw new Error(error.message);

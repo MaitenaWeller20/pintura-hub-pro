@@ -67,6 +67,10 @@ function NuevaVenta() {
   const [prodQuery, setProdQuery] = useState("");
   const [showCli, setShowCli] = useState(false);
   const [showProd, setShowProd] = useState(false);
+  // Una key estable por vida del formulario: reintentar el mismo submit no duplica
+  // la venta. Si el submit falla por validación, la venta no se creó y el reintento
+  // procede normal; sólo hace short-circuit cuando la venta realmente quedó guardada.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   const esCtaCte = TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE";
   const esRemitoObra = tipoComp === "REMITO_OBRA";
@@ -120,6 +124,10 @@ function NuevaVenta() {
   // con el que se va a guardar, así el cajero ve lo que realmente va a pasar.
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
+  const esFiscal = ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO", "NOTA_DEBITO"].includes(tipoComp);
+  // Coherencia comprobante ↔ condición IVA: Factura A sólo a Responsable Inscripto.
+  const comboInvalido =
+    tipoComp === "FACTURA_A" && !!clienteSel && clienteSel.tipo !== "RESPONSABLE_INSCRIPTO";
   const signo = esNotaCredito ? -1 : 1;
 
   // Una nota de crédito/débito rectifica una factura concreta. AFIP lo exige
@@ -202,6 +210,7 @@ function NuevaVenta() {
         percepciones: Number(percepciones || 0), observaciones,
         nombre_obra: esRemitoObra ? nombreObra : null,
         cbte_asoc_id: esNota ? cbteAsocId || null : null,
+        idempotency_key: idempotencyKey,
         items: items.map((it) => {
           // Un campo de precio vacío (null) NO es "precio 0": es "usá el de lista".
           // Sólo mandamos el precio cuando el cajero tipeó un valor distinto al de
@@ -235,6 +244,11 @@ function NuevaVenta() {
   const canSave =
     !!effSucursal && !!clienteId &&
     items.length > 0 &&
+    // (4) al menos un ítem con cantidad > 0, y total ≠ 0 en comprobantes fiscales
+    items.some((it) => (it.cantidad || 0) > 0) &&
+    (!esFiscal || Math.abs(totales.total) > 0.005) &&
+    // (1) no permitir Factura A a un cliente que no es Responsable Inscripto
+    !comboInvalido &&
     (!esRemitoObra || nombreObra.trim().length > 0) &&
     // Una nota sin factura asociada no se puede emitir en AFIP.
     (!esNota || !!cbteAsocId);
@@ -281,6 +295,12 @@ function NuevaVenta() {
                   <SelectItem value="FAC_INTERNA_CTA_CTE">Fac. interna Cta Cte</SelectItem>
                 </SelectContent>
               </Select>
+              {comboInvalido && (
+                <p className="text-[11px] text-destructive mt-1">
+                  La Factura A es sólo para Responsables Inscriptos. Este cliente es {clienteSel?.tipo?.replace(/_/g, " ").toLowerCase()}.
+                  Elegí Factura B (u otro comprobante).
+                </p>
+              )}
             </div>
             <div>
               <Label>Condición *</Label>

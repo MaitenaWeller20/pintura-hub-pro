@@ -18,7 +18,7 @@ import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTri
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { anularVenta } from "@/lib/ventas.functions";
-import { emitirComprobante } from "@/lib/fiscal.functions";
+import { emitirComprobante, datosFiscalesComprobante } from "@/lib/fiscal.functions";
 import { esComprobanteFiscal } from "@/lib/fiscal/codigos";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -228,6 +228,21 @@ function EstadoAfip({ venta }: { venta: any }) {
   return <StatusPill tone="neutral">Sin emitir</StatusPill>;
 }
 
+const condIvaLabel: Record<string, string> = {
+  RESPONSABLE_INSCRIPTO: "Responsable Inscripto",
+  MONOTRIBUTO: "Monotributo",
+};
+// letra + código AFIP por CbteTipo (para el recuadro de la letra, estilo AFIP).
+const CBTE_INFO: Record<number, { letra: string; cod: string }> = {
+  1: { letra: "A", cod: "01" }, 2: { letra: "A", cod: "02" }, 3: { letra: "A", cod: "03" },
+  6: { letra: "B", cod: "06" }, 7: { letra: "B", cod: "07" }, 8: { letra: "B", cod: "08" },
+  11: { letra: "C", cod: "11" }, 12: { letra: "C", cod: "12" }, 13: { letra: "C", cod: "13" }, 15: { letra: "C", cod: "15" },
+};
+const tituloDeCbte = (c: number) =>
+  [3, 8, 13].includes(c) ? "NOTA DE CRÉDITO" : [2, 7, 12].includes(c) ? "NOTA DE DÉBITO" : "FACTURA";
+// cae_vencimiento viene 'YYYY-MM-DD': formateo manual para no correr un día por timezone.
+const fmtVencCae = (s?: string | null) => (s ? s.split("-").reverse().join("/") : "—");
+
 function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
   const { data: detail } = useQuery({
     queryKey: ["venta-detail", venta?.id],
@@ -240,30 +255,80 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
       return { items: (items ?? []) as any[], pagos: (pagos ?? []) as any[] };
     },
   });
+  const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
 
-  const imprimir = () => {
+  const imprimir = async () => {
     if (!venta) return;
+
+    // Datos fiscales (CAE, QR, emisor real) sólo si el comprobante ya está autorizado.
+    let fiscal: any = null;
+    if (venta.cae && esComprobanteFiscal(venta.tipo_comprobante)) {
+      try {
+        fiscal = await datosFiscalesFn({ data: { venta_id: venta.id } });
+      } catch {
+        fiscal = null;
+      }
+    }
+
     const doc = new jsPDF();
-    doc.setFontSize(16); doc.text("CasaForma", 14, 16);
-    doc.setFontSize(10); doc.text(`${tipoComprobanteLabel[venta.tipo_comprobante]} ${venta.numero_comprobante}`, 14, 22);
-    doc.text(`Fecha: ${fmtDateTime(venta.fecha)}`, 14, 28);
-    doc.text(`Sucursal: ${venta.sucursal?.nombre ?? ""}`, 14, 34);
-    doc.text(`Cliente: ${venta.cliente?.razon_social ?? ""}${venta.cliente?.cuit_dni ? ` — ${venta.cliente.cuit_dni}` : ""}`, 14, 40);
+
+    // Encabezado: razón social real de fiscal_config (ya no "CasaForma" hardcodeado).
+    const emisorNombre = fiscal?.emisor?.razon_social ?? venta.sucursal?.nombre ?? "Comprobante";
+    doc.setFontSize(16); doc.text(emisorNombre, 14, 16);
+    doc.setFontSize(9);
+    let hy = 22;
+    if (fiscal?.emisor?.cuit) { doc.text(`CUIT: ${fiscal.emisor.cuit}`, 14, hy); hy += 5; }
+    if (fiscal?.emisor?.condicion_iva) {
+      doc.text(`Condición IVA: ${condIvaLabel[fiscal.emisor.condicion_iva] ?? fiscal.emisor.condicion_iva}`, 14, hy); hy += 5;
+    }
+    if (fiscal?.emisor?.domicilio_fiscal) { doc.text(String(fiscal.emisor.domicilio_fiscal), 14, hy); hy += 5; }
+
+    // Título + número: fiscal (PPPPP-NNNNNNNN + letra/COD) si hay CAE; si no, el interno.
+    const cbte = fiscal ? CBTE_INFO[fiscal.cbte_tipo] : null;
+    const numeroMostrar = fiscal
+      ? `${String(fiscal.punto_venta).padStart(5, "0")}-${String(fiscal.numero).padStart(8, "0")}`
+      : venta.numero_comprobante;
+    const titulo = cbte
+      ? `${tituloDeCbte(fiscal.cbte_tipo)} ${cbte.letra} (COD. ${cbte.cod})`
+      : tipoComprobanteLabel[venta.tipo_comprobante];
+
+    doc.setFontSize(11); doc.text(`${titulo}   ${numeroMostrar}`, 14, hy + 2);
+    doc.setFontSize(9);
+    doc.text(`Fecha: ${fmtDateTime(venta.fecha)}`, 14, hy + 8);
+    doc.text(`Cliente: ${venta.cliente?.razon_social ?? ""}${venta.cliente?.cuit_dni ? ` — ${venta.cliente.cuit_dni}` : ""}`, 14, hy + 14);
+
     autoTable(doc, {
-      startY: 46,
-      head: [["Código","Descripción","Cant.","Precio s/IVA","Desc.","IVA","Subtotal"]],
-      body: (detail?.items ?? []).map((i:any) => [
+      startY: hy + 20,
+      head: [["Código", "Descripción", "Cant.", "Precio s/IVA", "Desc.", "IVA", "Subtotal"]],
+      body: (detail?.items ?? []).map((i: any) => [
         i.codigo, i.descripcion, i.cantidad, fmtMoney(i.precio_unitario_sin_iva),
         `${i.descuento_porcentaje}%`, `${i.iva_porcentaje}%`, fmtMoney(i.subtotal_con_iva),
       ]),
       styles: { fontSize: 8 },
     });
+
     const y = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(9);
     doc.text(`Subtotal: ${fmtMoney(venta.subtotal_sin_iva)}`, 130, y);
-    doc.text(`IVA: ${fmtMoney(venta.iva_total)}`, 130, y+6);
-    doc.text(`Percepciones: ${fmtMoney(venta.percepciones)}`, 130, y+12);
-    doc.setFontSize(12); doc.text(`TOTAL: ${fmtMoney(venta.total)}`, 130, y+20);
-    doc.save(`${venta.numero_comprobante}.pdf`);
+    doc.text(`IVA: ${fmtMoney(venta.iva_total)}`, 130, y + 6);
+    doc.text(`Percepciones: ${fmtMoney(venta.percepciones)}`, 130, y + 12);
+    doc.setFontSize(12); doc.text(`TOTAL: ${fmtMoney(venta.total)}`, 130, y + 20);
+
+    // Bloque CAE + QR de AFIP (sólo comprobantes autorizados que emitimos).
+    if (fiscal?.cae && fiscal.qr) {
+      const qy = y + 30;
+      doc.addImage(fiscal.qr, "PNG", 14, qy, 32, 32);
+      doc.setFontSize(9);
+      doc.text("Comprobante Autorizado", 50, qy + 6);
+      doc.text(`CAE N°: ${fiscal.cae}`, 50, qy + 12);
+      doc.text(`Vto. CAE: ${fmtVencCae(fiscal.cae_vencimiento)}`, 50, qy + 18);
+      if (fiscal.modo === "HOMOLOGACION") {
+        doc.setFontSize(8);
+        doc.text("Comprobante emitido en homologación — sin validez fiscal.", 50, qy + 24);
+      }
+    }
+
+    doc.save(`${numeroMostrar}.pdf`);
   };
 
   return (

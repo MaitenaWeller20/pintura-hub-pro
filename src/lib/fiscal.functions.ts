@@ -12,6 +12,7 @@ import {
   determinarLetra,
   cbteTipoAfip,
   letraDeCbteTipo,
+  facturaDeLetra,
   puedeForzarConsumidorFinal,
   esComprobanteFiscal,
   docTipoAfip,
@@ -421,6 +422,8 @@ export const emitirComprobante = createServerFn({ method: "POST" })
               afip_estado: "APROBADO",
               afip_error: null,
               afip_emitido_at: new Date().toISOString(),
+              // Si la letra emitida difiere del tipo tipeado, reescribe tipo/numero interno.
+              ...(await camposReescrituraLetra(sb, venta, cbteTipo)),
             })
             .eq("id", venta.id);
           return { cae: recuperado.cae, numero: venta.afip_numero, recuperado: true, modo: pv.modo };
@@ -467,7 +470,12 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         );
       }
 
-      numero = ultimoAfip + 1;
+      // En PRODUCCIÓN el número lo dicta AFIP (ultimoAfip, ya validado == ultimoLocal
+      // por la guarda de arriba). En MOCK no hay AFIP: ultimoAutorizado() devuelve 0
+      // fijo, así que ultimoAfip+1 daría SIEMPRE 1 y la 2da emisión de cada
+      // (PV,tipo,modo) chocaría con el índice único uq_ventas_afip_numeracion. En MOCK
+      // numeramos desde el último LOCAL (mayor afip_numero ya autorizado con CAE).
+      numero = (MOCK ? ultimoLocal : ultimoAfip) + 1;
     } catch (e) {
       if (esErrorTransitorio(e)) {
         await marcarPendiente(sb, venta.id, (e as Error).message);
@@ -553,6 +561,8 @@ export const emitirComprobante = createServerFn({ method: "POST" })
           afip_emitido_at: new Date().toISOString(),
           // El importe exacto que se le mandó a AFIP, para el QR.
           afip_imp_total: totales.total,
+          // Si la letra emitida difiere del tipo tipeado, reescribe tipo/numero interno.
+          ...(await camposReescrituraLetra(sb, venta, cbteTipo)),
         })
         .eq("id", venta.id);
 
@@ -585,6 +595,35 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       throw e;
     }
   });
+
+/**
+ * Si la letra REALMENTE emitida (derivada del CbteTipo de AFIP) difiere del
+ * tipo_comprobante TIPEADO, devuelve los campos para reescribir tipo_comprobante y
+ * numero_comprobante (número interno) a la letra correcta. Ej: se tipeó FACTURA_A a
+ * un consumidor final; AFIP autoriza B (cbte 6) → se reescribe a FACTURA_B con un
+ * número FVTA fresco. Sólo aplica a facturas: el enum no distingue letra en NC/ND.
+ * Escribe con el cliente admin (service_role), que el trigger guard_ventas_columnas
+ * deja pasar. Si no puede sacar número nuevo, NO frena la emisión (el CAE ya está):
+ * deja el tipo/numero originales y loguea.
+ */
+async function camposReescrituraLetra(sb: any, venta: any, cbteTipo: number) {
+  const esFactura =
+    venta.tipo_comprobante === "FACTURA_A" ||
+    venta.tipo_comprobante === "FACTURA_B" ||
+    venta.tipo_comprobante === "FACTURA_C";
+  if (!esFactura) return {};
+  const tipoEmitido = facturaDeLetra(letraDeCbteTipo(cbteTipo));
+  if (tipoEmitido === venta.tipo_comprobante) return {};
+  const { data: nuevoNumero, error } = await sb.rpc("next_comprobante_numero", {
+    _sucursal_id: venta.sucursal_id,
+    _tipo: tipoEmitido,
+  });
+  if (error || !nuevoNumero) {
+    console.error("[AFIP] no se pudo reescribir tipo/numero a la letra emitida:", error?.message);
+    return {};
+  }
+  return { tipo_comprobante: tipoEmitido, numero_comprobante: nuevoNumero };
+}
 
 async function marcarPendiente(sb: any, ventaId: string, error: string) {
   await sb.from("ventas").update({ afip_estado: "PENDIENTE", afip_error: error }).eq("id", ventaId);

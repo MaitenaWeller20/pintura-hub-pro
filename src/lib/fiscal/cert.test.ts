@@ -39,7 +39,10 @@ describe("CSR para AFIP", () => {
     expect(() => validarCuitEmisor("20111111112")).toThrow(/ejemplo/i);
     expect(() => validarCuitEmisor("123")).toThrow(/11 dígitos/);
     expect(() => validarCuitEmisor(null)).toThrow();
-    expect(validarCuitEmisor("30-71234567-8")).toBe("30712345678");
+    // CUIT con dígito verificador incorrecto: ahora también se rechaza (módulo 11).
+    expect(() => validarCuitEmisor("30-71234567-8")).toThrow(/dígito verificador/i);
+    // CUIT válido (mismos 10 primeros dígitos, verificador correcto = 1).
+    expect(validarCuitEmisor("30-71234567-1")).toBe("30712345671");
   });
 
   it("genera un CSR con el subject exacto que pide AFIP", async () => {

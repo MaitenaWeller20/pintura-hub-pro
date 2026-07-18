@@ -1,4 +1,5 @@
 import forge from "node-forge";
+import { cuitValido } from "./codigos";
 
 /**
  * Certificado digital de AFIP.
@@ -67,8 +68,13 @@ export function validarCuitEmisor(cuit: string | null | undefined): string {
   if (limpio.length !== 11) {
     throw new Error("Cargá el CUIT del emisor (11 dígitos) antes de generar el CSR.");
   }
+  // El CUIT de ejemplo tiene módulo 11 válido, así que hay que rechazarlo ANTES
+  // que la verificación genérica para dar el mensaje correcto.
   if (limpio === CUIT_PROVISORIO) {
     throw new Error("Ese es el CUIT de ejemplo de AFIP. Cargá el CUIT real del negocio.");
+  }
+  if (!cuitValido(limpio)) {
+    throw new Error("El CUIT del emisor no es válido (dígito verificador incorrecto).");
   }
   return limpio;
 }

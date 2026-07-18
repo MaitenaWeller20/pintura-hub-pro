@@ -34,6 +34,18 @@ import { generarParYCsr, validarCuitEmisor, prepararSubject, verificarCertificad
 import { encryptString, decryptString } from "./fiscal/crypto";
 import { qrAfipDataUrl } from "./fiscal/qr";
 
+// Ventana de gracia del claim anti doble-submit: si una emisión de la MISMA venta
+// se reservó hace menos que esto, un segundo request no puede re-reservar (se
+// considera "en curso"). Un reintento legítimo tras un timeout no depende de este
+// grace: entra por el camino de recuperación (consulta el CAE ya reservado).
+//
+// DEBE ser > TIMEOUT_MS de la llamada a AFIP (25s): un intento lento-pero-vivo
+// SIEMPRE termina (por éxito o por AfipTimeout a los 25s) antes de la gracia, y al
+// terminar re-estampa updated_at (marcarPendiente / guardado del CAE). Así la rama
+// `updated_at.lt` sólo se activa cuando el request original quedó realmente muerto
+// (crash / serverless killed), no cuando todavía está esperando a AFIP.
+const EMISION_GRACE_MS = 90_000;
+
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   return supabaseAdmin as any;
@@ -466,9 +478,21 @@ export const emitirComprobante = createServerFn({ method: "POST" })
 
     // Reservamos el número ANTES de llamar a AFIP: si la llamada se va por
     // timeout, el reintento sabe qué número consultar en vez de emitir otro.
-    // El índice único uq_ventas_afip_numeracion impide que dos emisiones
-    // simultáneas tomen el mismo número: si esta escritura falla, otro se lo llevó.
-    const { error: reservaErr } = await sb
+    // El índice único uq_ventas_afip_numeracion impide que dos VENTAS DISTINTAS
+    // tomen el mismo número. Pero NO frena el doble-submit de la MISMA venta
+    // (doble click / retry): al ser la misma fila, ambos updates tendrían éxito y
+    // ambos llamarían a AFIP → comprobante duplicado. Por eso la reserva es un
+    // CLAIM ATÓMICO con dos condiciones (AND):
+    //   1. `cae IS NULL`: nunca re-reservar una venta YA autorizada. Sin esto, si
+    //      un request concurrente terminó (APROBADO+CAE) mientras otro estaba en la
+    //      consulta de recuperación, el segundo pasaría `afip_estado.neq.PENDIENTE`
+    //      (APROBADO ≠ PENDIENTE) y emitiría un comprobante DUPLICADO.
+    //   2. no hay emisión en curso reciente: `afip_estado.neq.PENDIENTE` OR el
+    //      PENDIENTE ya venció la gracia (request muerto).
+    // El segundo request, tras el lock de fila, re-evalúa el WHERE contra la fila
+    // ya reservada/aprobada, no matchea, y afecta 0 filas.
+    const graceThreshold = new Date(Date.now() - EMISION_GRACE_MS).toISOString();
+    const { data: reservada, error: reservaErr } = await sb
       .from("ventas")
       .update({
         afip_cbte_tipo: cbteTipo,
@@ -478,11 +502,22 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         afip_estado: "PENDIENTE",
         afip_intentos: (venta.afip_intentos ?? 0) + 1,
       })
-      .eq("id", venta.id);
+      .eq("id", venta.id)
+      .is("cae", null)
+      .or(`afip_estado.neq.PENDIENTE,updated_at.lt.${graceThreshold}`)
+      .select("id");
 
     if (reservaErr) {
       throw new Error(
         "Otro comprobante tomó ese número de AFIP en este instante. Reintentá la emisión.",
+      );
+    }
+    if (!reservada || reservada.length === 0) {
+      // El claim no afectó filas: hay otra emisión de ESTA misma venta en curso.
+      // El reintento legítimo tras un timeout NO cae acá: entra por el camino de
+      // recuperación (la venta ya tiene afip_numero) que consulta el CAE en AFIP.
+      throw new Error(
+        "Ya hay una emisión en curso para este comprobante. Esperá unos segundos y reintentá.",
       );
     }
 

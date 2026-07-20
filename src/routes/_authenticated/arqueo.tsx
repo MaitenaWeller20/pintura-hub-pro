@@ -25,9 +25,11 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
-import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown } from "lucide-react";
+import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
 import { toast } from "sonner";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/arqueo")({
   component: ArqueoPage,
@@ -39,6 +41,39 @@ type CajaForma = { entra: number; sale: number; neto: number };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
 const TIPO_MOV_LABEL: Record<string, string> = { INGRESO: "Ingreso", GASTO: "Gasto", RETIRO: "Retiro", INICIAL: "Fondo inicial" };
 
+// PDF del cierre de una sesión: esperado/contado/diferencia por forma + efectivo dejado.
+function pdfCierre(s: any, sucNombre: string) {
+  const doc = new jsPDF();
+  const W = doc.internal.pageSize.getWidth();
+  doc.setFontSize(14); doc.text("CASAFORMA", 14, 16);
+  doc.setFontSize(11); doc.text("Cierre de caja", W / 2, 16, { align: "center" });
+  doc.setFontSize(9);
+  doc.text(`Sucursal: ${sucNombre}`, 14, 24);
+  doc.text(`Abierta: ${fmtDateTime(s.abierta_en)}`, 14, 29);
+  doc.text(`Cerrada: ${fmtDateTime(s.cerrada_en)}`, 14, 34);
+  doc.text(`Fondo inicial: ${fmtMoney(s.fondo_inicial)}`, 14, 39);
+
+  const esperado = s.esperado ?? {}, contado = s.contado ?? {}, diferencia = s.diferencia ?? {};
+  const formas = Array.from(new Set([...Object.keys(esperado), ...Object.keys(contado)]));
+  autoTable(doc, {
+    startY: 44,
+    head: [["Forma", "Esperado", "Contado", "Diferencia"]],
+    body: formas.map((f) => [
+      formaPagoLabel[f] ?? f,
+      fmtMoney(Number(esperado[f]?.neto ?? 0)),
+      fmtMoney(Number(contado[f] ?? 0)),
+      fmtMoney(Number(diferencia[f] ?? 0)),
+    ]),
+    foot: [["TOTAL", fmtMoney(s.total_esperado), fmtMoney(s.total_contado), fmtMoney(s.total_diferencia)]],
+    styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
+  });
+  const y = (doc as any).lastAutoTable.finalY + 8;
+  doc.setFontSize(10);
+  doc.text(`Efectivo dejado para mañana: ${fmtMoney(s.efectivo_dejado ?? 0)}`, 14, y);
+  if (s.notas) { doc.setFontSize(9); doc.text(`Observaciones: ${s.notas}`, 14, y + 6); }
+  doc.save(`cierre-caja-${fmtDate(s.cerrada_en)}.pdf`);
+}
+
 function ArqueoPage() {
   const { data: cu } = useCurrentUser();
   const qc = useQueryClient();
@@ -49,6 +84,7 @@ function ArqueoPage() {
     queryKey: ["sucs"],
     queryFn: async () => ((await supabase.from("sucursales").select("id,nombre").order("nombre")).data ?? []) as any[],
   });
+  const sucNombre = useMemo(() => sucs.find((s: any) => s.id === effSucId)?.nombre ?? "", [sucs, effSucId]);
 
   // Sesión abierta de la sucursal (si hay).
   const { data: sesion, isLoading } = useQuery({
@@ -66,10 +102,10 @@ function ArqueoPage() {
   return (
     <div>
       <PageHeader
-        title="Arqueo de caja"
-        subtitle="Apertura, movimientos y cierre con conteo por forma de pago"
+        title="Rendición de caja"
+        subtitle="La caja se abre sola con la primera venta del día. Al cerrar, declarás lo contado y cuánto dejás para mañana."
         badge={sesion ? <StatusPill tone="success" icon={<LockOpen className="h-3 w-3" />}>Caja abierta</StatusPill>
-                      : <StatusPill tone="neutral" icon={<Lock className="h-3 w-3" />}>Caja cerrada</StatusPill>}
+                      : <StatusPill tone="neutral" icon={<Lock className="h-3 w-3" />}>Sin movimientos hoy</StatusPill>}
         actions={cu?.isAdmin && (
           <Select value={sucId} onValueChange={setSucId}>
             <SelectTrigger className="w-52"><SelectValue placeholder="Mi sucursal" /></SelectTrigger>
@@ -86,37 +122,16 @@ function ArqueoPage() {
           qc.invalidateQueries({ queryKey: ["caja-historial"] });
         }} />
       ) : (
-        <AbrirCaja sucId={effSucId} onOpened={() => qc.invalidateQueries({ queryKey: ["caja-sesion-activa"] })} />
+        <SectionCard title="Caja del día">
+          <p className="text-sm text-muted-foreground">
+            Todavía no hubo movimientos hoy en esta sucursal. La caja se abre sola con la primera venta,
+            cobranza o pago; el fondo inicial es el efectivo que dejaste en el cierre anterior.
+          </p>
+        </SectionCard>
       )}
 
-      <Historial sucId={effSucId} />
+      <Historial sucId={effSucId} sucNombre={sucNombre} />
     </div>
-  );
-}
-
-// ---------------- Abrir ----------------
-function AbrirCaja({ sucId, onOpened }: { sucId: string; onOpened: () => void }) {
-  const [fondo, setFondo] = useState<number | null>(0);
-  const abrir = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase.rpc("abrir_caja", { p_sucursal_id: sucId, p_fondo_inicial: Number(fondo || 0) });
-      if (error) throw error;
-    },
-    onSuccess: () => { toast.success("Caja abierta"); onOpened(); },
-    onError: (e: any) => toast.error(e.message),
-  });
-  return (
-    <SectionCard title="Abrir caja" subtitle="Declará el efectivo con el que arranca el turno">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-48">
-          <Label>Fondo inicial (efectivo)</Label>
-          <NumberInput value={fondo} onValueChange={setFondo} className="mt-1" />
-        </div>
-        <Button onClick={() => abrir.mutate()} disabled={!sucId || abrir.isPending}>
-          <LockOpen className="h-4 w-4 mr-1.5" /> Abrir caja
-        </Button>
-      </div>
-    </SectionCard>
   );
 }
 
@@ -289,6 +304,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
   { sesion: any; esperado: Record<string, CajaForma>; onClose: () => void; onClosed: () => void }) {
   const [contado, setContado] = useState<Record<string, number | null>>({});
   const [notas, setNotas] = useState("");
+  const [efectivoDejado, setEfectivoDejado] = useState<number | null>(null);
 
   const cerrar = useMutation({
     mutationFn: async () => {
@@ -296,6 +312,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
       for (const f of FORMAS) if (contado[f] != null) payload[f] = Number(contado[f]);
       const { error } = await supabase.rpc("cerrar_caja", {
         p_sesion_id: sesion.id, p_contado: payload, p_notas: notas || undefined,
+        p_efectivo_dejado: Number(efectivoDejado || 0),
       });
       if (error) throw error;
     },
@@ -340,6 +357,15 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
             );
           })}
         </div>
+        <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
+          <Label className="font-medium">Efectivo que dejás en la caja para mañana</Label>
+          <div className="flex items-center gap-2 mt-1">
+            <NumberInput value={efectivoDejado ?? null} onValueChange={setEfectivoDejado} className="h-9 w-40 text-right" />
+            <p className="text-[11px] text-muted-foreground">
+              Será el fondo inicial del próximo turno. El resto del efectivo se retira. Si no dejás nada, poné 0.
+            </p>
+          </div>
+        </div>
         <div className="mt-2">
           <Label>Observaciones</Label>
           <Textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={2} className="mt-1"
@@ -357,7 +383,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
 }
 
 // ---------------- Historial ----------------
-function Historial({ sucId }: { sucId: string }) {
+function Historial({ sucId, sucNombre }: { sucId: string; sucNombre: string }) {
   const { data: sesiones = [] } = useQuery({
     queryKey: ["caja-historial", sucId],
     enabled: !!sucId,
@@ -375,6 +401,8 @@ function Historial({ sucId }: { sucId: string }) {
           <TableHead className="text-right">Esperado</TableHead>
           <TableHead className="text-right">Contado</TableHead>
           <TableHead className="text-right">Diferencia</TableHead>
+          <TableHead className="text-right">Dejado</TableHead>
+          <TableHead></TableHead>
         </TableRow></TableHeader>
         <TableBody>
           {sesiones.map((s) => (
@@ -387,6 +415,12 @@ function Historial({ sucId }: { sucId: string }) {
                 Number(s.total_diferencia) === 0 ? "text-success" : "text-destructive"
               }`}>
                 {Number(s.total_diferencia) > 0 ? "+" : ""}{fmtMoney(s.total_diferencia)}
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.efectivo_dejado ?? 0)}</TableCell>
+              <TableCell className="text-right">
+                <Button size="sm" variant="ghost" onClick={() => pdfCierre(s, sucNombre)} title="Descargar PDF del cierre">
+                  <Printer className="h-3.5 w-3.5" />
+                </Button>
               </TableCell>
             </TableRow>
           ))}

@@ -111,6 +111,7 @@ export type Database = {
           contado: Json | null
           created_at: string
           diferencia: Json | null
+          efectivo_dejado: number | null
           esperado: Json | null
           estado: Database["public"]["Enums"]["caja_sesion_estado"]
           fondo_inicial: number
@@ -130,6 +131,7 @@ export type Database = {
           contado?: Json | null
           created_at?: string
           diferencia?: Json | null
+          efectivo_dejado?: number | null
           esperado?: Json | null
           estado?: Database["public"]["Enums"]["caja_sesion_estado"]
           fondo_inicial?: number
@@ -149,6 +151,7 @@ export type Database = {
           contado?: Json | null
           created_at?: string
           diferencia?: Json | null
+          efectivo_dejado?: number | null
           esperado?: Json | null
           estado?: Database["public"]["Enums"]["caja_sesion_estado"]
           fondo_inicial?: number
@@ -1706,6 +1709,7 @@ export type Database = {
       }
       aprobar_remito: { Args: { p_remito_id: string }; Returns: undefined }
       caja_esperado: { Args: { _sesion_id: string }; Returns: Json }
+      caja_sesion_actual: { Args: { p_sucursal_id: string }; Returns: string }
       cc_registrar_por_venta: {
         Args: { _venta_id: string }
         Returns: undefined
@@ -1720,7 +1724,12 @@ export type Database = {
       }
       cc_saldo: { Args: { _cliente_id: string }; Returns: number }
       cerrar_caja: {
-        Args: { p_contado?: Json; p_notas?: string; p_sesion_id: string }
+        Args: {
+          p_contado?: Json
+          p_efectivo_dejado?: number
+          p_notas?: string
+          p_sesion_id: string
+        }
         Returns: {
           total_contado: number
           total_diferencia: number

@@ -53,8 +53,7 @@ const groups: Array<{ label: string; items: MenuItem[] }> = [
     items: [
       { to: "/pagos", label: "Pagos", icon: Wallet, adminOnly: false },
       { to: "/cuentas-corrientes", label: "Cuentas corrientes", icon: Receipt, adminOnly: false },
-      { to: "/arqueo", label: "Arqueo de caja", icon: Calculator, adminOnly: false },
-      { to: "/caja", label: "Rendición caja", icon: Coins, adminOnly: false },
+      { to: "/arqueo", label: "Rendición de caja", icon: Coins, adminOnly: false },
     ],
   },
   {

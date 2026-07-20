@@ -322,7 +322,8 @@ function NuevaCompra() {
                     <Select value={p.forma_pago} onValueChange={(v) => updPago(p.id, "forma_pago", v)}>
                       <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {Object.entries(formaPagoLabel).filter(([k]) => k !== "CTA_CTE").map(([k, l]) => (<SelectItem key={k} value={k}>{l}</SelectItem>))}
+                        {/* A un proveedor solo se le paga en efectivo, transferencia o cheque. */}
+                        {["EFECTIVO", "TRANSFERENCIA", "CHEQUE"].map((k) => (<SelectItem key={k} value={k}>{formaPagoLabel[k]}</SelectItem>))}
                       </SelectContent>
                     </Select>
                   </div>

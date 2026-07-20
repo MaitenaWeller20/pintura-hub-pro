@@ -335,7 +335,12 @@ function MarkupDialog({ open, onClose, productoIds, totalFiltrado, currentDefaul
         sobrescribir_individual: true,
       },
     }),
-    onSuccess: (r: any) => { toast.success(`${r.actualizados} productos actualizados`); onDone(); },
+    onSuccess: (r: any) => {
+      const partes = [`${r.actualizados} con precio recalculado`];
+      if (r.sin_costo > 0) partes.push(`${r.sin_costo} sin costo cargado (markup guardado)`);
+      toast.success(`Markup aplicado: ${partes.join(" · ")}`);
+      onDone();
+    },
     onError: (e: any) => toast.error(e.message),
   });
 

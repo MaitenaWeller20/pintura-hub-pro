@@ -30,6 +30,8 @@ export const Route = createFileRoute("/_authenticated/productos/")({
 
 // Calcula precio venta s/IVA según fábrica y markup efectivo (individual o default)
 const calcPrecio = (fabrica: number, markup: number) => +(fabrica * (1 + markup / 100)).toFixed(2);
+// Costo (precio de fábrica) a partir del precio de lista de Quimex y su descuento comercial.
+const costoDeLista = (lista: number, descuento: number) => +(lista * (1 - descuento / 100)).toFixed(2);
 
 function Productos() {
   const { data: cu } = useCurrentUser();
@@ -46,6 +48,7 @@ function Productos() {
     queryFn: async () => (await supabase.from("settings").select("*").maybeSingle()).data,
   });
   const markupDefault = Number(settings?.markup_default_porcentaje ?? 50);
+  const descuentoProveedor = Number(settings?.descuento_proveedor_porcentaje ?? 42);
 
   const { data: productos = [] } = useQuery({
     queryKey: ["productos"],
@@ -208,7 +211,7 @@ function Productos() {
       </div>
 
       <ProductoDialog key={`${editing?.id ?? "nuevo"}-${open}`} open={open} onClose={() => setOpen(false)} editing={editing}
-        categorias={categorias} marcas={marcas} markupDefault={markupDefault}
+        categorias={categorias} marcas={marcas} markupDefault={markupDefault} descuentoProveedor={descuentoProveedor}
         onSaved={() => { qc.invalidateQueries({ queryKey: ["productos"] }); setOpen(false); }} />
 
       <MarkupDialog open={openMarkup} onClose={() => setOpenMarkup(false)}
@@ -225,11 +228,11 @@ function Productos() {
   );
 }
 
-function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefault, onSaved }: any) {
+function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefault, descuentoProveedor, onSaved }: any) {
   const [form, setForm] = useState<any>(() => editing ?? {
     codigo: "", nombre: "", categoria_id: null, marca_id: null,
     unidad_medida: "unidad",
-    precio_fabrica: 0, markup_porcentaje: null,
+    precio_lista: 0, precio_fabrica: 0, markup_porcentaje: null,
     precio_sin_iva: 0, iva_porcentaje: 21, stock_minimo: 0, activo: true,
   });
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -239,6 +242,12 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
     const mk = markup ?? markupDefault;
     set("precio_sin_iva", calcPrecio(fabrica || 0, mk));
   };
+  // Al cambiar el precio de lista de Quimex: costo = lista − descuento, y luego venta.
+  const recalcDesdeLista = (lista: number) => {
+    const fabrica = costoDeLista(lista || 0, descuentoProveedor);
+    set("precio_fabrica", fabrica);
+    recalcPrecio(fabrica, form.markup_porcentaje);
+  };
 
   const m = useMutation({
     mutationFn: async () => {
@@ -246,6 +255,7 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
         codigo: form.codigo, nombre: form.nombre,
         categoria_id: form.categoria_id, marca_id: form.marca_id,
         unidad_medida: form.unidad_medida,
+        precio_lista: Number(form.precio_lista || 0),
         precio_fabrica: Number(form.precio_fabrica || 0),
         markup_porcentaje: form.markup_porcentaje === null || form.markup_porcentaje === "" ? null : Number(form.markup_porcentaje),
         precio_sin_iva: Number(form.precio_sin_iva || 0),
@@ -289,7 +299,11 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
             </Select>
           </div>
           <div>
-            <Label>Precio Fábrica</Label>
+            <Label>Precio de lista (Quimex)</Label>
+            <NumberInput value={form.precio_lista} onValueChange={(v) => { set("precio_lista", v ?? 0); recalcDesdeLista(v ?? 0); }} />
+          </div>
+          <div>
+            <Label>Precio Fábrica (costo) <span className="text-xs text-muted-foreground">(lista − {descuentoProveedor}%)</span></Label>
             <NumberInput value={form.precio_fabrica} onValueChange={(v) => { set("precio_fabrica", v ?? 0); recalcPrecio(v ?? 0, form.markup_porcentaje); }} />
           </div>
           <div>

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,8 @@ type Row = Record<string, any>;
 const fieldsTarget = [
   { key: "codigo", label: "Código *" },
   { key: "nombre", label: "Nombre *" },
-  { key: "precio_fabrica", label: "Precio fábrica" },
+  { key: "precio_lista", label: "Precio de lista (Quimex)" },
+  { key: "precio_fabrica", label: "Precio fábrica (costo)" },
   { key: "precio_sin_iva", label: "Precio s/IVA" },
   { key: "iva_porcentaje", label: "IVA %" },
   { key: "stock_minimo", label: "Stock mínimo" },
@@ -67,6 +68,7 @@ const numOr = (v: unknown, def: number) => {
 const sinonimos: Record<string, string[]> = {
   codigo: ["codigo", "cod", "sku", "articulo"],
   nombre: ["nombre", "descripcion", "detalle", "producto"],
+  precio_lista: ["preciodelista", "preciolista", "listadeprecios", "listaprecios", "lista"],
   precio_fabrica: ["preciofabrica", "fabrica", "costo", "preciocosto"],
   precio_sin_iva: ["preciosiniva", "preciosiva", "preciounitario", "precioneto", "precio", "punit"],
   iva_porcentaje: ["iva", "alicuota", "ivaporcentaje"],
@@ -103,6 +105,16 @@ function ImportarProductos() {
   const [mapping, setMapping] = useState<Record<string,string>>({});
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Array<{ row:number; msg:string }>>([]);
+  // Parámetros de precio (se inicializan desde settings y se guardan al importar).
+  const [descuento, setDescuento] = useState<number>(42);
+  const [markupDef, setMarkupDef] = useState<number>(50);
+  useEffect(() => {
+    supabase.from("settings").select("markup_default_porcentaje, descuento_proveedor_porcentaje").maybeSingle()
+      .then(({ data }) => {
+        if (data?.descuento_proveedor_porcentaje != null) setDescuento(Number(data.descuento_proveedor_porcentaje));
+        if (data?.markup_default_porcentaje != null) setMarkupDef(Number(data.markup_default_porcentaje));
+      });
+  }, []);
 
   const handleFile = (f: File) => {
     setErrors([]);
@@ -137,8 +149,12 @@ function ImportarProductos() {
     const { data: cats = [] } = await supabase.from("categorias").select("*");
     const { data: mks = [] } = await supabase.from("marcas").select("*");
     const { data: sucs = [] } = await supabase.from("sucursales").select("id, codigo");
-    const { data: settings } = await supabase.from("settings").select("markup_default_porcentaje").maybeSingle();
-    const markupDefault = Number(settings?.markup_default_porcentaje ?? 50);
+    // Parámetros de precio elegidos en la UI; se persisten para próximas importaciones.
+    const markupDefault = Number(markupDef) || 50;
+    const descuentoProveedor = Number(descuento) || 0;
+    await supabase.from("settings").update({
+      markup_default_porcentaje: markupDefault, descuento_proveedor_porcentaje: descuentoProveedor,
+    }).eq("id", true);
     const sucMap = new Map((sucs ?? []).map((s:any) => [s.codigo, s.id]));
     const catMap = new Map((cats ?? []).map((c:any) => [c.nombre.toLowerCase(), c.id]));
     const mkMap = new Map((mks ?? []).map((m:any) => [m.nombre.toLowerCase(), m.id]));
@@ -173,10 +189,16 @@ function ImportarProductos() {
           }
         }
 
-        // Precio de venta: si la planilla trae precio s/IVA se respeta; si sólo trae
-        // precio de fábrica, se deriva aplicando el markup default (fábrica × (1 + %)),
-        // que es el mismo modelo de precios que usa la pantalla de Productos.
-        const precioFabrica = mapping.precio_fabrica ? numOr(r[mapping.precio_fabrica], 0) : 0;
+        // Cadena de precios (misma que la pantalla de Productos):
+        //   precio_lista (Quimex) × (1 − descuento) = precio_fabrica (costo)
+        //   precio_fabrica × (1 + markup)           = precio_sin_iva (venta)
+        // Si la planilla trae el precio de lista, se deriva el costo con el descuento
+        // del proveedor. Si no, se usa el precio de fábrica de la planilla. El precio
+        // s/IVA se respeta si viene explícito; si no, se deriva con el markup default.
+        const precioLista = mapping.precio_lista ? numOr(r[mapping.precio_lista], 0) : 0;
+        const precioFabrica = mapping.precio_lista && precioLista > 0
+          ? +(precioLista * (1 - descuentoProveedor / 100)).toFixed(2)
+          : (mapping.precio_fabrica ? numOr(r[mapping.precio_fabrica], 0) : 0);
         const precioSinIvaPlanilla = mapping.precio_sin_iva ? parseNumAr(r[mapping.precio_sin_iva]) : NaN;
         const precioSinIva = Number.isFinite(precioSinIvaPlanilla) && precioSinIvaPlanilla > 0
           ? precioSinIvaPlanilla
@@ -186,6 +208,7 @@ function ImportarProductos() {
           codigo, nombre,
           categoria_id: cat_id ?? null, marca_id: mk_id ?? null,
           unidad_medida: String(r[mapping.unidad_medida] ?? "unidad") || "unidad",
+          precio_lista: precioLista,
           precio_fabrica: precioFabrica,
           precio_sin_iva: precioSinIva,
           iva_porcentaje: numOr(r[mapping.iva_porcentaje], 21),
@@ -234,6 +257,21 @@ function ImportarProductos() {
 
       {rows.length > 0 && (
         <>
+          <Card className="p-4">
+            <h3 className="font-semibold mb-3">Parámetros de precio</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label>Descuento de proveedor (Quimex) %</Label>
+                <Input type="number" value={descuento} onChange={(e) => setDescuento(Number(e.target.value))} />
+                <p className="text-[11px] text-muted-foreground mt-1">El costo se calcula como precio de lista − este %.</p>
+              </div>
+              <div>
+                <Label>Markup default %</Label>
+                <Input type="number" value={markupDef} onChange={(e) => setMarkupDef(Number(e.target.value))} />
+                <p className="text-[11px] text-muted-foreground mt-1">Se aplica al costo para el precio de venta (si el producto no tiene markup propio).</p>
+              </div>
+            </div>
+          </Card>
           <Card className="p-4">
             <h3 className="font-semibold mb-3">Mapeo de columnas</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

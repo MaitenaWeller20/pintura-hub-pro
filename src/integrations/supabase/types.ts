@@ -660,6 +660,7 @@ export type Database = {
           markup_porcentaje: number | null
           nombre: string
           precio_fabrica: number
+          precio_lista: number
           precio_sin_iva: number
           stock_minimo: number
           unidad_medida: string
@@ -678,6 +679,7 @@ export type Database = {
           markup_porcentaje?: number | null
           nombre: string
           precio_fabrica?: number
+          precio_lista?: number
           precio_sin_iva?: number
           stock_minimo?: number
           unidad_medida?: string
@@ -696,6 +698,7 @@ export type Database = {
           markup_porcentaje?: number | null
           nombre?: string
           precio_fabrica?: number
+          precio_lista?: number
           precio_sin_iva?: number
           stock_minimo?: number
           unidad_medida?: string
@@ -1176,18 +1179,21 @@ export type Database = {
       }
       settings: {
         Row: {
+          descuento_proveedor_porcentaje: number
           id: boolean
           markup_default_porcentaje: number
           permitir_stock_negativo: boolean
           updated_at: string
         }
         Insert: {
+          descuento_proveedor_porcentaje?: number
           id?: boolean
           markup_default_porcentaje?: number
           permitir_stock_negativo?: boolean
           updated_at?: string
         }
         Update: {
+          descuento_proveedor_porcentaje?: number
           id?: boolean
           markup_default_porcentaje?: number
           permitir_stock_negativo?: boolean

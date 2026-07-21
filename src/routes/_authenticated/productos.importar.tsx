@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { supabase } from "@/integrations/supabase/client";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
@@ -122,6 +123,7 @@ function autoMapear(headers: string[]): Record<string, string> {
 
 function ImportarProductos() {
   const navigate = useNavigate();
+  const { data: cu } = useCurrentUser();
   const [rows, setRows] = useState<Row[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string,string>>({});
@@ -189,9 +191,15 @@ function ImportarProductos() {
     // Parámetros de precio elegidos en la UI; se persisten para próximas importaciones.
     const markupDefault = Number(markupDef) || 50;
     const descuentoProveedor = Number(descuento) || 0;
-    await supabase.from("settings").update({
-      markup_default_porcentaje: markupDefault, descuento_proveedor_porcentaje: descuentoProveedor,
-    }).eq("id", true);
+    // Persistir estos parámetros como default global es una escritura admin-only
+    // (RLS: solo is_admin puede tocar settings). Un empleado igual puede importar
+    // usando los valores de la pantalla; simplemente no los guarda como default,
+    // así evitamos disparar un PATCH que la RLS rechazaría con 403.
+    if (cu?.isAdmin) {
+      await supabase.from("settings").update({
+        markup_default_porcentaje: markupDefault, descuento_proveedor_porcentaje: descuentoProveedor,
+      }).eq("id", true);
+    }
     const sucMap = new Map((sucs ?? []).map((s:any) => [s.codigo, s.id]));
     const catMap = new Map((cats ?? []).map((c:any) => [c.nombre.toLowerCase(), c.id]));
     const mkMap = new Map((mks ?? []).map((m:any) => [m.nombre.toLowerCase(), m.id]));

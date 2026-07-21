@@ -1,0 +1,19 @@
+-- ============================================================
+-- Fix: el rol `authenticated` no podía UPDATE-ar public.settings.
+--
+-- El cliente actualiza public.settings DIRECTAMENTE (no vía RPC) desde:
+--   - la pantalla de importación de productos (markup/descuento default), y
+--   - la config de cobranzas (markup_default_porcentaje).
+--
+-- La RLS ya restringe la escritura a admins (policy "admin write settings" con
+-- is_admin(auth.uid())), PERO faltaba el privilegio de tabla: RLS filtra dentro de
+-- lo que el rol ya tiene permitido; sin GRANT UPDATE, Postgres corta antes con
+-- "permission denied for table settings" y PostgREST devuelve 403 —incluso a un
+-- admin—. Este GRANT habilita el privilegio base; la RLS sigue siendo la que
+-- garantiza que SOLO un admin pueda escribir (un empleado igual recibe 403 por la
+-- policy, que es lo correcto).
+--
+-- No se otorga INSERT/DELETE: settings es un singleton (id boolean, una sola fila
+-- con default) que solo se actualiza, nunca se crea ni borra desde el cliente.
+-- ============================================================
+GRANT UPDATE ON public.settings TO authenticated;

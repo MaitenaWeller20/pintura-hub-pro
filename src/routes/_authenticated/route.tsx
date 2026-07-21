@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/sidebar";
 import {
   LayoutDashboard, ShoppingCart, Package, Boxes, Users, Truck, Wallet, Coins, BarChart3,
-  UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2, Calculator, ShoppingBag,
+  UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2, Calculator, ShoppingBag, Banknote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,7 @@ const groups: Array<{ label: string; items: MenuItem[] }> = [
     items: [
       { to: "/compras", label: "Compras", icon: ShoppingBag, adminOnly: false },
       { to: "/proveedores", label: "Proveedores", icon: Building2, adminOnly: false },
+      { to: "/gastos", label: "Gastos varios", icon: Banknote, adminOnly: false },
     ],
   },
   {

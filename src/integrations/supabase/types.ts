@@ -1806,6 +1806,15 @@ export type Database = {
           saldo: number
         }[]
       }
+      registrar_gasto: {
+        Args: {
+          p_descripcion: string
+          p_forma_pago: string
+          p_monto: number
+          p_sucursal_id: string
+        }
+        Returns: string
+      }
       registrar_movimiento_caja: {
         Args: {
           p_descripcion: string

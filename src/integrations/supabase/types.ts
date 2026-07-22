@@ -666,6 +666,7 @@ export type Database = {
           precio_lista: number
           precio_sin_iva: number
           stock_minimo: number
+          tamano_envase: number | null
           unidad_medida: string
           updated_at: string
         }
@@ -685,6 +686,7 @@ export type Database = {
           precio_lista?: number
           precio_sin_iva?: number
           stock_minimo?: number
+          tamano_envase?: number | null
           unidad_medida?: string
           updated_at?: string
         }
@@ -704,6 +706,7 @@ export type Database = {
           precio_lista?: number
           precio_sin_iva?: number
           stock_minimo?: number
+          tamano_envase?: number | null
           unidad_medida?: string
           updated_at?: string
         }

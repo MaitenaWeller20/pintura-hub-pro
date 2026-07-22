@@ -11,10 +11,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
-import { Plus, Power, KeyRound, Loader2, RefreshCw } from "lucide-react";
+import { Plus, Power, KeyRound, Loader2, RefreshCw, PackageX } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { crearUsuario, toggleUsuarioActivo, resetearPassword } from "@/lib/usuarios.functions";
+import { crearUsuario, toggleUsuarioActivo, resetearPassword, setPermiteVentaSinStock } from "@/lib/usuarios.functions";
 
 export const Route = createFileRoute("/_authenticated/usuarios")({
   ssr: false,
@@ -32,6 +32,7 @@ function UsuariosPage() {
   const [open, setOpen] = useState(false);
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
+  const setSinStock = useServerFn(setPermiteVentaSinStock);
 
   const { data: usuarios = [], isLoading } = useQuery({
     queryKey: ["usuarios"],
@@ -54,10 +55,15 @@ function UsuariosPage() {
     onSuccess: () => { toast.success("Estado actualizado"); qc.invalidateQueries({ queryKey:["usuarios"] }); },
     onError: (e:any) => toast.error(e.message),
   });
+  const sinStock = useMutation({
+    mutationFn: async (d: any) => setSinStock({ data: d }),
+    onSuccess: () => { toast.success("Permiso de venta sin stock actualizado"); qc.invalidateQueries({ queryKey:["usuarios"] }); },
+    onError: (e:any) => toast.error(e.message),
+  });
 
   // Antes esto venía precargado con "emp1234" — la misma contraseña débil que
   // estuvo publicada en la pantalla de login. Cada usuario nuevo nacía quemado.
-  const formVacio = { email:"", password:"", username:"", nombre_completo:"", role:"empleado", sucursal_id: null };
+  const formVacio = { email:"", password:"", username:"", nombre_completo:"", role:"empleado", sucursal_id: null, permite_venta_sin_stock: false };
   const [form, setForm] = useState<any>(formVacio);
   const set = (k:string,v:any) => setForm((f:any)=>({ ...f, [k]: v }));
   const m = useMutation({
@@ -92,6 +98,11 @@ function UsuariosPage() {
             <TableCell className="text-muted-foreground text-sm">{u.sucursal?.nombre ?? "—"}</TableCell>
             <TableCell>{u.activo ? <StatusPill tone="success">Activo</StatusPill> : <StatusPill tone="neutral">Inactivo</StatusPill>}</TableCell>
             <TableCell className="flex gap-1">
+              <Button size="sm" variant="ghost"
+                title={u.permite_venta_sin_stock ? "Puede vender sin stock — clic para quitar" : "No puede vender sin stock — clic para habilitar"}
+                onClick={()=>sinStock.mutate({ user_id: u.id, valor: !u.permite_venta_sin_stock })}>
+                <PackageX className={`h-3.5 w-3.5 ${u.permite_venta_sin_stock ? "text-warning" : "text-muted-foreground/40"}`}/>
+              </Button>
               <Button size="sm" variant="ghost" title="Cambiar contraseña" onClick={()=>setResetUser(u)}>
                 <KeyRound className="h-3.5 w-3.5"/>
               </Button>
@@ -126,6 +137,10 @@ function UsuariosPage() {
                 </SelectContent>
               </Select>
             </div>
+            <label className="flex items-center gap-2 text-sm border border-border rounded p-2 bg-muted/30">
+              <input type="checkbox" checked={!!form.permite_venta_sin_stock} onChange={(e)=>set("permite_venta_sin_stock", e.target.checked)} />
+              <span><strong>Puede vender sin stock</strong> — registra ventas de productos sin stock disponible. Los administradores siempre pueden.</span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={()=>setOpen(false)}>Cancelar</Button>

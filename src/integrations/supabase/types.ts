@@ -733,6 +733,7 @@ export type Database = {
           created_at: string
           id: string
           nombre_completo: string | null
+          permite_venta_sin_stock: boolean
           sucursal_id: string | null
           updated_at: string
           username: string
@@ -742,6 +743,7 @@ export type Database = {
           created_at?: string
           id: string
           nombre_completo?: string | null
+          permite_venta_sin_stock?: boolean
           sucursal_id?: string | null
           updated_at?: string
           username: string
@@ -751,6 +753,7 @@ export type Database = {
           created_at?: string
           id?: string
           nombre_completo?: string | null
+          permite_venta_sin_stock?: boolean
           sucursal_id?: string | null
           updated_at?: string
           username?: string
@@ -1780,6 +1783,7 @@ export type Database = {
       }
       condicion_iva_emisor: { Args: never; Returns: string }
       current_sucursal_id: { Args: never; Returns: string }
+      puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

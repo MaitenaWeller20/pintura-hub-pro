@@ -375,4 +375,20 @@ El spec se pasó a Codex (paso 2 del pipeline) **antes** de implementar. Hallazg
 
 **Decisiones de negocio (respuestas de Leo, 2026-07-21):**
 - **IVA histórico en NC/ND (R4/R5):** ✅ **RESUELTO** — se toma el IVA del producto **actual**. Limitación conocida aceptada.
-- **Base del recargo de la ND (R5):** ⏳ **PENDIENTE DE HABLAR con Leo.** Leo: *"según entiendo para la nota de débito sería un porcentaje extra."* Falta cerrar si la ND es (a) productos + recargo %/$ como se decidió antes, o (b) simplemente un porcentaje extra sobre la factura. **R5 es el último en el orden de implementación; NO implementar la ND hasta cerrar esto con Leo.** El resto del lote (R2, R3, R4, R6–R12) no depende de esta decisión y se implementa igual.
+- **Forma de la ND (R5):** ✅ **RESUELTO** — Leo eligió **"Solo un % / monto extra"**: la ND **NO trae productos**, es un cargo sobre la factura (interés/mora). Base del %: **sobre el total con IVA** de la factura elegida. Esto **simplifica** R5 respecto al diseño original (ya no precarga productos en la ND) y **reduce el riesgo**: la línea de concepto libre es una sola (el recargo).
+  - **Modelo:** recargo = `round2(totalFacturaConIVA × % / 100) + montoFijo`. Es el **total con IVA** de la ND. Se materializa como **una** línea de concepto libre (`producto_id = NULL`, `codigo = 'RECARGO'`, `descripcion = "Recargo/interés s/ <factura>"`, `cantidad = 1`), restringida a `NOTA_DEBITO` en la RPC.
+  - **IVA del recargo:** ⏳ pendiente de una última confirmación de Leo (con IVA 21% desglosado —estándar para interés sobre venta gravada— vs. sin IVA). Matemáticamente el total de la ND es el mismo se calcule el % "sobre total c/IVA" o "sobre neto"; la única diferencia es si el recargo discrimina IVA por dentro.
+
+---
+
+## Registro del review adversarial (agentes, 2026-07-21)
+
+Tras implementar 9 de 10 items, se corrió un review adversarial (2 agentes: uno sobre las migraciones SQL, otro sobre el front). Hallazgos confirmados y corregidos en el commit `fix(review)`:
+
+1. **R7 — CRÍTICO (seguridad).** `aprobar_remito`/`rechazar_remito` comparaban `current_sucursal_id() = sucursal_destino_id` con `=`. Un empleado con `sucursal_id NULL` producía `false OR NULL = NULL`, y `IF NOT NULL` no dispara la excepción → podía aprobar/rechazar **cualquier** remito. Regresión respecto a la versión previa (solo `is_admin`, que nunca es NULL). **Fix:** `IS NOT DISTINCT FROM` (NULL-safe) en ambas funciones.
+2. **R11 — CRÍTICO (race).** `cerrar_caja` recalcula el esperado en vivo, pero la UI mandaba el contado de las formas no-efectivo desde un snapshot cacheado → si entraba plata entre el fetch y el cierre (dos terminales comparten sesión), el server grababa una diferencia fantasma que la UI mostraba como 0. **Fix:** la UI manda **solo** el efectivo; `cerrar_caja` completa el resto con su esperado interno (diferencia 0 por definición). Además el botón "Confirmar cierre" se deshabilita si no se cargó el efectivo.
+3. **R4 — precio histórico "pegado".** Al cambiar de NC/ND a factura normal, los ítems precargados quedaban con el precio histórico forzado, sin aviso → factura con precio viejo. **Fix:** effect que limpia los ítems precargados al dejar de ser nota + forzado condicionado a `esNota`.
+
+**Nota no-bug:** el agente observó que "Ticket promedio" salió de los KPIs de Pagos (R10) — es una decisión deliberada (se priorizó la card "Devoluciones"); `resumenPagos.ticketPromedio` se conserva por si se reintroduce.
+
+Las verificaciones matemáticas de R3 (clamp de pagos, invariante Σ venta_pagos == total_pagado) y R2/R6 (diffs incrementales de `crear_venta` sin pérdida de lógica) pasaron sin hallazgos.

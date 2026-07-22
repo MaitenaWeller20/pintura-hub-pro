@@ -45,6 +45,16 @@ export const crearRemito = createServerFn({ method: "POST" })
     if (data.sucursal_origen_id === data.sucursal_destino_id)
       throw new Error("Origen y destino deben ser distintos");
 
+    // R7b: el remito lo crea el ORIGEN (o un admin). Sin esto, un empleado del
+    // destino podía crear un remito saliendo de otra sucursal y auto-aprobarlo.
+    // La barrera autoritativa es la RLS de INSERT; acá damos un error claro.
+    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
+    if (!isAdmin) {
+      const { data: miSuc } = await supabase.rpc("current_sucursal_id");
+      if (miSuc !== data.sucursal_origen_id)
+        throw new Error("Sólo podés crear remitos que salgan de tu sucursal.");
+    }
+
     // Numero
     const { data: numero } = await supabase.rpc("next_comprobante_numero", {
       _sucursal_id: data.sucursal_origen_id, _tipo: "REMITO" as const,

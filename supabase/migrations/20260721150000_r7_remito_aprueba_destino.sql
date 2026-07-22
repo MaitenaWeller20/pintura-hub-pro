@@ -172,7 +172,10 @@ BEGIN
   END IF;
 
   -- R7: sólo la sucursal DESTINO (o un administrador) puede rechazar.
-  IF NOT (public.is_admin(v_uid) OR public.current_sucursal_id() = v_remito.sucursal_destino_id) THEN
+  -- IS NOT DISTINCT FROM es NULL-safe (empleado sin sucursal → false, no NULL);
+  -- con `=` un current_sucursal_id() NULL dejaría pasar la condición.
+  IF NOT (public.is_admin(v_uid)
+          OR public.current_sucursal_id() IS NOT DISTINCT FROM v_remito.sucursal_destino_id) THEN
     RAISE EXCEPTION 'Sólo la sucursal destino (o un administrador) puede rechazar este remito';
   END IF;
 

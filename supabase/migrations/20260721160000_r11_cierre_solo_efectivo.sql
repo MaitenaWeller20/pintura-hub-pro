@@ -70,12 +70,14 @@ BEGIN
     SELECT jsonb_object_keys(v_contado) AS f
   ) u;
 
-  -- R11: completar las formas ausentes en p_contado con su ESPERADO recalculado.
-  -- Sólo el efectivo (lo único que se cuenta a mano) llega en p_contado; el resto
-  -- se cierra sin diferencia contra el esperado fresco, eliminando la carrera.
+  -- R11: SÓLO el efectivo se cuenta a mano. Toda otra forma se cierra con su
+  -- ESPERADO recalculado, SOBREESCRIBIENDO cualquier valor entrante (autoritativo
+  -- server-side): así ni un cliente desactualizado ni una llamada directa pueden
+  -- inyectar una diferencia fantasma en una forma electrónica. Sólo EFECTIVO
+  -- sobrevive de p_contado.
   IF v_formas IS NOT NULL THEN
     FOREACH k IN ARRAY v_formas LOOP
-      IF NOT (v_contado ? k) THEN
+      IF k <> 'EFECTIVO' THEN
         v_contado := v_contado || jsonb_build_object(
           k, ROUND(COALESCE((v_esperado->k->>'neto')::numeric, 0), 2)
         );

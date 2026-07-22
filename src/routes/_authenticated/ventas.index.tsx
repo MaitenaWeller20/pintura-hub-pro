@@ -177,7 +177,8 @@ function VentasList() {
                     : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
                 </Button>
               )}
-              {v.estado === "ACTIVA" && v.tipo_comprobante !== "NOTA_CREDITO" && (
+              {/* anular_venta sólo acepta facturas: las notas se corrigen con otra nota. */}
+              {v.estado === "ACTIVA" && ["FACTURA_A","FACTURA_B","FACTURA_C","REMITO","REMITO_OBRA","FAC_INTERNA_CTA_CTE"].includes(v.tipo_comprobante) && (
                 <Button size="sm" variant="ghost" onClick={()=>setAnularDlg(v)}><Ban className="h-3.5 w-3.5 text-destructive"/></Button>
               )}
             </TableCell>

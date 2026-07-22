@@ -228,6 +228,16 @@ function NuevaVenta() {
     setItems(prev => prev.some(it => it.desde_factura) ? prev.filter(it => !it.desde_factura) : prev);
   }, [clienteId]);
 
+  // R4/R5: al dejar de ser nota (se cambió a una factura normal), se limpian los
+  // productos precargados y la factura asociada. Si no, quedarían con el precio
+  // HISTÓRICO pegado y se emitiría una factura cobrando un precio viejo sin aviso.
+  useEffect(() => {
+    if (!esNota) {
+      setCbteAsocId("");
+      setItems(prev => prev.some(it => it.desde_factura) ? prev.filter(it => !it.desde_factura) : prev);
+    }
+  }, [esNota]);
+
   // El comprobante por defecto tiene que reflejar la letra que le corresponde al
   // cliente: a un Responsable Inscripto le corresponde Factura A. El default global
   // es FACTURA_B (caso mostrador / consumidor final), así que al elegir un cliente
@@ -287,10 +297,12 @@ function NuevaVenta() {
               ? null
               : Number(it.precio_unitario_sin_iva);
           // Un ítem precargado de la factura (NC/ND) SIEMPRE manda su precio histórico,
-          // aunque coincida con el de catálogo: la nota debe espejar la factura.
+          // aunque coincida con el de catálogo: la nota debe espejar la factura. El
+          // forzado sólo aplica MIENTRAS sea una nota (defensa por si quedara un ítem
+          // precargado tras cambiar de tipo; el efecto de arriba igual los limpia).
           const pisado =
             precioTipeado !== null &&
-            (it.desde_factura || Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005);
+            ((esNota && it.desde_factura) || Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005);
           return {
             producto_id: it.producto_id,
             cantidad: Number(it.cantidad || 0),

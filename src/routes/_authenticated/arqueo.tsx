@@ -337,13 +337,11 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
 
   const cerrar = useMutation({
     mutationFn: async () => {
-      // R11: sólo el EFECTIVO se cuenta a mano (es lo único físico que puede
-      // diferir). El resto de las formas se cierra con el monto ESPERADO por el
-      // sistema, así su diferencia es siempre 0 por construcción.
-      const payload: Record<string, number> = {};
-      for (const f of FORMAS) {
-        payload[f] = f === "EFECTIVO" ? Number(contado.EFECTIVO ?? 0) : neto(esperado[f]);
-      }
+      // R11: mandamos SÓLO el efectivo (lo único que se cuenta a mano). El resto de
+      // las formas las completa cerrar_caja con el esperado que recalcula en la
+      // misma transacción, así no hay diferencia fantasma por una carrera con un
+      // esperado cacheado (ver migración 20260721160000).
+      const payload: Record<string, number> = { EFECTIVO: Number(contado.EFECTIVO ?? 0) };
       const { error } = await supabase.rpc("cerrar_caja", {
         p_sesion_id: sesion.id, p_contado: payload, p_notas: notas || undefined,
         p_efectivo_dejado: Number(efectivoDejado || 0),
@@ -415,7 +413,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending}>
+          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending || contado.EFECTIVO == null}>
             <Lock className="h-4 w-4 mr-1" /> Confirmar cierre
           </Button>
         </DialogFooter>

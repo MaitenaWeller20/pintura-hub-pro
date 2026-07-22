@@ -47,7 +47,11 @@ BEGIN
   END IF;
 
   -- R7: sólo la sucursal DESTINO (o un administrador) puede aprobar.
-  IF NOT (public.is_admin(v_uid) OR public.current_sucursal_id() = v_remito.sucursal_destino_id) THEN
+  -- current_sucursal_id() puede ser NULL (empleado sin sucursal). Con `=` daría
+  -- NULL y `IF NOT NULL` no dispararía la excepción -> agujero de autorización.
+  -- IS NOT DISTINCT FROM es NULL-safe: NULL vs uuid da false, no NULL.
+  IF NOT (public.is_admin(v_uid)
+          OR public.current_sucursal_id() IS NOT DISTINCT FROM v_remito.sucursal_destino_id) THEN
     RAISE EXCEPTION 'Sólo la sucursal destino (o un administrador) puede aprobar este remito';
   END IF;
 

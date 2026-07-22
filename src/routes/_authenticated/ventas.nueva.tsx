@@ -19,6 +19,8 @@ import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearVenta } from "@/lib/ventas.functions";
+import { calcTotalesComprobante } from "@/lib/ventas-totales";
+import { round2 } from "@/lib/fiscal/iva";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
@@ -160,16 +162,12 @@ function NuevaVenta() {
   });
 
   const totales = useMemo(() => {
-    let sub = 0, iva = 0;
-    items.forEach(it => {
-      // Precio vacío (null) = usa el de lista, no 0.
-      const precio = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
-      const base = precio * (1 - (it.descuento_porcentaje ?? 0) / 100) * (it.cantidad || 0);
-      sub += base; iva += base * ((it.iva_porcentaje || 0) / 100);
-    });
-    const total = (sub + iva + Number(percepciones || 0)) * signo;
-    const pagado = esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0) * signo;
-    return { sub: sub * signo, iva: iva * signo, total, pagado, saldo: total - pagado };
+    // Misma fórmula que la RPC crear_venta (redondeo del IVA POR LÍNEA): así el
+    // total que ve el cajero coincide al centavo con el del servidor y un pago
+    // electrónico "por el total" no queda 1 centavo por encima. Ver R3.
+    const { sub, iva, total } = calcTotalesComprobante(items, percepciones, signo);
+    const pagado = esCtaCte ? 0 : round2(pagos.reduce((a, p) => a + Number(p.monto || 0), 0)) * signo;
+    return { sub, iva, total, pagado, saldo: round2(total - pagado) };
   }, [items, percepciones, pagos, esCtaCte, signo]);
 
   // Cuenta Cte: limpio pagos al cambiar de tipo

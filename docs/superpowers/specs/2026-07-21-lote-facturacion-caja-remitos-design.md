@@ -373,6 +373,6 @@ El spec se pasó a Codex (paso 2 del pipeline) **antes** de implementar. Hallazg
 11. **Migración única de `crear_venta`** sobre la versión vigente de 12 args, para no dejar sobrecargas ni pisar cambios. **[incorporado]**
 12. **Regenerar `types.ts`** tras el `producto_id` nullable. **[incorporado]**
 
-**Decisiones de negocio menores a confirmar por Leo en esta revisión:**
-- **Base del recargo de la ND (R5):** `%` sobre el **subtotal sin IVA** de los productos de la ND; IVA del recargo **21%**; si se cargan `%` y `$` se suman. ¿OK, o preferís otra base / recargo exento de IVA?
-- **IVA histórico en NC/ND (R4/R5):** se toma el IVA del producto **actual** (no el de la factura). Aceptable porque el IVA casi nunca cambia. ¿OK como limitación conocida?
+**Decisiones de negocio (respuestas de Leo, 2026-07-21):**
+- **IVA histórico en NC/ND (R4/R5):** ✅ **RESUELTO** — se toma el IVA del producto **actual**. Limitación conocida aceptada.
+- **Base del recargo de la ND (R5):** ⏳ **PENDIENTE DE HABLAR con Leo.** Leo: *"según entiendo para la nota de débito sería un porcentaje extra."* Falta cerrar si la ND es (a) productos + recargo %/$ como se decidió antes, o (b) simplemente un porcentaje extra sobre la factura. **R5 es el último en el orden de implementación; NO implementar la ND hasta cerrar esto con Leo.** El resto del lote (R2, R3, R4, R6–R12) no depende de esta decisión y se implementa igual.

@@ -264,6 +264,17 @@ function NuevaVenta() {
     }
   }, [esNota]);
 
+  // R5: al alternar entre NC y ND con la misma factura ya elegida, hay que
+  // re-sincronizar la grilla: sólo la NC precarga los productos (la ND usa el
+  // recargo). Sin esto, cambiar de ND a NC dejaba la grilla vacía y "Guardar"
+  // deshabilitado sin aviso (el cliente no cambió y esNota sigue true).
+  useEffect(() => {
+    if (!esNota || !cbteAsocId) return;
+    if (tipoComp === "NOTA_CREDITO") seleccionarFacturaRectifica(cbteAsocId);
+    else setItems(prev => prev.filter(it => !it.desde_factura)); // ND: grilla limpia
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoComp]);
+
   // El comprobante por defecto tiene que reflejar la letra que le corresponde al
   // cliente: a un Responsable Inscripto le corresponde Factura A. El default global
   // es FACTURA_B (caso mostrador / consumidor final), así que al elegir un cliente

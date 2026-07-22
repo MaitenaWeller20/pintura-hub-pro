@@ -1375,7 +1375,7 @@ export type Database = {
           iva_porcentaje: number
           precio_lista_sin_iva: number | null
           precio_unitario_sin_iva: number
-          producto_id: string
+          producto_id: string | null
           subtotal_con_iva: number
           subtotal_sin_iva: number
           venta_id: string
@@ -1391,7 +1391,7 @@ export type Database = {
           iva_porcentaje: number
           precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva: number
-          producto_id: string
+          producto_id: string | null
           subtotal_con_iva: number
           subtotal_sin_iva: number
           venta_id: string
@@ -1407,7 +1407,7 @@ export type Database = {
           iva_porcentaje?: number
           precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva?: number
-          producto_id?: string
+          producto_id?: string | null
           subtotal_con_iva?: number
           subtotal_sin_iva?: number
           venta_id?: string

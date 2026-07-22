@@ -64,4 +64,18 @@ describe("calcTotalesComprobante", () => {
     expect(t.iva).toBe(189);
     expect(t.total).toBe(1089);
   });
+
+  // R5: la Nota de Débito manda UNA línea de recargo "con IVA". El front calcula el
+  // neto como recargoConIVA/1.21; al pasar por la fórmula del server el total debe
+  // reconstruir el recargo con IVA (± 1 centavo de redondeo). Ej: 10% de $74.052.
+  it("reconstruye el recargo con IVA de una nota de débito (10% de 74052)", () => {
+    const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+    const recargoConIVA = round2(74052 * 0.10); // 7405.2
+    const recargoNeto = round2(recargoConIVA / 1.21); // 6119.17
+    const t = calcTotalesComprobante(
+      [{ precio_unitario_sin_iva: recargoNeto, precio_lista: recargoNeto, cantidad: 1, descuento_porcentaje: 0, iva_porcentaje: 21 }],
+      0, 1,
+    );
+    expect(Math.abs(t.total - recargoConIVA)).toBeLessThanOrEqual(0.01);
+  });
 });

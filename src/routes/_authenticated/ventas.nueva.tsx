@@ -69,6 +69,9 @@ function NuevaVenta() {
   const [percepciones, setPercepciones] = useState<number | null>(0);
   const [observaciones, setObservaciones] = useState("");
   const [nombreObra, setNombreObra] = useState("");
+  // R5: recargo de una Nota de Débito (% sobre el total con IVA de la factura + monto fijo).
+  const [recargoPct, setRecargoPct] = useState<number | null>(null);
+  const [recargoMonto, setRecargoMonto] = useState<number | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [pagos, setPagos] = useState<PagoRow[]>([]);
   const [prodQuery, setProdQuery] = useState("");
@@ -156,6 +159,8 @@ function NuevaVenta() {
   const seleccionarFacturaRectifica = async (facturaId: string) => {
     setCbteAsocId(facturaId);
     if (!facturaId) return;
+    // La Nota de Débito NO trae productos: usa el recargo (R5). Sólo la NC precarga.
+    if (tipoComp !== "NOTA_CREDITO") return;
     const { data, error } = await supabase.from("venta_items")
       .select("producto_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,iva_porcentaje,descuento_porcentaje")
       .eq("venta_id", facturaId);
@@ -177,6 +182,7 @@ function NuevaVenta() {
   // Una nota de crédito RESTA (es una devolución). Lo mostramos con el mismo signo
   // con el que se va a guardar, así el cajero ve lo que realmente va a pasar.
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
+  const esNotaDebito = tipoComp === "NOTA_DEBITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
   const esFiscal = ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO", "NOTA_DEBITO"].includes(tipoComp);
   // Coherencia comprobante ↔ condición IVA: Factura A sólo a Responsable Inscripto.
@@ -203,14 +209,34 @@ function NuevaVenta() {
     },
   });
 
+  // R5: la Nota de Débito NO trae productos. Es un recargo (interés/mora) sobre la
+  // factura que rectifica: % sobre el total con IVA + un monto fijo. Se materializa
+  // como UNA línea de concepto libre con IVA 21% (el server la desglosa en neto+IVA).
+  const facturaSel = useMemo(
+    () => facturasDelCliente.find((f: any) => f.id === cbteAsocId),
+    [facturasDelCliente, cbteAsocId],
+  );
+  const recargoConIVA = useMemo(() => {
+    if (!esNotaDebito) return 0;
+    const base = Number(facturaSel?.total ?? 0);
+    return round2(round2(base * (Number(recargoPct) || 0) / 100) + (Number(recargoMonto) || 0));
+  }, [esNotaDebito, facturaSel, recargoPct, recargoMonto]);
+  // Neto de la línea de recargo: el recargo es "con IVA", así el total de la ND
+  // coincide con lo que ve el usuario (± redondeo). IVA 21%.
+  const recargoNeto = useMemo(() => round2(recargoConIVA / 1.21), [recargoConIVA]);
+
   const totales = useMemo(() => {
-    // Misma fórmula que la RPC crear_venta (redondeo del IVA POR LÍNEA): así el
-    // total que ve el cajero coincide al centavo con el del servidor y un pago
-    // electrónico "por el total" no queda 1 centavo por encima. Ver R3.
-    const { sub, iva, total } = calcTotalesComprobante(items, percepciones, signo);
+    // R5: la ND se calcula sobre la línea de recargo, no sobre la grilla de productos.
+    // Misma fórmula que la RPC (redondeo del IVA POR LÍNEA): así el total que ve el
+    // cajero coincide al centavo con el del servidor y un pago electrónico "por el
+    // total" no queda 1 centavo por encima. Ver R3/R5.
+    const itemsCalc = esNotaDebito
+      ? [{ precio_unitario_sin_iva: recargoNeto, precio_lista: recargoNeto, cantidad: 1, descuento_porcentaje: 0, iva_porcentaje: 21 }]
+      : items;
+    const { sub, iva, total } = calcTotalesComprobante(itemsCalc, percepciones, signo);
     const pagado = esCtaCte ? 0 : round2(pagos.reduce((a, p) => a + Number(p.monto || 0), 0)) * signo;
     return { sub, iva, total, pagado, saldo: round2(total - pagado) };
-  }, [items, percepciones, pagos, esCtaCte, signo]);
+  }, [items, percepciones, pagos, esCtaCte, signo, esNotaDebito, recargoNeto]);
 
   // Cuenta Cte: limpio pagos al cambiar de tipo
   useEffect(() => {
@@ -288,7 +314,18 @@ function NuevaVenta() {
         nombre_obra: esRemitoObra ? nombreObra : null,
         cbte_asoc_id: esNota ? cbteAsocId || null : null,
         idempotency_key: idempotencyKey,
-        items: items.map((it) => {
+        // R5: la Nota de Débito manda UNA línea de concepto libre (el recargo). El
+        // resto de los comprobantes manda la grilla de productos.
+        items: esNotaDebito
+          ? [{
+              producto_id: null,
+              descripcion: `Recargo/interés s/ ${facturaSel?.numero_comprobante ?? ""}`.trim(),
+              cantidad: 1,
+              precio_unitario_sin_iva: recargoNeto,
+              iva_porcentaje: 21,
+              descuento_porcentaje: 0,
+            }]
+          : items.map((it) => {
           // Un campo de precio vacío (null) NO es "precio 0": es "usá el de lista".
           // Sólo mandamos el precio cuando el cajero tipeó un valor distinto al de
           // catálogo. Si no, el servidor lo resuelve solo.
@@ -296,7 +333,7 @@ function NuevaVenta() {
             it.precio_unitario_sin_iva === null || it.precio_unitario_sin_iva === undefined
               ? null
               : Number(it.precio_unitario_sin_iva);
-          // Un ítem precargado de la factura (NC/ND) SIEMPRE manda su precio histórico,
+          // Un ítem precargado de la factura (NC) SIEMPRE manda su precio histórico,
           // aunque coincida con el de catálogo: la nota debe espejar la factura. El
           // forzado sólo aplica MIENTRAS sea una nota (defensa por si quedara un ítem
           // precargado tras cambiar de tipo; el efecto de arriba igual los limpia).
@@ -324,9 +361,11 @@ function NuevaVenta() {
 
   const canSave =
     !!effSucursal && !!clienteId &&
-    items.length > 0 &&
-    // (4) al menos un ítem con cantidad > 0, y total ≠ 0 en comprobantes fiscales
-    items.some((it) => (it.cantidad || 0) > 0) &&
+    // R5: la ND no usa la grilla; exige factura + un recargo > 0. El resto exige
+    // al menos un ítem con cantidad > 0.
+    (esNotaDebito
+      ? (!!cbteAsocId && recargoConIVA > 0.005)
+      : (items.length > 0 && items.some((it) => (it.cantidad || 0) > 0))) &&
     (!esFiscal || Math.abs(totales.total) > 0.005) &&
     // (1) no permitir Factura A a un cliente que no es Responsable Inscripto
     !comboInvalido &&
@@ -498,6 +537,36 @@ function NuevaVenta() {
         </SectionCard>
       </div>
 
+      {esNotaDebito && (
+        <SectionCard className="space-y-3">
+          <h3 className="font-semibold text-sm">Recargo de la nota de débito</h3>
+          {!cbteAsocId ? (
+            <p className="text-sm text-muted-foreground">Elegí primero la factura que rectifica (arriba).</p>
+          ) : (
+            <>
+              <p className="text-[12px] text-muted-foreground">
+                Cargo extra (interés/mora) sobre {facturaSel?.numero_comprobante} ({fmtMoney(facturaSel?.total)}). Se factura con IVA 21%.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>% sobre el total de la factura</Label>
+                  <NumberInput value={recargoPct} onValueChange={setRecargoPct} className="mt-1" />
+                </div>
+                <div>
+                  <Label>Monto fijo extra ($, con IVA)</Label>
+                  <NumberInput value={recargoMonto} onValueChange={setRecargoMonto} className="mt-1" />
+                </div>
+              </div>
+              <div className="text-sm bg-muted/30 p-2 rounded flex justify-between">
+                <span className="text-muted-foreground">Recargo a cobrar (con IVA):</span>
+                <span className="font-mono font-semibold">{fmtMoney(recargoConIVA)}</span>
+              </div>
+            </>
+          )}
+        </SectionCard>
+      )}
+
+      {!esNotaDebito && (
       <SectionCard className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-sm">Productos</h3>
@@ -567,6 +636,7 @@ function NuevaVenta() {
           </div>
         }
       </SectionCard>
+      )}
 
       {!esCtaCte && (
         <SectionCard className="space-y-3">

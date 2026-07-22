@@ -16,14 +16,23 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
 const itemSchema = z.object({
-  producto_id: z.string().uuid(),
+  // R5: producto_id puede faltar en una línea de CONCEPTO LIBRE (recargo/interés
+  // de una Nota de Débito). En ese caso se exige descripción y precio. La RPC sólo
+  // acepta líneas sin producto en NOTA_DEBITO.
+  producto_id: z.string().uuid().nullable().optional(),
   cantidad: z.number().nonnegative(),
   descuento_porcentaje: z.number().min(0).max(100).default(0),
   // Opcional: el cajero puede pisar el precio de lista (es una necesidad real del
   // mostrador, se negocia en el momento). Si no viene, la base usa el del catálogo.
   // Si viene, se guardan los dos y la diferencia queda auditada.
   precio_unitario_sin_iva: z.number().nonnegative().optional(),
-});
+  // Sólo para líneas de concepto libre (sin producto).
+  descripcion: z.string().optional(),
+  iva_porcentaje: z.number().min(0).max(100).optional(),
+}).refine(
+  (it) => !!it.producto_id || (!!it.descripcion && it.precio_unitario_sin_iva != null),
+  { message: "Una línea sin producto necesita descripción y precio" },
+);
 
 const pagoSchema = z.object({
   forma_pago: z.enum([

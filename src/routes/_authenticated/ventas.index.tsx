@@ -48,7 +48,8 @@ function VentasList() {
     enabled: !!cu,
     queryFn: async () => {
       let q = supabase.from("ventas").select(`
-        *, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo)
+        *, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo),
+        pagos:venta_pagos(forma_pago,monto)
       `).order("fecha", { ascending: false }).limit(200);
       if (sucFilter) q = q.eq("sucursal_id", sucFilter);
       if (pagoFilter !== "all") q = q.eq("estado_pago", pagoFilter as any);
@@ -86,6 +87,10 @@ function VentasList() {
       Comprobante: v.numero_comprobante, Tipo: tipoComprobanteLabel[v.tipo_comprobante],
       Fecha: v.fecha, Sucursal: v.sucursal?.nombre, Cliente: v.cliente?.razon_social,
       Subtotal: v.subtotal_sin_iva, IVA: v.iva_total, Total: v.total, Pagado: v.total_pagado, Estado: v.estado_pago,
+      // R12.b: forma(s) de pago. Cta cte no tiene venta_pagos (se cobra por cobranzas).
+      "Forma de pago": (v.pagos?.length
+        ? v.pagos.map((p:any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago).join(", ")
+        : (v.condicion_venta === "CTA_CTE" ? "Cuenta Corriente" : "—")),
     })));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Ventas");
     XLSX.writeFile(wb, "ventas.xlsx");

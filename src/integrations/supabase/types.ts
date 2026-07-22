@@ -1843,6 +1843,7 @@ export type Database = {
         }
         Returns: string
       }
+      rechazar_remito: { Args: { p_motivo?: string; p_remito_id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "empleado"

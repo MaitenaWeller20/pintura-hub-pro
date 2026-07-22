@@ -21,14 +21,14 @@ export const rechazarRemito = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ remito_id: z.string().uuid(), motivo: z.string().min(1) }).parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-    if (!isAdmin) throw new Error("Sólo el administrador puede rechazar remitos");
-
-    await supabase.from("remitos").update({
-      estado: "RECHAZADO", aprobado_por: userId,
-      fecha_aprobacion: new Date().toISOString(), motivo_rechazo: data.motivo,
-    }).eq("id", data.remito_id).eq("estado", "PENDIENTE");
+    const { supabase } = context;
+    // R7: la autorización (sucursal destino o admin) y la guarda de estado viven en
+    // la RPC transaccional rechazar_remito. Antes era un UPDATE suelto por PostgREST
+    // que sólo chequeaba is_admin y no verificaba error ni filas afectadas.
+    const { error } = await supabase.rpc("rechazar_remito", {
+      p_remito_id: data.remito_id, p_motivo: data.motivo,
+    });
+    if (error) throw new Error(error.message);
     return { ok: true };
   });
 

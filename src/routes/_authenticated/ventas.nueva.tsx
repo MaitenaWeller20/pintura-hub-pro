@@ -48,8 +48,9 @@ interface PagoRow {
   detalle: Record<string, any>;
 }
 
-// Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja)
-const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA", "FAC_INTERNA_CTA_CTE"]);
+// Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja).
+// R2.a: la "Factura interna" YA NO está acá — es un documento interno de contado.
+const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA"]);
 
 function NuevaVenta() {
   const { data: cu } = useCurrentUser();
@@ -74,8 +75,21 @@ function NuevaVenta() {
   // procede normal; sólo hace short-circuit cuando la venta realmente quedó guardada.
   const [idempotencyKey] = useState(() => crypto.randomUUID());
 
-  const esCtaCte = TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE";
+  // R2.a: la Factura interna es SIEMPRE de contado (nunca cuenta corriente).
+  const esFacInterna = tipoComp === "FAC_INTERNA_CTA_CTE";
+  const esCtaCte = (TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE") && !esFacInterna;
   const esRemitoObra = tipoComp === "REMITO_OBRA";
+
+  // R2.b: condición de IVA del emisor. Si es Monotributo, la única factura que
+  // puede emitir es la C (la matriz A/B requiere emisor Responsable Inscripto).
+  const { data: condicionEmisor } = useQuery({
+    queryKey: ["condicion-emisor"],
+    queryFn: async () => {
+      const { data } = await supabase.rpc("condicion_iva_emisor");
+      return (data ?? "RESPONSABLE_INSCRIPTO") as string;
+    },
+  });
+  const emisorMonotributo = condicionEmisor === "MONOTRIBUTO";
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -190,11 +204,25 @@ function NuevaVenta() {
   // operador cambia el selector a mano), nunca por omisión.
   useEffect(() => {
     if (esNota) return; // no tocar el tipo de una nota de crédito/débito
+    // Emisor Monotributo -> la factura es siempre C (no existe A/B para él).
+    if (emisorMonotributo) {
+      if (tipoComp === "FACTURA_A" || tipoComp === "FACTURA_B") setTipoComp("FACTURA_C");
+      return;
+    }
+    // Emisor Responsable Inscripto: la letra depende del cliente. Si venías de un
+    // borrador con emisor Monotributo (C), lo bajamos a B.
+    if (tipoComp === "FACTURA_C") { setTipoComp("FACTURA_B"); return; }
     const esRI = clienteSel?.tipo === "RESPONSABLE_INSCRIPTO";
     if (esRI && tipoComp === "FACTURA_B") setTipoComp("FACTURA_A");
     else if (!esRI && tipoComp === "FACTURA_A") setTipoComp("FACTURA_B");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clienteSel?.tipo]);
+  }, [clienteSel?.tipo, emisorMonotributo]);
+
+  // R2.a: si se elige Factura interna con una condición de cuenta corriente
+  // heredada de otro tipo, la reseteamos a contado (la Factura interna no va a Cta Cte).
+  useEffect(() => {
+    if (esFacInterna && condVenta === "CTA_CTE") setCondVenta("CONTADO");
+  }, [esFacInterna, condVenta]);
 
   const addPago = () => setPagos(p => [...p, {
     id: crypto.randomUUID(),
@@ -294,13 +322,19 @@ function NuevaVenta() {
               <Select value={tipoComp} onValueChange={(v) => setTipoComp(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="FACTURA_A">Factura A</SelectItem>
-                  <SelectItem value="FACTURA_B">Factura B</SelectItem>
+                  {emisorMonotributo ? (
+                    <SelectItem value="FACTURA_C">Factura C</SelectItem>
+                  ) : (
+                    <>
+                      <SelectItem value="FACTURA_A">Factura A</SelectItem>
+                      <SelectItem value="FACTURA_B">Factura B</SelectItem>
+                    </>
+                  )}
                   <SelectItem value="NOTA_CREDITO">Nota de Crédito</SelectItem>
                   <SelectItem value="NOTA_DEBITO">Nota de Débito</SelectItem>
                   <SelectItem value="REMITO">Remito Cta Cte</SelectItem>
                   <SelectItem value="REMITO_OBRA">Remito de Obra (Cta Cte)</SelectItem>
-                  <SelectItem value="FAC_INTERNA_CTA_CTE">Fac. interna Cta Cte</SelectItem>
+                  <SelectItem value="FAC_INTERNA_CTA_CTE">Factura interna</SelectItem>
                 </SelectContent>
               </Select>
               {comboInvalido && (
@@ -312,7 +346,11 @@ function NuevaVenta() {
             </div>
             <div>
               <Label>Condición *</Label>
-              <Select value={esCtaCte ? "CTA_CTE" : condVenta} onValueChange={(v) => setCondVenta(v as any)} disabled={esCtaCte}>
+              <Select
+                value={esFacInterna ? "CONTADO" : esCtaCte ? "CTA_CTE" : condVenta}
+                onValueChange={(v) => setCondVenta(v as any)}
+                disabled={esCtaCte || esFacInterna}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CONTADO">Contado</SelectItem>
@@ -320,6 +358,7 @@ function NuevaVenta() {
                 </SelectContent>
               </Select>
               {esCtaCte && <p className="text-[11px] text-warning mt-1">No impacta caja. Se cobra después desde Cta Cte.</p>}
+              {esFacInterna && <p className="text-[11px] text-muted-foreground mt-1">La factura interna es siempre de contado.</p>}
             </div>
             <div>
               <Label>Cliente *</Label>

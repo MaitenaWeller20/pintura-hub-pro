@@ -1775,6 +1775,7 @@ export type Database = {
           venta_id: string
         }[]
       }
+      condicion_iva_emisor: { Args: never; Returns: string }
       current_sucursal_id: { Args: never; Returns: string }
       has_role: {
         Args: {

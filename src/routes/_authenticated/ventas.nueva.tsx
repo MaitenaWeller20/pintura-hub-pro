@@ -40,6 +40,10 @@ interface ItemRow {
   // cajero pisó el precio: sólo en ese caso se lo mandamos al servidor. Si no, el
   // servidor lo resuelve solo contra el catálogo y no confía en el navegador.
   precio_lista: number;
+  // R4/R5: la línea vino precargada de la factura que rectifica una NC/ND. En ese
+  // caso SIEMPRE mandamos el precio facturado (histórico), aunque coincida con el
+  // de lista, para que la nota espeje la factura y no el precio de hoy.
+  desde_factura?: boolean;
 }
 interface PagoRow {
   id: string;
@@ -146,6 +150,30 @@ function NuevaVenta() {
   };
   const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i));
 
+  // R4/R5: al elegir la factura que rectifica una NC/ND, se cargan SUS productos en
+  // la grilla (editables y borrables: se devuelve/re-cobra sólo lo que corresponda).
+  // El precio se toma histórico de la factura (desde_factura fuerza su envío).
+  const seleccionarFacturaRectifica = async (facturaId: string) => {
+    setCbteAsocId(facturaId);
+    if (!facturaId) return;
+    const { data, error } = await supabase.from("venta_items")
+      .select("producto_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,iva_porcentaje,descuento_porcentaje")
+      .eq("venta_id", facturaId);
+    if (error) { toast.error("No se pudieron cargar los productos de la factura"); return; }
+    setItems((data ?? []).map((it: any) => ({
+      producto_id: it.producto_id,
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      cantidad: Number(it.cantidad),
+      precio_unitario_sin_iva: Number(it.precio_unitario_sin_iva),
+      precio_lista: Number(it.precio_unitario_sin_iva),
+      iva_porcentaje: Number(it.iva_porcentaje),
+      descuento_porcentaje: Number(it.descuento_porcentaje ?? 0),
+      desde_factura: true,
+    })));
+    toast.info("Se cargaron los productos de la factura. Editá o borrá los que no correspondan.");
+  };
+
   // Una nota de crédito RESTA (es una devolución). Lo mostramos con el mismo signo
   // con el que se va a guardar, así el cajero ve lo que realmente va a pasar.
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
@@ -195,6 +223,9 @@ function NuevaVenta() {
   useEffect(() => {
     setCbteAsocId("");
     setNombreObra("");
+    // R4/R5: los productos precargados de una factura son de este cliente; al
+    // cambiarlo, se quitan (los agregados a mano se conservan).
+    setItems(prev => prev.some(it => it.desde_factura) ? prev.filter(it => !it.desde_factura) : prev);
   }, [clienteId]);
 
   // El comprobante por defecto tiene que reflejar la letra que le corresponde al
@@ -255,9 +286,11 @@ function NuevaVenta() {
             it.precio_unitario_sin_iva === null || it.precio_unitario_sin_iva === undefined
               ? null
               : Number(it.precio_unitario_sin_iva);
+          // Un ítem precargado de la factura (NC/ND) SIEMPRE manda su precio histórico,
+          // aunque coincida con el de catálogo: la nota debe espejar la factura.
           const pisado =
             precioTipeado !== null &&
-            Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005;
+            (it.desde_factura || Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005);
           return {
             producto_id: it.producto_id,
             cantidad: Number(it.cantidad || 0),
@@ -393,7 +426,7 @@ function NuevaVenta() {
             {esNota && (
               <div className="col-span-2">
                 <Label>Factura que rectifica *</Label>
-                <Select value={cbteAsocId} onValueChange={setCbteAsocId} disabled={!clienteId}>
+                <Select value={cbteAsocId} onValueChange={seleccionarFacturaRectifica} disabled={!clienteId}>
                   <SelectTrigger>
                     <SelectValue placeholder={clienteId ? "Elegí la factura…" : "Elegí primero el cliente"} />
                   </SelectTrigger>

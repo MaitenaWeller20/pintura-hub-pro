@@ -308,8 +308,13 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
 
   const cerrar = useMutation({
     mutationFn: async () => {
+      // R11: sólo el EFECTIVO se cuenta a mano (es lo único físico que puede
+      // diferir). El resto de las formas se cierra con el monto ESPERADO por el
+      // sistema, así su diferencia es siempre 0 por construcción.
       const payload: Record<string, number> = {};
-      for (const f of FORMAS) if (contado[f] != null) payload[f] = Number(contado[f]);
+      for (const f of FORMAS) {
+        payload[f] = f === "EFECTIVO" ? Number(contado.EFECTIVO ?? 0) : neto(esperado[f]);
+      }
       const { error } = await supabase.rpc("cerrar_caja", {
         p_sesion_id: sesion.id, p_contado: payload, p_notas: notas || undefined,
         p_efectivo_dejado: Number(efectivoDejado || 0),
@@ -331,7 +336,8 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           <DialogTitle>Cerrar caja — conteo</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Contá lo que hay físicamente por forma de pago. El esperado es lo que entró menos lo que salió (compras, pagos a proveedor, gastos).
+          Contá el <strong>efectivo</strong> que hay físicamente en la caja. El resto de las formas ya viene con el monto
+          esperado por el sistema (lo que entró menos lo que salió: compras, pagos a proveedor, gastos), no se cuenta a mano.
         </p>
         <div className="space-y-2 mt-1">
           <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center text-xs text-muted-foreground font-medium px-1">
@@ -339,14 +345,21 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           </div>
           {formasCierre.map((f) => {
             const esp = neto(esperado[f]);
-            const cont = contado[f];
-            const dif = cont == null ? null : Number(cont) - esp;
+            const esEfectivo = f === "EFECTIVO";
+            // Sólo el efectivo es editable. El resto muestra (y cierra con) el esperado.
+            const cont = esEfectivo ? contado[f] : esp;
+            const dif = esEfectivo ? (contado[f] == null ? null : Number(contado[f]) - esp) : 0;
             return (
               <div key={f} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
                 <span className="text-sm">{formaPagoLabel[f]}</span>
                 <span className="w-24 text-right font-mono tabular-nums text-sm text-muted-foreground">{fmtMoney(esp)}</span>
                 <div className="w-28">
-                  <NumberInput value={cont ?? null} onValueChange={(v) => setContado((c) => ({ ...c, [f]: v }))} className="h-8 text-right" />
+                  <NumberInput
+                    value={esEfectivo ? (contado[f] ?? null) : esp}
+                    onValueChange={(v) => { if (esEfectivo) setContado((c) => ({ ...c, [f]: v })); }}
+                    disabled={!esEfectivo}
+                    className={`h-8 text-right ${!esEfectivo ? "opacity-60" : ""}`}
+                  />
                 </div>
                 <span className={`w-24 text-right font-mono tabular-nums text-sm ${
                   dif == null ? "text-muted-foreground" : dif === 0 ? "text-success" : "text-destructive"

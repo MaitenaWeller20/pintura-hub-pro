@@ -55,6 +55,19 @@ describe("resumenPagos", () => {
     expect(r.cantidad).toBe(2); // dos cobros positivos
     expect(r.ticketPromedio).toBe(750); // (1000 + 500) / 2
   });
+
+  // R10: las devoluciones se segregan como total aparte en vez de aparecer como
+  // un pago negativo embebido en un medio. Cobrado bruto = sólo positivos;
+  // devoluciones = valor absoluto de los negativos; neto = bruto - devoluciones.
+  it("segrega devoluciones y expone montos brutos (positivos)", () => {
+    const r = resumenPagos(normalizarCobros(ventas as any, cobranzas as any));
+    expect(r.devoluciones).toBe(400); // |−400|
+    expect(r.cobradoBruto).toBe(1500); // 1000 + 500 (sin la NC)
+    expect(r.efectivoBruto).toBe(1000); // efectivo positivo, sin la NC
+    expect(r.electronicoBruto).toBe(500); // transferencia positiva
+    // El neto sigue siendo bruto menos devoluciones.
+    expect(r.cobradoBruto - r.devoluciones).toBe(r.totalNeto);
+  });
 });
 
 describe("serieDiaria", () => {

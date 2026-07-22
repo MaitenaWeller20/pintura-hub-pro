@@ -19,6 +19,8 @@ import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearVenta } from "@/lib/ventas.functions";
+import { calcTotalesComprobante } from "@/lib/ventas-totales";
+import { round2 } from "@/lib/fiscal/iva";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
@@ -38,6 +40,10 @@ interface ItemRow {
   // cajero pisó el precio: sólo en ese caso se lo mandamos al servidor. Si no, el
   // servidor lo resuelve solo contra el catálogo y no confía en el navegador.
   precio_lista: number;
+  // R4/R5: la línea vino precargada de la factura que rectifica una NC/ND. En ese
+  // caso SIEMPRE mandamos el precio facturado (histórico), aunque coincida con el
+  // de lista, para que la nota espeje la factura y no el precio de hoy.
+  desde_factura?: boolean;
 }
 interface PagoRow {
   id: string;
@@ -46,8 +52,9 @@ interface PagoRow {
   detalle: Record<string, any>;
 }
 
-// Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja)
-const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA", "FAC_INTERNA_CTA_CTE"]);
+// Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja).
+// R2.a: la "Factura interna" YA NO está acá — es un documento interno de contado.
+const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA"]);
 
 function NuevaVenta() {
   const { data: cu } = useCurrentUser();
@@ -62,6 +69,9 @@ function NuevaVenta() {
   const [percepciones, setPercepciones] = useState<number | null>(0);
   const [observaciones, setObservaciones] = useState("");
   const [nombreObra, setNombreObra] = useState("");
+  // R5: recargo de una Nota de Débito (% sobre el total con IVA de la factura + monto fijo).
+  const [recargoPct, setRecargoPct] = useState<number | null>(null);
+  const [recargoMonto, setRecargoMonto] = useState<number | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [pagos, setPagos] = useState<PagoRow[]>([]);
   const [prodQuery, setProdQuery] = useState("");
@@ -72,8 +82,21 @@ function NuevaVenta() {
   // procede normal; sólo hace short-circuit cuando la venta realmente quedó guardada.
   const [idempotencyKey] = useState(() => crypto.randomUUID());
 
-  const esCtaCte = TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE";
+  // R2.a: la Factura interna es SIEMPRE de contado (nunca cuenta corriente).
+  const esFacInterna = tipoComp === "FAC_INTERNA_CTA_CTE";
+  const esCtaCte = (TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE") && !esFacInterna;
   const esRemitoObra = tipoComp === "REMITO_OBRA";
+
+  // R2.b: condición de IVA del emisor. Si es Monotributo, la única factura que
+  // puede emitir es la C (la matriz A/B requiere emisor Responsable Inscripto).
+  const { data: condicionEmisor } = useQuery({
+    queryKey: ["condicion-emisor"],
+    queryFn: async () => {
+      const { data } = await supabase.rpc("condicion_iva_emisor");
+      return (data ?? "RESPONSABLE_INSCRIPTO") as string;
+    },
+  });
+  const emisorMonotributo = condicionEmisor === "MONOTRIBUTO";
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -130,9 +153,36 @@ function NuevaVenta() {
   };
   const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i));
 
+  // R4/R5: al elegir la factura que rectifica una NC/ND, se cargan SUS productos en
+  // la grilla (editables y borrables: se devuelve/re-cobra sólo lo que corresponda).
+  // El precio se toma histórico de la factura (desde_factura fuerza su envío).
+  const seleccionarFacturaRectifica = async (facturaId: string) => {
+    setCbteAsocId(facturaId);
+    if (!facturaId) return;
+    // La Nota de Débito NO trae productos: usa el recargo (R5). Sólo la NC precarga.
+    if (tipoComp !== "NOTA_CREDITO") return;
+    const { data, error } = await supabase.from("venta_items")
+      .select("producto_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,iva_porcentaje,descuento_porcentaje")
+      .eq("venta_id", facturaId);
+    if (error) { toast.error("No se pudieron cargar los productos de la factura"); return; }
+    setItems((data ?? []).map((it: any) => ({
+      producto_id: it.producto_id,
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      cantidad: Number(it.cantidad),
+      precio_unitario_sin_iva: Number(it.precio_unitario_sin_iva),
+      precio_lista: Number(it.precio_unitario_sin_iva),
+      iva_porcentaje: Number(it.iva_porcentaje),
+      descuento_porcentaje: Number(it.descuento_porcentaje ?? 0),
+      desde_factura: true,
+    })));
+    toast.info("Se cargaron los productos de la factura. Editá o borrá los que no correspondan.");
+  };
+
   // Una nota de crédito RESTA (es una devolución). Lo mostramos con el mismo signo
   // con el que se va a guardar, así el cajero ve lo que realmente va a pasar.
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
+  const esNotaDebito = tipoComp === "NOTA_DEBITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
   const esFiscal = ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO", "NOTA_DEBITO"].includes(tipoComp);
   // Coherencia comprobante ↔ condición IVA: Factura A sólo a Responsable Inscripto.
@@ -159,18 +209,34 @@ function NuevaVenta() {
     },
   });
 
+  // R5: la Nota de Débito NO trae productos. Es un recargo (interés/mora) sobre la
+  // factura que rectifica: % sobre el total con IVA + un monto fijo. Se materializa
+  // como UNA línea de concepto libre con IVA 21% (el server la desglosa en neto+IVA).
+  const facturaSel = useMemo(
+    () => facturasDelCliente.find((f: any) => f.id === cbteAsocId),
+    [facturasDelCliente, cbteAsocId],
+  );
+  const recargoConIVA = useMemo(() => {
+    if (!esNotaDebito) return 0;
+    const base = Number(facturaSel?.total ?? 0);
+    return round2(round2(base * (Number(recargoPct) || 0) / 100) + (Number(recargoMonto) || 0));
+  }, [esNotaDebito, facturaSel, recargoPct, recargoMonto]);
+  // Neto de la línea de recargo: el recargo es "con IVA", así el total de la ND
+  // coincide con lo que ve el usuario (± redondeo). IVA 21%.
+  const recargoNeto = useMemo(() => round2(recargoConIVA / 1.21), [recargoConIVA]);
+
   const totales = useMemo(() => {
-    let sub = 0, iva = 0;
-    items.forEach(it => {
-      // Precio vacío (null) = usa el de lista, no 0.
-      const precio = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
-      const base = precio * (1 - (it.descuento_porcentaje ?? 0) / 100) * (it.cantidad || 0);
-      sub += base; iva += base * ((it.iva_porcentaje || 0) / 100);
-    });
-    const total = (sub + iva + Number(percepciones || 0)) * signo;
-    const pagado = esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0) * signo;
-    return { sub: sub * signo, iva: iva * signo, total, pagado, saldo: total - pagado };
-  }, [items, percepciones, pagos, esCtaCte, signo]);
+    // R5: la ND se calcula sobre la línea de recargo, no sobre la grilla de productos.
+    // Misma fórmula que la RPC (redondeo del IVA POR LÍNEA): así el total que ve el
+    // cajero coincide al centavo con el del servidor y un pago electrónico "por el
+    // total" no queda 1 centavo por encima. Ver R3/R5.
+    const itemsCalc = esNotaDebito
+      ? [{ precio_unitario_sin_iva: recargoNeto, precio_lista: recargoNeto, cantidad: 1, descuento_porcentaje: 0, iva_porcentaje: 21 }]
+      : items;
+    const { sub, iva, total } = calcTotalesComprobante(itemsCalc, percepciones, signo);
+    const pagado = esCtaCte ? 0 : round2(pagos.reduce((a, p) => a + Number(p.monto || 0), 0)) * signo;
+    return { sub, iva, total, pagado, saldo: round2(total - pagado) };
+  }, [items, percepciones, pagos, esCtaCte, signo, esNotaDebito, recargoNeto]);
 
   // Cuenta Cte: limpio pagos al cambiar de tipo
   useEffect(() => {
@@ -183,7 +249,31 @@ function NuevaVenta() {
   useEffect(() => {
     setCbteAsocId("");
     setNombreObra("");
+    // R4/R5: los productos precargados de una factura son de este cliente; al
+    // cambiarlo, se quitan (los agregados a mano se conservan).
+    setItems(prev => prev.some(it => it.desde_factura) ? prev.filter(it => !it.desde_factura) : prev);
   }, [clienteId]);
+
+  // R4/R5: al dejar de ser nota (se cambió a una factura normal), se limpian los
+  // productos precargados y la factura asociada. Si no, quedarían con el precio
+  // HISTÓRICO pegado y se emitiría una factura cobrando un precio viejo sin aviso.
+  useEffect(() => {
+    if (!esNota) {
+      setCbteAsocId("");
+      setItems(prev => prev.some(it => it.desde_factura) ? prev.filter(it => !it.desde_factura) : prev);
+    }
+  }, [esNota]);
+
+  // R5: al alternar entre NC y ND con la misma factura ya elegida, hay que
+  // re-sincronizar la grilla: sólo la NC precarga los productos (la ND usa el
+  // recargo). Sin esto, cambiar de ND a NC dejaba la grilla vacía y "Guardar"
+  // deshabilitado sin aviso (el cliente no cambió y esNota sigue true).
+  useEffect(() => {
+    if (!esNota || !cbteAsocId) return;
+    if (tipoComp === "NOTA_CREDITO") seleccionarFacturaRectifica(cbteAsocId);
+    else setItems(prev => prev.filter(it => !it.desde_factura)); // ND: grilla limpia
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoComp]);
 
   // El comprobante por defecto tiene que reflejar la letra que le corresponde al
   // cliente: a un Responsable Inscripto le corresponde Factura A. El default global
@@ -192,11 +282,25 @@ function NuevaVenta() {
   // operador cambia el selector a mano), nunca por omisión.
   useEffect(() => {
     if (esNota) return; // no tocar el tipo de una nota de crédito/débito
+    // Emisor Monotributo -> la factura es siempre C (no existe A/B para él).
+    if (emisorMonotributo) {
+      if (tipoComp === "FACTURA_A" || tipoComp === "FACTURA_B") setTipoComp("FACTURA_C");
+      return;
+    }
+    // Emisor Responsable Inscripto: la letra depende del cliente. Si venías de un
+    // borrador con emisor Monotributo (C), lo bajamos a B.
+    if (tipoComp === "FACTURA_C") { setTipoComp("FACTURA_B"); return; }
     const esRI = clienteSel?.tipo === "RESPONSABLE_INSCRIPTO";
     if (esRI && tipoComp === "FACTURA_B") setTipoComp("FACTURA_A");
     else if (!esRI && tipoComp === "FACTURA_A") setTipoComp("FACTURA_B");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clienteSel?.tipo]);
+  }, [clienteSel?.tipo, emisorMonotributo]);
+
+  // R2.a: si se elige Factura interna con una condición de cuenta corriente
+  // heredada de otro tipo, la reseteamos a contado (la Factura interna no va a Cta Cte).
+  useEffect(() => {
+    if (esFacInterna && condVenta === "CTA_CTE") setCondVenta("CONTADO");
+  }, [esFacInterna, condVenta]);
 
   const addPago = () => setPagos(p => [...p, {
     id: crypto.randomUUID(),
@@ -221,7 +325,18 @@ function NuevaVenta() {
         nombre_obra: esRemitoObra ? nombreObra : null,
         cbte_asoc_id: esNota ? cbteAsocId || null : null,
         idempotency_key: idempotencyKey,
-        items: items.map((it) => {
+        // R5: la Nota de Débito manda UNA línea de concepto libre (el recargo). El
+        // resto de los comprobantes manda la grilla de productos.
+        items: esNotaDebito
+          ? [{
+              producto_id: null,
+              descripcion: `Recargo/interés s/ ${facturaSel?.numero_comprobante ?? ""}`.trim(),
+              cantidad: 1,
+              precio_unitario_sin_iva: recargoNeto,
+              iva_porcentaje: 21,
+              descuento_porcentaje: 0,
+            }]
+          : items.map((it) => {
           // Un campo de precio vacío (null) NO es "precio 0": es "usá el de lista".
           // Sólo mandamos el precio cuando el cajero tipeó un valor distinto al de
           // catálogo. Si no, el servidor lo resuelve solo.
@@ -229,9 +344,13 @@ function NuevaVenta() {
             it.precio_unitario_sin_iva === null || it.precio_unitario_sin_iva === undefined
               ? null
               : Number(it.precio_unitario_sin_iva);
+          // Un ítem precargado de la factura (NC) SIEMPRE manda su precio histórico,
+          // aunque coincida con el de catálogo: la nota debe espejar la factura. El
+          // forzado sólo aplica MIENTRAS sea una nota (defensa por si quedara un ítem
+          // precargado tras cambiar de tipo; el efecto de arriba igual los limpia).
           const pisado =
             precioTipeado !== null &&
-            Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005;
+            ((esNota && it.desde_factura) || Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005);
           return {
             producto_id: it.producto_id,
             cantidad: Number(it.cantidad || 0),
@@ -253,9 +372,11 @@ function NuevaVenta() {
 
   const canSave =
     !!effSucursal && !!clienteId &&
-    items.length > 0 &&
-    // (4) al menos un ítem con cantidad > 0, y total ≠ 0 en comprobantes fiscales
-    items.some((it) => (it.cantidad || 0) > 0) &&
+    // R5: la ND no usa la grilla; exige factura + un recargo > 0. El resto exige
+    // al menos un ítem con cantidad > 0.
+    (esNotaDebito
+      ? (!!cbteAsocId && recargoConIVA > 0.005)
+      : (items.length > 0 && items.some((it) => (it.cantidad || 0) > 0))) &&
     (!esFiscal || Math.abs(totales.total) > 0.005) &&
     // (1) no permitir Factura A a un cliente que no es Responsable Inscripto
     !comboInvalido &&
@@ -296,13 +417,19 @@ function NuevaVenta() {
               <Select value={tipoComp} onValueChange={(v) => setTipoComp(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="FACTURA_A">Factura A</SelectItem>
-                  <SelectItem value="FACTURA_B">Factura B</SelectItem>
+                  {emisorMonotributo ? (
+                    <SelectItem value="FACTURA_C">Factura C</SelectItem>
+                  ) : (
+                    <>
+                      <SelectItem value="FACTURA_A">Factura A</SelectItem>
+                      <SelectItem value="FACTURA_B">Factura B</SelectItem>
+                    </>
+                  )}
                   <SelectItem value="NOTA_CREDITO">Nota de Crédito</SelectItem>
                   <SelectItem value="NOTA_DEBITO">Nota de Débito</SelectItem>
                   <SelectItem value="REMITO">Remito Cta Cte</SelectItem>
                   <SelectItem value="REMITO_OBRA">Remito de Obra (Cta Cte)</SelectItem>
-                  <SelectItem value="FAC_INTERNA_CTA_CTE">Fac. interna Cta Cte</SelectItem>
+                  <SelectItem value="FAC_INTERNA_CTA_CTE">Factura interna</SelectItem>
                 </SelectContent>
               </Select>
               {comboInvalido && (
@@ -314,7 +441,11 @@ function NuevaVenta() {
             </div>
             <div>
               <Label>Condición *</Label>
-              <Select value={esCtaCte ? "CTA_CTE" : condVenta} onValueChange={(v) => setCondVenta(v as any)} disabled={esCtaCte}>
+              <Select
+                value={esFacInterna ? "CONTADO" : esCtaCte ? "CTA_CTE" : condVenta}
+                onValueChange={(v) => setCondVenta(v as any)}
+                disabled={esCtaCte || esFacInterna}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CONTADO">Contado</SelectItem>
@@ -322,6 +453,7 @@ function NuevaVenta() {
                 </SelectContent>
               </Select>
               {esCtaCte && <p className="text-[11px] text-warning mt-1">No impacta caja. Se cobra después desde Cta Cte.</p>}
+              {esFacInterna && <p className="text-[11px] text-muted-foreground mt-1">La factura interna es siempre de contado.</p>}
             </div>
             <div>
               <Label>Cliente *</Label>
@@ -356,7 +488,7 @@ function NuevaVenta() {
             {esNota && (
               <div className="col-span-2">
                 <Label>Factura que rectifica *</Label>
-                <Select value={cbteAsocId} onValueChange={setCbteAsocId} disabled={!clienteId}>
+                <Select value={cbteAsocId} onValueChange={seleccionarFacturaRectifica} disabled={!clienteId}>
                   <SelectTrigger>
                     <SelectValue placeholder={clienteId ? "Elegí la factura…" : "Elegí primero el cliente"} />
                   </SelectTrigger>
@@ -416,6 +548,36 @@ function NuevaVenta() {
         </SectionCard>
       </div>
 
+      {esNotaDebito && (
+        <SectionCard className="space-y-3">
+          <h3 className="font-semibold text-sm">Recargo de la nota de débito</h3>
+          {!cbteAsocId ? (
+            <p className="text-sm text-muted-foreground">Elegí primero la factura que rectifica (arriba).</p>
+          ) : (
+            <>
+              <p className="text-[12px] text-muted-foreground">
+                Cargo extra (interés/mora) sobre {facturaSel?.numero_comprobante} ({fmtMoney(facturaSel?.total)}). Se factura con IVA 21%.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>% sobre el total de la factura</Label>
+                  <NumberInput value={recargoPct} onValueChange={setRecargoPct} className="mt-1" />
+                </div>
+                <div>
+                  <Label>Monto fijo extra ($, con IVA)</Label>
+                  <NumberInput value={recargoMonto} onValueChange={setRecargoMonto} className="mt-1" />
+                </div>
+              </div>
+              <div className="text-sm bg-muted/30 p-2 rounded flex justify-between">
+                <span className="text-muted-foreground">Recargo a cobrar (con IVA):</span>
+                <span className="font-mono font-semibold">{fmtMoney(recargoConIVA)}</span>
+              </div>
+            </>
+          )}
+        </SectionCard>
+      )}
+
+      {!esNotaDebito && (
       <SectionCard className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-sm">Productos</h3>
@@ -485,6 +647,7 @@ function NuevaVenta() {
           </div>
         }
       </SectionCard>
+      )}
 
       {!esCtaCte && (
         <SectionCard className="space-y-3">

@@ -21,14 +21,14 @@ export const rechazarRemito = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ remito_id: z.string().uuid(), motivo: z.string().min(1) }).parse(d))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-    if (!isAdmin) throw new Error("Sólo el administrador puede rechazar remitos");
-
-    await supabase.from("remitos").update({
-      estado: "RECHAZADO", aprobado_por: userId,
-      fecha_aprobacion: new Date().toISOString(), motivo_rechazo: data.motivo,
-    }).eq("id", data.remito_id).eq("estado", "PENDIENTE");
+    const { supabase } = context;
+    // R7: la autorización (sucursal destino o admin) y la guarda de estado viven en
+    // la RPC transaccional rechazar_remito. Antes era un UPDATE suelto por PostgREST
+    // que sólo chequeaba is_admin y no verificaba error ni filas afectadas.
+    const { error } = await supabase.rpc("rechazar_remito", {
+      p_remito_id: data.remito_id, p_motivo: data.motivo,
+    });
+    if (error) throw new Error(error.message);
     return { ok: true };
   });
 
@@ -44,6 +44,16 @@ export const crearRemito = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     if (data.sucursal_origen_id === data.sucursal_destino_id)
       throw new Error("Origen y destino deben ser distintos");
+
+    // R7b: el remito lo crea el ORIGEN (o un admin). Sin esto, un empleado del
+    // destino podía crear un remito saliendo de otra sucursal y auto-aprobarlo.
+    // La barrera autoritativa es la RLS de INSERT; acá damos un error claro.
+    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
+    if (!isAdmin) {
+      const { data: miSuc } = await supabase.rpc("current_sucursal_id");
+      if (miSuc !== data.sucursal_origen_id)
+        throw new Error("Sólo podés crear remitos que salgan de tu sucursal.");
+    }
 
     // Numero
     const { data: numero } = await supabase.rpc("next_comprobante_numero", {

@@ -54,9 +54,10 @@ export const tipoComprobanteLabel: Record<string, string> = {
   FACTURA_B: "Factura B",
   NOTA_CREDITO: "Nota de Crédito",
   NOTA_DEBITO: "Nota de Débito",
+  FACTURA_C: "Factura C",
   REMITO: "Remito interno",
   REMITO_OBRA: "Remito de Obra",
-  FAC_INTERNA_CTA_CTE: "Fac. Interna Cta Cte",
+  FAC_INTERNA_CTA_CTE: "Factura interna",
 };
 
 export const tipoClienteLabel: Record<string, string> = {

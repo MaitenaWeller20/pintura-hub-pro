@@ -666,6 +666,7 @@ export type Database = {
           precio_lista: number
           precio_sin_iva: number
           stock_minimo: number
+          tamano_envase: number | null
           unidad_medida: string
           updated_at: string
         }
@@ -685,6 +686,7 @@ export type Database = {
           precio_lista?: number
           precio_sin_iva?: number
           stock_minimo?: number
+          tamano_envase?: number | null
           unidad_medida?: string
           updated_at?: string
         }
@@ -704,6 +706,7 @@ export type Database = {
           precio_lista?: number
           precio_sin_iva?: number
           stock_minimo?: number
+          tamano_envase?: number | null
           unidad_medida?: string
           updated_at?: string
         }
@@ -730,6 +733,7 @@ export type Database = {
           created_at: string
           id: string
           nombre_completo: string | null
+          permite_venta_sin_stock: boolean
           sucursal_id: string | null
           updated_at: string
           username: string
@@ -739,6 +743,7 @@ export type Database = {
           created_at?: string
           id: string
           nombre_completo?: string | null
+          permite_venta_sin_stock?: boolean
           sucursal_id?: string | null
           updated_at?: string
           username: string
@@ -748,6 +753,7 @@ export type Database = {
           created_at?: string
           id?: string
           nombre_completo?: string | null
+          permite_venta_sin_stock?: boolean
           sucursal_id?: string | null
           updated_at?: string
           username?: string
@@ -1369,7 +1375,7 @@ export type Database = {
           iva_porcentaje: number
           precio_lista_sin_iva: number | null
           precio_unitario_sin_iva: number
-          producto_id: string
+          producto_id: string | null
           subtotal_con_iva: number
           subtotal_sin_iva: number
           venta_id: string
@@ -1385,7 +1391,7 @@ export type Database = {
           iva_porcentaje: number
           precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva: number
-          producto_id: string
+          producto_id: string | null
           subtotal_con_iva: number
           subtotal_sin_iva: number
           venta_id: string
@@ -1401,7 +1407,7 @@ export type Database = {
           iva_porcentaje?: number
           precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva?: number
-          producto_id?: string
+          producto_id?: string | null
           subtotal_con_iva?: number
           subtotal_sin_iva?: number
           venta_id?: string
@@ -1775,7 +1781,9 @@ export type Database = {
           venta_id: string
         }[]
       }
+      condicion_iva_emisor: { Args: never; Returns: string }
       current_sucursal_id: { Args: never; Returns: string }
+      puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1835,6 +1843,7 @@ export type Database = {
         }
         Returns: string
       }
+      rechazar_remito: { Args: { p_motivo?: string; p_remito_id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "empleado"

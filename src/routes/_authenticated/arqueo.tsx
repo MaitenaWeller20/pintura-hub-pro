@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -41,8 +41,9 @@ type CajaForma = { entra: number; sale: number; neto: number };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
 const TIPO_MOV_LABEL: Record<string, string> = { INGRESO: "Ingreso", GASTO: "Gasto", RETIRO: "Retiro", INICIAL: "Fondo inicial" };
 
-// PDF del cierre de una sesión: esperado/contado/diferencia por forma + efectivo dejado.
-function pdfCierre(s: any, sucNombre: string) {
+// PDF del cierre de una sesión: esperado/contado/diferencia por forma + efectivo
+// dejado + el detalle de todas las ventas del turno con su forma de pago (R12.a).
+async function pdfCierre(s: any, sucNombre: string) {
   const doc = new jsPDF();
   const W = doc.internal.pageSize.getWidth();
   doc.setFontSize(14); doc.text("CASAFORMA", 14, 16);
@@ -67,10 +68,38 @@ function pdfCierre(s: any, sucNombre: string) {
     foot: [["TOTAL", fmtMoney(s.total_esperado), fmtMoney(s.total_contado), fmtMoney(s.total_diferencia)]],
     styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
   });
-  const y = (doc as any).lastAutoTable.finalY + 8;
+  let y = (doc as any).lastAutoTable.finalY + 8;
   doc.setFontSize(10);
   doc.text(`Efectivo dejado para mañana: ${fmtMoney(s.efectivo_dejado ?? 0)}`, 14, y);
-  if (s.notas) { doc.setFontSize(9); doc.text(`Observaciones: ${s.notas}`, 14, y + 6); }
+  if (s.notas) { doc.setFontSize(9); doc.text(`Observaciones: ${s.notas}`, 14, y + 6); y += 6; }
+
+  // R12.a: detalle de las ventas del turno con su forma de pago. Best-effort: si
+  // la consulta falla, el PDF igual se genera con las tablas de arriba.
+  try {
+    const { data: ventasSesion } = await supabase.from("ventas")
+      .select("numero_comprobante,tipo_comprobante,total,condicion_venta,cliente:clientes(razon_social),pagos:venta_pagos(forma_pago,monto)")
+      .eq("caja_sesion_id", s.id)
+      .order("fecha", { ascending: true });
+    if (ventasSesion && ventasSesion.length) {
+      const startY = y + 10;
+      doc.setFontSize(10); doc.text("Ventas del turno", 14, startY);
+      autoTable(doc, {
+        startY: startY + 3,
+        head: [["Comprobante", "Tipo", "Cliente", "Total", "Forma de pago"]],
+        body: ventasSesion.map((v: any) => [
+          v.numero_comprobante,
+          tipoComprobanteLabel[v.tipo_comprobante] ?? v.tipo_comprobante,
+          v.cliente?.razon_social ?? "—",
+          fmtMoney(v.total),
+          v.pagos?.length
+            ? v.pagos.map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago).join(", ")
+            : (v.condicion_venta === "CTA_CTE" ? "Cuenta Corriente" : "—"),
+        ]),
+        styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
+      });
+    }
+  } catch { /* PDF sin el detalle si la consulta falla */ }
+
   doc.save(`cierre-caja-${fmtDate(s.cerrada_en)}.pdf`);
 }
 
@@ -308,8 +337,11 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
 
   const cerrar = useMutation({
     mutationFn: async () => {
-      const payload: Record<string, number> = {};
-      for (const f of FORMAS) if (contado[f] != null) payload[f] = Number(contado[f]);
+      // R11: mandamos SÓLO el efectivo (lo único que se cuenta a mano). El resto de
+      // las formas las completa cerrar_caja con el esperado que recalcula en la
+      // misma transacción, así no hay diferencia fantasma por una carrera con un
+      // esperado cacheado (ver migración 20260721160000).
+      const payload: Record<string, number> = { EFECTIVO: Number(contado.EFECTIVO ?? 0) };
       const { error } = await supabase.rpc("cerrar_caja", {
         p_sesion_id: sesion.id, p_contado: payload, p_notas: notas || undefined,
         p_efectivo_dejado: Number(efectivoDejado || 0),
@@ -331,7 +363,8 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           <DialogTitle>Cerrar caja — conteo</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Contá lo que hay físicamente por forma de pago. El esperado es lo que entró menos lo que salió (compras, pagos a proveedor, gastos).
+          Contá el <strong>efectivo</strong> que hay físicamente en la caja. El resto de las formas ya viene con el monto
+          esperado por el sistema (lo que entró menos lo que salió: compras, pagos a proveedor, gastos), no se cuenta a mano.
         </p>
         <div className="space-y-2 mt-1">
           <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center text-xs text-muted-foreground font-medium px-1">
@@ -339,14 +372,21 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           </div>
           {formasCierre.map((f) => {
             const esp = neto(esperado[f]);
-            const cont = contado[f];
-            const dif = cont == null ? null : Number(cont) - esp;
+            const esEfectivo = f === "EFECTIVO";
+            // Sólo el efectivo es editable. El resto muestra (y cierra con) el esperado.
+            const cont = esEfectivo ? contado[f] : esp;
+            const dif = esEfectivo ? (contado[f] == null ? null : Number(contado[f]) - esp) : 0;
             return (
               <div key={f} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
                 <span className="text-sm">{formaPagoLabel[f]}</span>
                 <span className="w-24 text-right font-mono tabular-nums text-sm text-muted-foreground">{fmtMoney(esp)}</span>
                 <div className="w-28">
-                  <NumberInput value={cont ?? null} onValueChange={(v) => setContado((c) => ({ ...c, [f]: v }))} className="h-8 text-right" />
+                  <NumberInput
+                    value={esEfectivo ? (contado[f] ?? null) : esp}
+                    onValueChange={(v) => { if (esEfectivo) setContado((c) => ({ ...c, [f]: v })); }}
+                    disabled={!esEfectivo}
+                    className={`h-8 text-right ${!esEfectivo ? "opacity-60" : ""}`}
+                  />
                 </div>
                 <span className={`w-24 text-right font-mono tabular-nums text-sm ${
                   dif == null ? "text-muted-foreground" : dif === 0 ? "text-success" : "text-destructive"
@@ -373,7 +413,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending}>
+          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending || contado.EFECTIVO == null}>
             <Lock className="h-4 w-4 mr-1" /> Confirmar cierre
           </Button>
         </DialogFooter>
@@ -418,7 +458,7 @@ function Historial({ sucId, sucNombre }: { sucId: string; sucNombre: string }) {
               </TableCell>
               <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.efectivo_dejado ?? 0)}</TableCell>
               <TableCell className="text-right">
-                <Button size="sm" variant="ghost" onClick={() => pdfCierre(s, sucNombre)} title="Descargar PDF del cierre">
+                <Button size="sm" variant="ghost" onClick={() => { pdfCierre(s, sucNombre).catch((e) => toast.error("No se pudo generar el PDF: " + e.message)); }} title="Descargar PDF del cierre">
                   <Printer className="h-3.5 w-3.5" />
                 </Button>
               </TableCell>

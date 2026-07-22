@@ -213,15 +213,18 @@ function PagosPage() {
         </div>
       </PeriodFilters>
 
+      {/* R10: las devoluciones se muestran como un total SEPARADO, no como un pago
+          negativo embebido en un medio. Efectivo/Electrónico son brutos (positivos);
+          el neto = cobrado bruto − devoluciones. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
         <StatCard label="Total neto cobrado" value={fmtMoney(resumen.totalNeto)} icon={Wallet} tone="success"
-          spark={sparkSerie} trend={trend(resumen.totalNeto, resumenPrev.totalNeto)} hint="neto de devoluciones" />
-        <StatCard label="Efectivo" value={fmtMoney(resumen.efectivo)} icon={Coins} tone="warning"
-          trend={trend(resumen.efectivo, resumenPrev.efectivo)} />
-        <StatCard label="Electrónico" value={fmtMoney(resumen.electronico)} icon={CreditCard} tone="info"
-          trend={trend(resumen.electronico, resumenPrev.electronico)} hint="transf. + tarjetas + MP + cheque" />
-        <StatCard label="Ticket promedio" value={fmtMoney(resumen.ticketPromedio)} icon={Receipt} tone="primary"
-          trend={trend(resumen.ticketPromedio, resumenPrev.ticketPromedio)} hint="excluye devoluciones" />
+          spark={sparkSerie} trend={trend(resumen.totalNeto, resumenPrev.totalNeto)} hint="cobrado − devoluciones" />
+        <StatCard label="Efectivo" value={fmtMoney(resumen.efectivoBruto)} icon={Coins} tone="warning"
+          trend={trend(resumen.efectivoBruto, resumenPrev.efectivoBruto)} hint="cobrado en efectivo" />
+        <StatCard label="Electrónico" value={fmtMoney(resumen.electronicoBruto)} icon={CreditCard} tone="info"
+          trend={trend(resumen.electronicoBruto, resumenPrev.electronicoBruto)} hint="transf. + tarjetas + MP + cheque" />
+        <StatCard label="Devoluciones" value={fmtMoney(resumen.devoluciones)} icon={Receipt} tone="destructive"
+          trend={trend(resumen.devoluciones, resumenPrev.devoluciones)} hint="notas de crédito del período" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 mb-4">

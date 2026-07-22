@@ -168,6 +168,7 @@ function Productos() {
             <TableRow>
               {cu.isAdmin && <TableHead className="w-8"><Checkbox checked={seleccion.size === filtered.length && filtered.length > 0} onCheckedChange={toggleAll} /></TableHead>}
               <TableHead>Código</TableHead><TableHead>Nombre</TableHead>
+              <TableHead className="text-right">Env.</TableHead>
               <TableHead>Marca</TableHead>
               <TableHead className="text-right">P. Fábrica</TableHead>
               <TableHead className="text-right">% Markup</TableHead>
@@ -187,6 +188,7 @@ function Productos() {
                   {cu.isAdmin && <TableCell><Checkbox checked={seleccion.has(p.id)} onCheckedChange={() => toggleSel(p.id)} /></TableCell>}
                   <TableCell className="font-mono text-xs">{p.codigo}</TableCell>
                   <TableCell>{p.nombre} {!p.activo && <span className="ml-2 align-middle"><StatusPill tone="neutral">Inactivo</StatusPill></span>}</TableCell>
+                  <TableCell className="text-right text-muted-foreground text-xs tabular-nums">{p.tamano_envase ?? "—"}</TableCell>
                   <TableCell className="text-muted-foreground">{p.marca?.nombre}</TableCell>
                   <TableCell className="text-right font-mono">{fmtMoney(p.precio_fabrica ?? 0)}</TableCell>
                   <TableCell className="text-right">
@@ -231,7 +233,7 @@ function Productos() {
 function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefault, descuentoProveedor, onSaved }: any) {
   const [form, setForm] = useState<any>(() => editing ?? {
     codigo: "", nombre: "", categoria_id: null, marca_id: null,
-    unidad_medida: "unidad",
+    unidad_medida: "unidad", tamano_envase: null,
     precio_lista: 0, precio_fabrica: 0, markup_porcentaje: null,
     precio_sin_iva: 0, iva_porcentaje: 21, stock_minimo: 0, activo: true,
   });
@@ -255,6 +257,7 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
         codigo: form.codigo, nombre: form.nombre,
         categoria_id: form.categoria_id, marca_id: form.marca_id,
         unidad_medida: form.unidad_medida,
+        tamano_envase: form.tamano_envase === null || form.tamano_envase === "" ? null : Number(form.tamano_envase),
         precio_lista: Number(form.precio_lista || 0),
         precio_fabrica: Number(form.precio_fabrica || 0),
         markup_porcentaje: form.markup_porcentaje === null || form.markup_porcentaje === "" ? null : Number(form.markup_porcentaje),
@@ -283,6 +286,7 @@ function ProductoDialog({ open, onClose, editing, categorias, marcas, markupDefa
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><Label>Código *</Label><Input value={form.codigo} onChange={(e) => set("codigo", e.target.value)} /></div>
           <div><Label>Unidad</Label><Input value={form.unidad_medida} onChange={(e) => set("unidad_medida", e.target.value)} /></div>
+          <div className="col-span-2 sm:col-span-1"><Label>Tamaño de envase <span className="text-xs text-muted-foreground">(litros/kg, ej. 20)</span></Label><NumberInput value={form.tamano_envase} onValueChange={(v) => set("tamano_envase", v)} /></div>
           <div className="col-span-2"><Label>Nombre *</Label><Input value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></div>
           <div>
             <Label>Categoría</Label>

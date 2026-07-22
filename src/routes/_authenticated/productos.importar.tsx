@@ -26,6 +26,7 @@ const fieldsTarget = [
   { key: "precio_sin_iva", label: "Precio s/IVA" },
   { key: "iva_porcentaje", label: "IVA %" },
   { key: "stock_minimo", label: "Stock mínimo" },
+  { key: "tamano_envase", label: "Envase (ENV)" },
   { key: "unidad_medida", label: "Unidad" },
   { key: "categoria", label: "Categoría (texto)" },
   { key: "marca", label: "Marca (texto)" },
@@ -73,6 +74,7 @@ const sinonimos: Record<string, string[]> = {
   precio_sin_iva: ["preciosiniva", "preciosiva", "preciounitario", "precioneto", "precio", "punit"],
   iva_porcentaje: ["iva", "alicuota", "ivaporcentaje"],
   stock_minimo: ["stockminimo", "minimo", "stockmin"],
+  tamano_envase: ["env", "envase", "tamanoenvase", "tamano", "presentacion", "capacidad"],
   unidad_medida: ["unidad", "unidadmedida", "um", "medida"],
   categoria: ["categoria", "rubro"],
   marca: ["marca", "fabricante"],
@@ -274,6 +276,8 @@ function ImportarProductos() {
           // columna de precio "C/IVA" al % de IVA). Se ignora y se usa el default.
           iva_porcentaje: (() => { const x = numOr(r[mapping.iva_porcentaje], 21); return x >= 0 && x <= 100 ? x : 21; })(),
           stock_minimo: numOr(r[mapping.stock_minimo], 0),
+          // R8: tamaño de envase (ENV). Vacío -> null (no todo producto lo trae).
+          tamano_envase: (() => { const n = parseNumAr(mapping.tamano_envase ? r[mapping.tamano_envase] : ""); return Number.isFinite(n) ? n : null; })(),
         };
         const { data: up, error } = await supabase.from("productos")
           .upsert(payload, { onConflict: "codigo" }).select().single();

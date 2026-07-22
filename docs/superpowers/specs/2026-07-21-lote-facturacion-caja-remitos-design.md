@@ -392,3 +392,17 @@ Tras implementar 9 de 10 items, se corrió un review adversarial (2 agentes: uno
 **Nota no-bug:** el agente observó que "Ticket promedio" salió de los KPIs de Pagos (R10) — es una decisión deliberada (se priorizó la card "Devoluciones"); `resumenPagos.ticketPromedio` se conserva por si se reintroduce.
 
 Las verificaciones matemáticas de R3 (clamp de pagos, invariante Σ venta_pagos == total_pagado) y R2/R6 (diffs incrementales de `crear_venta` sin pérdida de lógica) pasaron sin hallazgos.
+
+---
+
+## Validación end-to-end con Playwright (2026-07-22)
+
+DB local reseteada con TODAS las migraciones aplicadas limpio (las 8 del lote sin errores — validación real del SQL). Probado en la app (localhost) logueado como admin:
+
+- **R2 — dropdown:** con emisor RESPONSABLE_INSCRIPTO el dropdown muestra Factura A/B (sin Factura C ✓) y "Factura interna" (renombrada, sin "Cta Cte" ✓).
+- **R3 — bug del centavo (headline):** reproducido el caso EXACTO de la captura (2 productos a 120490.35 y 6165.06). El TOTAL del front muestra **$153.253,04** (= server, no .05). Guardó una Factura B pagada 100% con **Mercado Pago = total** → PAGADO, sin el error "los pagos electrónicos superan el total". DB: `total = total_pagado = Σ venta_pagos = 153253.04` (el clamp evita el centavo fantasma).
+- **R4 — NC trae productos:** la NC sobre OHI-FVTA-0001 precargó los 2 productos con **precio histórico** (120490.35 / 6165.06, no catálogo). Borré una línea → total se ajustó a -$145.793,32. Guardó `OHI-NCIV-0001` con solo el producto restante; stock DEVOLUCION 18→19.
+- **R5 — Nota de Débito:** ND sobre la factura con recargo **10% = $15.325,30** (neto $12.665,54 + IVA 21% $2.659,76). Guardó `OHI-NDIV-0001` con línea `producto_id NULL` / `codigo='RECARGO'`, IVA 21%, y **0 movimientos de stock**.
+- **R11 — cierre solo efectivo:** el modal deja editable SOLO Efectivo; el resto (incl. Mercado Pago $153.253,04) viene disabled con el esperado; "Confirmar cierre" deshabilitado hasta cargar el efectivo. Cerró con diferencia total 0.00; el `contado` guardado incluye `MERCADO_PAGO` autocompletado por el server (fix autoritativo).
+
+Sin errores de consola atribuibles al lote. R6/R7/R8/R10/R12 quedaron validados por la aplicación limpia de sus migraciones + los reviews; no se manejaron por UI en esta pasada.

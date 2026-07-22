@@ -98,12 +98,22 @@ export function resumenPagos(cobros: Cobro[]): {
   totalNeto: number;
   efectivo: number;
   electronico: number;
+  // R10: montos BRUTOS (sólo cobros positivos) y devoluciones segregadas, para
+  // no mostrar una devolución como un pago negativo embebido en un medio.
+  cobradoBruto: number;
+  efectivoBruto: number;
+  electronicoBruto: number;
+  devoluciones: number;
   ticketPromedio: number;
   cantidad: number;
 } {
   let totalNeto = 0;
   let efectivo = 0;
   let electronico = 0;
+  let cobradoBruto = 0;
+  let efectivoBruto = 0;
+  let electronicoBruto = 0;
+  let devoluciones = 0;
   let sumPositivos = 0;
   let cantPositivos = 0;
 
@@ -114,6 +124,11 @@ export function resumenPagos(cobros: Cobro[]): {
     if (c.monto > 0) {
       sumPositivos += c.monto;
       cantPositivos += 1;
+      cobradoBruto += c.monto;
+      if (c.formaPago === "EFECTIVO") efectivoBruto += c.monto;
+      else if (ELECTRONICO.has(c.formaPago)) electronicoBruto += c.monto;
+    } else if (c.monto < 0) {
+      devoluciones += -c.monto; // valor absoluto
     }
   }
 
@@ -121,6 +136,10 @@ export function resumenPagos(cobros: Cobro[]): {
     totalNeto,
     efectivo,
     electronico,
+    cobradoBruto,
+    efectivoBruto,
+    electronicoBruto,
+    devoluciones,
     ticketPromedio: cantPositivos > 0 ? sumPositivos / cantPositivos : 0,
     cantidad: cantPositivos,
   };

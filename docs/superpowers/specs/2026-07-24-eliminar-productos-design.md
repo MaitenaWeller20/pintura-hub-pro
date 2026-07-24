@@ -1,99 +1,143 @@
 # Eliminación de productos (individual y masiva) — Diseño
 
 **Fecha:** 2026-07-24
-**Estado:** Diseño aprobado; pendiente revisión del spec.
+**Estado:** Diseño aprobado (revisado tras review de Codex del spec); pendiente implementación.
 
-Feature para el sistema Quimex (pinturería, TanStack Start + React + Supabase/Postgres). Hoy los productos solo se dan de baja lógica editándolos (`activo = false`); no hay forma de eliminarlos, ni individual ni en lote. Este diseño agrega una acción de eliminación en `/productos` que hace lo correcto según el caso.
+Feature para el sistema Quimex (pinturería, TanStack Start + React + Supabase/Postgres). Hoy los productos solo se dan de baja lógica editándolos (`activo = false`); no hay forma de eliminarlos, ni individual ni en lote. Este diseño agrega esa acción en `/productos` con una semántica explícita de tres desenlaces.
 
 ---
 
-## 1. Principio rector: no se puede borrar historial
+## 1. Principio rector: no se puede borrar historial, y `activo` está sobrecargado
 
-`productos` está referenciado por muchas tablas transaccionales, y las FK definen qué se puede borrar:
+`productos` está referenciado por muchas tablas. Las FK definen qué se puede borrar:
 
-| Tabla que referencia | `ON DELETE` | Efecto al borrar el producto |
+| Tabla | `ON DELETE` | Al borrar el producto |
 |---|---|---|
-| `stock_sucursal` | CASCADE | se borra el stock del producto |
-| `producto_codigos_proveedor` | CASCADE | se borran sus equivalencias de proveedor |
-| `stock_movimientos` (kardex) | RESTRICT | **bloquea** el borrado |
-| `venta_items` | RESTRICT | **bloquea** el borrado |
-| `compra_items` | RESTRICT | **bloquea** el borrado |
-| `remito_items` (transferencias) | RESTRICT | **bloquea** el borrado |
-| `ingreso_mercaderia_items` | RESTRICT | **bloquea** el borrado |
+| `stock_sucursal` | CASCADE | se borra el stock |
+| `producto_codigos_proveedor` | CASCADE | se borran sus equivalencias |
+| `stock_movimientos` (kardex) | NO ACTION | **bloquea** |
+| `venta_items` | NO ACTION | **bloquea** |
+| `compra_items` | NO ACTION | **bloquea** |
+| `remito_items` (transferencias) | NO ACTION | **bloquea** |
+| `ingreso_mercaderia_items` | NO ACTION | **bloquea** |
 
-Conclusión: **un producto que alguna vez tuvo movimiento (venta, compra, transferencia, ingreso o cualquier ajuste de stock) no se puede borrar de la base** sin romper el pasado. Sólo se pueden borrar de verdad los que nunca se usaron (creados por error).
+(La lista se verificó exhaustiva contra todas las migraciones: son las únicas 7 FK a `productos`.)
 
-Por eso la eliminación es **híbrida**: borra de verdad lo que no tiene historial, y **desactiva** (`activo = false`) lo que sí lo tiene. Una sola acción "Eliminar" hace lo correcto según el caso; el usuario no tiene que saber de antemano cuál aplica.
+Dos consecuencias:
 
----
+1. **Un producto con movimiento (venta, compra, transferencia, ingreso confirmado o kardex) no se puede borrar de la base** sin romper el pasado. Solo se borran de verdad los que nunca se usaron.
+2. **`activo` ya significa dos cosas** y no alcanza para "eliminado": un producto nace **inactivo cuando todavía no tiene precio** (alta inline desde ingresos) y en ese estado **debe** seguir apareciendo en stock y poder recibir mercadería. Reusar `activo=false` para "eliminado" rompería ese flujo.
 
-## 2. RPC `eliminar_productos(p_ids uuid[])`
-
-SECURITY DEFINER, patrón del resto de las RPC del repo. Una sola función sirve para **individual** (array de 1) y **masivo** (array de N).
-
-1. Valida `auth.uid()` y **admin** (`is_admin`). Escribir `productos` es solo-admin (RLS `admin write prods`), así que el borrado también.
-2. Toma los productos pedidos `FOR UPDATE`.
-3. Por cada producto, detecta **historial** con `EXISTS` sobre: `venta_items`, `compra_items`, `remito_items`, `ingreso_mercaderia_items`, `stock_movimientos`.
-   - **Con historial** → `UPDATE productos SET activo = false`. Si ya estaba inactivo, es no-op efectivo.
-   - **Sin historial** → `DELETE FROM productos` (arrastra en cascada `stock_sucursal` y `producto_codigos_proveedor`).
-4. Devuelve un resumen para que la UI avise: cantidad borrada, cantidad desactivada, y los nombres/códigos de cada grupo (p. ej. `{ borrados: [...], desactivados: [...] }`).
-
-Todo en una transacción. Si un `DELETE` fallara igual por una FK no contemplada, se hace `RAISE` con el producto y no se aplica nada (atómico) — pero el chequeo previo de historial cubre las FK conocidas.
-
-`REVOKE ALL` + `GRANT EXECUTE` a `authenticated` y `service_role`, como el resto.
+Por eso se agrega un flag **nuevo y separado**: `archivado`. `activo` = "vendible"; `archivado` = "sacado de las pantallas de trabajo".
 
 ---
 
-## 3. Frontend en `/productos`
+## 2. Modelo de datos
 
-Reusa lo que ya existe: estado de selección (`seleccion: Set<string>`), checkboxes solo-admin, acción "Editar" por fila, y la barra de acciones donde vive "Aplicar markup".
+```sql
+ALTER TABLE public.productos
+  ADD COLUMN IF NOT EXISTS archivado boolean NOT NULL DEFAULT false;
+```
 
-- **Por fila:** botón "Eliminar" (ícono tacho, `variant=ghost`) al lado de "Editar", solo-admin.
-- **Masivo:** botón "Eliminar seleccionados (N)" en la barra superior, al lado de "Aplicar markup", visible cuando hay selección.
-- **Confirmación:** AlertDialog (mismo patrón que "anular" de ingresos/compras) que:
-  - Lista cuántos productos se van a eliminar.
-  - **Avisa** que los que tengan ventas/compras/movimientos se van a **desactivar** en vez de borrarse, y que eso no toca las facturas ni los reportes viejos.
-- **Resultado:** `toast` con el resumen que devuelve la RPC (p. ej. *"2 eliminados · 3 desactivados (tenían historial)"*), limpiar la selección e invalidar la query de productos.
+Índices para que el chequeo de historial en lote no escanee tablas grandes (faltan hoy):
 
-La llamada va por un **server function** `eliminarProductos` (`createServerFn` + `requireSupabaseAuth`) que invoca la RPC, para ser consistente con cómo se llama `aplicarMarkup` (aunque `productos` tiene escritura directa, la lógica de borrado con chequeo de historial vive mejor en la RPC).
+```sql
+CREATE INDEX IF NOT EXISTS idx_venta_items_producto      ON public.venta_items (producto_id);
+CREATE INDEX IF NOT EXISTS idx_stock_mov_producto        ON public.stock_movimientos (producto_id);
+CREATE INDEX IF NOT EXISTS idx_remito_items_producto     ON public.remito_items (producto_id);
+```
 
----
-
-## 4. Permisos y seguridad
-
-- **Solo admin**, validado en la RPC (`is_admin`) — no alcanza con esconder el botón en la UI.
-- La RPC es la única vía de borrado (no se expone `DELETE` directo desde el cliente).
-- Un no-admin que llame la RPC directo recibe `RAISE`.
+(`compra_items` e `ingreso_mercaderia_items` ya tienen índice por `producto_id`.)
 
 ---
 
-## 5. Casos borde
+## 3. RPC `eliminar_productos(p_ids uuid[])`
 
-- **Producto ya inactivo, sin historial** → se borra (limpia inactivos viejos que nunca se usaron).
-- **Producto ya inactivo, con historial** → sigue inactivo (no-op).
-- **Producto con stock en mano pero sin movimientos** → se borra; su `stock_sucursal` cae en cascada. Es un caso raro (el stock normalmente viene de movimientos que dejarían historial).
-- **Selección mixta** (algunos con historial, otros sin) → cada uno se resuelve por separado; el resumen lo refleja.
-- **Lista vacía** → la RPC no hace nada y devuelve ceros.
+SECURITY DEFINER, patrón del repo. Sirve para **individual** (array de 1) y **masivo** (array de N). Una transacción.
+
+1. Valida `auth.uid()` y **admin** (`is_admin`). Escribir `productos` es solo-admin.
+2. Por cada id, en orden **`FOR UPDATE` del producto → chequeos → acción** (el `FOR UPDATE` antes de los `EXISTS` cierra la carrera con una venta/ingreso concurrente: el `INSERT` hijo necesita `FOR KEY SHARE` sobre la fila del producto, que espera o falla contra nuestro lock).
+3. Desenlace por producto:
+   - **Referenciado por un ingreso en `BORRADOR`** (`EXISTS` en `ingreso_mercaderia_items` JOIN `ingresos_mercaderia` con `estado='BORRADOR'`) → **BLOQUEADO**: no se toca, se reporta con motivo. (Un borrador engancha `producto_id` antes de confirmar; no es historial real, pero su FK impediría el DELETE. Se pide resolver el borrador primero en vez de romperlo.)
+   - Si no, **tiene historial real** (`EXISTS` en `venta_items`, `compra_items`, `remito_items`, `stock_movimientos`, o `ingreso_mercaderia_items` de un ingreso **confirmado**) **o tiene stock** (`EXISTS stock_sucursal con cantidad <> 0`) → **ARCHIVADO** (`UPDATE productos SET archivado = true`). No se puede borrar sin romper el pasado o tirar stock.
+   - Si no (sin historial, sin stock, sin borrador) → **DELETE** real (arrastra en cascada `stock_sucursal` con cantidad 0 y `producto_codigos_proveedor`).
+4. Devuelve resumen: `{ borrados: [...], archivados: [...], bloqueados: [{codigo, nombre, motivo}] }` (código/nombre por grupo, para el toast).
+
+Nota sobre el **stock**: la importación de Excel y el seed cargan `stock_sucursal` **sin** dejar kardex, así que "sin historial" no implica "sin stock". Por eso el DELETE real exige además **stock cero**; si tiene stock, se archiva.
+
+`REVOKE ALL` + `GRANT EXECUTE` a `authenticated` y `service_role`.
 
 ---
 
-## 6. Verificación
+## 4. Visibilidad: dónde deja de verse un producto archivado
 
-- **e2e contra la base** (curl/psql a la RPC):
-  - Producto sin uso → se borra (desaparece de `productos`, y su `stock_sucursal` también).
-  - Producto con una venta → queda `activo = false` y la venta (`venta_items`) sigue intacta.
-  - Selección mixta → resumen correcto (borrados vs desactivados).
+`archivado = true` lo saca de **todas las pantallas de trabajo**, manteniéndolo en el historial. Se agrega el filtro `archivado = false` (o `eq("archivado", false)`) en:
+
+- **Ventas** — búsqueda de productos (además del `activo` que ya filtra).
+- **`/stock`** — inventario (hoy no filtra nada; se le agrega `archivado=false`).
+- **Transferencias (`/remitos`)** — selector de productos (hoy no filtra).
+- **Match de ingresos** — `buscar_productos_similares` y el match por código exacto/aprendido excluyen archivados. **Importante:** siguen incluyendo los **inactivos NO archivados** (un producto inline sin precio tiene que poder recibir mercadería).
+- **Dashboard de stock bajo** (`index.tsx`) — excluye archivados.
+
+**No** se filtran los reportes históricos ni las pantallas que muestran el pasado (facturas, kardex, cuenta corriente): esas joinean por `producto_id` y deben seguir mostrando el producto archivado tal como fue.
+
+En **`/productos`**: por defecto se ocultan los archivados; un toggle **"ver archivados"** los muestra (con pill "Archivado") para poder **restaurarlos** (una acción que hace `UPDATE archivado = false`). Los archivados no cuentan en el markup masivo ni en la selección por defecto.
+
+---
+
+## 5. Frontend en `/productos`
+
+Reusa lo que ya existe: selección (`seleccion: Set`), checkboxes solo-admin, acción "Editar" por fila, barra de acciones (donde vive "Aplicar markup").
+
+- **Por fila:** botón "Eliminar" (ícono tacho, ghost), solo-admin. Para un producto ya archivado, la acción de fila pasa a ser "Restaurar".
+- **Masivo:** botón "Eliminar seleccionados (N)" en la barra, visible con selección.
+- **Confirmación:** AlertDialog (patrón "anular" de ingresos/compras) que avisa: los que tengan historial o stock se **archivan** (se ocultan, no se borran; el pasado queda intacto), los que estén en un borrador de ingreso se **saltan**.
+- **Resultado:** `toast` con el resumen de la RPC (p. ej. *"2 eliminados · 3 archivados · 1 en borrador (saltado)"*); limpiar selección; invalidar la query.
+- **Toggle "ver archivados"** + acción "Restaurar" por fila.
+
+La llamada va por un **server function** `eliminarProductos` / `restaurarProductos` (`createServerFn` + `requireSupabaseAuth`) que invoca la RPC, consistente con `aplicarMarkup`.
+
+---
+
+## 6. Permisos y seguridad
+
+- **Solo admin**, validado en la RPC (`is_admin`), no solo escondiendo el botón.
+- La RPC es la única vía de borrado/archivado; no se expone `DELETE` directo del cliente.
+- No-admin que llame la RPC directo → `RAISE`.
+
+---
+
+## 7. Casos borde
+
+- **Ya archivado** en la selección → no-op (o se puede restaurar desde el toggle).
+- **Producto con stock pero sin movimientos** (importado por Excel) → se **archiva** (no se borra, no se tira stock).
+- **En un borrador de ingreso** → **bloqueado**, con motivo en el resumen.
+- **Selección mixta** → cada uno por separado; el resumen lo refleja.
+- **IDs repetidos / inexistentes** → se ignoran; no rompen la operación.
+- **Lista vacía** → no hace nada, resumen en ceros.
+
+---
+
+## 8. Verificación
+
+- **e2e contra la base** (psql a la RPC):
+  - Producto sin uso ni stock → **DELETE** (desaparece).
+  - Producto con stock pero sin movimientos → **archivado** (no se borra).
+  - Producto con una venta → **archivado**, la venta intacta.
+  - Producto en un ingreso borrador → **bloqueado**.
+  - Selección mixta → resumen correcto.
   - No-admin → rechazado.
+  - Un producto archivado no aparece en `buscar_productos_similares`; uno inactivo-sin-precio sí.
 - **typecheck** + tests en verde; regenerar `types.ts`.
 - **Review con Codex** del diff antes de commitear.
-- **Playwright** end-to-end: eliminar individual (uno sin historial → desaparece; uno con historial → queda "Inactivo"), y eliminar masivo con selección mixta, viendo el toast de resumen.
+- **Playwright** end-to-end: eliminar individual (uno sin uso → desaparece; uno con historial → "Archivado"), eliminar masivo con selección mixta viendo el toast, toggle "ver archivados" + restaurar.
 - Deploy a prod (dry-run + push + Vercel) con autorización, y verificación.
 
 ---
 
-## 7. No-objetivos (YAGNI)
+## 9. No-objetivos (YAGNI)
 
-- No se toca `/stock` (queda de solo lectura; la gestión vive en `/productos`).
-- No hay "papelera" ni "restaurar": reactivar un producto desactivado ya se hace editándolo (`activo = true`).
+- No se toca el bug preexistente de `crearRemito` no-transaccional (cabecera antes que ítems); la FK igual protege la integridad y está fuera de alcance de esta feature.
+- No hay "papelera" con retención/purga: restaurar es `archivado=false`.
 - No se borra historial nunca (ni ventas, ni kardex, ni ingresos).
 - No se elimina en cascada "hacia arriba" (un producto con historial nunca fuerza el borrado de sus ventas).

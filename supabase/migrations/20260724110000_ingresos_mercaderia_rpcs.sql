@@ -406,31 +406,41 @@ BEGIN
 END; $$;
 
 -- ------------------------------------------------------------
--- crear_producto_desde_ingreso — alta rápida INACTIVA desde la revisión.
+-- crear_producto_desde_ingreso — alta rápida desde la revisión.
 -- productos tiene RLS de escritura solo-admin; esta RPC deja que un no-admin cree
--- el producto, pero SIEMPRE inactivo: entra al stock pero no se puede vender hasta
--- que alguien le cargue el precio. Imposible venderlo a $0 por descuido.
+-- el producto. El precio es OPCIONAL:
+--   con precio (>0) -> nace ACTIVO y vendible, en la misma pantalla.
+--   sin precio      -> nace INACTIVO: entra al stock pero no se ve ni se vende
+--                      hasta que le carguen el precio en Productos (imposible
+--                      venderlo a $0 por descuido).
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.crear_producto_desde_ingreso(
-  p_codigo text,
-  p_nombre text,
-  p_iva    numeric DEFAULT 21
+  p_codigo         text,
+  p_nombre         text,
+  p_iva            numeric DEFAULT 21,
+  p_precio_sin_iva numeric DEFAULT NULL
 )
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_uid uuid := auth.uid();
-  v_id  uuid;
+  v_uid    uuid := auth.uid();
+  v_id     uuid;
+  v_precio numeric(14,2) := COALESCE(p_precio_sin_iva, 0);
+  v_activo boolean;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'No autenticado'; END IF;
   IF btrim(COALESCE(p_codigo, '')) = '' THEN RAISE EXCEPTION 'El código es obligatorio'; END IF;
   IF btrim(COALESCE(p_nombre, '')) = '' THEN RAISE EXCEPTION 'El nombre es obligatorio'; END IF;
+  IF v_precio < 0 THEN RAISE EXCEPTION 'El precio no puede ser negativo'; END IF;
   IF EXISTS (SELECT 1 FROM public.productos WHERE codigo = p_codigo) THEN
     RAISE EXCEPTION 'Ya existe un producto con el código %', p_codigo;
   END IF;
 
-  INSERT INTO public.productos (codigo, nombre, iva_porcentaje, activo)
-  VALUES (p_codigo, p_nombre, COALESCE(p_iva, 21), false)  -- nace inactivo, sin precio
+  -- Sólo con precio se activa: sin precio queda oculto hasta completarlo.
+  v_activo := v_precio > 0;
+
+  INSERT INTO public.productos (codigo, nombre, iva_porcentaje, precio_sin_iva, activo)
+  VALUES (p_codigo, p_nombre, COALESCE(p_iva, 21), v_precio, v_activo)
   RETURNING id INTO v_id;
 
   RETURN v_id;
@@ -481,7 +491,7 @@ BEGIN
     'actualizar_items_borrador(uuid, jsonb)',
     'confirmar_ingreso_mercaderia(uuid, text, date, jsonb, text, uuid)',
     'anular_ingreso_mercaderia(uuid, text)',
-    'crear_producto_desde_ingreso(text, text, numeric)',
+    'crear_producto_desde_ingreso(text, text, numeric, numeric)',
     'buscar_productos_similares(text, text, integer)'
   ])
   LOOP

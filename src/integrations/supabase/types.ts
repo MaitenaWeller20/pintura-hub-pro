@@ -2030,7 +2030,12 @@ export type Database = {
         }[]
       }
       crear_producto_desde_ingreso: {
-        Args: { p_codigo: string; p_iva?: number; p_nombre: string }
+        Args: {
+          p_codigo: string
+          p_iva?: number
+          p_nombre: string
+          p_precio_sin_iva?: number
+        }
         Returns: string
       }
       crear_venta: {

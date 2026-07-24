@@ -612,7 +612,8 @@ function ItemFila({
 }
 
 // ---------------------------------------------------------------------------
-// Alta rápida de producto (nace inactivo, sin precio)
+// Alta rápida de producto. Precio opcional: con precio nace activo y vendible;
+// sin precio nace inactivo (oculto) hasta completarlo acá o en Productos.
 // ---------------------------------------------------------------------------
 function DialogNuevoProducto({
   it,
@@ -626,6 +627,7 @@ function DialogNuevoProducto({
   const [codigo, setCodigo] = useState(it.codigo_proveedor || "");
   const [nombre, setNombre] = useState(it.descripcion_proveedor || it.descripcion_raw || "");
   const [iva, setIva] = useState<number | null>(21);
+  const [precio, setPrecio] = useState<number | null>(null);
 
   const m = useMutation({
     mutationFn: async () => {
@@ -633,12 +635,17 @@ function DialogNuevoProducto({
         p_codigo: codigo.trim(),
         p_nombre: nombre.trim(),
         p_iva: iva ?? 21,
+        p_precio_sin_iva: precio && precio > 0 ? precio : undefined,
       });
       if (error) throw error;
       return { id: data as string, codigo: codigo.trim(), nombre: nombre.trim() };
     },
     onSuccess: (p) => {
-      toast.success("Producto creado (inactivo, sin precio)");
+      toast.success(
+        precio && precio > 0
+          ? "Producto creado y activo"
+          : "Producto creado (inactivo hasta que le cargues el precio)",
+      );
       onCreado(p);
     },
     onError: (e: any) => toast.error(e.message),
@@ -667,13 +674,32 @@ function DialogNuevoProducto({
               data-testid="nuevo-nombre"
             />
           </div>
-          <div>
-            <Label>IVA %</Label>
-            <NumberInput value={iva} onValueChange={setIva} className="w-24" />
+          <div className="flex gap-3">
+            <div>
+              <Label>IVA %</Label>
+              <NumberInput value={iva} onValueChange={setIva} className="w-24" />
+            </div>
+            <div className="flex-1">
+              <Label>Precio de venta s/IVA (opcional)</Label>
+              <NumberInput
+                value={precio}
+                onValueChange={setPrecio}
+                className="w-full"
+                data-testid="nuevo-precio"
+              />
+            </div>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Nace <strong>inactivo y sin precio</strong>: entra al stock pero no se puede vender
-            hasta que le cargues el precio en Productos.
+            {precio && precio > 0 ? (
+              <>
+                Nace <strong>activo</strong>: entra al stock y ya se puede vender.
+              </>
+            ) : (
+              <>
+                Sin precio nace <strong>inactivo</strong>: entra al stock pero no se ve ni se vende
+                hasta que le cargues el precio (acá o después en Productos).
+              </>
+            )}
           </p>
         </div>
         <DialogFooter>

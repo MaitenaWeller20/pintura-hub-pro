@@ -253,7 +253,7 @@ function Productos() {
                     variant="outline"
                     className="text-destructive"
                     data-testid="eliminar-masivo"
-                    onClick={() => setAEliminar(filtered.filter((p: any) => seleccion.has(p.id)))}
+                    onClick={() => setAEliminar(productos.filter((p: any) => seleccion.has(p.id)))}
                   >
                     <Trash2 className="h-4 w-4 mr-1" /> Eliminar seleccionados ({seleccion.size})
                   </Button>

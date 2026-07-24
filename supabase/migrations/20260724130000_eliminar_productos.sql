@@ -40,13 +40,19 @@ DECLARE
   v_borrados    jsonb := '[]'::jsonb;
   v_archivados  jsonb := '[]'::jsonb;
   v_bloqueados  jsonb := '[]'::jsonb;
+  v_ids         uuid[];
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'No autenticado'; END IF;
   IF NOT public.is_admin(v_uid) THEN
     RAISE EXCEPTION 'Sólo un administrador puede eliminar productos';
   END IF;
 
-  FOREACH v_id IN ARRAY COALESCE(p_ids, ARRAY[]::uuid[])
+  -- Dedupe + orden estable de los ids ANTES del loop: dos borrados masivos
+  -- concurrentes con las mismas filas en distinto orden no se deadlockean (toman
+  -- los FOR UPDATE siempre en el mismo orden).
+  v_ids := ARRAY(SELECT DISTINCT u FROM unnest(COALESCE(p_ids, ARRAY[]::uuid[])) u ORDER BY u);
+
+  FOREACH v_id IN ARRAY v_ids
   LOOP
     -- FOR UPDATE ANTES de los EXISTS: cierra la carrera con una venta/ingreso
     -- concurrente (su INSERT hijo necesita FOR KEY SHARE de esta fila).

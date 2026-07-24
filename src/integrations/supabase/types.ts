@@ -168,6 +168,13 @@ export type Database = {
             foreignKeyName: "caja_sesiones_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "caja_sesiones_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -241,6 +248,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "clientes_sucursal_habitual_id_fkey"
+            columns: ["sucursal_habitual_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
           {
             foreignKeyName: "clientes_sucursal_habitual_id_fkey"
             columns: ["sucursal_habitual_id"]
@@ -319,6 +333,13 @@ export type Database = {
             foreignKeyName: "cobranzas_cta_cte_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "cobranzas_cta_cte_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -378,6 +399,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compra_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
           },
         ]
       }
@@ -468,6 +496,13 @@ export type Database = {
             foreignKeyName: "compras_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "compras_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -493,6 +528,13 @@ export type Database = {
           ultimo_numero?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "comprobante_secuencias_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
           {
             foreignKeyName: "comprobante_secuencias_sucursal_id_fkey"
             columns: ["sucursal_id"]
@@ -566,6 +608,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "cobranzas_cta_cte"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
           },
           {
             foreignKeyName: "cuenta_corriente_movimientos_sucursal_id_fkey"
@@ -704,6 +753,13 @@ export type Database = {
             referencedRelation: "productos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "ingreso_mercaderia_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
         ]
       }
       ingresos_mercaderia: {
@@ -795,6 +851,13 @@ export type Database = {
             foreignKeyName: "ingresos_mercaderia_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "ingresos_mercaderia_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -859,6 +922,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "producto_codigos_proveedor_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
           },
           {
             foreignKeyName: "producto_codigos_proveedor_proveedor_id_fkey"
@@ -993,6 +1063,13 @@ export type Database = {
             foreignKeyName: "profiles_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "profiles_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1074,6 +1151,13 @@ export type Database = {
             foreignKeyName: "proveedor_cc_movimientos_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "proveedor_cc_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1150,6 +1234,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "proveedores"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proveedor_pagos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
           },
           {
             foreignKeyName: "proveedor_pagos_sucursal_id_fkey"
@@ -1238,6 +1329,13 @@ export type Database = {
             foreignKeyName: "puntos_venta_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: true
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "puntos_venta_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: true
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1272,6 +1370,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "remito_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
           },
           {
             foreignKeyName: "remito_items_remito_id_fkey"
@@ -1330,8 +1435,22 @@ export type Database = {
             foreignKeyName: "remitos_sucursal_destino_id_fkey"
             columns: ["sucursal_destino_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "remitos_sucursal_destino_id_fkey"
+            columns: ["sucursal_destino_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "remitos_sucursal_origen_id_fkey"
+            columns: ["sucursal_origen_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
           },
           {
             foreignKeyName: "remitos_sucursal_origen_id_fkey"
@@ -1414,6 +1533,13 @@ export type Database = {
             foreignKeyName: "rendiciones_caja_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "rendiciones_caja_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1442,6 +1568,121 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      stock_conteo_items: {
+        Row: {
+          cantidad_anterior: number
+          cantidad_contada: number
+          cantidad_final: number
+          conteo_id: string
+          id: string
+          movimientos_posteriores: number
+          producto_codigo: string
+          producto_id: string | null
+          producto_nombre: string
+        }
+        Insert: {
+          cantidad_anterior: number
+          cantidad_contada: number
+          cantidad_final: number
+          conteo_id: string
+          id?: string
+          movimientos_posteriores?: number
+          producto_codigo: string
+          producto_id?: string | null
+          producto_nombre: string
+        }
+        Update: {
+          cantidad_anterior?: number
+          cantidad_contada?: number
+          cantidad_final?: number
+          conteo_id?: string
+          id?: string
+          movimientos_posteriores?: number
+          producto_codigo?: string
+          producto_id?: string | null
+          producto_nombre?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_conteo_items_conteo_id_fkey"
+            columns: ["conteo_id"]
+            isOneToOne: false
+            referencedRelation: "stock_conteos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_conteo_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_conteo_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+        ]
+      }
+      stock_conteos: {
+        Row: {
+          contado_desde: string | null
+          created_at: string
+          id: string
+          idempotency_key: string | null
+          items_ajustados: number
+          items_con_movimientos: number
+          items_conflicto: number
+          items_sin_cambio: number
+          motivo: string
+          sucursal_id: string
+          usuario_id: string | null
+        }
+        Insert: {
+          contado_desde?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          items_ajustados?: number
+          items_con_movimientos?: number
+          items_conflicto?: number
+          items_sin_cambio?: number
+          motivo: string
+          sucursal_id: string
+          usuario_id?: string | null
+        }
+        Update: {
+          contado_desde?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          items_ajustados?: number
+          items_con_movimientos?: number
+          items_conflicto?: number
+          items_sin_cambio?: number
+          motivo?: string
+          sucursal_id?: string
+          usuario_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_conteos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "stock_conteos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       stock_correccion_envase: {
         Row: {
@@ -1504,6 +1745,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "stock_correccion_envase_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_correccion_envase_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
             foreignKeyName: "stock_correccion_envase_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
@@ -1561,6 +1816,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "stock_movimientos_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
             foreignKeyName: "stock_movimientos_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
@@ -1598,6 +1867,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_sucursal_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_sucursal_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
           },
           {
             foreignKeyName: "stock_sucursal_sucursal_id_fkey"
@@ -1721,6 +2004,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venta_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
           },
           {
             foreignKeyName: "venta_items_venta_id_fkey"
@@ -1908,6 +2198,13 @@ export type Database = {
             foreignKeyName: "ventas_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "ventas_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1988,6 +2285,42 @@ export type Database = {
         }
         Relationships: []
       }
+      stock_inventario: {
+        Row: {
+          cantidad: number | null
+          cargado: boolean | null
+          categoria_id: string | null
+          codigo: string | null
+          fue_contado: boolean | null
+          marca_id: string | null
+          nombre: string | null
+          producto_id: string | null
+          stock_minimo: number | null
+          sucursal_codigo: string | null
+          sucursal_id: string | null
+          sucursal_nombre: string | null
+          tamano_envase: number | null
+          tiene_fila: boolean | null
+          tiene_movimientos: boolean | null
+          unidad_medida: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "productos_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "productos_marca_id_fkey"
+            columns: ["marca_id"]
+            isOneToOne: false
+            referencedRelation: "marcas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       abrir_caja: {
@@ -2009,6 +2342,16 @@ export type Database = {
           cantidad_anterior: number
           cantidad_nueva: number
         }[]
+      }
+      ajustar_stock_masivo: {
+        Args: {
+          p_contado_desde?: string
+          p_idempotency_key?: string
+          p_items: Json
+          p_motivo: string
+          p_sucursal_id: string
+        }
+        Returns: Json
       }
       anular_compra: { Args: { p_compra_id: string }; Returns: undefined }
       anular_ingreso_mercaderia: {
@@ -2154,6 +2497,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      iniciar_conteo_stock: { Args: never; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       next_comprobante_numero: {
         Args: {

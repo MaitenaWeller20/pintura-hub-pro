@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { traerTodo } from "@/lib/supabase-paginado";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { StatCard } from "@/components/app/stat-card";
@@ -54,22 +55,41 @@ function Dashboard() {
       // producto, quedándonos con la sucursal más crítica. Así un producto con stock
       // bajo en las dos sucursales aparece una sola vez (no duplicado, y el KPI cuenta
       // productos) pero SIGUE alertando aunque el total entre sucursales supere el mínimo.
-      let stockQ = supabase
-        .from("stock_sucursal")
-        .select("cantidad, sucursal_id, producto:productos!inner(id, nombre, codigo, stock_minimo)")
-        .eq("producto.archivado", false); // los archivados no cuentan para stock bajo
-      if (!cu!.isAdmin && cu!.sucursal) stockQ = stockQ.eq("sucursal_id", cu!.sucursal.id);
-      const stocks = ((await stockQ).data ?? []) as any[];
+      //
+      // Se lee de stock_inventario filtrando `cargado`: un producto que
+      // NADIE CONTÓ TODAVÍA no es "stock bajo", es "sin contar". Sin este filtro
+      // el KPI queda inservible — después de la corrección del envase hay ~1150
+      // productos en cero que nadie contó nunca.
+      const { filas: stocks } = await traerTodo<any>(async (desde, hasta) => {
+        let sel = supabase
+          .from("stock_inventario")
+          .select("producto_id, nombre, codigo, stock_minimo, cantidad, sucursal_id", {
+            count: "exact",
+          })
+          .eq("cargado", true)
+          .order("codigo")
+          .order("sucursal_id")
+          .range(desde, hasta);
+        if (!cu!.isAdmin && cu!.sucursal) sel = sel.eq("sucursal_id", cu!.sucursal.id);
+        const { data, error, count } = await sel;
+        return { data, error, count };
+      });
       const bajasPorFila = stocks.filter(
-        (s) => Number(s.cantidad) <= Number(s.producto?.stock_minimo ?? 0),
+        (s: any) => Number(s.cantidad) <= Number(s.stock_minimo ?? 0),
       );
       const peorPorProducto = new Map<string, { producto: any; cantidad: number }>();
       for (const s of bajasPorFila) {
-        const pid = s.producto?.id;
+        const pid = s.producto_id;
         if (!pid) continue;
+        const producto = {
+          id: s.producto_id,
+          nombre: s.nombre,
+          codigo: s.codigo,
+          stock_minimo: s.stock_minimo,
+        };
         const prev = peorPorProducto.get(pid);
         if (!prev || Number(s.cantidad) < prev.cantidad)
-          peorPorProducto.set(pid, { producto: s.producto, cantidad: Number(s.cantidad) });
+          peorPorProducto.set(pid, { producto, cantidad: Number(s.cantidad) });
       }
       const stockBajo = [...peorPorProducto.values()].sort((a, b) => a.cantidad - b.cantidad);
 

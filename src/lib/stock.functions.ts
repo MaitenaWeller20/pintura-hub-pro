@@ -19,14 +19,17 @@ export const aprobarRemito = createServerFn({ method: "POST" })
 
 export const rechazarRemito = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ remito_id: z.string().uuid(), motivo: z.string().min(1) }).parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ remito_id: z.string().uuid(), motivo: z.string().min(1) }).parse(d),
+  )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     // R7: la autorización (sucursal destino o admin) y la guarda de estado viven en
     // la RPC transaccional rechazar_remito. Antes era un UPDATE suelto por PostgREST
     // que sólo chequeaba is_admin y no verificaba error ni filas afectadas.
     const { error } = await supabase.rpc("rechazar_remito", {
-      p_remito_id: data.remito_id, p_motivo: data.motivo,
+      p_remito_id: data.remito_id,
+      p_motivo: data.motivo,
     });
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -34,12 +37,18 @@ export const rechazarRemito = createServerFn({ method: "POST" })
 
 export const crearRemito = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({
-    sucursal_origen_id: z.string().uuid(),
-    sucursal_destino_id: z.string().uuid(),
-    observaciones: z.string().optional().nullable(),
-    items: z.array(z.object({ producto_id: z.string().uuid(), cantidad: z.number().positive() })).min(1),
-  }).parse(d))
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        sucursal_origen_id: z.string().uuid(),
+        sucursal_destino_id: z.string().uuid(),
+        observaciones: z.string().optional().nullable(),
+        items: z
+          .array(z.object({ producto_id: z.string().uuid(), cantidad: z.number().positive() }))
+          .min(1),
+      })
+      .parse(d),
+  )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     if (data.sucursal_origen_id === data.sucursal_destino_id)
@@ -57,34 +66,98 @@ export const crearRemito = createServerFn({ method: "POST" })
 
     // Numero
     const { data: numero } = await supabase.rpc("next_comprobante_numero", {
-      _sucursal_id: data.sucursal_origen_id, _tipo: "REMITO" as const,
+      _sucursal_id: data.sucursal_origen_id,
+      _tipo: "REMITO" as const,
     });
 
-    const { data: rem, error } = await supabase.from("remitos").insert({
-      numero: numero as unknown as string,
-      sucursal_origen_id: data.sucursal_origen_id,
-      sucursal_destino_id: data.sucursal_destino_id,
-      observaciones: data.observaciones ?? null,
-      creado_por: userId,
-    }).select().single();
+    const { data: rem, error } = await supabase
+      .from("remitos")
+      .insert({
+        numero: numero as unknown as string,
+        sucursal_origen_id: data.sucursal_origen_id,
+        sucursal_destino_id: data.sucursal_destino_id,
+        observaciones: data.observaciones ?? null,
+        creado_por: userId,
+      })
+      .select()
+      .single();
     if (error) throw new Error(error.message);
 
-    const { error: iErr } = await supabase.from("remito_items").insert(
-      data.items.map((i) => ({ ...i, remito_id: rem.id }))
-    );
+    const { error: iErr } = await supabase
+      .from("remito_items")
+      .insert(data.items.map((i) => ({ ...i, remito_id: rem.id })));
     if (iErr) throw new Error(iErr.message);
 
     return { id: rem.id, numero };
   });
 
+/**
+ * Conteo físico: carga muchas cantidades de una, en una transacción, con kardex.
+ *
+ * `contado_desde` es el momento en que se abrió el conteo en pantalla. Los
+ * movimientos posteriores a esa hora se SUMAN a lo contado en vez de pisarse:
+ * contar 10 a las 10:00, vender 2 a las 10:10 y guardar a las 10:30 tiene que
+ * dejar 8. Ver §5.4 del spec del conteo físico.
+ */
+export const conteoFisico = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        sucursal_id: z.string().uuid(),
+        motivo: z.string().min(1),
+        // Lo genera el server (iniciar_conteo_stock → now()) y viaja opaco hasta
+        // la RPC, que lo castea a timestamptz. PostgREST lo serializa con offset
+        // (+00:00), que el .datetime() estricto de Zod rechaza; no lo re-validamos.
+        contado_desde: z.string().min(1).nullable().optional(),
+        idempotency_key: z.string().uuid(),
+        items: z
+          .array(
+            z.object({
+              producto_id: z.string().uuid(),
+              // 0 es un valor válido y es el más importante del conteo:
+              // "lo conté y no hay".
+              cantidad: z.number().nonnegative().finite(),
+            }),
+          )
+          .min(1)
+          .max(2000),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    // La autorización real (admin) vive en la RPC, que es SECURITY DEFINER.
+    const { data: res, error } = await supabase.rpc("ajustar_stock_masivo", {
+      p_sucursal_id: data.sucursal_id,
+      p_items: data.items,
+      p_motivo: data.motivo,
+      p_contado_desde: data.contado_desde ?? undefined,
+      p_idempotency_key: data.idempotency_key,
+    });
+    if (error) throw new Error(error.message);
+    return res as {
+      conteo_id: string;
+      ajustados: number;
+      sin_cambio: number;
+      con_movimientos: number;
+      conflictos: number;
+      repetido: boolean;
+    };
+  });
+
 export const ajusteStock = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({
-    producto_id: z.string().uuid(),
-    sucursal_id: z.string().uuid(),
-    nueva_cantidad: z.number().nonnegative(),
-    motivo: z.string().min(1),
-  }).parse(d))
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        producto_id: z.string().uuid(),
+        sucursal_id: z.string().uuid(),
+        nueva_cantidad: z.number().nonnegative(),
+        motivo: z.string().min(1),
+      })
+      .parse(d),
+  )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });

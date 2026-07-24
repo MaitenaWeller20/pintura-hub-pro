@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { traerTodo } from "@/lib/supabase-paginado";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
@@ -85,14 +86,22 @@ function Productos() {
   const markupDefault = Number(settings?.markup_default_porcentaje ?? 50);
   const descuentoProveedor = Number(settings?.descuento_proveedor_porcentaje ?? 42);
 
+  // Paginado explícito: PostgREST corta en 1000 filas sin avisar, así que esta
+  // pantalla mostraba "1000 de 1000" teniendo 1133 productos. El orden tiene que
+  // ser total (`nombre` no es único) o la paginación por offset saltea/repite.
   const { data: productos = [] } = useQuery({
     queryKey: ["productos"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("productos")
-        .select("*, categoria:categorias(id,nombre), marca:marcas(id,nombre)")
-        .order("nombre");
-      return (data ?? []) as any[];
+      const { filas } = await traerTodo<any>(async (desde, hasta) => {
+        const { data, error, count } = await supabase
+          .from("productos")
+          .select("*, categoria:categorias(id,nombre), marca:marcas(id,nombre)", { count: "exact" })
+          .order("nombre")
+          .order("id")
+          .range(desde, hasta);
+        return { data, error, count };
+      });
+      return filas;
     },
   });
   const { data: categorias = [] } = useQuery({

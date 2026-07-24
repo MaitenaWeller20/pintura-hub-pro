@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { traerTodo } from "@/lib/supabase-paginado";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
@@ -137,21 +138,32 @@ function NuevaVenta() {
     [clientes, clienteId],
   );
 
-  // Traemos TODOS los productos activos una sola vez (el catálogo es chico) y
-  // filtramos en el cliente: así el picker muestra la lista completa apenas se
-  // abre y filtra al instante mientras escribís, sin un round-trip por tecla.
+  // Traemos TODOS los productos activos una sola vez y filtramos en el cliente:
+  // así el picker muestra la lista completa apenas se abre y filtra al instante
+  // mientras escribís, sin un round-trip por tecla.
+  //
+  // Ojo con el "todos": PostgREST corta en 1000 filas y no avisa. Con 1157
+  // productos activos, los que quedaban después del 1000 NO SE PODÍAN VENDER
+  // (no aparecían en el buscador). Por eso el paginado explícito, con un orden
+  // total (`nombre` no es único: dos productos pueden llamarse igual).
   const { data: productosCatalogo = [] } = useQuery({
     queryKey: ["prods-catalogo"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("productos")
-        .select(
-          "id,codigo,nombre,precio_sin_iva,iva_porcentaje,stock_sucursal(cantidad,sucursal_id)",
-        )
-        .eq("activo", true)
-        .eq("archivado", false)
-        .order("nombre");
-      return (data ?? []) as any[];
+      const { filas } = await traerTodo<any>(async (desde, hasta) => {
+        const { data, error, count } = await supabase
+          .from("productos")
+          .select(
+            "id,codigo,nombre,precio_sin_iva,iva_porcentaje,stock_sucursal(cantidad,sucursal_id)",
+            { count: "exact" },
+          )
+          .eq("activo", true)
+          .eq("archivado", false)
+          .order("nombre")
+          .order("id")
+          .range(desde, hasta);
+        return { data, error, count };
+      });
+      return filas;
     },
   });
 

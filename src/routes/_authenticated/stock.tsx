@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback, memo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Button } from "@/components/ui/button";
@@ -26,16 +26,129 @@ import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
+import { NumberInput } from "@/components/ui/number-input";
 import { fmtNum } from "@/lib/format";
+import { traerTodo } from "@/lib/supabase-paginado";
+import { uuidv4 } from "@/lib/uuid";
 import { useServerFn } from "@tanstack/react-start";
-import { ajusteStock } from "@/lib/stock.functions";
+import { ajusteStock, conteoFisico } from "@/lib/stock.functions";
 import { toast } from "sonner";
-import { Pencil, Printer } from "lucide-react";
+import { Pencil, Printer, ClipboardList } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/stock")({
   component: Stock,
+});
+
+type FilaInventario = {
+  producto_id: string;
+  codigo: string;
+  nombre: string;
+  stock_minimo: number;
+  tamano_envase: number | null;
+  sucursal_id: string;
+  sucursal_nombre: string;
+  cantidad: number;
+  cargado: boolean;
+};
+
+/**
+ * El estado de una fila del inventario.
+ *
+ * "Sin contar" no es lo mismo que "sin stock", y la diferencia no se puede leer
+ * de la cantidad: la corrección del envase (20260724150000) dejó 113 filas en 0
+ * SIN kardex a propósito, y contar CERO tampoco deja kardex (no hay nada que
+ * mover). Por eso la vista trae `cargado`: tiene kardex O fue parte de un conteo.
+ */
+function estadoDe(f: FilaInventario) {
+  if (!f.cargado) return { tono: "neutral" as const, txt: "Sin contar" };
+  if (f.cantidad <= 0) return { tono: "danger" as const, txt: "Sin stock" };
+  if (f.cantidad <= Number(f.stock_minimo)) return { tono: "warning" as const, txt: "Bajo" };
+  return { tono: "success" as const, txt: "OK" };
+}
+
+type AjusteState = {
+  producto_id: string;
+  sucursal_id: string;
+  producto_nombre: string;
+  sucursal_nombre: string;
+  cantidad_actual: number;
+};
+
+/**
+ * Una fila del inventario. Memoizada: en modo conteo hay ~2266 de estas, cada
+ * una con un input controlado; sin el memo, tipear en UNA re-renderiza TODAS.
+ * Por eso `valor` es el número de esta fila (no el Map entero) y los callbacks
+ * llegan estables desde el padre (useCallback / setState).
+ */
+const InventarioRow = memo(function InventarioRow({
+  fila,
+  contando,
+  valor,
+  esAdmin,
+  onContar,
+  onAjustar,
+}: {
+  fila: FilaInventario;
+  contando: boolean;
+  valor: number | null;
+  esAdmin: boolean;
+  onContar: (producto_id: string, v: number | null) => void;
+  onAjustar: (a: AjusteState) => void;
+}) {
+  const est = estadoDe(fila);
+  return (
+    <TableRow>
+      <TableCell className="font-mono text-xs">{fila.codigo}</TableCell>
+      <TableCell>{fila.nombre}</TableCell>
+      {/* El envase al lado de la cantidad: son cosas distintas y confundirlas ya
+          costó un inventario entero. */}
+      <TableCell className="text-right font-mono text-muted-foreground">
+        {fila.tamano_envase ?? "—"}
+      </TableCell>
+      <TableCell className="text-muted-foreground">{fila.sucursal_nombre}</TableCell>
+      <TableCell className="text-right font-mono">
+        {contando ? (
+          <div className="flex items-center justify-end gap-2">
+            <span className="text-xs text-muted-foreground">{fmtNum(fila.cantidad)}</span>
+            <NumberInput
+              className="w-24"
+              value={valor}
+              onValueChange={(v) => onContar(fila.producto_id, v)}
+            />
+          </div>
+        ) : (
+          fmtNum(fila.cantidad)
+        )}
+      </TableCell>
+      <TableCell className="text-right font-mono text-muted-foreground">
+        {fmtNum(fila.stock_minimo)}
+      </TableCell>
+      <TableCell>
+        <StatusPill tone={est.tono}>{est.txt}</StatusPill>
+      </TableCell>
+      <TableCell>
+        {esAdmin && !contando && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              onAjustar({
+                producto_id: fila.producto_id,
+                sucursal_id: fila.sucursal_id,
+                producto_nombre: fila.nombre,
+                sucursal_nombre: fila.sucursal_nombre,
+                cantidad_actual: fila.cantidad,
+              })
+            }
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </TableCell>
+    </TableRow>
+  );
 });
 
 function Stock() {
@@ -44,8 +157,26 @@ function Stock() {
   const [sucFilter, setSucFilter] = useState<string>("");
   const [q, setQ] = useState("");
   const [bajoSolo, setBajoSolo] = useState(false);
-  const [ajuste, setAjuste] = useState<any>(null);
+  const [sinContarSolo, setSinContarSolo] = useState(false);
+  const [ajuste, setAjuste] = useState<AjusteState | null>(null);
   const ajusteFn = useServerFn(ajusteStock);
+  const conteoFn = useServerFn(conteoFisico);
+
+  // --- modo conteo ---
+  const [contando, setContando] = useState(false);
+  const [motivoConteo, setMotivoConteo] = useState("Conteo físico");
+  // Lo tipeado vive acá, fuera de las filas: filtrar o buscar no lo pierde.
+  // null = el input está vacío (no se manda). 0 es un VALOR: "lo conté y no hay".
+  const [contado, setContado] = useState<Map<string, number | null>>(new Map());
+  // Momento en que se abrió el conteo. Lo que se mueva después de esta hora se
+  // suma a lo contado en vez de pisarse (§5.4 del spec).
+  const contadoDesde = useRef<string | null>(null);
+  // Clave de idempotencia POR INTENTO de guardado, generada UNA vez y estable
+  // ante reintentos: un doble click o un retry de react-query mandan la misma
+  // clave, así el backend colapsa los dos en un solo conteo. Se rota recién
+  // cuando un guardado termina OK (para el próximo lote de la misma sesión).
+  const idemKey = useRef<string>(uuidv4());
+  const [cancelarAbierto, setCancelarAbierto] = useState(false);
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -55,73 +186,164 @@ function Stock() {
 
   const sucId = sucFilter || (cu?.isAdmin ? "" : (cu?.sucursal?.id ?? ""));
 
-  const { data: stock = [], isLoading } = useQuery({
-    queryKey: ["stock", sucId],
+  const { data: inventario, isLoading } = useQuery({
+    queryKey: ["inventario", sucId],
     enabled: !!cu,
     queryFn: async () => {
-      let q = supabase
-        .from("stock_sucursal")
-        .select(
-          `
-        cantidad, sucursal_id,
-        sucursal:sucursales(nombre,codigo),
-        producto:productos!inner(id,codigo,nombre,stock_minimo,unidad_medida,tamano_envase,categoria:categorias(nombre),marca:marcas(nombre))
-      `,
-        )
-        .eq("producto.archivado", false); // los archivados (eliminados) no se muestran
-      if (sucId) q = q.eq("sucursal_id", sucId);
-      const { data } = await q;
-      return (data ?? []) as any[];
+      // Paginado explícito: PostgREST corta en 1000 filas y no avisa. Acá son
+      // ~1200 productos × sucursales, así que sin esto la planilla del conteo
+      // saldría incompleta sin que nadie se entere. El orden tiene que ser
+      // total y estable o la paginación por offset saltea/repite.
+      return traerTodo<FilaInventario>(async (desde, hasta) => {
+        let sel = supabase
+          .from("stock_inventario")
+          .select(
+            "producto_id,codigo,nombre,stock_minimo,tamano_envase,sucursal_id,sucursal_nombre,cantidad,cargado",
+            { count: "exact" },
+          )
+          .order("codigo")
+          .order("sucursal_id")
+          .range(desde, hasta);
+        if (sucId) sel = sel.eq("sucursal_id", sucId);
+        const { data, error, count } = await sel;
+        return { data: data as unknown as FilaInventario[] | null, error, count };
+      });
     },
   });
+  // Estabilizado a propósito: `inventario?.filas ?? []` crea un array nuevo en
+  // cada render y haría recalcular el filtro de 2266 filas todo el tiempo,
+  // justo mientras se tipea el conteo.
+  const filas = useMemo(() => inventario?.filas ?? [], [inventario]);
+  const truncado = inventario?.truncado ?? false;
 
   const filtered = useMemo(
     () =>
-      stock.filter((s: any) => {
-        if (bajoSolo && Number(s.cantidad) > Number(s.producto.stock_minimo)) return false;
-        if (
-          q &&
-          !`${s.producto.codigo} ${s.producto.nombre}`.toLowerCase().includes(q.toLowerCase())
-        )
-          return false;
+      filas.filter((s) => {
+        if (sinContarSolo && s.cargado) return false;
+        // Lo que nadie contó no es "stock bajo": es desconocido.
+        if (bajoSolo && !(s.cargado && s.cantidad <= Number(s.stock_minimo))) return false;
+        if (q && !`${s.codigo} ${s.nombre}`.toLowerCase().includes(q.toLowerCase())) return false;
         return true;
       }),
-    [stock, q, bajoSolo],
+    [filas, q, bajoSolo, sinContarSolo],
   );
 
   const m = useMutation({
     mutationFn: async (data: any) => ajusteFn({ data }),
     onSuccess: () => {
       toast.success("Stock ajustado");
-      qc.invalidateQueries({ queryKey: ["stock"] });
+      qc.invalidateQueries({ queryKey: ["inventario"] });
       setAjuste(null);
     },
     onError: (e: any) => toast.error(e.message),
   });
 
+  // Callback estable: sin esto, cada fila recibiría una función nueva por render
+  // y el memo de InventarioRow no serviría de nada (tipear re-renderiza las 2266).
+  const setContadoDe = useCallback((producto_id: string, v: number | null) => {
+    setContado((prev) => {
+      const next = new Map(prev);
+      next.set(producto_id, v);
+      return next;
+    });
+  }, []);
+
+  // Sólo las filas con algo tipeado. Ojo: "0" ES un valor —"lo conté y no
+  // hay"— así que el criterio es "el input no está vacío", nunca un if truthy.
+  const itemsConteo = useMemo(() => {
+    const out: Array<{ producto_id: string; cantidad: number }> = [];
+    for (const [producto_id, cantidad] of contado) {
+      // `cantidad === 0` tiene que pasar. Un `if (cantidad)` acá se comería
+      // justamente el dato más importante del conteo.
+      if (cantidad === null || !Number.isFinite(cantidad) || cantidad < 0) continue;
+      out.push({ producto_id, cantidad });
+    }
+    return out;
+  }, [contado]);
+
+  const guardarConteo = useMutation({
+    mutationFn: async () =>
+      conteoFn({
+        data: {
+          sucursal_id: sucId,
+          motivo: motivoConteo.trim() || "Conteo físico",
+          contado_desde: contadoDesde.current,
+          idempotency_key: idemKey.current,
+          items: itemsConteo,
+        },
+      }),
+    onSuccess: (r: any) => {
+      const partes = [`${r.ajustados} ajustado${r.ajustados === 1 ? "" : "s"}`];
+      if (r.sin_cambio) partes.push(`${r.sin_cambio} sin cambio`);
+      if (r.con_movimientos)
+        partes.push(
+          `${r.con_movimientos} con movimientos posteriores al conteo (se sumaron, no se pisaron)`,
+        );
+      if (r.conflictos)
+        toast.warning(
+          `${r.conflictos} producto${r.conflictos === 1 ? "" : "s"} quedaron en 0: se vendió más de lo contado. Revisalos.`,
+        );
+      toast.success(partes.join(" · "));
+      setContado(new Map());
+      setContando(false);
+      contadoDesde.current = null;
+      idemKey.current = uuidv4(); // el próximo conteo es otro documento
+      // El conteo mueve stock: refrescar también el catálogo y el dashboard.
+      qc.invalidateQueries({ queryKey: ["inventario"] });
+      qc.invalidateQueries({ queryKey: ["productos"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const abrirConteo = async () => {
+    if (!sucId) {
+      toast.error("Elegí una sucursal para contar: contar «todas» a la vez no significa nada.");
+      return;
+    }
+    // La hora la pone el SERVIDOR, no el reloj del navegador: de eso depende que
+    // los movimientos hechos durante el conteo se sumen bien y no al revés.
+    const { data, error } = await supabase.rpc("iniciar_conteo_stock");
+    // Si falla, contado_desde queda null (ajuste absoluto) — nunca la hora local.
+    contadoDesde.current = error ? null : (data as unknown as string);
+    setContado(new Map());
+    setContando(true);
+  };
+
+  const cerrarConteo = () => {
+    setContado(new Map());
+    setContando(false);
+    contadoDesde.current = null;
+    setCancelarAbierto(false);
+  };
+
+  const sucNombre = sucId ? (sucs.find((s: any) => s.id === sucId)?.nombre ?? "") : "Global";
+
   const imprimir = () => {
     const doc = new jsPDF();
     doc.setFontSize(14);
+    // El PDF es la planilla con la que se cuenta. Si sale una vista filtrada y
+    // no lo dice, se cuenta de menos y nadie se entera.
+    const filtrada = filtered.length !== filas.length;
+    doc.text(`CasaForma — Stock ${sucNombre}`, 14, 16);
+    doc.setFontSize(9);
     doc.text(
-      `CasaForma — Stock ${sucId ? sucs.find((s: any) => s.id === sucId)?.nombre : "Global"}`,
+      `${filtered.length} de ${filas.length} ítems${filtrada ? " — VISTA FILTRADA" : ""}`,
       14,
-      16,
+      21,
     );
     autoTable(doc, {
-      startY: 22,
-      head: [["Código", "Producto", "Env.", "Sucursal", "Cantidad", "Mín.", "Estado"]],
-      body: filtered.map((s: any) => [
-        s.producto.codigo,
-        s.producto.nombre,
-        s.producto.tamano_envase ?? "—",
-        s.sucursal?.nombre ?? "",
+      startY: 26,
+      head: [["Código", "Producto", "Env.", "Sucursal", "Cantidad", "Mín.", "Estado", "Contado"]],
+      body: filtered.map((s) => [
+        s.codigo,
+        s.nombre,
+        s.tamano_envase ?? "—",
+        s.sucursal_nombre ?? "",
         fmtNum(s.cantidad),
-        s.producto.stock_minimo,
-        Number(s.cantidad) <= 0
-          ? "Sin stock"
-          : Number(s.cantidad) <= Number(s.producto.stock_minimo)
-            ? "Bajo"
-            : "OK",
+        s.stock_minimo,
+        estadoDe(s).txt,
+        "", // para escribir a mano
       ]),
       styles: { fontSize: 8 },
     });
@@ -132,13 +354,29 @@ function Stock() {
     <div className="space-y-4">
       <PageHeader
         title="Inventario"
-        subtitle={`${filtered.length} ítems`}
+        subtitle={`${filtered.length} de ${filas.length} ítems`}
         actions={
-          <Button variant="outline" onClick={imprimir}>
-            <Printer className="h-4 w-4 mr-1" /> Imprimir PDF
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={imprimir}>
+              <Printer className="h-4 w-4 mr-1" /> Imprimir PDF
+            </Button>
+            {cu?.isAdmin && !contando && (
+              <Button onClick={abrirConteo}>
+                <ClipboardList className="h-4 w-4 mr-1" /> Conteo físico
+              </Button>
+            )}
+          </div>
         }
       />
+
+      {truncado && (
+        <SectionCard>
+          <p className="text-sm text-destructive">
+            La lista está <strong>incompleta</strong>: se alcanzó el tope de filas. Filtrá por
+            sucursal o avisá, porque un conteo sobre una lista incompleta deja productos sin cargar.
+          </p>
+        </SectionCard>
+      )}
 
       <SectionCard>
         <div className="flex flex-wrap gap-2 items-center">
@@ -152,6 +390,7 @@ function Stock() {
             <Select
               value={sucFilter || "__all__"}
               onValueChange={(v) => setSucFilter(v === "__all__" ? "" : v)}
+              disabled={contando}
             >
               <SelectTrigger className="w-48">
                 <SelectValue />
@@ -174,66 +413,99 @@ function Stock() {
             />{" "}
             Solo stock bajo
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={sinContarSolo}
+              onChange={(e) => setSinContarSolo(e.target.checked)}
+            />{" "}
+            Solo sin contar
+          </label>
         </div>
       </SectionCard>
 
       <DataTable
-        columns={["Código", "Producto", "Env.", "Sucursal", "Cantidad", "Mínimo", "Estado", ""]}
+        columns={[
+          "Código",
+          "Producto",
+          "Env.",
+          "Sucursal",
+          contando ? "Contado" : "Cantidad",
+          "Mínimo",
+          "Estado",
+          "",
+        ]}
         loading={isLoading}
         isEmpty={filtered.length === 0}
         empty={{ text: "No hay ítems de stock para mostrar." }}
       >
-        {filtered.map((s: any) => {
-          const cant = Number(s.cantidad),
-            min = Number(s.producto.stock_minimo);
-          const estado = cant <= 0 ? "destructive" : cant <= min ? "warning" : "success";
-          const txt = cant <= 0 ? "Sin stock" : cant <= min ? "Bajo" : "OK";
-          return (
-            <TableRow key={`${s.producto.id}-${s.sucursal_id}`}>
-              <TableCell className="font-mono text-xs">{s.producto.codigo}</TableCell>
-              <TableCell>{s.producto.nombre}</TableCell>
-              {/* El envase (columna ENV. de la lista) al lado de la cantidad: son
-                  cosas distintas y confundirlas ya costó un inventario entero. */}
-              <TableCell className="text-right font-mono text-muted-foreground">
-                {s.producto.tamano_envase ?? "—"}
-              </TableCell>
-              <TableCell className="text-muted-foreground">{s.sucursal?.nombre}</TableCell>
-              <TableCell className="text-right font-mono">{fmtNum(cant)}</TableCell>
-              <TableCell className="text-right font-mono text-muted-foreground">
-                {fmtNum(min)}
-              </TableCell>
-              <TableCell>
-                <StatusPill
-                  tone={
-                    estado === "success" ? "success" : estado === "warning" ? "warning" : "danger"
-                  }
-                >
-                  {txt}
-                </StatusPill>
-              </TableCell>
-              <TableCell>
-                {cu?.isAdmin && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      setAjuste({
-                        producto_id: s.producto.id,
-                        sucursal_id: s.sucursal_id,
-                        producto_nombre: s.producto.nombre,
-                        sucursal_nombre: s.sucursal?.nombre,
-                        cantidad_actual: cant,
-                      })
-                    }
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </TableCell>
-            </TableRow>
-          );
-        })}
+        {filtered.map((s) => (
+          <InventarioRow
+            key={`${s.producto_id}-${s.sucursal_id}`}
+            fila={s}
+            contando={contando}
+            valor={contado.get(s.producto_id) ?? null}
+            esAdmin={!!cu?.isAdmin}
+            onContar={setContadoDe}
+            onAjustar={setAjuste}
+          />
+        ))}
       </DataTable>
+
+      {contando && (
+        <div className="sticky bottom-0 z-10 rounded-2xl border border-border bg-background/95 p-3 shadow-card backdrop-blur">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm">
+              <strong>{itemsConteo.length}</strong>{" "}
+              {itemsConteo.length === 1 ? "producto cargado" : "productos cargados"} en {sucNombre}
+            </span>
+            <Input
+              className="max-w-xs"
+              value={motivoConteo}
+              onChange={(e) => setMotivoConteo(e.target.value)}
+              placeholder="Motivo"
+            />
+            <div className="ml-auto flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => (itemsConteo.length ? setCancelarAbierto(true) : cerrarConteo())}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => guardarConteo.mutate()}
+                disabled={itemsConteo.length === 0 || guardarConteo.isPending}
+              >
+                {guardarConteo.isPending ? "Guardando…" : "Guardar conteo"}
+              </Button>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Se guarda sólo lo que tenga un número escrito. Un <strong>0</strong> también se guarda:
+            es "lo conté y no hay". Lo que se venda mientras contás se suma después, no se pisa.
+          </p>
+        </div>
+      )}
+
+      <Dialog open={cancelarAbierto} onOpenChange={setCancelarAbierto}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Descartar el conteo</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">
+            Tenés {itemsConteo.length} producto{itemsConteo.length === 1 ? "" : "s"} cargado
+            {itemsConteo.length === 1 ? "" : "s"} sin guardar. Si salís se pierden.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelarAbierto(false)}>
+              Seguir contando
+            </Button>
+            <Button variant="destructive" onClick={cerrarConteo}>
+              Descartar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!ajuste} onOpenChange={(v) => !v && setAjuste(null)}>
         <DialogContent>

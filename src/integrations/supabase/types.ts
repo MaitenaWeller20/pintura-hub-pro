@@ -879,6 +879,7 @@ export type Database = {
       productos: {
         Row: {
           activo: boolean
+          archivado: boolean
           categoria_id: string | null
           codigo: string
           codigo_barras: string | null
@@ -899,6 +900,7 @@ export type Database = {
         }
         Insert: {
           activo?: boolean
+          archivado?: boolean
           categoria_id?: string | null
           codigo: string
           codigo_barras?: string | null
@@ -919,6 +921,7 @@ export type Database = {
         }
         Update: {
           activo?: boolean
+          archivado?: boolean
           categoria_id?: string | null
           codigo?: string
           codigo_barras?: string | null
@@ -2060,6 +2063,7 @@ export type Database = {
         }[]
       }
       current_sucursal_id: { Args: never; Returns: string }
+      eliminar_productos: { Args: { p_ids: string[] }; Returns: Json }
       guardar_extraccion_ingreso: {
         Args: {
           p_archivo_path?: string
@@ -2139,6 +2143,7 @@ export type Database = {
         }
         Returns: string
       }
+      restaurar_productos: { Args: { p_ids: string[] }; Returns: number }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
     }

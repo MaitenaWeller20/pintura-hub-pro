@@ -301,13 +301,16 @@ export const extraerYMatchearRemito = createServerFn({ method: "POST" })
       const cod = it.codigo_proveedor?.trim();
       const codNorm = normalizarTexto(cod);
 
-      // a. equivalencia aprendida (por código NORMALIZADO)
+      // a. equivalencia aprendida (por código NORMALIZADO). El !inner + filtro deja
+      //    fuera las equivalencias hacia productos archivados (no se auto-matchea a
+      //    un producto eliminado; cae al fuzzy, que también los excluye).
       if (codNorm) {
         const { data: eq } = await supabase
           .from("producto_codigos_proveedor")
-          .select("producto_id, productos(codigo, nombre)")
+          .select("producto_id, productos!inner(codigo, nombre, archivado)")
           .eq("proveedor_id", data.proveedor_id)
           .eq("codigo_proveedor_norm", codNorm)
+          .eq("productos.archivado", false)
           .maybeSingle();
         if (eq?.producto_id) {
           const p = eq.productos as any;
@@ -322,12 +325,14 @@ export const extraerYMatchearRemito = createServerFn({ method: "POST" })
         }
       }
 
-      // b. código propio exacto — SOLO si el proveedor lo permite
+      // b. código propio exacto — SOLO si el proveedor lo permite. No matchea
+      //    productos archivados (eliminados).
       if (cod && usaCodigosPropios) {
         const { data: pExacto } = await supabase
           .from("productos")
           .select("id, codigo, nombre")
           .eq("codigo", cod)
+          .eq("archivado", false)
           .maybeSingle();
         if (pExacto) {
           resueltos.set(it.linea, {

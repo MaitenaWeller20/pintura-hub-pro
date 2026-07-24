@@ -25,18 +25,27 @@ function Dashboard() {
     queryFn: async () => {
       const hoyISO = todayLocalISO();
       const { gte: hoyGte, lt: hoyLt } = rangeToUtc(hoyISO, hoyISO);
-      const start30 = new Date(); start30.setDate(start30.getDate() - 30); start30.setHours(0, 0, 0, 0);
+      const start30 = new Date();
+      start30.setDate(start30.getDate() - 30);
+      start30.setHours(0, 0, 0, 0);
 
       // Excluye NOTA_CREDITO: una venta anulada no debe restar del facturado (su NC
       // autogenerada queda ACTIVA con total negativo). Consistente con Reportes.
-      let ventasQ = supabase.from("ventas").select("id, sucursal_id, fecha, total, total_pagado, estado")
-        .gte("fecha", start30.toISOString()).eq("estado", "ACTIVA").neq("tipo_comprobante", "NOTA_CREDITO");
+      let ventasQ = supabase
+        .from("ventas")
+        .select("id, sucursal_id, fecha, total, total_pagado, estado")
+        .gte("fecha", start30.toISOString())
+        .eq("estado", "ACTIVA")
+        .neq("tipo_comprobante", "NOTA_CREDITO");
       if (!cu!.isAdmin && cu!.sucursal) ventasQ = ventasQ.eq("sucursal_id", cu!.sucursal.id);
       const ventas = ((await ventasQ).data ?? []) as any[];
 
       // Cobranzas de cta cte de hoy (para "Cobrado hoy" = fondos que entraron).
-      let cobrQ = supabase.from("cobranzas_cta_cte").select("monto, sucursal_id, fecha")
-        .gte("fecha", hoyGte).lt("fecha", hoyLt);
+      let cobrQ = supabase
+        .from("cobranzas_cta_cte")
+        .select("monto, sucursal_id, fecha")
+        .gte("fecha", hoyGte)
+        .lt("fecha", hoyLt);
       if (!cu!.isAdmin && cu!.sucursal) cobrQ = cobrQ.eq("sucursal_id", cu!.sucursal.id);
       const cobranzasHoy = ((await cobrQ).data ?? []) as any[];
 
@@ -45,26 +54,43 @@ function Dashboard() {
       // producto, quedándonos con la sucursal más crítica. Así un producto con stock
       // bajo en las dos sucursales aparece una sola vez (no duplicado, y el KPI cuenta
       // productos) pero SIGUE alertando aunque el total entre sucursales supere el mínimo.
-      let stockQ = supabase.from("stock_sucursal")
-        .select("cantidad, sucursal_id, producto:productos!inner(id, nombre, codigo, stock_minimo)");
+      let stockQ = supabase
+        .from("stock_sucursal")
+        .select("cantidad, sucursal_id, producto:productos!inner(id, nombre, codigo, stock_minimo)")
+        .eq("producto.archivado", false); // los archivados no cuentan para stock bajo
       if (!cu!.isAdmin && cu!.sucursal) stockQ = stockQ.eq("sucursal_id", cu!.sucursal.id);
       const stocks = ((await stockQ).data ?? []) as any[];
-      const bajasPorFila = stocks.filter((s) => Number(s.cantidad) <= Number(s.producto?.stock_minimo ?? 0));
+      const bajasPorFila = stocks.filter(
+        (s) => Number(s.cantidad) <= Number(s.producto?.stock_minimo ?? 0),
+      );
       const peorPorProducto = new Map<string, { producto: any; cantidad: number }>();
       for (const s of bajasPorFila) {
         const pid = s.producto?.id;
         if (!pid) continue;
         const prev = peorPorProducto.get(pid);
-        if (!prev || Number(s.cantidad) < prev.cantidad) peorPorProducto.set(pid, { producto: s.producto, cantidad: Number(s.cantidad) });
+        if (!prev || Number(s.cantidad) < prev.cantidad)
+          peorPorProducto.set(pid, { producto: s.producto, cantidad: Number(s.cantidad) });
       }
       const stockBajo = [...peorPorProducto.values()].sort((a, b) => a.cantidad - b.cantidad);
 
       // Serie 7 días (para sparkline).
-      const dayKey = (d: string) => new Date(d).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit" });
+      const dayKey = (d: string) =>
+        new Date(d).toLocaleDateString("es-AR", {
+          timeZone: "America/Argentina/Buenos_Aires",
+          day: "2-digit",
+          month: "2-digit",
+        });
       const last7Keys: string[] = [];
-      for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); last7Keys.push(dayKey(d.toISOString())); }
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        last7Keys.push(dayKey(d.toISOString()));
+      }
       const porDia: Record<string, number> = {};
-      ventas.forEach((v) => { const k = dayKey(v.fecha); porDia[k] = (porDia[k] ?? 0) + Number(v.total); });
+      ventas.forEach((v) => {
+        const k = dayKey(v.fecha);
+        porDia[k] = (porDia[k] ?? 0) + Number(v.total);
+      });
       const spark7 = last7Keys.map((k) => porDia[k] ?? 0);
 
       const hoy = new Date(hoyGte);
@@ -75,8 +101,12 @@ function Dashboard() {
       const cobradoHoy = cobradoVentasHoy + cobradoCtaCteHoy;
       const pendienteHoy = totalHoy - cobradoVentasHoy;
 
-      let ultQ = supabase.from("ventas").select("id, numero_comprobante, fecha, total, estado_pago, cliente:clientes(razon_social)")
-        .eq("estado", "ACTIVA").order("fecha", { ascending: false }).limit(6);
+      let ultQ = supabase
+        .from("ventas")
+        .select("id, numero_comprobante, fecha, total, estado_pago, cliente:clientes(razon_social)")
+        .eq("estado", "ACTIVA")
+        .order("fecha", { ascending: false })
+        .limit(6);
       if (!cu!.isAdmin && cu!.sucursal) ultQ = ultQ.eq("sucursal_id", cu!.sucursal.id);
       const ultimas = ((await ultQ).data ?? []) as any[];
 
@@ -90,7 +120,9 @@ function Dashboard() {
     <div>
       <PageHeader
         title={`Hola, ${nombre}`}
-        subtitle={cu?.isAdmin ? "Vista global de CasaForma" : `Sucursal ${cu?.sucursal?.nombre ?? ""}`}
+        subtitle={
+          cu?.isAdmin ? "Vista global de CasaForma" : `Sucursal ${cu?.sucursal?.nombre ?? ""}`
+        }
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -101,16 +133,46 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Ventas hoy" value={fmtMoney(stats?.totalHoy ?? 0)} icon={ShoppingCart} tone="primary" spark={stats?.spark7} />
-        <StatCard label="Cobrado hoy" value={fmtMoney(stats?.cobradoHoy ?? 0)} icon={Wallet} tone="success" hint="ventas + cta cte" />
-        <StatCard label="Pendiente hoy" value={fmtMoney(stats?.pendienteHoy ?? 0)} icon={Clock} tone="warning" />
-        <StatCard label="Productos stock bajo" value={String(stats?.stockBajo.length ?? 0)} icon={AlertTriangle} tone="destructive" />
+        <StatCard
+          label="Ventas hoy"
+          value={fmtMoney(stats?.totalHoy ?? 0)}
+          icon={ShoppingCart}
+          tone="primary"
+          spark={stats?.spark7}
+        />
+        <StatCard
+          label="Cobrado hoy"
+          value={fmtMoney(stats?.cobradoHoy ?? 0)}
+          icon={Wallet}
+          tone="success"
+          hint="ventas + cta cte"
+        />
+        <StatCard
+          label="Pendiente hoy"
+          value={fmtMoney(stats?.pendienteHoy ?? 0)}
+          icon={Clock}
+          tone="warning"
+        />
+        <StatCard
+          label="Productos stock bajo"
+          value={String(stats?.stockBajo.length ?? 0)}
+          icon={AlertTriangle}
+          tone="destructive"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <SectionCard
-          title={<span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-warning" /> Alertas de stock bajo</span>}
-          actions={<Button size="sm" variant="ghost" asChild><Link to="/stock">Ver stock</Link></Button>}
+          title={
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Alertas de stock bajo
+            </span>
+          }
+          actions={
+            <Button size="sm" variant="ghost" asChild>
+              <Link to="/stock">Ver stock</Link>
+            </Button>
+          }
         >
           {(stats?.stockBajo ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground">Todo OK en niveles de stock.</p>
@@ -118,7 +180,9 @@ function Dashboard() {
             <ul className="space-y-1.5 max-h-64 overflow-auto">
               {stats!.stockBajo.slice(0, 10).map((s: any, i: number) => (
                 <li key={i} className="flex justify-between text-sm">
-                  <span className="truncate">{s.producto.codigo} — {s.producto.nombre}</span>
+                  <span className="truncate">
+                    {s.producto.codigo} — {s.producto.nombre}
+                  </span>
                   <span className="text-destructive font-mono">{Number(s.cantidad)}</span>
                 </li>
               ))}
@@ -127,8 +191,16 @@ function Dashboard() {
         </SectionCard>
 
         <SectionCard
-          title={<span className="flex items-center gap-2"><ShoppingCart className="h-4 w-4" /> Últimas ventas</span>}
-          actions={<Button size="sm" variant="ghost" asChild><Link to="/ventas">Ver todas</Link></Button>}
+          title={
+            <span className="flex items-center gap-2">
+              <ShoppingCart className="h-4 w-4" /> Últimas ventas
+            </span>
+          }
+          actions={
+            <Button size="sm" variant="ghost" asChild>
+              <Link to="/ventas">Ver todas</Link>
+            </Button>
+          }
         >
           {(stats?.ultimas ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground">No hay ventas todavía.</p>
@@ -136,10 +208,16 @@ function Dashboard() {
             <div className="text-sm divide-y divide-border">
               {stats!.ultimas.map((v: any) => (
                 <div key={v.id} className="py-2 flex items-center gap-3">
-                  <span className="font-mono text-xs text-muted-foreground w-28 shrink-0">{v.numero_comprobante}</span>
+                  <span className="font-mono text-xs text-muted-foreground w-28 shrink-0">
+                    {v.numero_comprobante}
+                  </span>
                   <span className="flex-1 truncate">{v.cliente?.razon_social ?? "—"}</span>
-                  <span className="text-xs text-muted-foreground hidden sm:block">{fmtDateTime(v.fecha)}</span>
-                  <span className="font-semibold w-24 text-right tabular-nums">{fmtMoney(v.total)}</span>
+                  <span className="text-xs text-muted-foreground hidden sm:block">
+                    {fmtDateTime(v.fecha)}
+                  </span>
+                  <span className="font-semibold w-24 text-right tabular-nums">
+                    {fmtMoney(v.total)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -150,13 +228,22 @@ function Dashboard() {
   );
 }
 
-function QuickAction({ to, icon: Icon, label, tone }: {
-  to: string; icon: ComponentType<{ className?: string }>; label: string;
+function QuickAction({
+  to,
+  icon: Icon,
+  label,
+  tone,
+}: {
+  to: string;
+  icon: ComponentType<{ className?: string }>;
+  label: string;
   tone: "primary" | "success" | "info" | "warning";
 }) {
   const color = {
-    primary: "var(--color-primary)", success: "var(--color-success)",
-    info: "var(--color-info)", warning: "var(--color-warning)",
+    primary: "var(--color-primary)",
+    success: "var(--color-success)",
+    info: "var(--color-info)",
+    warning: "var(--color-warning)",
   }[tone];
   return (
     <Link to={to}>

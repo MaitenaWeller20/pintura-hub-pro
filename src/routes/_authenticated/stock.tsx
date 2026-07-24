@@ -7,8 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TableRow, TableCell } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
@@ -37,48 +49,78 @@ function Stock() {
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
-    queryFn: async () => ((await supabase.from("sucursales").select("*").order("numero")).data ?? []) as any[],
+    queryFn: async () =>
+      ((await supabase.from("sucursales").select("*").order("numero")).data ?? []) as any[],
   });
 
-  const sucId = sucFilter || (cu?.isAdmin ? "" : cu?.sucursal?.id ?? "");
+  const sucId = sucFilter || (cu?.isAdmin ? "" : (cu?.sucursal?.id ?? ""));
 
   const { data: stock = [], isLoading } = useQuery({
     queryKey: ["stock", sucId],
     enabled: !!cu,
     queryFn: async () => {
-      let q = supabase.from("stock_sucursal").select(`
+      let q = supabase
+        .from("stock_sucursal")
+        .select(
+          `
         cantidad, sucursal_id,
         sucursal:sucursales(nombre,codigo),
         producto:productos!inner(id,codigo,nombre,stock_minimo,unidad_medida,categoria:categorias(nombre),marca:marcas(nombre))
-      `);
+      `,
+        )
+        .eq("producto.archivado", false); // los archivados (eliminados) no se muestran
       if (sucId) q = q.eq("sucursal_id", sucId);
       const { data } = await q;
       return (data ?? []) as any[];
     },
   });
 
-  const filtered = useMemo(() => stock.filter((s:any) => {
-    if (bajoSolo && Number(s.cantidad) > Number(s.producto.stock_minimo)) return false;
-    if (q && !`${s.producto.codigo} ${s.producto.nombre}`.toLowerCase().includes(q.toLowerCase())) return false;
-    return true;
-  }), [stock, q, bajoSolo]);
+  const filtered = useMemo(
+    () =>
+      stock.filter((s: any) => {
+        if (bajoSolo && Number(s.cantidad) > Number(s.producto.stock_minimo)) return false;
+        if (
+          q &&
+          !`${s.producto.codigo} ${s.producto.nombre}`.toLowerCase().includes(q.toLowerCase())
+        )
+          return false;
+        return true;
+      }),
+    [stock, q, bajoSolo],
+  );
 
   const m = useMutation({
     mutationFn: async (data: any) => ajusteFn({ data }),
-    onSuccess: () => { toast.success("Stock ajustado"); qc.invalidateQueries({ queryKey:["stock"] }); setAjuste(null); },
-    onError: (e:any) => toast.error(e.message),
+    onSuccess: () => {
+      toast.success("Stock ajustado");
+      qc.invalidateQueries({ queryKey: ["stock"] });
+      setAjuste(null);
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   const imprimir = () => {
     const doc = new jsPDF();
-    doc.setFontSize(14); doc.text(`CasaForma — Stock ${sucId ? sucs.find((s:any)=>s.id===sucId)?.nombre : "Global"}`, 14, 16);
+    doc.setFontSize(14);
+    doc.text(
+      `CasaForma — Stock ${sucId ? sucs.find((s: any) => s.id === sucId)?.nombre : "Global"}`,
+      14,
+      16,
+    );
     autoTable(doc, {
       startY: 22,
-      head: [["Código","Producto","Sucursal","Cantidad","Mín.","Estado"]],
-      body: filtered.map((s:any) => [
-        s.producto.codigo, s.producto.nombre, s.sucursal?.nombre ?? "",
-        fmtNum(s.cantidad), s.producto.stock_minimo,
-        Number(s.cantidad) <= 0 ? "Sin stock" : Number(s.cantidad) <= Number(s.producto.stock_minimo) ? "Bajo" : "OK",
+      head: [["Código", "Producto", "Sucursal", "Cantidad", "Mín.", "Estado"]],
+      body: filtered.map((s: any) => [
+        s.producto.codigo,
+        s.producto.nombre,
+        s.sucursal?.nombre ?? "",
+        fmtNum(s.cantidad),
+        s.producto.stock_minimo,
+        Number(s.cantidad) <= 0
+          ? "Sin stock"
+          : Number(s.cantidad) <= Number(s.producto.stock_minimo)
+            ? "Bajo"
+            : "OK",
       ]),
       styles: { fontSize: 8 },
     });
@@ -91,24 +133,45 @@ function Stock() {
         title="Inventario"
         subtitle={`${filtered.length} ítems`}
         actions={
-          <Button variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1"/> Imprimir PDF</Button>
+          <Button variant="outline" onClick={imprimir}>
+            <Printer className="h-4 w-4 mr-1" /> Imprimir PDF
+          </Button>
         }
       />
 
       <SectionCard>
         <div className="flex flex-wrap gap-2 items-center">
-          <Input placeholder="Buscar producto…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-xs"/>
+          <Input
+            placeholder="Buscar producto…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="max-w-xs"
+          />
           {cu?.isAdmin && (
-            <Select value={sucFilter || "__all__"} onValueChange={(v)=>setSucFilter(v==="__all__"?"":v)}>
-              <SelectTrigger className="w-48"><SelectValue/></SelectTrigger>
+            <Select
+              value={sucFilter || "__all__"}
+              onValueChange={(v) => setSucFilter(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">Todas las sucursales</SelectItem>
-                {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
+                {sucs.map((s: any) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.nombre}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}
           <label className="flex items-center gap-2 text-sm ml-2">
-            <input type="checkbox" checked={bajoSolo} onChange={(e)=>setBajoSolo(e.target.checked)}/> Solo stock bajo
+            <input
+              type="checkbox"
+              checked={bajoSolo}
+              onChange={(e) => setBajoSolo(e.target.checked)}
+            />{" "}
+            Solo stock bajo
           </label>
         </div>
       </SectionCard>
@@ -119,8 +182,9 @@ function Stock() {
         isEmpty={filtered.length === 0}
         empty={{ text: "No hay ítems de stock para mostrar." }}
       >
-        {filtered.map((s:any) => {
-          const cant = Number(s.cantidad), min = Number(s.producto.stock_minimo);
+        {filtered.map((s: any) => {
+          const cant = Number(s.cantidad),
+            min = Number(s.producto.stock_minimo);
           const estado = cant <= 0 ? "destructive" : cant <= min ? "warning" : "success";
           const txt = cant <= 0 ? "Sin stock" : cant <= min ? "Bajo" : "OK";
           return (
@@ -129,19 +193,35 @@ function Stock() {
               <TableCell>{s.producto.nombre}</TableCell>
               <TableCell className="text-muted-foreground">{s.sucursal?.nombre}</TableCell>
               <TableCell className="text-right font-mono">{fmtNum(cant)}</TableCell>
-              <TableCell className="text-right font-mono text-muted-foreground">{fmtNum(min)}</TableCell>
+              <TableCell className="text-right font-mono text-muted-foreground">
+                {fmtNum(min)}
+              </TableCell>
               <TableCell>
-                <StatusPill tone={estado === "success" ? "success" : estado === "warning" ? "warning" : "danger"}>
+                <StatusPill
+                  tone={
+                    estado === "success" ? "success" : estado === "warning" ? "warning" : "danger"
+                  }
+                >
                   {txt}
                 </StatusPill>
               </TableCell>
               <TableCell>
                 {cu?.isAdmin && (
-                  <Button size="sm" variant="ghost" onClick={()=>setAjuste({
-                    producto_id: s.producto.id, sucursal_id: s.sucursal_id,
-                    producto_nombre: s.producto.nombre, sucursal_nombre: s.sucursal?.nombre,
-                    cantidad_actual: cant,
-                  })}><Pencil className="h-3.5 w-3.5"/></Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setAjuste({
+                        producto_id: s.producto.id,
+                        sucursal_id: s.sucursal_id,
+                        producto_nombre: s.producto.nombre,
+                        sucursal_nombre: s.sucursal?.nombre,
+                        cantidad_actual: cant,
+                      })
+                    }
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
                 )}
               </TableCell>
             </TableRow>
@@ -149,32 +229,61 @@ function Stock() {
         })}
       </DataTable>
 
-      <Dialog open={!!ajuste} onOpenChange={(v)=>!v && setAjuste(null)}>
+      <Dialog open={!!ajuste} onOpenChange={(v) => !v && setAjuste(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Ajuste de stock</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Ajuste de stock</DialogTitle>
+          </DialogHeader>
           {ajuste && (
             <div className="space-y-3">
               <div className="text-sm">
-                <div><strong>Producto:</strong> {ajuste.producto_nombre}</div>
-                <div><strong>Sucursal:</strong> {ajuste.sucursal_nombre}</div>
-                <div><strong>Cantidad actual:</strong> {ajuste.cantidad_actual}</div>
+                <div>
+                  <strong>Producto:</strong> {ajuste.producto_nombre}
+                </div>
+                <div>
+                  <strong>Sucursal:</strong> {ajuste.sucursal_nombre}
+                </div>
+                <div>
+                  <strong>Cantidad actual:</strong> {ajuste.cantidad_actual}
+                </div>
               </div>
               <div>
                 <Label>Nueva cantidad</Label>
-                <Input type="number" step="0.01" defaultValue={ajuste.cantidad_actual} id="nueva_cant"/>
+                <Input
+                  type="number"
+                  step="0.01"
+                  defaultValue={ajuste.cantidad_actual}
+                  id="nueva_cant"
+                />
               </div>
               <div>
                 <Label>Motivo *</Label>
-                <Textarea id="motivo" placeholder="Conteo físico, rotura, devolución, etc."/>
+                <Textarea id="motivo" placeholder="Conteo físico, rotura, devolución, etc." />
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={()=>setAjuste(null)}>Cancelar</Button>
-                <Button onClick={()=>{
-                  const cant = Number((document.getElementById("nueva_cant") as HTMLInputElement).value);
-                  const mot = (document.getElementById("motivo") as HTMLTextAreaElement).value;
-                  if (!mot.trim()) { toast.error("Motivo requerido"); return; }
-                  m.mutate({ producto_id: ajuste.producto_id, sucursal_id: ajuste.sucursal_id, nueva_cantidad: cant, motivo: mot });
-                }}>Guardar</Button>
+                <Button variant="outline" onClick={() => setAjuste(null)}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => {
+                    const cant = Number(
+                      (document.getElementById("nueva_cant") as HTMLInputElement).value,
+                    );
+                    const mot = (document.getElementById("motivo") as HTMLTextAreaElement).value;
+                    if (!mot.trim()) {
+                      toast.error("Motivo requerido");
+                      return;
+                    }
+                    m.mutate({
+                      producto_id: ajuste.producto_id,
+                      sucursal_id: ajuste.sucursal_id,
+                      nueva_cantidad: cant,
+                      motivo: mot,
+                    });
+                  }}
+                >
+                  Guardar
+                </Button>
               </DialogFooter>
             </div>
           )}

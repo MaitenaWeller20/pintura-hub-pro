@@ -1443,6 +1443,75 @@ export type Database = {
         }
         Relationships: []
       }
+      stock_correccion_envase: {
+        Row: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+          created_at: string
+          id: string
+          motivo: string
+          movimientos_count: number
+          producto_codigo: string
+          producto_id: string | null
+          producto_nombre: string
+          revertido_at: string | null
+          stock_updated_at: string | null
+          sucursal_codigo: string | null
+          sucursal_id: string | null
+          tamano_envase: number | null
+          ultimo_movimiento_at: string | null
+        }
+        Insert: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+          created_at?: string
+          id?: string
+          motivo: string
+          movimientos_count?: number
+          producto_codigo: string
+          producto_id?: string | null
+          producto_nombre: string
+          revertido_at?: string | null
+          stock_updated_at?: string | null
+          sucursal_codigo?: string | null
+          sucursal_id?: string | null
+          tamano_envase?: number | null
+          ultimo_movimiento_at?: string | null
+        }
+        Update: {
+          cantidad_anterior?: number
+          cantidad_nueva?: number
+          created_at?: string
+          id?: string
+          motivo?: string
+          movimientos_count?: number
+          producto_codigo?: string
+          producto_id?: string | null
+          producto_nombre?: string
+          revertido_at?: string | null
+          stock_updated_at?: string | null
+          sucursal_codigo?: string | null
+          sucursal_id?: string | null
+          tamano_envase?: number | null
+          ultimo_movimiento_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_correccion_envase_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_correccion_envase_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stock_movimientos: {
         Row: {
           cantidad: number

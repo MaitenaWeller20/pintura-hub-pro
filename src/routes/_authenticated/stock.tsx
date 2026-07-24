@@ -65,7 +65,7 @@ function Stock() {
           `
         cantidad, sucursal_id,
         sucursal:sucursales(nombre,codigo),
-        producto:productos!inner(id,codigo,nombre,stock_minimo,unidad_medida,categoria:categorias(nombre),marca:marcas(nombre))
+        producto:productos!inner(id,codigo,nombre,stock_minimo,unidad_medida,tamano_envase,categoria:categorias(nombre),marca:marcas(nombre))
       `,
         )
         .eq("producto.archivado", false); // los archivados (eliminados) no se muestran
@@ -109,10 +109,11 @@ function Stock() {
     );
     autoTable(doc, {
       startY: 22,
-      head: [["Código", "Producto", "Sucursal", "Cantidad", "Mín.", "Estado"]],
+      head: [["Código", "Producto", "Env.", "Sucursal", "Cantidad", "Mín.", "Estado"]],
       body: filtered.map((s: any) => [
         s.producto.codigo,
         s.producto.nombre,
+        s.producto.tamano_envase ?? "—",
         s.sucursal?.nombre ?? "",
         fmtNum(s.cantidad),
         s.producto.stock_minimo,
@@ -177,7 +178,7 @@ function Stock() {
       </SectionCard>
 
       <DataTable
-        columns={["Código", "Producto", "Sucursal", "Cantidad", "Mínimo", "Estado", ""]}
+        columns={["Código", "Producto", "Env.", "Sucursal", "Cantidad", "Mínimo", "Estado", ""]}
         loading={isLoading}
         isEmpty={filtered.length === 0}
         empty={{ text: "No hay ítems de stock para mostrar." }}
@@ -191,6 +192,11 @@ function Stock() {
             <TableRow key={`${s.producto.id}-${s.sucursal_id}`}>
               <TableCell className="font-mono text-xs">{s.producto.codigo}</TableCell>
               <TableCell>{s.producto.nombre}</TableCell>
+              {/* El envase (columna ENV. de la lista) al lado de la cantidad: son
+                  cosas distintas y confundirlas ya costó un inventario entero. */}
+              <TableCell className="text-right font-mono text-muted-foreground">
+                {s.producto.tamano_envase ?? "—"}
+              </TableCell>
               <TableCell className="text-muted-foreground">{s.sucursal?.nombre}</TableCell>
               <TableCell className="text-right font-mono">{fmtNum(cant)}</TableCell>
               <TableCell className="text-right font-mono text-muted-foreground">

@@ -23,6 +23,14 @@ import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import {
+  FIELDS_TARGET,
+  autoMapear,
+  detectarFilaEncabezados,
+  normalizar,
+  numOr,
+  parseNumAr,
+} from "@/lib/importar-productos";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
@@ -31,122 +39,27 @@ export const Route = createFileRoute("/_authenticated/productos/importar")({
 });
 
 type Row = Record<string, any>;
-const fieldsTarget = [
-  { key: "codigo", label: "Código *" },
-  { key: "nombre", label: "Nombre *" },
-  { key: "precio_lista", label: "Precio de lista (Quimex)" },
-  { key: "precio_fabrica", label: "Precio fábrica (costo)" },
-  { key: "precio_sin_iva", label: "Precio s/IVA" },
-  { key: "iva_porcentaje", label: "IVA %" },
-  { key: "stock_minimo", label: "Stock mínimo" },
-  { key: "tamano_envase", label: "Envase (ENV)" },
-  { key: "unidad_medida", label: "Unidad" },
-  { key: "categoria", label: "Categoría (texto)" },
-  { key: "marca", label: "Marca (texto)" },
-  { key: "stock_ohi", label: "Stock O'Higgins" },
-  { key: "stock_gpz", label: "Stock General Paz" },
-];
-
-// Las planillas reales traen cabeceras con acentos, puntos y abreviaturas
-// ("Código", "P. Unit s/IVA", "Stock O'Higgins"). Normalizamos y probamos
-// varios sinónimos por campo en vez de exigir que la cabecera contenga la clave.
-const normalizar = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-
-// N\u00fameros que pueden venir en formato argentino ("1.234,56": punto miles, coma
-// decimal) o ingl\u00e9s/datos ("1234.56": punto decimal). Reglas:
-//  - Si hay coma: la coma es el decimal y los puntos (si hay) son miles.
-//  - Si NO hay coma y hay VARIOS puntos: son separadores de miles ("1.234.567").
-//  - Si NO hay coma y hay UN solo punto: es el decimal y se respeta tal cual
-//    ("224410.56" NO se convierte en 22441056). Antes se lo trataba como miles
-//    cuando ten\u00eda 3 d\u00edgitos, lo que corromp\u00eda precios de lista con muchos decimales.
-function parseNumAr(v: unknown): number {
-  if (v == null) return NaN;
-  if (typeof v === "number") return v;
-  let s = String(v)
-    .trim()
-    .replace(/[^\d.,-]/g, "");
-  if (s === "") return NaN;
-  const puntos = (s.match(/\./g) || []).length;
-  if (s.includes(",")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (puntos > 1) {
-    s = s.replace(/\./g, "");
-  }
-  return Number(s);
-}
-// parseNumAr con valor por defecto cuando la celda est\u00e1 vac\u00eda o no es un n\u00famero.
-const numOr = (v: unknown, def: number) => {
-  const n = parseNumAr(v);
-  return Number.isFinite(n) ? n : def;
-};
-
-const sinonimos: Record<string, string[]> = {
-  codigo: ["codigo", "cod", "sku", "articulo"],
-  nombre: ["nombre", "descripcion", "detalle", "producto"],
-  precio_lista: ["preciodelista", "preciolista", "listadeprecios", "listaprecios", "lista"],
-  precio_fabrica: ["preciofabrica", "fabrica", "costo", "preciocosto"],
-  precio_sin_iva: ["preciosiniva", "preciosiva", "preciounitario", "precioneto", "precio", "punit"],
-  iva_porcentaje: ["iva", "alicuota", "ivaporcentaje"],
-  stock_minimo: ["stockminimo", "minimo", "stockmin"],
-  tamano_envase: ["env", "envase", "tamanoenvase", "tamano", "presentacion", "capacidad"],
-  unidad_medida: ["unidad", "unidadmedida", "um", "medida"],
-  categoria: ["categoria", "rubro"],
-  marca: ["marca", "fabricante"],
-  stock_ohi: ["stockohiggins", "ohiggins", "ohi", "stockohi"],
-  stock_gpz: ["stockgeneralpaz", "generalpaz", "gpz", "stockgpz"],
-};
+// El mapeo de columnas (campos destino, sinónimos, parseo de números) vive en
+// src/lib/importar-productos.ts para poder testearlo.
+//
+// REGLA que se paga cara si se rompe: esta pantalla actualiza PRECIOS y DATOS
+// DEL PRODUCTO, y NO toca el stock. Hasta el 24/07/2026 ofrecía destinos "Stock
+// O'Higgins" / "Stock General Paz" que hacían un upsert ABSOLUTO sobre
+// stock_sucursal y sin kardex; como la lista de Quimexur no trae stock y su
+// única columna numérica libre es ENV., el inventario de producción terminó
+// cargado con el tamaño de envase. El stock se carga aparte: Ingresos de
+// mercadería, Compras o el ajuste de Inventario, siempre con kardex.
+// Ver docs/superpowers/specs/2026-07-24-stock-no-es-envase-design.md.
 
 // Parsea una hoja detectando la fila de encabezados: en las listas reales el
 // título ("LISTA DE PRECIOS N° ...") ocupa las primeras filas y los encabezados
-// (CÓDIGO, DESCRIPCIÓN, PRECIO DE LISTA) están más abajo. Buscamos la primera fila
-// que contenga alguna de esas claves y la usamos como header.
+// (CÓDIGO, DESCRIPCIÓN, PRECIO DE LISTA) están más abajo.
 function parsearHoja(ws: any): { rows: Row[]; headers: string[] } {
   const aoa = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: "" });
-  const claves = ["codigo", "descripcion", "denominacion", "precio", "nombre"];
-  let headerIdx = 0;
-  for (let i = 0; i < Math.min(aoa.length, 20); i++) {
-    const celdas = (aoa[i] || []).map((c: any) => normalizar(String(c)));
-    if (celdas.filter((c: string) => claves.some((k) => c.includes(k))).length >= 2) {
-      headerIdx = i;
-      break;
-    }
-  }
+  const headerIdx = detectarFilaEncabezados(aoa);
   const rows = XLSX.utils.sheet_to_json<Row>(ws, { range: headerIdx, defval: "" });
   const headers = Object.keys(rows[0] ?? {});
   return { rows, headers };
-}
-
-function autoMapear(headers: string[]): Record<string, string> {
-  const auto: Record<string, string> = {};
-  const usados = new Set<string>();
-  for (const t of fieldsTarget) {
-    const candidatos = sinonimos[t.key] ?? [t.key];
-    // Coincidencia exacta primero; si no, la cabecera que contenga el sinónimo.
-    const exacto = headers.find((h) => !usados.has(h) && candidatos.includes(normalizar(h)));
-    let parcial =
-      exacto ??
-      headers.find((h) => !usados.has(h) && candidatos.some((c) => normalizar(h).includes(c)));
-    // El % de IVA no debe engancharse a una columna de PRECIO que contenga "c/iva"
-    // (ej "Sugerido al público C/IVA"): sus valores romperían numeric(5,2).
-    if (
-      parcial &&
-      exacto == null &&
-      t.key === "iva_porcentaje" &&
-      /precio|sugerido|publico|venta|costo|importe/.test(normalizar(parcial))
-    ) {
-      parcial = undefined;
-    }
-    if (parcial) {
-      auto[t.key] = parcial;
-      usados.add(parcial);
-    }
-  }
-  return auto;
 }
 
 function ImportarProductos() {
@@ -223,7 +136,6 @@ function ImportarProductos() {
     // Cache categorías/marcas
     const { data: cats = [] } = await supabase.from("categorias").select("*");
     const { data: mks = [] } = await supabase.from("marcas").select("*");
-    const { data: sucs = [] } = await supabase.from("sucursales").select("id, codigo");
     // Parámetros de precio elegidos en la UI; se persisten para próximas importaciones.
     const markupDefault = Number(markupDef) || 50;
     const descuentoProveedor = Number(descuento) || 0;
@@ -240,7 +152,6 @@ function ImportarProductos() {
         })
         .eq("id", true);
     }
-    const sucMap = new Map((sucs ?? []).map((s: any) => [s.codigo, s.id]));
     const catMap = new Map((cats ?? []).map((c: any) => [c.nombre.toLowerCase(), c.id]));
     const mkMap = new Map((mks ?? []).map((m: any) => [m.nombre.toLowerCase(), m.id]));
 
@@ -354,36 +265,12 @@ function ImportarProductos() {
             return Number.isFinite(n) ? n : null;
           })(),
         };
-        const { data: up, error } = await supabase
+        // Deliberadamente NO se escribe stock_sucursal acá: la lista de precios no
+        // trae stock (ver el comentario del encabezado del archivo).
+        const { error } = await supabase
           .from("productos")
-          .upsert(payload, { onConflict: "codigo" })
-          .select()
-          .single();
+          .upsert(payload, { onConflict: "codigo" });
         if (error) throw error;
-
-        // Stock por sucursal
-        const stockOhi = numOr(r[mapping.stock_ohi], 0);
-        const stockGpz = numOr(r[mapping.stock_gpz], 0);
-        if (mapping.stock_ohi && sucMap.get("OHIGGINS")) {
-          await supabase.from("stock_sucursal").upsert(
-            {
-              producto_id: up.id,
-              sucursal_id: sucMap.get("OHIGGINS"),
-              cantidad: stockOhi,
-            },
-            { onConflict: "producto_id,sucursal_id" },
-          );
-        }
-        if (mapping.stock_gpz && sucMap.get("GENERALPAZ")) {
-          await supabase.from("stock_sucursal").upsert(
-            {
-              producto_id: up.id,
-              sucursal_id: sucMap.get("GENERALPAZ"),
-              cantidad: stockGpz,
-            },
-            { onConflict: "producto_id,sucursal_id" },
-          );
-        }
       } catch (e: any) {
         errs.push({ row: i + 2, msg: e.message });
       }
@@ -412,6 +299,12 @@ function ImportarProductos() {
           Quimex, elegí la solapa
           <strong> LISTA PLANA</strong>. Evitá abrirlo y re-guardarlo antes de subirlo: puede
           corromper los decimales.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Esta importación actualiza <strong>precios y datos del producto</strong>.{" "}
+          <strong>No toca el stock</strong>: el stock se carga aparte, desde Ingresos de mercadería,
+          Compras o el ajuste de Inventario. La columna <strong>ENV.</strong> de la lista es el{" "}
+          <strong>tamaño de envase</strong>, no la cantidad en depósito.
         </p>
         <Input
           type="file"
@@ -470,7 +363,7 @@ function ImportarProductos() {
           <Card className="p-4">
             <h3 className="font-semibold mb-3">Mapeo de columnas</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {fieldsTarget.map((f) => (
+              {FIELDS_TARGET.map((f) => (
                 <div key={f.key}>
                   <Label>{f.label}</Label>
                   <Select

@@ -631,6 +631,175 @@ export type Database = {
         }
         Relationships: []
       }
+      ingreso_mercaderia_items: {
+        Row: {
+          advertencia: string | null
+          aprender: boolean
+          cantidad: number | null
+          cantidad_raw: string | null
+          codigo: string | null
+          codigo_proveedor: string | null
+          confianza: string | null
+          descripcion: string | null
+          descripcion_proveedor: string | null
+          descripcion_raw: string | null
+          id: string
+          ingreso_id: string
+          linea: number
+          origen_match: string
+          pagina: number | null
+          pisar_equivalencia: boolean
+          producto_id: string | null
+        }
+        Insert: {
+          advertencia?: string | null
+          aprender?: boolean
+          cantidad?: number | null
+          cantidad_raw?: string | null
+          codigo?: string | null
+          codigo_proveedor?: string | null
+          confianza?: string | null
+          descripcion?: string | null
+          descripcion_proveedor?: string | null
+          descripcion_raw?: string | null
+          id?: string
+          ingreso_id: string
+          linea: number
+          origen_match?: string
+          pagina?: number | null
+          pisar_equivalencia?: boolean
+          producto_id?: string | null
+        }
+        Update: {
+          advertencia?: string | null
+          aprender?: boolean
+          cantidad?: number | null
+          cantidad_raw?: string | null
+          codigo?: string | null
+          codigo_proveedor?: string | null
+          confianza?: string | null
+          descripcion?: string | null
+          descripcion_proveedor?: string | null
+          descripcion_raw?: string | null
+          id?: string
+          ingreso_id?: string
+          linea?: number
+          origen_match?: string
+          pagina?: number | null
+          pisar_equivalencia?: boolean
+          producto_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingreso_mercaderia_items_ingreso_id_fkey"
+            columns: ["ingreso_id"]
+            isOneToOne: false
+            referencedRelation: "ingresos_mercaderia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingresos_mercaderia: {
+        Row: {
+          archivo_path: string | null
+          bloqueo_confirmacion: string | null
+          created_at: string
+          estado: string
+          extraccion: Json | null
+          extraccion_error: string | null
+          extraccion_estado: string
+          fecha_carga: string
+          fecha_confirmacion: string | null
+          fecha_remito: string | null
+          id: string
+          idempotency_key: string | null
+          motivo_anulacion: string | null
+          numero_normalizado: string | null
+          numero_remito_proveedor: string | null
+          observaciones: string | null
+          proveedor_id: string
+          sucursal_id: string
+          updated_at: string
+          uso_tokens: Json | null
+          usuario_id: string
+        }
+        Insert: {
+          archivo_path?: string | null
+          bloqueo_confirmacion?: string | null
+          created_at?: string
+          estado?: string
+          extraccion?: Json | null
+          extraccion_error?: string | null
+          extraccion_estado?: string
+          fecha_carga?: string
+          fecha_confirmacion?: string | null
+          fecha_remito?: string | null
+          id?: string
+          idempotency_key?: string | null
+          motivo_anulacion?: string | null
+          numero_normalizado?: string | null
+          numero_remito_proveedor?: string | null
+          observaciones?: string | null
+          proveedor_id: string
+          sucursal_id: string
+          updated_at?: string
+          uso_tokens?: Json | null
+          usuario_id: string
+        }
+        Update: {
+          archivo_path?: string | null
+          bloqueo_confirmacion?: string | null
+          created_at?: string
+          estado?: string
+          extraccion?: Json | null
+          extraccion_error?: string | null
+          extraccion_estado?: string
+          fecha_carga?: string
+          fecha_confirmacion?: string | null
+          fecha_remito?: string | null
+          id?: string
+          idempotency_key?: string | null
+          motivo_anulacion?: string | null
+          numero_normalizado?: string | null
+          numero_remito_proveedor?: string | null
+          observaciones?: string | null
+          proveedor_id?: string
+          sucursal_id?: string
+          updated_at?: string
+          uso_tokens?: Json | null
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingresos_mercaderia_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "ingresos_mercaderia_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingresos_mercaderia_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       marcas: {
         Row: {
           created_at: string
@@ -648,6 +817,64 @@ export type Database = {
           nombre?: string
         }
         Relationships: []
+      }
+      producto_codigos_proveedor: {
+        Row: {
+          codigo_proveedor: string
+          codigo_proveedor_norm: string | null
+          created_at: string
+          descripcion_proveedor: string | null
+          id: string
+          producto_id: string
+          proveedor_id: string
+          updated_at: string
+          usuario_id: string | null
+        }
+        Insert: {
+          codigo_proveedor: string
+          codigo_proveedor_norm?: string | null
+          created_at?: string
+          descripcion_proveedor?: string | null
+          id?: string
+          producto_id: string
+          proveedor_id: string
+          updated_at?: string
+          usuario_id?: string | null
+        }
+        Update: {
+          codigo_proveedor?: string
+          codigo_proveedor_norm?: string | null
+          created_at?: string
+          descripcion_proveedor?: string | null
+          id?: string
+          producto_id?: string
+          proveedor_id?: string
+          updated_at?: string
+          usuario_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "producto_codigos_proveedor_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "producto_codigos_proveedor_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "producto_codigos_proveedor_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       productos: {
         Row: {
@@ -933,6 +1160,7 @@ export type Database = {
       proveedores: {
         Row: {
           activo: boolean
+          codigos_coinciden_con_los_propios: boolean
           condicion_cta_cte: boolean
           condicion_iva: Database["public"]["Enums"]["tipo_cliente"]
           created_at: string
@@ -946,6 +1174,7 @@ export type Database = {
         }
         Insert: {
           activo?: boolean
+          codigos_coinciden_con_los_propios?: boolean
           condicion_cta_cte?: boolean
           condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
           created_at?: string
@@ -959,6 +1188,7 @@ export type Database = {
         }
         Update: {
           activo?: boolean
+          codigos_coinciden_con_los_propios?: boolean
           condicion_cta_cte?: boolean
           condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
           created_at?: string
@@ -1391,7 +1621,7 @@ export type Database = {
           iva_porcentaje: number
           precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva: number
-          producto_id: string | null
+          producto_id?: string | null
           subtotal_con_iva: number
           subtotal_sin_iva: number
           venta_id: string
@@ -1692,6 +1922,10 @@ export type Database = {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
       }
+      actualizar_items_borrador: {
+        Args: { p_ingreso_id: string; p_items: Json }
+        Returns: undefined
+      }
       ajustar_stock: {
         Args: {
           p_motivo: string
@@ -1705,6 +1939,10 @@ export type Database = {
         }[]
       }
       anular_compra: { Args: { p_compra_id: string }; Returns: undefined }
+      anular_ingreso_mercaderia: {
+        Args: { p_ingreso_id: string; p_motivo?: string }
+        Returns: undefined
+      }
       anular_pago_proveedor: { Args: { p_pago_id: string }; Returns: undefined }
       anular_venta: {
         Args: { p_venta_id: string }
@@ -1714,6 +1952,17 @@ export type Database = {
         }[]
       }
       aprobar_remito: { Args: { p_remito_id: string }; Returns: undefined }
+      buscar_productos_similares: {
+        Args: { p_codigo?: string; p_limite?: number; p_texto: string }
+        Returns: {
+          activo: boolean
+          codigo: string
+          id: string
+          iva_porcentaje: number
+          nombre: string
+          score: number
+        }[]
+      }
       caja_esperado: { Args: { _sesion_id: string }; Returns: Json }
       caja_sesion_actual: { Args: { p_sucursal_id: string }; Returns: string }
       cc_registrar_por_venta: {
@@ -1742,6 +1991,26 @@ export type Database = {
           total_esperado: number
         }[]
       }
+      condicion_iva_emisor: { Args: never; Returns: string }
+      confirmar_ingreso_mercaderia: {
+        Args: {
+          p_fecha?: string
+          p_idempotency_key?: string
+          p_ingreso_id: string
+          p_items?: Json
+          p_numero?: string
+          p_observaciones?: string
+        }
+        Returns: string
+      }
+      crear_borrador_ingreso: {
+        Args: {
+          p_archivo_path?: string
+          p_proveedor_id: string
+          p_sucursal_id: string
+        }
+        Returns: string
+      }
       crear_compra: {
         Args: {
           p_condicion?: string
@@ -1759,6 +2028,10 @@ export type Database = {
         Returns: {
           compra_id: string
         }[]
+      }
+      crear_producto_desde_ingreso: {
+        Args: { p_codigo: string; p_iva?: number; p_nombre: string }
+        Returns: string
       }
       crear_venta: {
         Args: {
@@ -1781,9 +2054,21 @@ export type Database = {
           venta_id: string
         }[]
       }
-      condicion_iva_emisor: { Args: never; Returns: string }
       current_sucursal_id: { Args: never; Returns: string }
-      puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
+      guardar_extraccion_ingreso: {
+        Args: {
+          p_archivo_path?: string
+          p_bloqueo?: string
+          p_error?: string
+          p_extraccion?: Json
+          p_fecha?: string
+          p_ingreso_id: string
+          p_items?: Json
+          p_numero?: string
+          p_uso_tokens?: Json
+        }
+        Returns: undefined
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1799,7 +2084,13 @@ export type Database = {
         }
         Returns: string
       }
+      normalizar_codigo: { Args: { p_texto: string }; Returns: string }
       proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
+      puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
+      rechazar_remito: {
+        Args: { p_motivo?: string; p_remito_id: string }
+        Returns: undefined
+      }
       registrar_cobranza: {
         Args: {
           p_cliente_id: string
@@ -1843,7 +2134,8 @@ export type Database = {
         }
         Returns: string
       }
-      rechazar_remito: { Args: { p_motivo?: string; p_remito_id: string }; Returns: undefined }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       app_role: "admin" | "empleado"
@@ -1889,6 +2181,8 @@ export type Database = {
         | "COMPRA"
         | "ANULACION_COMPRA"
         | "DEVOLUCION"
+        | "INGRESO_MERCADERIA"
+        | "ANULACION_INGRESO_MERCADERIA"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2065,6 +2359,8 @@ export const Constants = {
         "COMPRA",
         "ANULACION_COMPRA",
         "DEVOLUCION",
+        "INGRESO_MERCADERIA",
+        "ANULACION_INGRESO_MERCADERIA",
       ],
     },
   },

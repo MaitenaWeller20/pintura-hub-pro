@@ -26,9 +26,11 @@ import { Route as AuthenticatedCajaRouteImport } from './routes/_authenticated/c
 import { Route as AuthenticatedArqueoRouteImport } from './routes/_authenticated/arqueo'
 import { Route as AuthenticatedVentasIndexRouteImport } from './routes/_authenticated/ventas.index'
 import { Route as AuthenticatedProductosIndexRouteImport } from './routes/_authenticated/productos.index'
+import { Route as AuthenticatedIngresosMercaderiaIndexRouteImport } from './routes/_authenticated/ingresos-mercaderia.index'
 import { Route as AuthenticatedComprasIndexRouteImport } from './routes/_authenticated/compras.index'
 import { Route as AuthenticatedVentasNuevaRouteImport } from './routes/_authenticated/ventas.nueva'
 import { Route as AuthenticatedProductosImportarRouteImport } from './routes/_authenticated/productos.importar'
+import { Route as AuthenticatedIngresosMercaderiaNuevoRouteImport } from './routes/_authenticated/ingresos-mercaderia.nuevo'
 import { Route as AuthenticatedComprasNuevaRouteImport } from './routes/_authenticated/compras.nueva'
 
 const AuthRoute = AuthRouteImport.update({
@@ -120,6 +122,12 @@ const AuthenticatedProductosIndexRoute =
     path: '/productos/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedIngresosMercaderiaIndexRoute =
+  AuthenticatedIngresosMercaderiaIndexRouteImport.update({
+    id: '/ingresos-mercaderia/',
+    path: '/ingresos-mercaderia/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedComprasIndexRoute =
   AuthenticatedComprasIndexRouteImport.update({
     id: '/compras/',
@@ -136,6 +144,12 @@ const AuthenticatedProductosImportarRoute =
   AuthenticatedProductosImportarRouteImport.update({
     id: '/productos/importar',
     path: '/productos/importar',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedIngresosMercaderiaNuevoRoute =
+  AuthenticatedIngresosMercaderiaNuevoRouteImport.update({
+    id: '/ingresos-mercaderia/nuevo',
+    path: '/ingresos-mercaderia/nuevo',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedComprasNuevaRoute =
@@ -161,9 +175,11 @@ export interface FileRoutesByFullPath {
   '/stock': typeof AuthenticatedStockRoute
   '/usuarios': typeof AuthenticatedUsuariosRoute
   '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
+  '/ingresos-mercaderia/nuevo': typeof AuthenticatedIngresosMercaderiaNuevoRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/compras/': typeof AuthenticatedComprasIndexRoute
+  '/ingresos-mercaderia/': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/productos/': typeof AuthenticatedProductosIndexRoute
   '/ventas/': typeof AuthenticatedVentasIndexRoute
 }
@@ -183,9 +199,11 @@ export interface FileRoutesByTo {
   '/usuarios': typeof AuthenticatedUsuariosRoute
   '/': typeof AuthenticatedIndexRoute
   '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
+  '/ingresos-mercaderia/nuevo': typeof AuthenticatedIngresosMercaderiaNuevoRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/compras': typeof AuthenticatedComprasIndexRoute
+  '/ingresos-mercaderia': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/productos': typeof AuthenticatedProductosIndexRoute
   '/ventas': typeof AuthenticatedVentasIndexRoute
 }
@@ -207,9 +225,11 @@ export interface FileRoutesById {
   '/_authenticated/usuarios': typeof AuthenticatedUsuariosRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/compras/nueva': typeof AuthenticatedComprasNuevaRoute
+  '/_authenticated/ingresos-mercaderia/nuevo': typeof AuthenticatedIngresosMercaderiaNuevoRoute
   '/_authenticated/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/_authenticated/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/_authenticated/compras/': typeof AuthenticatedComprasIndexRoute
+  '/_authenticated/ingresos-mercaderia/': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/_authenticated/productos/': typeof AuthenticatedProductosIndexRoute
   '/_authenticated/ventas/': typeof AuthenticatedVentasIndexRoute
 }
@@ -231,9 +251,11 @@ export interface FileRouteTypes {
     | '/stock'
     | '/usuarios'
     | '/compras/nueva'
+    | '/ingresos-mercaderia/nuevo'
     | '/productos/importar'
     | '/ventas/nueva'
     | '/compras/'
+    | '/ingresos-mercaderia/'
     | '/productos/'
     | '/ventas/'
   fileRoutesByTo: FileRoutesByTo
@@ -253,9 +275,11 @@ export interface FileRouteTypes {
     | '/usuarios'
     | '/'
     | '/compras/nueva'
+    | '/ingresos-mercaderia/nuevo'
     | '/productos/importar'
     | '/ventas/nueva'
     | '/compras'
+    | '/ingresos-mercaderia'
     | '/productos'
     | '/ventas'
   id:
@@ -276,9 +300,11 @@ export interface FileRouteTypes {
     | '/_authenticated/usuarios'
     | '/_authenticated/'
     | '/_authenticated/compras/nueva'
+    | '/_authenticated/ingresos-mercaderia/nuevo'
     | '/_authenticated/productos/importar'
     | '/_authenticated/ventas/nueva'
     | '/_authenticated/compras/'
+    | '/_authenticated/ingresos-mercaderia/'
     | '/_authenticated/productos/'
     | '/_authenticated/ventas/'
   fileRoutesById: FileRoutesById
@@ -409,6 +435,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProductosIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/ingresos-mercaderia/': {
+      id: '/_authenticated/ingresos-mercaderia/'
+      path: '/ingresos-mercaderia'
+      fullPath: '/ingresos-mercaderia/'
+      preLoaderRoute: typeof AuthenticatedIngresosMercaderiaIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/compras/': {
       id: '/_authenticated/compras/'
       path: '/compras'
@@ -428,6 +461,13 @@ declare module '@tanstack/react-router' {
       path: '/productos/importar'
       fullPath: '/productos/importar'
       preLoaderRoute: typeof AuthenticatedProductosImportarRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/ingresos-mercaderia/nuevo': {
+      id: '/_authenticated/ingresos-mercaderia/nuevo'
+      path: '/ingresos-mercaderia/nuevo'
+      fullPath: '/ingresos-mercaderia/nuevo'
+      preLoaderRoute: typeof AuthenticatedIngresosMercaderiaNuevoRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/compras/nueva': {
@@ -455,9 +495,11 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsuariosRoute: typeof AuthenticatedUsuariosRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedComprasNuevaRoute: typeof AuthenticatedComprasNuevaRoute
+  AuthenticatedIngresosMercaderiaNuevoRoute: typeof AuthenticatedIngresosMercaderiaNuevoRoute
   AuthenticatedProductosImportarRoute: typeof AuthenticatedProductosImportarRoute
   AuthenticatedVentasNuevaRoute: typeof AuthenticatedVentasNuevaRoute
   AuthenticatedComprasIndexRoute: typeof AuthenticatedComprasIndexRoute
+  AuthenticatedIngresosMercaderiaIndexRoute: typeof AuthenticatedIngresosMercaderiaIndexRoute
   AuthenticatedProductosIndexRoute: typeof AuthenticatedProductosIndexRoute
   AuthenticatedVentasIndexRoute: typeof AuthenticatedVentasIndexRoute
 }
@@ -477,9 +519,13 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsuariosRoute: AuthenticatedUsuariosRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedComprasNuevaRoute: AuthenticatedComprasNuevaRoute,
+  AuthenticatedIngresosMercaderiaNuevoRoute:
+    AuthenticatedIngresosMercaderiaNuevoRoute,
   AuthenticatedProductosImportarRoute: AuthenticatedProductosImportarRoute,
   AuthenticatedVentasNuevaRoute: AuthenticatedVentasNuevaRoute,
   AuthenticatedComprasIndexRoute: AuthenticatedComprasIndexRoute,
+  AuthenticatedIngresosMercaderiaIndexRoute:
+    AuthenticatedIngresosMercaderiaIndexRoute,
   AuthenticatedProductosIndexRoute: AuthenticatedProductosIndexRoute,
   AuthenticatedVentasIndexRoute: AuthenticatedVentasIndexRoute,
 }

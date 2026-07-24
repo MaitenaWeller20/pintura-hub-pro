@@ -45,6 +45,7 @@ const groups: Array<{ label: string; items: MenuItem[] }> = [
     label: "Compras",
     items: [
       { to: "/compras", label: "Compras", icon: ShoppingBag, adminOnly: false },
+      { to: "/ingresos-mercaderia", label: "Ingresos de mercadería", icon: Truck, adminOnly: false },
       { to: "/proveedores", label: "Proveedores", icon: Building2, adminOnly: false },
       { to: "/gastos", label: "Gastos varios", icon: Banknote, adminOnly: false },
     ],

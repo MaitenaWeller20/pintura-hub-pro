@@ -16,6 +16,7 @@
     "build:vercel": "NITRO_PRESET=vercel vite build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.113.0",
     "@arcasdk/core": "^2.0.0",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",

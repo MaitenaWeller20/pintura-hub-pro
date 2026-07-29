@@ -47,6 +47,7 @@ import {
   calcularPrecios,
   coincideConFormula,
   costoDeLista,
+  descuentoEfectivo,
   simularOperacion,
 } from "@/lib/precios";
 import { uuidv4 } from "@/lib/uuid";
@@ -593,6 +594,7 @@ function Productos() {
         marcas={marcas}
         markupDefault={markupDefault}
         descuentoProveedor={descuentoProveedor}
+        proveedores={proveedores}
         onSaved={() => {
           qc.invalidateQueries({ queryKey: ["productos"] });
           setOpen(false);
@@ -651,6 +653,7 @@ function ProductoDialog({
   editing,
   categorias,
   marcas,
+  proveedores,
   markupDefault,
   descuentoProveedor,
   onSaved,
@@ -662,6 +665,7 @@ function ProductoDialog({
         nombre: "",
         categoria_id: null,
         marca_id: null,
+        proveedor_id: null,
         unidad_medida: "unidad",
         tamano_envase: null,
         precio_lista: 0,
@@ -679,6 +683,14 @@ function ProductoDialog({
   // Aplica el cambio y recalcula el precio de venta con la cadena completa.
   // NO se le pasa precio_sin_iva a calcularPrecios: ese campo es el override
   // manual y, si se pasara, ganaría siempre y nada se recalcularía nunca.
+  // El descuento que se usa para derivar el costo desde la lista es el del
+  // PROVEEDOR del producto, no el global. Sin esto, cargar a mano un producto de
+  // un proveedor con otro descuento le calculaba el costo con el de Quimex.
+  const descuentoDelProducto = descuentoEfectivo(
+    proveedores?.find((x: any) => x.id === form.proveedor_id) ?? null,
+    { descuento_proveedor_porcentaje: descuentoProveedor },
+  );
+
   const recalcVenta = (patch: Record<string, any>) =>
     setForm((f: any) => {
       const next = { ...f, ...patch };
@@ -707,6 +719,7 @@ function ProductoDialog({
         nombre: form.nombre,
         categoria_id: form.categoria_id,
         marca_id: form.marca_id,
+        proveedor_id: form.proveedor_id || null,
         unidad_medida: form.unidad_medida,
         tamano_envase:
           form.tamano_envase === null || form.tamano_envase === ""
@@ -827,13 +840,46 @@ function ProductoDialog({
             </Select>
           </div>
           <div>
+            <Label>Proveedor</Label>
+            <Select
+              value={form.proveedor_id ?? "__none__"}
+              onValueChange={(v) => {
+                const id = v === "__none__" ? null : v;
+                // Cambiar de proveedor cambia el descuento, y con él el costo.
+                const prov = proveedores?.find((x: any) => x.id === id) ?? null;
+                const desc = descuentoEfectivo(prov, {
+                  descuento_proveedor_porcentaje: descuentoProveedor,
+                });
+                recalcVenta({
+                  proveedor_id: id,
+                  precio_fabrica:
+                    Number(form.precio_lista || 0) > 0
+                      ? costoDeLista(form.precio_lista, desc)
+                      : form.precio_fabrica,
+                });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— (sin proveedor)</SelectItem>
+                {(proveedores ?? []).map((p: any) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.razon_social}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
             <Label>Precio de lista (Quimex)</Label>
             <NumberInput
               value={form.precio_lista}
               onValueChange={(v) =>
                 recalcVenta({
                   precio_lista: v ?? 0,
-                  precio_fabrica: costoDeLista(v ?? 0, descuentoProveedor),
+                  precio_fabrica: costoDeLista(v ?? 0, descuentoDelProducto),
                 })
               }
             />
@@ -841,7 +887,9 @@ function ProductoDialog({
           <div>
             <Label>
               Precio Fábrica (costo){" "}
-              <span className="text-xs text-muted-foreground">(lista − {descuentoProveedor}%)</span>
+              <span className="text-xs text-muted-foreground">
+                (lista − {descuentoDelProducto}%)
+              </span>
             </Label>
             <NumberInput
               value={form.precio_fabrica}
@@ -951,12 +999,22 @@ function PreciosDialog({
   onApplyAll,
   onDone,
 }: any) {
-  const [op, setOp] = useState<OperacionPrecio>("MARKUP");
-  const [pct, setPct] = useState<number | null>(markupDefault);
+  const [op, setOpRaw] = useState<OperacionPrecio>("MARKUP");
+  const [pct, setPctRaw] = useState<number | null>(markupDefault);
   // Una clave por intento. La RPC la usa para que un doble click, un reintento o
   // un F5 no repitan la operación: "aumentar 20%" dos veces da +44% y no se
   // deshace con un botón. Se renueva recién cuando una operación termina bien.
   const [clave, setClave] = useState(() => uuidv4());
+  // La clave identifica UNA operación concreta. Si cambia la operación o el %, es
+  // otra cosa y necesita su propia clave: si no, la RPC la rechaza por no coincidir.
+  const setOp = (v: OperacionPrecio) => {
+    setOpRaw(v);
+    setClave(uuidv4());
+  };
+  const setPct = (v: number | null) => {
+    setPctRaw(v);
+    setClave(uuidv4());
+  };
 
   const ids = productosSel.map((p: any) => p.id);
   const porcentaje = op === "RECALCULAR_COSTO" ? 0 : (pct ?? 0);
@@ -1073,9 +1131,18 @@ function PreciosDialog({
               {conBase.slice(0, 3).map(({ p, r }: any) => (
                 <div key={p.id} className="font-mono flex flex-wrap gap-x-3">
                   <span className="min-w-[12rem] truncate">{p.nombre}</span>
-                  <span className="text-muted-foreground">
-                    lista {fmtMoney(p.precio_lista ?? 0)} → {fmtMoney(r.precio_lista)}
-                  </span>
+                  {/* Se muestra la columna que ESTA operación cambia: mostrar la
+                      lista en "recalcular el costo" —que no la toca— dejaba a la
+                      vista previa sin decir nada sobre lo único que iba a pasar. */}
+                  {op === "RECALCULAR_COSTO" ? (
+                    <span className="text-muted-foreground">
+                      costo {fmtMoney(p.precio_fabrica ?? 0)} → {fmtMoney(r.precio_fabrica)}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      lista {fmtMoney(p.precio_lista ?? 0)} → {fmtMoney(r.precio_lista)}
+                    </span>
+                  )}
                   <span>
                     venta{" "}
                     {fmtMoney(Number(p.precio_sin_iva) * (1 + Number(p.iva_porcentaje) / 100))} →{" "}

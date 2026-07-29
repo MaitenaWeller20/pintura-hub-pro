@@ -34,7 +34,7 @@ import {
   numOr,
   sugeridoSinMapear,
 } from "@/lib/importar-productos";
-import { DESCUENTO_PROVEEDOR_DEFAULT, MARKUP_DEFAULT } from "@/lib/precios";
+import { DESCUENTO_PROVEEDOR_DEFAULT, MARKUP_DEFAULT, descuentoEfectivo } from "@/lib/precios";
 import { traerTodo } from "@/lib/supabase-paginado";
 import { fmtMoney } from "@/lib/format";
 import { toast } from "sonner";
@@ -81,6 +81,9 @@ function ImportarProductos() {
   const [sheetSel, setSheetSel] = useState<string>("");
   // Parámetros de precio (se inicializan desde settings y se guardan al importar).
   const [descuento, setDescuento] = useState<number>(DESCUENTO_PROVEEDOR_DEFAULT);
+  // El global de settings, para volver a él cuando el proveedor elegido no tiene
+  // descuento propio.
+  const [descuentoGlobal, setDescuentoGlobal] = useState<number>(DESCUENTO_PROVEEDOR_DEFAULT);
   const [markupDef, setMarkupDef] = useState<number>(MARKUP_DEFAULT);
   // Lo que ya está en el catálogo, por código: el sugerido y el markup propio de
   // cada producto (ver calcularFila). Paginado, porque PostgREST corta en 1000 sin
@@ -112,8 +115,10 @@ function ImportarProductos() {
       .select("markup_default_porcentaje, descuento_proveedor_porcentaje")
       .maybeSingle()
       .then(({ data }) => {
-        if (data?.descuento_proveedor_porcentaje != null)
+        if (data?.descuento_proveedor_porcentaje != null) {
           setDescuento(Number(data.descuento_proveedor_porcentaje));
+          setDescuentoGlobal(Number(data.descuento_proveedor_porcentaje));
+        }
         if (data?.markup_default_porcentaje != null)
           setMarkupDef(Number(data.markup_default_porcentaje));
       });
@@ -126,12 +131,14 @@ function ImportarProductos() {
         precio_sugerido_publico: number | null;
         markup_porcentaje: number | null;
         proveedor_id: string | null;
+        proveedor: { descuento_porcentaje: number | null } | null;
       }>(async (desde, hasta) => {
         const { data, error, count } = await supabase
           .from("productos")
-          .select("codigo, precio_sugerido_publico, markup_porcentaje, proveedor_id", {
-            count: "exact",
-          })
+          .select(
+            "codigo, precio_sugerido_publico, markup_porcentaje, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
+            { count: "exact" },
+          )
           .order("codigo")
           .range(desde, hasta);
         return { data, error, count };
@@ -149,6 +156,9 @@ function ImportarProductos() {
                 p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
               markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
               proveedor_id: p.proveedor_id ?? null,
+              // Sólo cuenta si la pantalla NO eligió proveedor para el archivo
+              // (ver calcularFila): si eligió, manda el de la pantalla.
+              descuento_porcentaje: p.proveedor?.descuento_porcentaje ?? null,
             },
           ]),
         ),
@@ -233,18 +243,25 @@ function ImportarProductos() {
     // válida (vender al costo), no un campo vacío.
     const markupDefault = Number.isFinite(Number(markupDef)) ? Number(markupDef) : MARKUP_DEFAULT;
     const descuentoProveedor = Number(descuento) || 0;
-    // Persistir estos parámetros como default global es una escritura admin-only
-    // (RLS: solo is_admin puede tocar settings). Un empleado igual puede importar
-    // usando los valores de la pantalla; simplemente no los guarda como default,
-    // así evitamos disparar un PATCH que la RLS rechazaría con 403.
+    // El markup default SÍ es global y se persiste (escritura admin-only por RLS;
+    // un empleado importa igual, sólo que no lo guarda como default).
+    //
+    // El DESCUENTO ya NO se persiste al global: desde que es por proveedor,
+    // guardarlo acá significaba que importar la lista de KUM con 35% le cambiaba
+    // el descuento a Quimex y a todos los que heredan del global — cientos de
+    // costos recalculados mal. Si se eligió un proveedor, el descuento de la
+    // pantalla se guarda EN ESE PROVEEDOR, que es a quien pertenece.
     if (cu?.isAdmin) {
       await supabase
         .from("settings")
-        .update({
-          markup_default_porcentaje: markupDefault,
-          descuento_proveedor_porcentaje: descuentoProveedor,
-        })
+        .update({ markup_default_porcentaje: markupDefault })
         .eq("id", true);
+      if (proveedorId) {
+        await supabase
+          .from("proveedores")
+          .update({ descuento_porcentaje: descuentoProveedor })
+          .eq("id", proveedorId);
+      }
     }
     const catMap = new Map((cats ?? []).map((c: any) => [c.nombre.toLowerCase(), c.id]));
     const mkMap = new Map((mks ?? []).map((m: any) => [m.nombre.toLowerCase(), m.id]));
@@ -296,11 +313,12 @@ function ImportarProductos() {
 
         // Toda la cadena de precios vive en src/lib/precios.ts. Acá sólo se traduce
         // la fila y se decide qué se escribe.
+        const g = guardados.get(codigo);
         const f = calcularFila(
           r,
           mapping,
           { descuento: descuentoProveedor, markupDefault },
-          guardados.get(codigo),
+          proveedorId && g ? { ...g, descuento_porcentaje: null } : g,
         );
 
         // Un valor absurdo (típicamente el separador decimal mal interpretado: un
@@ -408,6 +426,13 @@ function ImportarProductos() {
 
   // La vista previa calcula lo mismo que la importación, con la misma función:
   // lo que se ve es lo que se guarda.
+  // Con proveedor elegido para el archivo manda el descuento de la pantalla; sin
+  // proveedor elegido, cada producto usa el de SU proveedor.
+  const guardadoDe = (codigo: string) => {
+    const g = guardados.get(codigo);
+    if (!g) return undefined;
+    return proveedorId ? { ...g, descuento_porcentaje: null } : g;
+  };
   const paramsPrecio = {
     descuento: Number(descuento) || 0,
     markupDefault: Number(markupDef) || MARKUP_DEFAULT,
@@ -418,7 +443,7 @@ function ImportarProductos() {
         ? []
         : rows.map((r) => {
             const codigo = String(r[mapping.codigo] ?? "").trim();
-            return calcularFila(r, mapping, paramsPrecio, guardados.get(codigo));
+            return calcularFila(r, mapping, paramsPrecio, guardadoDe(codigo));
           }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, mapping, guardados, paramsPrecio.descuento, paramsPrecio.markupDefault],
@@ -541,10 +566,16 @@ function ImportarProductos() {
                     const id = v === "__none__" ? "" : v;
                     setProveedorId(id);
                     // El descuento del proveedor elegido se carga solo, pero queda
-                    // editable: la lista de hoy puede venir con otro.
+                    // editable: la lista de hoy puede venir con otro. SIEMPRE se
+                    // setea: si el proveedor no tiene uno propio hay que volver al
+                    // global, o queda el del proveedor anterior y se importa con el
+                    // descuento equivocado.
                     const prov = proveedores.find((x) => x.id === id);
-                    if (prov?.descuento_porcentaje != null)
-                      setDescuento(Number(prov.descuento_porcentaje));
+                    setDescuento(
+                      descuentoEfectivo(prov ?? null, {
+                        descuento_proveedor_porcentaje: descuentoGlobal,
+                      }),
+                    );
                   }}
                 >
                   <SelectTrigger>

@@ -150,6 +150,7 @@ DECLARE
   v_actualizados integer := 0;
   v_manual       integer := 0;
   v_sin_base     integer := 0;
+  v_sin_cambio   integer := 0;
   v_factor       numeric;
 BEGIN
   IF v_uid IS NULL THEN
@@ -176,6 +177,15 @@ BEGIN
   SELECT * INTO v_previa FROM public.precio_operaciones
    WHERE idempotency_key = p_idempotency_key;
   IF FOUND THEN
+    -- La clave identifica UNA operación concreta. Si vuelve con otra operación o
+    -- con otro porcentaje, no es un reintento: es una operación distinta que se
+    -- perdería en silencio (el cliente creería que se aplicó y no se aplicó nada).
+    IF v_previa.operacion IS DISTINCT FROM p_operacion
+       OR v_previa.porcentaje IS DISTINCT FROM p_porcentaje
+       OR v_previa.productos IS DISTINCT FROM v_pedidos THEN
+      RAISE EXCEPTION 'Esa clave ya se usó para otra operación (% al %, sobre % productos). Cerrá y volvé a abrir el diálogo.',
+        v_previa.operacion, v_previa.porcentaje, v_previa.productos;
+    END IF;
     RETURN jsonb_build_object(
       'ya_aplicado', true, 'actualizados', 0, 'precio_manual', 0, 'sin_base', 0,
       'productos', v_previa.productos);
@@ -192,6 +202,7 @@ BEGIN
          p.precio_sugerido_publico,
          p.precio_sin_iva,
          p.iva_porcentaje,
+         p.markup_porcentaje AS markup_crudo,
          COALESCE(p.markup_porcentaje, s.markup_default_porcentaje, 30) AS markup,
          COALESCE(prov.descuento_porcentaje, s.descuento_proveedor_porcentaje, 42) AS descuento
     FROM public.productos p
@@ -273,24 +284,36 @@ BEGIN
     FROM final f
    WHERE p.id = f.id AND f.con_base;
 
-  SELECT count(*) FILTER (WHERE NOT con_base),
-         count(*) FILTER (WHERE con_base AND NOT derivado),
-         count(*) FILTER (WHERE con_base AND derivado)
-    INTO v_sin_base, v_manual, v_actualizados
-    FROM (
-      SELECT (o.precio_lista > 0 OR o.precio_fabrica > 0
-              OR COALESCE(o.precio_sugerido_publico, 0) > 0) AS con_base,
-             (CASE
-                WHEN o.precio_sugerido_publico > 0 THEN
-                  abs(o.precio_sin_iva
-                      - round(o.precio_sugerido_publico * (1 + o.markup/100.0)
-                              / (1 + o.iva_porcentaje/100.0), 2)) <= 0.01
-                WHEN o.precio_fabrica > 0 THEN
-                  abs(o.precio_sin_iva - round(o.precio_fabrica * (1 + o.markup/100.0), 2)) <= 0.01
-                ELSE false
-              END) AS derivado
-        FROM _objetivo o
-    ) x;
+  -- Los contadores se leen comparando lo que QUEDÓ contra el estado previo que
+  -- guardó _objetivo, no recalculando las condiciones. Antes se calculaban aparte
+  -- y decían "recalculado" sobre productos donde nada había cambiado: para
+  -- RECALCULAR_COSTO, un producto con costo pero sin precio de lista tiene base y
+  -- aun así no se toca. Un cambio de precios que informa de más es tan malo como
+  -- uno que informa de menos.
+  --
+  -- Las cuatro categorías son excluyentes y suman el total:
+  --   actualizados   cambió algo Y se recalculó el precio de venta
+  --   precio_manual  cambió el costo, pero la venta estaba puesta a mano y quedó
+  --   sin_cambio     tenía base pero esta operación no le tocaba nada
+  --   sin_base       no tiene ni lista, ni costo, ni sugerido
+  SELECT
+    count(*) FILTER (WHERE con_base AND cambio AND cambio_venta),
+    count(*) FILTER (WHERE con_base AND cambio AND NOT cambio_venta),
+    count(*) FILTER (WHERE con_base AND NOT cambio),
+    count(*) FILTER (WHERE NOT con_base)
+    INTO v_actualizados, v_manual, v_sin_cambio, v_sin_base
+  FROM (
+    SELECT (t.precio_lista > 0 OR t.precio_fabrica > 0
+            OR COALESCE(t.precio_sugerido_publico, 0) > 0) AS con_base,
+           (p.precio_lista            IS DISTINCT FROM t.precio_lista
+         OR p.precio_fabrica          IS DISTINCT FROM t.precio_fabrica
+         OR p.precio_sugerido_publico IS DISTINCT FROM t.precio_sugerido_publico
+         OR p.precio_sin_iva          IS DISTINCT FROM t.precio_sin_iva
+         OR p.markup_porcentaje       IS DISTINCT FROM t.markup_crudo) AS cambio,
+           (p.precio_sin_iva IS DISTINCT FROM t.precio_sin_iva) AS cambio_venta
+      FROM _objetivo t
+      JOIN public.productos p ON p.id = t.id
+  ) o;
 
   INSERT INTO public.precio_operaciones
     (idempotency_key, operacion, porcentaje, productos, usuario_id)
@@ -301,6 +324,7 @@ BEGIN
     'actualizados', v_actualizados,
     'precio_manual', v_manual,
     'sin_base', v_sin_base,
+    'sin_cambio', v_sin_cambio,
     'productos', v_pedidos);
 END; $$;
 

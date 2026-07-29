@@ -204,6 +204,14 @@ export type FilaPlanilla = Record<string, unknown>;
 export type ProductoGuardado = {
   precio_sugerido_publico: number | null;
   markup_porcentaje: number | null;
+  /**
+   * El descuento del proveedor QUE YA TIENE el producto. Se usa cuando la pantalla
+   * no eligió un proveedor para todo el archivo: sin esto, todas las filas se
+   * derivaban con el mismo descuento de pantalla, así que reimportar una lista
+   * mixta le calculaba a los productos de un proveedor el costo con el descuento
+   * de otro.
+   */
+  descuento_porcentaje?: number | null;
 };
 
 /** Celda numérica opcional: vacía o no-numérica -> null (igual que tamano_envase). */
@@ -238,9 +246,12 @@ export function calcularFila(
   guardado?: ProductoGuardado,
 ) {
   const precio_lista = mapping.precio_lista ? numOr(r[mapping.precio_lista], 0) : 0;
+  // El descuento del proveedor del producto le gana al de la pantalla; el de la
+  // pantalla es el del proveedor elegido para el archivo, o el global.
+  const descuento = guardado?.descuento_porcentaje ?? p.descuento;
   const precio_fabrica =
     mapping.precio_lista && precio_lista > 0
-      ? costoDeLista(precio_lista, p.descuento)
+      ? costoDeLista(precio_lista, descuento)
       : mapping.precio_fabrica
         ? numOr(r[mapping.precio_fabrica], 0)
         : 0;

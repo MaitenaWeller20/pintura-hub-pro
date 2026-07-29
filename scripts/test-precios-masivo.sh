@@ -32,7 +32,10 @@ echo "── Sembrando ───────────────────
 $PSQL <<'SQL'
 DELETE FROM public.productos WHERE codigo LIKE 'MAS-%';
 DELETE FROM public.proveedores WHERE razon_social IN ('TEST KUM','TEST QUIMEX');
-DELETE FROM public.precio_operaciones WHERE porcentaje IN (20, 40, 111);
+-- Todas las claves del test, para que el script sea repetible. Sin esto, la
+-- segunda corrida recibe ya_aplicado y los checks miden otra cosa.
+DELETE FROM public.precio_operaciones
+ WHERE idempotency_key::text ~ '^(1{8}|2{8}|3{8}|4{8}|5{8}|6{8}|7{8})-';
 
 INSERT INTO public.proveedores (razon_social, descuento_porcentaje) VALUES ('TEST KUM', 35);
 INSERT INTO public.proveedores (razon_social, descuento_porcentaje) VALUES ('TEST QUIMEX', NULL);
@@ -89,7 +92,7 @@ chequear() {
 }
 
 echo "── 1. AUMENTO 20% ────────────────────────────────────────"
-res=$(rpc AUMENTO 20 '11111111-1111-1111-1111-111111111111' | grep -o '{.*}')
+res=$(rpc AUMENTO 20 '11111111-1111-1111-1111-111111111111' | grep -o '{.*}' | tail -1)
 echo "     $res"
 
 # A: lista 30774.40 -> 36929.28 ; costo RE-DERIVADO 36929.28*0.58 = 21418.98
@@ -115,7 +118,7 @@ chequear "E: la venta sigue la cadena"    "10140.00" "$(verificar "select precio
 
 echo "── 2. Idempotencia ───────────────────────────────────────"
 antes=$(verificar "select precio_lista from productos where codigo='MAS-A'")
-res2=$(rpc AUMENTO 20 '11111111-1111-1111-1111-111111111111' | grep -o '{.*}')
+res2=$(rpc AUMENTO 20 '11111111-1111-1111-1111-111111111111' | grep -o '{.*}' | tail -1)
 chequear "misma clave: no vuelve a aplicar" "$antes" "$(verificar "select precio_lista from productos where codigo='MAS-A'")"
 if echo "$res2" | grep -q '"ya_aplicado": true'; then echo "  ✓ informa ya_aplicado"; else echo "  ✗ no informa ya_aplicado — $res2"; fallos=$((fallos+1)); fi
 
@@ -157,7 +160,36 @@ if echo "$desc" | grep -q "settings_descuento_valido"; then echo "  ✓ rechaza 
 # entera con CREATE OR REPLACE. La de 20260729110000 se escribió mirando la
 # primera y borró en silencio la protección que había agregado la segunda. Este
 # test fija las tres para que no vuelva a pasar.
-echo "── 7. El guard de proveedores protege las TRES cosas ─────"
+echo "── 7. La clave está atada a la operación ─────────────────"
+# Si el servidor aplicó y el cliente no se enteró, cambiar el % y reintentar con
+# la misma clave daba un no-op SILENCIOSO: el cliente creía que se había aplicado
+# la operación nueva y no se había aplicado nada.
+otra=$(rpc MARKUP 55 '33333333-3333-3333-3333-333333333333' 2>&1 || true)
+if echo "$otra" | grep -q "ya se usó para otra operación"; then
+  echo "  ✓ la misma clave con otro % es un error, no un no-op silencioso"
+else
+  echo "  ✗ aceptó la misma clave para otra operación:"; echo "$otra" | tail -4; fallos=$((fallos+1))
+fi
+
+echo "── 8. Los contadores dicen lo que pasó de verdad ─────────"
+# MAS-D no tiene ni lista ni costo -> sin_base.
+# RECALCULAR_COSTO sobre un producto SIN precio de lista no cambia nada: antes se
+# contaba como "recalculado" igual.
+$PSQL <<'SQL' > /dev/null
+UPDATE public.productos SET precio_lista = 0, precio_fabrica = 5000, precio_sin_iva = 6500
+ WHERE codigo = 'MAS-B';
+SQL
+out=$(rpc RECALCULAR_COSTO 0 '77777777-7777-7777-7777-777777777777' | grep -o '{.*}' | tail -1)
+campo() { echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['$1'])" 2>/dev/null || echo AUSENTE; }
+# A esta altura los costos YA están recalculados (paso 5) y MAS-B quedó sin precio
+# de lista, así que esta operación no cambia NADA. El bug que esto fija: antes los
+# contaba como "recalculados" igual, porque se calculaban a partir de las
+# condiciones y no de lo que el UPDATE había hecho de verdad.
+chequear "no dice 'recalculado' cuando no cambió nada" "0" "$(campo actualizados)"
+chequear "los cuenta como sin cambio"                  "4" "$(campo sin_cambio)"
+chequear "y el que no tiene base, aparte"              "1" "$(campo sin_base)"
+
+echo "── 9. El guard de proveedores protege las TRES cosas ─────"
 for campo in "condicion_cta_cte = true" \
              "codigos_coinciden_con_los_propios = true" \
              "descuento_porcentaje = 10"; do
@@ -178,8 +210,7 @@ $PSQL <<'SQL' > /dev/null
 DELETE FROM public.productos WHERE codigo LIKE 'MAS-%';
 DELETE FROM public.proveedores WHERE razon_social IN ('TEST KUM','TEST QUIMEX');
 DELETE FROM public.precio_operaciones
- WHERE idempotency_key::text LIKE '1111%' OR idempotency_key::text LIKE '2222%'
-    OR idempotency_key::text LIKE '3333%' OR idempotency_key::text LIKE '4444%';
+ WHERE idempotency_key::text ~ '^(1{8}|2{8}|3{8}|4{8}|5{8}|6{8}|7{8})-';
 SQL
 
 if [[ $fallos -eq 0 ]]; then echo -e "\n✅ Todo verde.\n"; else echo -e "\n❌ $fallos fallo(s).\n"; exit 1; fi

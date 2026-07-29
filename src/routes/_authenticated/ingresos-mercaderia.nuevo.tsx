@@ -5,7 +5,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
-import { StatusPill } from "@/components/app/status-pill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,19 +23,10 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
 import { NumberInput } from "@/components/ui/number-input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { extraerYMatchearRemito, buscarProductosIngreso } from "@/lib/ingresos.functions";
-import { validarArchivo } from "@/lib/ingresos-ia";
-import { ArrowLeft, Loader2, Upload, Search, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { buscarProductosIngreso } from "@/lib/ingresos.functions";
+import { uuidv4 } from "@/lib/uuid";
+import { ArrowLeft, Loader2, Search, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/ingresos-mercaderia/nuevo")({
@@ -44,192 +34,184 @@ export const Route = createFileRoute("/_authenticated/ingresos-mercaderia/nuevo"
   component: NuevoIngreso,
 });
 
-interface ItemRevision {
-  linea: number;
-  pagina: number;
-  codigo_proveedor: string;
-  descripcion_proveedor: string;
-  cantidad: number | null;
-  cantidad_raw: string;
-  descripcion_raw: string;
-  producto_id: string | null;
-  codigo: string | null;
-  descripcion: string | null;
-  origen_match: "APRENDIDO" | "CODIGO" | "IA" | "MANUAL" | "NUEVO" | "IGNORADA";
-  confianza: "ALTA" | "MEDIA" | "BAJA" | null;
-  advertencia: string | null;
-}
+// Ingreso de mercadería A MANO.
+//
+// Hasta el 29/07/2026 esta pantalla subía una foto o un PDF del remito y lo leía
+// un modelo. El cliente lo bajó: "es un bardo lo de cargarlo con una foto, con un
+// PDF; lo vamos a hacer a mano". Se busca el producto en el catálogo y se pone
+// cuánto entró.
+//
+// El motor NO cambió: crear_borrador_ingreso / actualizar_items_borrador /
+// confirmar_ingreso_mercaderia son las mismas RPC de siempre, con su transacción,
+// su kardex y sus validaciones. Esto es sólo la puerta de entrada.
+// Ver docs/superpowers/specs/2026-07-29-compras-plata-ingresos-mano-design.md
 
-const ORIGEN_LABEL: Record<
-  string,
-  { txt: string; tone: "success" | "info" | "warning" | "neutral" }
-> = {
-  APRENDIDO: { txt: "Aprendido", tone: "success" },
-  CODIGO: { txt: "Por código", tone: "success" },
-  IA: { txt: "IA", tone: "info" },
-  MANUAL: { txt: "A mano", tone: "neutral" },
-  NUEVO: { txt: "Nuevo", tone: "warning" },
-  IGNORADA: { txt: "Ignorada", tone: "neutral" },
+type Fila = {
+  /** Clave de React y número de línea del remito. */
+  linea: number;
+  producto_id: string;
+  codigo: string;
+  descripcion: string;
+  cantidad: number | null;
+  /**
+   * El código con el que ESTE proveedor llama a este producto. Arranca con el
+   * código interno y se puede cambiar por el del remito.
+   *
+   * No es decorativo: `confirmar_ingreso_mercaderia` lo guarda en
+   * `producto_codigos_proveedor`, que es lo que hace que el próximo remito del
+   * mismo proveedor se resuelva solo. Si esta pantalla no lo capturara, la tabla
+   * que aprende dejaría de aprender.
+   */
+  codigo_proveedor: string;
 };
 
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  let bin = "";
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
-
 function NuevoIngreso() {
-  const { data: cu } = useCurrentUser();
   const navigate = useNavigate();
-  const { id: borradorId } = Route.useSearch();
+  const { data: cu } = useCurrentUser();
+  const { id: idExistente } = Route.useSearch();
 
+  const [ingresoId, setIngresoId] = useState<string | null>(idExistente ?? null);
   const [sucursalId, setSucursalId] = useState("");
   const [proveedorId, setProveedorId] = useState("");
-  const [ingresoId, setIngresoId] = useState<string | null>(borradorId ?? null);
   const [numero, setNumero] = useState("");
-  const [fecha, setFecha] = useState("");
-  const [items, setItems] = useState<ItemRevision[]>([]);
-  const [inconsistencia, setInconsistencia] = useState<string | null>(null);
-  const [paginasQuitadas, setPaginasQuitadas] = useState<number[]>([]);
-  const [esMock, setEsMock] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  // Key estable por montaje (patrón de ventas.nueva): un reintento tras timeout
-  // reusa la key y la RPC devuelve idempotente, en vez de errorear "ya confirmado".
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filas, setFilas] = useState<Fila[]>([]);
+  const [bloqueo, setBloqueo] = useState<string | null>(null);
+  const [busqueda, setBusqueda] = useState("");
+  const [idempotencyKey] = useState(() => uuidv4());
 
   const effSucursal = sucursalId || cu?.sucursal?.id || "";
 
-  const { data: sucs = [] } = useQuery({
-    queryKey: ["sucs"],
+  const { data: sucursales = [] } = useQuery({
+    queryKey: ["sucursales"],
     queryFn: async () =>
       ((await supabase.from("sucursales").select("*").order("numero")).data ?? []) as any[],
   });
   const { data: proveedores = [] } = useQuery({
-    queryKey: ["prov-activos"],
+    queryKey: ["proveedores-activos"],
     queryFn: async () =>
       ((
         await supabase
           .from("proveedores")
-          .select("id,razon_social")
+          .select("id, razon_social")
           .eq("activo", true)
           .order("razon_social")
       ).data ?? []) as any[],
   });
 
-  // Retomar un borrador existente.
+  // Retomar un borrador. Puede ser uno viejo que quedó de la extracción con IA:
+  // sus ítems se editan igual, porque son los mismos ítems.
   useEffect(() => {
-    if (!borradorId) return;
+    if (!idExistente) return;
     (async () => {
       const { data: ing } = await supabase
         .from("ingresos_mercaderia")
         .select("*")
-        .eq("id", borradorId)
+        .eq("id", idExistente)
         .maybeSingle();
       if (!ing) return;
-      setProveedorId(ing.proveedor_id);
       setSucursalId(ing.sucursal_id);
+      setProveedorId(ing.proveedor_id);
       setNumero(ing.numero_remito_proveedor ?? "");
-      setFecha(ing.fecha_remito ?? "");
-      setInconsistencia(ing.bloqueo_confirmacion ?? null); // el bloqueo resiste el retomar
-      setIngresoId(ing.id);
+      if (ing.fecha_remito) setFecha(String(ing.fecha_remito).slice(0, 10));
+      setBloqueo(ing.bloqueo_confirmacion ?? null);
       const { data: its } = await supabase
         .from("ingreso_mercaderia_items")
         .select("*")
-        .eq("ingreso_id", borradorId)
+        .eq("ingreso_id", idExistente)
         .order("linea");
-      setItems(
-        (its ?? []).map((it: any) => ({
-          linea: it.linea,
-          pagina: it.pagina ?? 1,
-          codigo_proveedor: it.codigo_proveedor ?? "",
-          descripcion_proveedor: it.descripcion_proveedor ?? "",
-          cantidad: it.cantidad,
-          cantidad_raw: it.cantidad_raw ?? "",
-          descripcion_raw: it.descripcion_raw ?? "",
-          producto_id: it.producto_id,
-          codigo: it.codigo,
-          descripcion: it.descripcion,
-          origen_match: it.origen_match,
-          confianza: it.confianza,
-          advertencia: it.advertencia,
-        })),
+      setFilas(
+        (its ?? [])
+          .filter((it: any) => it.producto_id)
+          .map((it: any, i: number) => ({
+            linea: i + 1,
+            producto_id: it.producto_id,
+            codigo: it.codigo ?? "",
+            descripcion: it.descripcion ?? "",
+            cantidad: it.cantidad == null ? null : Number(it.cantidad),
+            codigo_proveedor: it.codigo_proveedor ?? it.codigo ?? "",
+          })),
       );
     })();
-  }, [borradorId]);
+  }, [idExistente]);
 
-  // Extraer + matchear. El server fn crea el borrador (rate limit), sube el
-  // archivo y persiste todo; acá sólo mandamos el archivo y los ids.
-  const extraerM = useMutation({
-    mutationFn: async () => {
-      if (!file) throw new Error("Elegí un archivo.");
-      if (!proveedorId) throw new Error("Elegí el proveedor.");
-      if (!effSucursal) throw new Error("Elegí la sucursal.");
-      // Validación client-side para feedback rápido (el server la repite igual).
-      const errArchivo = validarArchivo(file.type, file.size);
-      if (errArchivo) throw new Error(errArchivo);
-      const b64 = await fileToBase64(file);
-      return await extraerYMatchearRemito({
-        data: {
-          proveedor_id: proveedorId,
-          sucursal_id: effSucursal,
-          archivo_base64: b64,
-          mime: file.type,
-          filename: file.name,
-        },
-      });
-    },
-    onSuccess: (res) => {
-      setIngresoId(res.ingreso_id);
-      setItems(res.items as ItemRevision[]);
-      setNumero(res.numero_remito ?? "");
-      setFecha(res.fecha_remito ?? "");
-      setInconsistencia(res.inconsistencia);
-      setPaginasQuitadas(res.paginas_quitadas ?? []);
-      setEsMock(res.mock);
-      if (res.paginas_quitadas?.length)
-        toast.info(`Se descartaron ${res.paginas_quitadas.length} página(s) duplicada(s).`);
-      toast.success("Remito leído. Revisá las líneas.");
-    },
-    onError: (e: any) => toast.error(e.message),
+  // Buscador contra el catálogo — "tiene que buscarlo al producto en productos,
+  // que sería la lista de precios que cargamos".
+  const { data: resultados = [], isFetching: buscando } = useQuery({
+    queryKey: ["buscar-producto-ingreso", busqueda],
+    enabled: busqueda.trim().length >= 2,
+    queryFn: async () => (await buscarProductosIngreso({ data: { texto: busqueda.trim() } })) as any[],
   });
 
-  const updItem = (linea: number, patch: Partial<ItemRevision>) =>
-    setItems((prev) => prev.map((it) => (it.linea === linea ? { ...it, ...patch } : it)));
+  const agregar = (p: any) => {
+    if (filas.some((f) => f.producto_id === p.id)) {
+      toast.info("Ese producto ya está en la lista.");
+      return;
+    }
+    setFilas((prev) => [
+      ...prev,
+      {
+        linea: prev.length + 1,
+        producto_id: p.id,
+        codigo: p.codigo,
+        descripcion: p.nombre,
+        cantidad: null,
+        codigo_proveedor: p.codigo,
+      },
+    ]);
+    setBusqueda("");
+  };
 
-  const totales = useMemo(() => {
-    const activas = items.filter((it) => it.origen_match !== "IGNORADA");
-    const conProducto = activas.filter((it) => it.producto_id && (it.cantidad ?? 0) > 0);
-    return {
-      activas: activas.length,
-      listas: conProducto.length,
-      sinResolver: activas.length - conProducto.length,
-    };
-  }, [items]);
+  const actualizar = (linea: number, patch: Partial<Fila>) =>
+    setFilas((prev) => prev.map((f) => (f.linea === linea ? { ...f, ...patch } : f)));
+  const borrar = (linea: number) =>
+    setFilas((prev) => prev.filter((f) => f.linea !== linea).map((f, i) => ({ ...f, linea: i + 1 })));
+
+  const listas = useMemo(() => filas.filter((f) => (f.cantidad ?? 0) > 0).length, [filas]);
+  const sinCantidad = filas.length - listas;
 
   const confirmarM = useMutation({
     mutationFn: async () => {
-      if (!ingresoId) throw new Error("Cargá el remito primero.");
-      if (inconsistencia) throw new Error(inconsistencia);
-      const payload = items.map((it) => ({
-        linea: it.linea,
-        producto_id: it.producto_id,
-        codigo: it.codigo,
-        descripcion: it.descripcion,
-        cantidad: it.cantidad,
-        codigo_proveedor: it.codigo_proveedor,
-        descripcion_proveedor: it.descripcion_proveedor,
-        cantidad_raw: it.cantidad_raw,
-        descripcion_raw: it.descripcion_raw,
-        pagina: it.pagina,
-        origen_match: it.origen_match,
-        confianza: it.confianza,
-        aprender: it.origen_match !== "IGNORADA",
+      if (!effSucursal) throw new Error("Elegí la sucursal.");
+      if (!proveedorId) throw new Error("Elegí el proveedor.");
+      if (filas.length === 0) throw new Error("Agregá al menos un producto.");
+      if (sinCantidad > 0) throw new Error("Hay productos sin cantidad.");
+      if (bloqueo) throw new Error(bloqueo);
+
+      // El borrador se crea recién acá si no existía: cargar la pantalla no tiene
+      // por qué dejar borradores huérfanos.
+      let id = ingresoId;
+      if (!id) {
+        const { data, error } = await supabase.rpc("crear_borrador_ingreso", {
+          p_proveedor_id: proveedorId,
+          p_sucursal_id: effSucursal,
+        });
+        if (error) throw new Error(error.message);
+        id = data as string;
+        setIngresoId(id);
+      }
+
+      const payload = filas.map((f) => ({
+        linea: f.linea,
+        producto_id: f.producto_id,
+        codigo: f.codigo,
+        descripcion: f.descripcion,
+        cantidad: f.cantidad,
+        codigo_proveedor: f.codigo_proveedor || f.codigo,
+        descripcion_proveedor: f.descripcion,
+        cantidad_raw: String(f.cantidad ?? ""),
+        descripcion_raw: f.descripcion,
+        pagina: 1,
+        origen_match: "MANUAL",
+        confianza: null,
+        // Guarda la equivalencia código-del-proveedor → producto, que es lo que
+        // hace que el próximo remito venga resuelto.
+        aprender: true,
         pisar_equivalencia: false,
       }));
+
       const { error } = await supabase.rpc("confirmar_ingreso_mercaderia", {
-        p_ingreso_id: ingresoId,
+        p_ingreso_id: id,
         p_numero: numero.trim() || undefined,
         p_fecha: fecha || undefined,
         p_items: payload as any,
@@ -244,477 +226,211 @@ function NuevoIngreso() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const paso: "subir" | "revisar" = ingresoId && items.length ? "revisar" : "subir";
-  const puedeConfirmar =
-    paso === "revisar" && !inconsistencia && totales.listas > 0 && totales.sinResolver === 0;
+  if (!cu) return null;
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Nuevo ingreso de mercadería"
-        subtitle="Subí el remito del proveedor y el sistema lo lee solo"
+        subtitle="Buscá cada producto y poné cuánto entró"
         actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate({ to: "/ingresos-mercaderia" })}
-            >
-              <ArrowLeft className="h-4 w-4 mr-1" /> Volver
-            </Button>
-            {paso === "revisar" && (
-              <Button
-                onClick={() => confirmarM.mutate()}
-                disabled={!puedeConfirmar || confirmarM.isPending}
-                data-testid="confirmar-ingreso"
-              >
-                {confirmarM.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}{" "}
-                Confirmar y sumar stock
-              </Button>
-            )}
-          </>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={confirmarM.isPending}
+            onClick={() => navigate({ to: "/ingresos-mercaderia" })}
+          >
+            <ArrowLeft className="h-4 w-4 mr-1" /> Volver
+          </Button>
         }
       />
 
-      {esMock && (
-        <div
-          className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
-          data-testid="mock-banner"
-        >
-          Modo demo: la extracción es simulada (no hay ANTHROPIC_API_KEY configurada). El circuito
-          de stock es real.
-        </div>
-      )}
-
-      {paso === "subir" && (
-        <SectionCard title="El remito">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label>Sucursal *</Label>
-              {cu?.isAdmin ? (
-                <Select value={sucursalId} onValueChange={setSucursalId}>
-                  <SelectTrigger data-testid="select-sucursal">
-                    <SelectValue placeholder="Seleccionar…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sucs.map((s: any) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.nombre}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value={cu?.sucursal?.nombre ?? ""} disabled />
-              )}
-            </div>
-            <div>
-              <Label>Proveedor *</Label>
-              <Select value={proveedorId} onValueChange={setProveedorId}>
-                <SelectTrigger data-testid="select-proveedor">
-                  <SelectValue placeholder="Seleccionar…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {proveedores.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.razon_social}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <Label>Archivo del remito (PDF o foto)</Label>
-            <label className="mt-1 flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border py-8 cursor-pointer hover:bg-accent/50 transition">
-              <Upload className="h-6 w-6 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {file ? file.name : "Elegí un PDF o una foto del remito"}
-              </span>
-              <input
-                type="file"
-                accept="application/pdf,image/jpeg,image/png,image/webp"
-                className="hidden"
-                data-testid="input-archivo"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            <div className="mt-3 flex justify-end">
-              <Button
-                onClick={() => extraerM.mutate()}
-                disabled={!file || !proveedorId || !effSucursal || extraerM.isPending}
-                data-testid="btn-extraer"
-              >
-                {extraerM.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-1" /> Leyendo el remito…
-                  </>
-                ) : (
-                  <>
-                    <Search className="h-4 w-4 mr-1" /> Leer remito
-                  </>
-                )}
-              </Button>
-            </div>
+      {/* Un borrador que la extracción dejó bloqueado no se puede confirmar ni
+          corrigiéndolo a mano: la RPC lo rechaza siempre y no hay forma de
+          limpiar el bloqueo. Mejor decirlo acá que dejar que choque contra un
+          error que no puede resolver. */}
+      {bloqueo && (
+        <SectionCard>
+          <div className="flex gap-2 items-start text-sm">
+            <AlertTriangle className="h-4 w-4 mt-0.5 text-destructive shrink-0" />
+            <p>
+              Este borrador quedó bloqueado: <strong>{bloqueo}</strong>. No se puede confirmar.
+              Anulalo desde el listado y cargá el remito de nuevo.
+            </p>
           </div>
         </SectionCard>
       )}
 
-      {paso === "revisar" && (
-        <>
-          {inconsistencia && (
-            <div
-              className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive flex gap-2 items-start"
-              data-testid="inconsistencia"
-            >
-              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>{inconsistencia}</span>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <SectionCard title="Datos del remito" className="lg:col-span-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <Label>N° de remito del proveedor</Label>
-                  <Input
-                    value={numero}
-                    onChange={(e) => setNumero(e.target.value)}
-                    placeholder="00054-00023918"
-                  />
-                </div>
-                <div>
-                  <Label>Fecha del remito</Label>
-                  <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
-                </div>
-              </div>
-              {paginasQuitadas.length > 0 && (
-                <p className="text-[11px] text-muted-foreground mt-2">
-                  Se descartaron {paginasQuitadas.length} página(s) duplicada(s):{" "}
-                  {paginasQuitadas.join(", ")}.
-                </p>
-              )}
-            </SectionCard>
-            <SectionCard title="Resumen">
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span>Líneas:</span>
-                  <span className="font-mono">{totales.activas}</span>
-                </div>
-                <div className="flex justify-between text-success">
-                  <span>Con producto:</span>
-                  <span className="font-mono">{totales.listas}</span>
-                </div>
-                {totales.sinResolver > 0 && (
-                  <div className="flex justify-between text-destructive">
-                    <span>Sin resolver:</span>
-                    <span className="font-mono">{totales.sinResolver}</span>
-                  </div>
-                )}
-                {totales.sinResolver > 0 && (
-                  <p className="text-[11px] text-destructive pt-1">
-                    Resolvé o ignorá todas las líneas antes de confirmar.
-                  </p>
-                )}
-              </div>
-            </SectionCard>
-          </div>
-
-          <SectionCard title="Líneas del remito" className="space-y-2">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Papel (código · descripción · cant.)</TableHead>
-                    <TableHead>Producto</TableHead>
-                    <TableHead>Cant.</TableHead>
-                    <TableHead>Origen</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((it) => (
-                    <ItemFila key={it.linea} it={it} onUpd={updItem} />
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </SectionCard>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Una fila de la grilla de revisión
-// ---------------------------------------------------------------------------
-function ItemFila({
-  it,
-  onUpd,
-}: {
-  it: ItemRevision;
-  onUpd: (linea: number, patch: Partial<ItemRevision>) => void;
-}) {
-  const [buscar, setBuscar] = useState(false);
-  const [q, setQ] = useState("");
-  const [nuevo, setNuevo] = useState(false);
-  const ignorada = it.origen_match === "IGNORADA";
-  const badge = ORIGEN_LABEL[it.origen_match];
-
-  const { data: candidatos = [] } = useQuery({
-    queryKey: ["buscar-prod-ingreso", q],
-    enabled: buscar && q.length >= 2,
-    queryFn: async () =>
-      await buscarProductosIngreso({
-        data: { texto: q, codigo: it.codigo_proveedor || undefined },
-      }),
-  });
-
-  return (
-    <TableRow className={ignorada ? "opacity-40" : ""} data-testid={`fila-${it.linea}`}>
-      <TableCell className="text-xs max-w-sm">
-        <div className="font-mono">{it.codigo_proveedor || "—"}</div>
-        <div className="text-muted-foreground truncate">
-          {it.descripcion_raw || it.descripcion_proveedor}
-        </div>
-        {it.advertencia && (
-          <div
-            className="text-warning flex items-center gap-1 mt-0.5"
-            data-testid={`adv-${it.linea}`}
-          >
-            <AlertTriangle className="h-3 w-3" /> {it.advertencia}
-          </div>
-        )}
-      </TableCell>
-      <TableCell className="text-sm">
-        {it.producto_id ? (
+      <SectionCard>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <div className="font-medium">{it.descripcion}</div>
-            <div className="text-xs font-mono text-muted-foreground">{it.codigo}</div>
+            <Label>Sucursal *</Label>
+            {cu.isAdmin ? (
+              <Select value={effSucursal} onValueChange={setSucursalId}>
+                <SelectTrigger data-testid="select-sucursal">
+                  <SelectValue placeholder="Elegí…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sucursales.map((s: any) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={cu.sucursal?.nombre ?? ""} disabled />
+            )}
           </div>
-        ) : ignorada ? (
-          <span className="text-xs text-muted-foreground">—</span>
-        ) : (
-          <span className="text-xs text-destructive">Sin producto</span>
-        )}
-      </TableCell>
-      <TableCell>
-        <NumberInput
-          className="h-8 w-20"
-          value={it.cantidad}
-          onValueChange={(v) => onUpd(it.linea, { cantidad: v })}
-          disabled={ignorada}
-        />
-      </TableCell>
-      <TableCell>
-        {badge && <StatusPill tone={badge.tone}>{badge.txt}</StatusPill>}
-        {it.confianza && it.confianza !== "ALTA" && (
-          <Badge variant="outline" className="ml-1 text-[10px]">
-            {it.confianza}
-          </Badge>
-        )}
-      </TableCell>
-      <TableCell>
-        <div className="flex justify-end gap-1">
-          {!ignorada && (
-            <>
-              <Popover open={buscar} onOpenChange={setBuscar}>
-                <PopoverTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    title="Buscar otro producto"
-                    data-testid={`buscar-${it.linea}`}
-                  >
-                    <Search className="h-3.5 w-3.5" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[92vw] sm:w-[420px] p-2">
-                  <Input
-                    placeholder="Nombre o código…"
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    autoFocus
-                  />
-                  <div className="max-h-64 overflow-auto mt-2">
-                    {candidatos.map((c: any) => (
-                      <button
-                        key={c.id}
-                        className="w-full text-left p-2 hover:bg-accent rounded text-sm"
-                        onClick={() => {
-                          onUpd(it.linea, {
-                            producto_id: c.id,
-                            codigo: c.codigo,
-                            descripcion: c.nombre,
-                            origen_match: "MANUAL",
-                            confianza: "ALTA",
-                          });
-                          setBuscar(false);
-                        }}
-                      >
-                        <div className="font-medium">{c.nombre}</div>
-                        <div className="text-xs font-mono text-muted-foreground">
-                          {c.codigo}
-                          {c.activo === false ? " · inactivo" : ""}
-                        </div>
-                      </button>
-                    ))}
-                    {q.length < 2 && (
-                      <p className="text-xs text-muted-foreground p-2">
-                        Escribí al menos 2 caracteres…
-                      </p>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
-              <Button
-                size="sm"
-                variant="ghost"
-                title="Crear producto nuevo"
-                data-testid={`nuevo-${it.linea}`}
-                onClick={() => setNuevo(true)}
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            title={ignorada ? "Reincorporar" : "Ignorar línea"}
-            data-testid={`ignorar-${it.linea}`}
-            onClick={() => onUpd(it.linea, { origen_match: ignorada ? "MANUAL" : "IGNORADA" })}
-          >
-            <Trash2 className={`h-3.5 w-3.5 ${ignorada ? "" : "text-destructive"}`} />
-          </Button>
+          <div>
+            <Label>Proveedor *</Label>
+            <Select value={proveedorId} onValueChange={setProveedorId}>
+              <SelectTrigger data-testid="select-proveedor">
+                <SelectValue placeholder="Elegí…" />
+              </SelectTrigger>
+              <SelectContent>
+                {proveedores.map((p: any) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.razon_social}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>N° de remito</Label>
+            <Input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="0001-00001234" />
+          </div>
+          <div>
+            <Label>Fecha</Label>
+            <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          </div>
         </div>
-        {nuevo && (
-          <DialogNuevoProducto
-            it={it}
-            onClose={() => setNuevo(false)}
-            onCreado={(p) => {
-              onUpd(it.linea, {
-                producto_id: p.id,
-                codigo: p.codigo,
-                descripcion: p.nombre,
-                origen_match: "NUEVO",
-                confianza: "ALTA",
-              });
-              setNuevo(false);
-            }}
-          />
-        )}
-      </TableCell>
-    </TableRow>
-  );
-}
+      </SectionCard>
 
-// ---------------------------------------------------------------------------
-// Alta rápida de producto. Precio opcional: con precio nace activo y vendible;
-// sin precio nace inactivo (oculto) hasta completarlo acá o en Productos.
-// ---------------------------------------------------------------------------
-function DialogNuevoProducto({
-  it,
-  onClose,
-  onCreado,
-}: {
-  it: ItemRevision;
-  onClose: () => void;
-  onCreado: (p: any) => void;
-}) {
-  const [codigo, setCodigo] = useState(it.codigo_proveedor || "");
-  const [nombre, setNombre] = useState(it.descripcion_proveedor || it.descripcion_raw || "");
-  const [iva, setIva] = useState<number | null>(21);
-  const [precio, setPrecio] = useState<number | null>(null);
-
-  const m = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.rpc("crear_producto_desde_ingreso", {
-        p_codigo: codigo.trim(),
-        p_nombre: nombre.trim(),
-        p_iva: iva ?? 21,
-        p_precio_sin_iva: precio && precio > 0 ? precio : undefined,
-      });
-      if (error) throw error;
-      return { id: data as string, codigo: codigo.trim(), nombre: nombre.trim() };
-    },
-    onSuccess: (p) => {
-      toast.success(
-        precio && precio > 0
-          ? "Producto creado y activo"
-          : "Producto creado (inactivo hasta que le cargues el precio)",
-      );
-      onCreado(p);
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
-
-  return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Crear producto nuevo</DialogTitle>
-        </DialogHeader>
+      <SectionCard>
         <div className="space-y-3">
           <div>
-            <Label>Código *</Label>
-            <Input
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value)}
-              data-testid="nuevo-codigo"
-            />
-          </div>
-          <div>
-            <Label>Nombre *</Label>
-            <Input
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              data-testid="nuevo-nombre"
-            />
-          </div>
-          <div className="flex gap-3">
-            <div>
-              <Label>IVA %</Label>
-              <NumberInput value={iva} onValueChange={setIva} className="w-24" />
-            </div>
-            <div className="flex-1">
-              <Label>Precio de venta s/IVA (opcional)</Label>
-              <NumberInput
-                value={precio}
-                onValueChange={setPrecio}
-                className="w-full"
-                data-testid="nuevo-precio"
+            <Label>Buscar producto por código o nombre</Label>
+            <div className="relative max-w-xl">
+              <Search className="h-4 w-4 absolute left-2 top-3 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Ej: 4000-00400 o membrana"
+                data-testid="buscar-producto"
               />
+              {buscando && <Loader2 className="h-4 w-4 animate-spin absolute right-2 top-3" />}
             </div>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            {precio && precio > 0 ? (
-              <>
-                Nace <strong>activo</strong>: entra al stock y ya se puede vender.
-              </>
-            ) : (
-              <>
-                Sin precio nace <strong>inactivo</strong>: entra al stock pero no se ve ni se vende
-                hasta que le cargues el precio (acá o después en Productos).
-              </>
-            )}
-          </p>
+
+          {busqueda.trim().length >= 2 && (
+            <div className="rounded-lg border border-border max-h-56 overflow-auto">
+              {resultados.length === 0 && !buscando ? (
+                <p className="p-3 text-sm text-muted-foreground">
+                  No hay productos que coincidan. Si el producto no está en el catálogo, cargalo
+                  primero en Productos.
+                </p>
+              ) : (
+                resultados.map((p: any) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex gap-3"
+                    onClick={() => agregar(p)}
+                  >
+                    <span className="font-mono text-xs w-32 shrink-0">{p.codigo}</span>
+                    <span className="truncate">{p.nombre}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancelar
-          </Button>
+      </SectionCard>
+
+      <div className="rounded-2xl border border-border overflow-hidden shadow-card">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Código</TableHead>
+                <TableHead>Producto</TableHead>
+                <TableHead className="text-right">Cantidad que entró</TableHead>
+                <TableHead>Código del proveedor</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filas.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                    Buscá un producto arriba para agregarlo.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filas.map((f) => (
+                  <TableRow key={f.linea} data-testid="fila-ingreso">
+                    <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
+                    <TableCell>{f.descripcion}</TableCell>
+                    <TableCell className="text-right">
+                      <NumberInput
+                        className="max-w-28 ml-auto"
+                        value={f.cantidad}
+                        onValueChange={(v) => actualizar(f.linea, { cantidad: v })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        className="max-w-40 font-mono text-xs"
+                        value={f.codigo_proveedor}
+                        onChange={(e) => actualizar(f.linea, { codigo_proveedor: e.target.value })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => borrar(f.linea)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <SectionCard>
+        <div className="flex flex-wrap items-center gap-3 justify-between">
+          <p className="text-sm text-muted-foreground">
+            {filas.length === 0
+              ? "Sin productos todavía."
+              : `${listas} producto${listas === 1 ? "" : "s"} listo${listas === 1 ? "" : "s"}` +
+                (sinCantidad > 0 ? ` · ${sinCantidad} sin cantidad` : "")}
+          </p>
           <Button
-            onClick={() => m.mutate()}
-            disabled={!codigo.trim() || !nombre.trim() || m.isPending}
-            data-testid="nuevo-crear"
+            onClick={() => confirmarM.mutate()}
+            disabled={
+              confirmarM.isPending ||
+              !!bloqueo ||
+              filas.length === 0 ||
+              sinCantidad > 0 ||
+              !proveedorId ||
+              !effSucursal
+            }
+            data-testid="confirmar-ingreso"
           >
-            {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Crear
+            {confirmarM.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+            Confirmar ingreso y sumar al stock
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </SectionCard>
+    </div>
   );
 }

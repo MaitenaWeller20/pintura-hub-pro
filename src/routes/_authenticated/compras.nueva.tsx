@@ -66,11 +66,10 @@ function NuevaCompra() {
   const [condicion, setCondicion] = useState<"CONTADO" | "CTA_CTE">("CONTADO");
   const [percepciones, setPercepciones] = useState<number | null>(0);
   const [observaciones, setObservaciones] = useState("");
-  const [items, setItems] = useState<ItemRow[]>([]);
+  const [subtotal, setSubtotal] = useState<number | null>(null);
+  const [ivaTotal, setIvaTotal] = useState<number | null>(null);
   const [pagos, setPagos] = useState<PagoRow[]>([]);
-  const [prodQuery, setProdQuery] = useState("");
   const [showProv, setShowProv] = useState(false);
-  const [showProd, setShowProd] = useState(false);
 
   const effSucursal = sucursalId || cu?.sucursal?.id || "";
   const esCtaCte = condicion === "CTA_CTE";
@@ -97,56 +96,16 @@ function NuevaCompra() {
     [proveedores, proveedorId],
   );
 
-  const { data: productosBusqueda = [] } = useQuery({
-    queryKey: ["prods-search-compra", prodQuery],
-    enabled: !!prodQuery && prodQuery.length >= 2,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("productos")
-        .select("id,codigo,nombre,precio_fabrica,iva_porcentaje")
-        .or(`codigo.ilike.%${prodQuery}%,nombre.ilike.%${prodQuery}%`)
-        .eq("activo", true)
-        .eq("archivado", false)
-        .limit(10);
-      return (data ?? []) as any[];
-    },
-  });
-
-  const addProducto = (p: any) => {
-    setItems((prev) => [
-      ...prev,
-      {
-        producto_id: p.id,
-        codigo: p.codigo,
-        descripcion: p.nombre,
-        cantidad: 1,
-        costo_unitario_sin_iva: Number(p.precio_fabrica) || null,
-        iva_porcentaje: Number(p.iva_porcentaje),
-      },
-    ]);
-    setProdQuery("");
-    setShowProd(false);
-  };
-  const updateItem = (i: number, k: keyof ItemRow, v: any) =>
-    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
-  const removeItem = (i: number) => setItems((prev) => prev.filter((_, idx) => idx !== i));
-
   const totales = useMemo(() => {
-    // Redondeo por ítem, igual que crear_compra en el server (ROUND(sub,2), ROUND(iva,2)),
-    // para que el total mostrado coincida exactamente con el que se guarda/exige.
-    const r2 = (n: number) => Math.round(n * 100) / 100;
-    let sub = 0,
-      iva = 0;
-    items.forEach((it) => {
-      const costo = it.costo_unitario_sin_iva ?? 0;
-      const subItem = r2(costo * (it.cantidad || 0));
-      sub += subItem;
-      iva += r2((subItem * (it.iva_porcentaje || 0)) / 100);
-    });
+    const r2 = (n: number) => +n.toFixed(2);
+    const sub = r2(Number(subtotal || 0));
+    const iva = r2(Number(ivaTotal || 0));
     const total = r2(sub + iva + r2(Number(percepciones || 0)));
-    const pagado = esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0);
+    const pagado = esCtaCte
+      ? 0
+      : pagos.reduce((a: number, p: any) => a + r2(Number(p.monto || 0)), 0);
     return { sub, iva, total, pagado, saldo: total - pagado };
-  }, [items, percepciones, pagos, esCtaCte]);
+  }, [subtotal, ivaTotal, percepciones, pagos, esCtaCte]);
 
   useEffect(() => {
     if (esCtaCte && pagos.length) setPagos([]);
@@ -177,12 +136,8 @@ function NuevaCompra() {
         p_numero: numero.trim(),
         p_fecha_comprobante: fechaComp,
         p_fecha_vencimiento: (fechaVto || null) as any,
-        p_items: items.map((it) => ({
-          producto_id: it.producto_id,
-          cantidad: Number(it.cantidad || 0),
-          costo_unitario_sin_iva: Number(it.costo_unitario_sin_iva || 0),
-          iva_porcentaje: Number(it.iva_porcentaje || 0),
-        })),
+        p_subtotal_sin_iva: Number(subtotal || 0),
+        p_iva_total: Number(ivaTotal || 0),
         p_pagos: esCtaCte
           ? []
           : pagos
@@ -212,15 +167,14 @@ function NuevaCompra() {
     !!proveedorId &&
     !!numero.trim() &&
     !!fechaComp &&
-    items.length > 0 &&
-    items.every((it) => (it.cantidad || 0) > 0 && (it.costo_unitario_sin_iva ?? -1) >= 0) &&
+    totales.total > 0 &&
     pagosOk;
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Nueva compra"
-        subtitle="Registrá la factura del proveedor (suma stock)"
+        subtitle="Registrá cuánta plata se le debe al proveedor"
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => navigate({ to: "/compras" })}>
@@ -232,6 +186,18 @@ function NuevaCompra() {
           </>
         }
       />
+
+      {/* La pantalla tiene que decir qué NO hace. Es la misma lección que dejó el
+          episodio del envase cargado como stock: el cartel de la importación
+          existe por eso. Acá el riesgo es al revés — que alguien cargue la
+          factura esperando que la mercadería entre sola. */}
+      <SectionCard>
+        <p className="text-sm text-muted-foreground">
+          Esto registra <strong>la plata que se le debe al proveedor</strong>.{" "}
+          <strong>No suma stock</strong>: la mercadería se carga en{" "}
+          <strong>Ingresos de mercadería</strong>, buscando cada producto y poniendo cuánto entró.
+        </p>
+      </SectionCard>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <SectionCard title="Datos del comprobante" className="lg:col-span-2">
@@ -348,13 +314,28 @@ function NuevaCompra() {
 
         <SectionCard title="Totales">
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span>Subtotal:</span>
-              <span className="font-mono">{fmtMoney(totales.sub)}</span>
+            {/* Se escriben mirando la factura. Antes salían de sumar los ítems;
+                sin ítems, los pone la persona — que es lo que hace igual con la
+                calculadora. El IVA va suelto y no derivado de un porcentaje único:
+                en una factura real conviven alícuotas distintas y percepciones, y
+                recomponerlo sería inventar un número que no está en el papel. */}
+            <div className="flex justify-between items-center gap-2">
+              <Label className="text-sm m-0">Subtotal s/IVA:</Label>
+              <NumberInput
+                value={subtotal}
+                onValueChange={setSubtotal}
+                className="h-7 w-32 text-right"
+                data-testid="compra-subtotal"
+              />
             </div>
-            <div className="flex justify-between">
-              <span>IVA:</span>
-              <span className="font-mono">{fmtMoney(totales.iva)}</span>
+            <div className="flex justify-between items-center gap-2">
+              <Label className="text-sm m-0">IVA:</Label>
+              <NumberInput
+                value={ivaTotal}
+                onValueChange={setIvaTotal}
+                className="h-7 w-32 text-right"
+                data-testid="compra-iva"
+              />
             </div>
             <div className="flex justify-between items-center gap-2">
               <Label className="text-sm m-0">Percepciones:</Label>
@@ -389,110 +370,6 @@ function NuevaCompra() {
           </div>
         </SectionCard>
       </div>
-
-      <SectionCard className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-sm">Productos</h3>
-          <Popover open={showProd} onOpenChange={setShowProd}>
-            <PopoverTrigger asChild>
-              <Button size="sm">
-                <Plus className="h-4 w-4 mr-1" /> Agregar
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[92vw] sm:w-[450px] p-2">
-              <Input
-                placeholder="Código o nombre…"
-                value={prodQuery}
-                onChange={(e) => setProdQuery(e.target.value)}
-                autoFocus
-              />
-              <div className="max-h-72 overflow-auto mt-2">
-                {productosBusqueda.map((p: any) => (
-                  <button
-                    key={p.id}
-                    className="w-full text-left p-2 hover:bg-accent rounded text-sm"
-                    onClick={() => addProducto(p)}
-                  >
-                    <div className="font-medium">
-                      {p.codigo} — {p.nombre}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      costo actual: {fmtMoney(p.precio_fabrica)} · IVA {p.iva_porcentaje}%
-                    </div>
-                  </button>
-                ))}
-                {prodQuery.length < 2 && (
-                  <p className="text-xs text-muted-foreground p-2">
-                    Escribí al menos 2 caracteres…
-                  </p>
-                )}
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-        {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-8 text-center">
-            Agregá los productos de la factura.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Código</TableHead>
-                  <TableHead>Descripción</TableHead>
-                  <TableHead>Cant.</TableHead>
-                  <TableHead>Costo unit. s/IVA</TableHead>
-                  <TableHead>IVA %</TableHead>
-                  <TableHead className="text-right">Subtotal</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((it, i) => {
-                  const sub =
-                    (it.costo_unitario_sin_iva ?? 0) *
-                    (it.cantidad || 0) *
-                    (1 + (it.iva_porcentaje || 0) / 100);
-                  return (
-                    <TableRow key={i}>
-                      <TableCell className="font-mono text-xs">{it.codigo}</TableCell>
-                      <TableCell className="text-sm max-w-xs">{it.descripcion}</TableCell>
-                      <TableCell>
-                        <NumberInput
-                          className="h-8 w-20"
-                          value={it.cantidad}
-                          onValueChange={(v) => updateItem(i, "cantidad", v ?? 0)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <NumberInput
-                          className="h-8 w-28"
-                          value={it.costo_unitario_sin_iva}
-                          onValueChange={(v) => updateItem(i, "costo_unitario_sin_iva", v)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <NumberInput
-                          className="h-8 w-16"
-                          value={it.iva_porcentaje}
-                          onValueChange={(v) => updateItem(i, "iva_porcentaje", v ?? 0)}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right font-mono">{fmtMoney(sub)}</TableCell>
-                      <TableCell>
-                        <Button size="sm" variant="ghost" onClick={() => removeItem(i)}>
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </SectionCard>
 
       {!esCtaCte && (
         <SectionCard className="space-y-3">

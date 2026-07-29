@@ -8,13 +8,21 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { calcularPrecios } from "@/lib/precios";
 import { z } from "zod";
 
 const cobranzaSchema = z.object({
   cliente_id: z.string().uuid(),
   sucursal_id: z.string().uuid(),
   monto: z.number().positive(),
-  forma_pago: z.enum(["EFECTIVO","TRANSFERENCIA","TARJETA_DEBITO","TARJETA_CREDITO","MERCADO_PAGO","CHEQUE"]),
+  forma_pago: z.enum([
+    "EFECTIVO",
+    "TRANSFERENCIA",
+    "TARJETA_DEBITO",
+    "TARJETA_CREDITO",
+    "MERCADO_PAGO",
+    "CHEQUE",
+  ]),
   detalle: z.record(z.string(), z.any()).default({}),
   observaciones: z.string().optional().nullable(),
 });
@@ -46,47 +54,62 @@ export const registrarCobranza = createServerFn({ method: "POST" })
 /** Aplica un nuevo % de markup a un set de productos (recalcula precio_sin_iva). */
 export const aplicarMarkup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({
-    producto_ids: z.array(z.string().uuid()).min(1),
-    markup_porcentaje: z.number().min(0),
-    setear_como_default: z.boolean().default(false),
-    sobrescribir_individual: z.boolean().default(true),
-  }).parse(d))
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        producto_ids: z.array(z.string().uuid()).min(1),
+        markup_porcentaje: z.number().min(0),
+        setear_como_default: z.boolean().default(false),
+        sobrescribir_individual: z.boolean().default(true),
+      })
+      .parse(d),
+  )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
     if (!isAdmin) throw new Error("Solo admin");
 
-    const { data: prods } = await supabase.from("productos")
-      .select("id, precio_fabrica, markup_porcentaje").in("id", data.producto_ids);
+    const { data: prods } = await supabase
+      .from("productos")
+      .select("id, precio_fabrica, precio_sugerido_publico, markup_porcentaje, iva_porcentaje")
+      .in("id", data.producto_ids);
     const lista = (prods ?? []) as any[];
 
     // El markup se guarda en TODOS los seleccionados (así queda registrado el % que
-    // el negocio quiere para cada producto). El precio de venta se RECALCULA a partir
-    // del costo (precio_fabrica); un producto sin costo cargado no puede recalcularse
-    // —daría vender gratis—, así que se le guarda el markup pero no se toca el precio,
-    // y se informa cuántos quedaron sin costo (cuando se les cargue, el precio se
-    // deriva con este markup). Antes esos se salteaban por completo y en silencio, y
-    // parecía que "solo se aplicaba al primero".
+    // el negocio quiere para cada producto). El precio de venta se RECALCULA con la
+    // cadena de precios: desde el SUGERIDO AL PÚBLICO si el producto lo tiene, y si
+    // no desde el costo. Un producto sin ninguna de las dos bases no puede
+    // recalcularse —daría vender gratis—, así que se le guarda el markup pero no se
+    // toca el precio, y se informa cuántos quedaron así (cuando se les cargue la
+    // base, el precio se deriva con este markup). Antes esos se salteaban por
+    // completo y en silencio, y parecía que "solo se aplicaba al primero".
     let actualizados = 0; // con precio recalculado
-    let sinCosto = 0;     // markup guardado, pero sin costo para recalcular el precio
+    let sinBase = 0; // markup guardado, pero sin sugerido ni costo para recalcular
     for (const p of lista) {
-      const fabrica = Number(p.precio_fabrica ?? 0);
       const patch: any = {};
       if (data.sobrescribir_individual) patch.markup_porcentaje = data.markup_porcentaje;
-      if (fabrica > 0) {
-        const nuevoPrecio = +(fabrica * (1 + data.markup_porcentaje / 100)).toFixed(2);
-        if (nuevoPrecio > 0) { patch.precio_sin_iva = nuevoPrecio; actualizados++; }
-        else sinCosto++;
-      } else {
-        sinCosto++;
-      }
+      const { precio_sin_iva: nuevoPrecio } = calcularPrecios(
+        {
+          precio_fabrica: p.precio_fabrica,
+          precio_sugerido_publico: p.precio_sugerido_publico,
+          iva_porcentaje: p.iva_porcentaje,
+          markup_porcentaje: data.markup_porcentaje,
+        },
+        { markupDefault: data.markup_porcentaje },
+      );
+      if (nuevoPrecio > 0) {
+        patch.precio_sin_iva = nuevoPrecio;
+        actualizados++;
+      } else sinBase++;
       if (Object.keys(patch).length > 0) {
         await supabase.from("productos").update(patch).eq("id", p.id);
       }
     }
     if (data.setear_como_default) {
-      await supabase.from("settings").update({ markup_default_porcentaje: data.markup_porcentaje }).eq("id", true);
+      await supabase
+        .from("settings")
+        .update({ markup_default_porcentaje: data.markup_porcentaje })
+        .eq("id", true);
     }
-    return { actualizados, sin_costo: sinCosto };
+    return { actualizados, sin_base: sinBase };
   });

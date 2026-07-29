@@ -10,6 +10,8 @@
 // de Inventario) y siempre deja kardex. Ver
 // docs/superpowers/specs/2026-07-24-stock-no-es-envase-design.md.
 
+import { calcularPrecios, costoDeLista, normalizarIva } from "./precios";
+
 export type CampoDestino = { key: string; label: string };
 
 export const FIELDS_TARGET: CampoDestino[] = [
@@ -17,6 +19,10 @@ export const FIELDS_TARGET: CampoDestino[] = [
   { key: "nombre", label: "Nombre *" },
   { key: "precio_lista", label: "Precio de lista (Quimex)" },
   { key: "precio_fabrica", label: "Precio fábrica (costo)" },
+  // Va ANTES de precio_sin_iva a propósito: autoMapear reclama las cabeceras en
+  // orden y precio_sin_iva tiene "precio" entre sus sinónimos, así que se quedaría
+  // con una columna "PRECIO SUGERIDO AL PUBLICO".
+  { key: "precio_sugerido_publico", label: "Sugerido al público (C/IVA)" },
   { key: "precio_sin_iva", label: "Precio s/IVA" },
   { key: "iva_porcentaje", label: "IVA %" },
   { key: "stock_minimo", label: "Stock mínimo (umbral de alerta)" },
@@ -41,6 +47,14 @@ export const SINONIMOS: Record<string, string[]> = {
   nombre: ["nombre", "descripcion", "detalle", "producto"],
   precio_lista: ["preciodelista", "preciolista", "listadeprecios", "listaprecios", "lista"],
   precio_fabrica: ["preciofabrica", "fabrica", "costo", "preciocosto"],
+  precio_sugerido_publico: [
+    "sugeridoalpublicociva",
+    "sugeridoalpublico",
+    "preciosugerido",
+    "sugerido",
+    "preciopublico",
+    "pvp",
+  ],
   precio_sin_iva: ["preciosiniva", "preciosiva", "preciounitario", "precioneto", "precio", "punit"],
   iva_porcentaje: ["iva", "alicuota", "ivaporcentaje"],
   stock_minimo: ["stockminimo", "minimo", "stockmin"],
@@ -79,32 +93,80 @@ export const numOr = (v: unknown, def: number) => {
   return Number.isFinite(n) ? n : def;
 };
 
+// Guardas semánticas del auto-mapeo: una cabecera puede coincidir con un sinónimo
+// y aun así traer el dato equivocado. Devuelven true cuando hay que RECHAZARLA
+// para ese campo. Es más mantenible que una lista de sinónimos interminable.
+const RECHAZAR_CABECERA: Record<string, (normalizada: string) => boolean> = {
+  // El % de IVA no debe engancharse a una columna de PRECIO que contenga "c/iva"
+  // (ej "Sugerido al público C/IVA"): sus valores romperían numeric(5,2).
+  iva_porcentaje: (h) => /precio|sugerido|publico|venta|costo|importe/.test(h),
+  // El sugerido se asume CON IVA: el cálculo lo divide por (1 + iva/100) para
+  // guardar el neto. Si una planilla trae "PVP S/IVA" o "Precio sugerido s/IVA",
+  // el sinónimo amplio ("pvp", "sugerido") se la llevaría y se le sacaría el IVA
+  // a un número que ya era neto: todos esos precios bajarían ~17% en silencio.
+  // "S/IVA" normaliza a "siva" y "SIN IVA" a "siniva" — hay que mirar los dos.
+  precio_sugerido_publico: (h) =>
+    (h.includes("siva") || h.includes("siniva")) && !h.includes("civa") && !h.includes("coniva"),
+};
+
 export function autoMapear(headers: string[]): Record<string, string> {
   const auto: Record<string, string> = {};
   const usados = new Set<string>();
   for (const t of FIELDS_TARGET) {
     const candidatos = SINONIMOS[t.key] ?? [t.key];
+    const rechazar = RECHAZAR_CABECERA[t.key];
+    const admisible = (h: string) => !usados.has(h) && !rechazar?.(normalizar(h));
     // Coincidencia exacta primero; si no, la cabecera que contenga el sinónimo.
-    const exacto = headers.find((h) => !usados.has(h) && candidatos.includes(normalizar(h)));
-    let parcial =
-      exacto ??
-      headers.find((h) => !usados.has(h) && candidatos.some((c) => normalizar(h).includes(c)));
-    // El % de IVA no debe engancharse a una columna de PRECIO que contenga "c/iva"
-    // (ej "Sugerido al público C/IVA"): sus valores romperían numeric(5,2).
-    if (
-      parcial &&
-      exacto == null &&
-      t.key === "iva_porcentaje" &&
-      /precio|sugerido|publico|venta|costo|importe/.test(normalizar(parcial))
-    ) {
-      parcial = undefined;
-    }
-    if (parcial) {
-      auto[t.key] = parcial;
-      usados.add(parcial);
+    const elegida =
+      headers.find((h) => admisible(h) && candidatos.includes(normalizar(h))) ??
+      headers.find((h) => admisible(h) && candidatos.some((c) => normalizar(h).includes(c)));
+    if (elegida) {
+      auto[t.key] = elegida;
+      usados.add(elegida);
     }
   }
   return auto;
+}
+
+// ---------------------------------------------------------------------------
+// Chequeos del mapeo que hace la persona a mano (la pantalla avisa, no bloquea)
+// ---------------------------------------------------------------------------
+
+/**
+ * Cabeceras asignadas a más de un campo destino.
+ *
+ * Le pasó al cliente: mapeó "PRECIO DE LISTA" en "Precio de lista" y también en
+ * "Precio fábrica (costo)". No rompe —hay precedencias que lo salvan— pero casi
+ * nunca es lo que se quiso hacer.
+ */
+export function columnasDuplicadas(mapping: Record<string, string>): string[] {
+  const cuenta = new Map<string, number>();
+  for (const col of Object.values(mapping)) {
+    if (col) cuenta.set(col, (cuenta.get(col) ?? 0) + 1);
+  }
+  return [...cuenta.entries()].filter(([, n]) => n > 1).map(([col]) => col);
+}
+
+/**
+ * Una columna del archivo que parece el sugerido al público y quedó sin mapear.
+ *
+ * Sin este aviso, re-importar la lista olvidándose de mapearla haría que los
+ * precios vuelvan al cálculo por costo: el bug que esta feature arregla, de vuelta
+ * y sin que nadie se entere.
+ */
+export function sugeridoSinMapear(
+  headers: string[],
+  mapping: Record<string, string>,
+): string | null {
+  if (mapping.precio_sugerido_publico) return null;
+  const rechazar = RECHAZAR_CABECERA.precio_sugerido_publico;
+  const usados = new Set(Object.values(mapping).filter(Boolean));
+  return (
+    headers.find((h) => {
+      const n = normalizar(h);
+      return !usados.has(h) && !rechazar(n) && (n.includes("sugerido") || n.includes("pvp"));
+    }) ?? null
+  );
 }
 
 // En las listas reales el título ("LISTA DE PRECIOS N° ...") ocupa las primeras
@@ -117,4 +179,81 @@ export function detectarFilaEncabezados(aoa: unknown[][]): number {
     if (celdas.filter((c) => claves.some((k) => c.includes(k))).length >= 2) return i;
   }
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// De la fila cruda de la planilla a la cadena de precios
+// ---------------------------------------------------------------------------
+
+/** Fila cruda de la planilla, tal como la devuelve XLSX/Papa (cabecera -> celda). */
+export type FilaPlanilla = Record<string, unknown>;
+
+/** Lo que ya sabemos de un producto que está en el catálogo, indexado por código. */
+export type ProductoGuardado = {
+  precio_sugerido_publico: number | null;
+  markup_porcentaje: number | null;
+};
+
+/** Celda numérica opcional: vacía o no-numérica -> null (igual que tamano_envase). */
+export const numOrNull = (v: unknown): number | null => {
+  const n = parseNumAr(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Traduce una fila de la planilla a la cadena de precios, con el mapeo elegido.
+ *
+ * La usan la vista previa Y la importación, para que lo que se ve en pantalla sea
+ * exactamente lo que se va a guardar.
+ *
+ * Hay DOS datos que salen del catálogo y no de la planilla, y los dos existen por
+ * la misma razón: una importación no puede degradar en silencio lo que ya estaba.
+ *
+ *  - EL SUGERIDO, cuando la columna no está mapeada. El importador escribe
+ *    `precio_sin_iva` en TODAS las filas. Si no se le pasara el sugerido guardado,
+ *    una importación a la que se le olvidó mapear esa columna volvería a derivar el
+ *    precio del costo y pisaría el neto derivado del sugerido — el bug original,
+ *    reintroducido sin que nadie se entere. Omitir la columna del payload conserva
+ *    el dato, no el precio.
+ *  - EL MARKUP PROPIO del producto. Antes la importación recalculaba todo con el
+ *    markup default, así que a un producto con markup propio le quedaba un precio
+ *    que contradecía su propio markup.
+ */
+export function calcularFila(
+  r: FilaPlanilla,
+  mapping: Record<string, string>,
+  p: { descuento: number; markupDefault: number },
+  guardado?: ProductoGuardado,
+) {
+  const precio_lista = mapping.precio_lista ? numOr(r[mapping.precio_lista], 0) : 0;
+  const precio_fabrica =
+    mapping.precio_lista && precio_lista > 0
+      ? costoDeLista(precio_lista, p.descuento)
+      : mapping.precio_fabrica
+        ? numOr(r[mapping.precio_fabrica], 0)
+        : 0;
+  const precio_sugerido_publico = mapping.precio_sugerido_publico
+    ? numOrNull(r[mapping.precio_sugerido_publico])
+    : (guardado?.precio_sugerido_publico ?? null);
+  const iva_porcentaje = normalizarIva(mapping.iva_porcentaje ? r[mapping.iva_porcentaje] : 21);
+
+  return {
+    codigo: String(r[mapping.codigo] ?? "").trim(),
+    nombre: String(r[mapping.nombre] ?? "").trim(),
+    envase: mapping.tamano_envase ? numOrNull(r[mapping.tamano_envase]) : null,
+    precio_lista,
+    precio_fabrica,
+    precio_sugerido_publico,
+    iva_porcentaje,
+    ...calcularPrecios(
+      {
+        precio_fabrica,
+        precio_sugerido_publico,
+        precio_sin_iva: mapping.precio_sin_iva ? numOrNull(r[mapping.precio_sin_iva]) : null,
+        markup_porcentaje: guardado?.markup_porcentaje ?? null,
+        iva_porcentaje,
+      },
+      { markupDefault: p.markupDefault },
+    ),
+  };
 }

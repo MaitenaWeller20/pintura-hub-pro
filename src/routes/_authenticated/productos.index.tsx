@@ -36,6 +36,14 @@ import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
+import {
+  MARKUP_DEFAULT,
+  ORIGEN_LABEL,
+  type OrigenPrecio,
+  calcularPrecios,
+  costoDeLista,
+  origenDelPrecio,
+} from "@/lib/precios";
 import { toast } from "sonner";
 import { Plus, Upload, Pencil, Printer, Percent, Trash2, ArchiveRestore } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -59,11 +67,24 @@ export const Route = createFileRoute("/_authenticated/productos/")({
   component: Productos,
 });
 
-// Calcula precio venta s/IVA según fábrica y markup efectivo (individual o default)
-const calcPrecio = (fabrica: number, markup: number) => +(fabrica * (1 + markup / 100)).toFixed(2);
-// Costo (precio de fábrica) a partir del precio de lista de Quimex y su descuento comercial.
-const costoDeLista = (lista: number, descuento: number) =>
-  +(lista * (1 - descuento / 100)).toFixed(2);
+// La cadena de precios vive en @/lib/precios. Hasta el 29/07/2026 esta pantalla
+// tenía su propia copia (calcPrecio/costoDeLista), igual que la importación y el
+// markup masivo: tres fórmulas que se desincronizaban.
+const ORIGEN_TONO: Record<OrigenPrecio, string> = {
+  sugerido: "border-success/40 text-success",
+  costo: "border-border text-muted-foreground",
+  manual: "border-warning/50 text-warning",
+};
+
+/** Los campos de un producto que `vista` necesita para armar la fila de precios. */
+type ProductoFila = {
+  precio_sin_iva: number;
+  iva_porcentaje: number;
+  precio_fabrica?: number | null;
+  precio_lista?: number | null;
+  precio_sugerido_publico?: number | null;
+  markup_porcentaje?: number | null;
+};
 
 function Productos() {
   const { data: cu } = useCurrentUser();
@@ -83,7 +104,7 @@ function Productos() {
     queryKey: ["settings"],
     queryFn: async () => (await supabase.from("settings").select("*").maybeSingle()).data,
   });
-  const markupDefault = Number(settings?.markup_default_porcentaje ?? 50);
+  const markupDefault = Number(settings?.markup_default_porcentaje ?? MARKUP_DEFAULT);
   const descuentoProveedor = Number(settings?.descuento_proveedor_porcentaje ?? 42);
 
   // Paginado explícito: PostgREST corta en 1000 filas sin avisar, así que esta
@@ -183,22 +204,42 @@ function Productos() {
     onError: (e: any) => toast.error(e.message),
   });
 
+  // Las exportaciones llevan la cadena completa (incluido el neto y el IVA, que
+  // la tabla ya no muestra para que entre en pantalla).
+  const vista = (p: ProductoFila) => {
+    const sIva = Number(p.precio_sin_iva);
+    const iva = Number(p.iva_porcentaje);
+    return {
+      mk: p.markup_porcentaje ?? markupDefault,
+      sIva,
+      cIva: +(sIva * (1 + iva / 100)).toFixed(2),
+      costo: Number(p.precio_fabrica ?? 0),
+      costoCIva: +(Number(p.precio_fabrica ?? 0) * (1 + iva / 100)).toFixed(2),
+      lista: Number(p.precio_lista ?? 0),
+      sugerido: p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
+      origen: origenDelPrecio(p, { markupDefault }),
+    };
+  };
+
   const exportar = () => {
     const ws = XLSX.utils.json_to_sheet(
       filtered.map((p: any) => {
-        const mk = p.markup_porcentaje ?? markupDefault;
-        const sIva = Number(p.precio_sin_iva);
+        const v = vista(p);
         return {
           Código: p.codigo,
           Nombre: p.nombre,
           Categoría: p.categoria?.nombre,
           Marca: p.marca?.nombre,
           Unidad: p.unidad_medida,
-          "Precio Fábrica": Number(p.precio_fabrica ?? 0),
-          "% Markup": mk,
-          "Precio s/IVA": sIva,
+          "Precio de lista": v.lista,
+          "Precio Fábrica": v.costo,
+          "Costo c/IVA": v.costoCIva,
+          "Sugerido al público": v.sugerido ?? "",
+          "% Markup": v.mk,
+          "Precio s/IVA": v.sIva,
           "IVA %": p.iva_porcentaje,
-          "Precio c/IVA": +(sIva * (1 + Number(p.iva_porcentaje) / 100)).toFixed(2),
+          "Precio c/IVA": v.cIva,
+          "Origen del precio": ORIGEN_LABEL[v.origen],
           "Stock mín.": p.stock_minimo,
           Activo: p.activo,
         };
@@ -210,24 +251,40 @@ function Productos() {
   };
 
   const imprimir = () => {
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: "landscape" });
     doc.setFontSize(14);
     doc.text("CasaForma — Listado de productos", 14, 16);
     autoTable(doc, {
       startY: 22,
-      head: [["Código", "Nombre", "Marca", "P.Fábrica", "%", "P.s/IVA", "IVA", "P.c/IVA"]],
+      head: [
+        [
+          "Código",
+          "Nombre",
+          "Marca",
+          "Lista",
+          "Costo",
+          "Costo c/IVA",
+          "Sugerido",
+          "%",
+          "P.s/IVA",
+          "IVA",
+          "Venta c/IVA",
+        ],
+      ],
       body: filtered.map((p: any) => {
-        const mk = p.markup_porcentaje ?? markupDefault;
-        const sIva = Number(p.precio_sin_iva);
+        const v = vista(p);
         return [
           p.codigo,
           p.nombre,
           p.marca?.nombre ?? "",
-          fmtMoney(p.precio_fabrica ?? 0),
-          `${mk}%`,
-          fmtMoney(sIva),
+          v.lista ? fmtMoney(v.lista) : "—",
+          fmtMoney(v.costo),
+          fmtMoney(v.costoCIva),
+          v.sugerido ? fmtMoney(v.sugerido) : "—",
+          `${v.mk}%`,
+          fmtMoney(v.sIva),
           `${p.iva_porcentaje}%`,
-          fmtMoney(sIva * (1 + Number(p.iva_porcentaje) / 100)),
+          fmtMoney(v.cIva),
         ];
       }),
       styles: { fontSize: 7 },
@@ -350,19 +407,18 @@ function Productos() {
                 <TableHead>Nombre</TableHead>
                 <TableHead className="text-right">Env.</TableHead>
                 <TableHead>Marca</TableHead>
-                <TableHead className="text-right">P. Fábrica</TableHead>
+                <TableHead className="text-right">Lista</TableHead>
+                <TableHead className="text-right">Costo</TableHead>
+                <TableHead className="text-right">Costo c/IVA</TableHead>
+                <TableHead className="text-right">Sugerido</TableHead>
                 <TableHead className="text-right">% Markup</TableHead>
-                <TableHead className="text-right">P. s/IVA</TableHead>
-                <TableHead>IVA</TableHead>
-                <TableHead className="text-right">P. c/IVA</TableHead>
+                <TableHead className="text-right">Venta c/IVA</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((p: any) => {
-                const mk = p.markup_porcentaje ?? markupDefault;
-                const sIva = Number(p.precio_sin_iva);
-                const cIva = sIva * (1 + Number(p.iva_porcentaje) / 100);
+                const v = vista(p);
                 return (
                   <TableRow key={p.id}>
                     {cu.isAdmin && (
@@ -392,21 +448,39 @@ function Productos() {
                       {p.tamano_envase ?? "—"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{p.marca?.nombre}</TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      {v.lista ? fmtMoney(v.lista) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">{fmtMoney(v.costo)}</TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      {fmtMoney(v.costoCIva)}
+                    </TableCell>
                     <TableCell className="text-right font-mono">
-                      {fmtMoney(p.precio_fabrica ?? 0)}
+                      {v.sugerido ? fmtMoney(v.sugerido) : "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      {mk}%{" "}
+                      {v.mk}%{" "}
                       {p.markup_porcentaje == null && (
                         <Badge variant="outline" className="ml-1 text-[10px]">
                           def
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-right font-mono">{fmtMoney(sIva)}</TableCell>
-                    <TableCell>{p.iva_porcentaje}%</TableCell>
-                    <TableCell className="text-right font-mono font-semibold">
-                      {fmtMoney(cIva)}
+                    <TableCell className="text-right font-mono font-semibold whitespace-nowrap">
+                      {fmtMoney(v.cIva)}{" "}
+                      <Badge
+                        variant="outline"
+                        className={`ml-1 text-[10px] font-sans ${ORIGEN_TONO[v.origen]}`}
+                        title={
+                          v.origen === "sugerido"
+                            ? "Sale del precio sugerido al público + el markup"
+                            : v.origen === "costo"
+                              ? "Sale del costo + el markup (el producto no tiene sugerido)"
+                              : "Precio puesto a mano: no lo explica ni el sugerido ni el costo"
+                        }
+                      >
+                        {ORIGEN_LABEL[v.origen]}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       {cu.isAdmin && (
@@ -535,6 +609,7 @@ function ProductoDialog({
         tamano_envase: null,
         precio_lista: 0,
         precio_fabrica: 0,
+        precio_sugerido_publico: null,
         markup_porcentaje: null,
         precio_sin_iva: 0,
         iva_porcentaje: 21,
@@ -544,17 +619,25 @@ function ProductoDialog({
   );
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
-  // Recalcular precio s/IVA al cambiar fábrica o markup
-  const recalcPrecio = (fabrica: number, markup: number | null) => {
-    const mk = markup ?? markupDefault;
-    set("precio_sin_iva", calcPrecio(fabrica || 0, mk));
-  };
-  // Al cambiar el precio de lista de Quimex: costo = lista − descuento, y luego venta.
-  const recalcDesdeLista = (lista: number) => {
-    const fabrica = costoDeLista(lista || 0, descuentoProveedor);
-    set("precio_fabrica", fabrica);
-    recalcPrecio(fabrica, form.markup_porcentaje);
-  };
+  // Aplica el cambio y recalcula el precio de venta con la cadena completa.
+  // NO se le pasa precio_sin_iva a calcularPrecios: ese campo es el override
+  // manual y, si se pasara, ganaría siempre y nada se recalcularía nunca.
+  const recalcVenta = (patch: Record<string, any>) =>
+    setForm((f: any) => {
+      const next = { ...f, ...patch };
+      return {
+        ...next,
+        precio_sin_iva: calcularPrecios(
+          {
+            precio_fabrica: next.precio_fabrica,
+            precio_sugerido_publico: next.precio_sugerido_publico,
+            markup_porcentaje: next.markup_porcentaje,
+            iva_porcentaje: next.iva_porcentaje,
+          },
+          { markupDefault },
+        ).precio_sin_iva,
+      };
+    });
 
   const m = useMutation({
     mutationFn: async () => {
@@ -570,6 +653,10 @@ function ProductoDialog({
             : Number(form.tamano_envase),
         precio_lista: Number(form.precio_lista || 0),
         precio_fabrica: Number(form.precio_fabrica || 0),
+        precio_sugerido_publico:
+          form.precio_sugerido_publico === null || form.precio_sugerido_publico === ""
+            ? null
+            : Number(form.precio_sugerido_publico),
         markup_porcentaje:
           form.markup_porcentaje === null || form.markup_porcentaje === ""
             ? null
@@ -595,6 +682,17 @@ function ProductoDialog({
   });
 
   const cIva = Number(form.precio_sin_iva || 0) * (1 + Number(form.iva_porcentaje || 0) / 100);
+  // Lo que daría la fórmula, para poder avisar cuando el precio está puesto a mano.
+  const calculado = calcularPrecios(
+    {
+      precio_fabrica: form.precio_fabrica,
+      precio_sugerido_publico: form.precio_sugerido_publico,
+      markup_porcentaje: form.markup_porcentaje,
+      iva_porcentaje: form.iva_porcentaje,
+    },
+    { markupDefault },
+  );
+  const esManual = origenDelPrecio(form, { markupDefault }) === "manual";
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -665,10 +763,12 @@ function ProductoDialog({
             <Label>Precio de lista (Quimex)</Label>
             <NumberInput
               value={form.precio_lista}
-              onValueChange={(v) => {
-                set("precio_lista", v ?? 0);
-                recalcDesdeLista(v ?? 0);
-              }}
+              onValueChange={(v) =>
+                recalcVenta({
+                  precio_lista: v ?? 0,
+                  precio_fabrica: costoDeLista(v ?? 0, descuentoProveedor),
+                })
+              }
             />
           </div>
           <div>
@@ -678,10 +778,17 @@ function ProductoDialog({
             </Label>
             <NumberInput
               value={form.precio_fabrica}
-              onValueChange={(v) => {
-                set("precio_fabrica", v ?? 0);
-                recalcPrecio(v ?? 0, form.markup_porcentaje);
-              }}
+              onValueChange={(v) => recalcVenta({ precio_fabrica: v ?? 0 })}
+            />
+          </div>
+          <div>
+            <Label>
+              Sugerido al público{" "}
+              <span className="text-xs text-muted-foreground">(c/IVA, vacío = no tiene)</span>
+            </Label>
+            <NumberInput
+              value={form.precio_sugerido_publico}
+              onValueChange={(v) => recalcVenta({ precio_sugerido_publico: v })}
             />
           </div>
           <div>
@@ -693,10 +800,7 @@ function ProductoDialog({
             </Label>
             <NumberInput
               value={form.markup_porcentaje}
-              onValueChange={(v) => {
-                set("markup_porcentaje", v);
-                recalcPrecio(Number(form.precio_fabrica || 0), v);
-              }}
+              onValueChange={(v) => recalcVenta({ markup_porcentaje: v })}
             />
           </div>
           <div>
@@ -705,12 +809,25 @@ function ProductoDialog({
               value={form.precio_sin_iva}
               onValueChange={(v) => set("precio_sin_iva", v ?? 0)}
             />
+            {esManual && (
+              <p className="text-[11px] text-warning mt-1">
+                Precio puesto a mano. La fórmula daría{" "}
+                <strong className="font-mono">{fmtMoney(calculado.precio_sin_iva)}</strong>.{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => set("precio_sin_iva", calculado.precio_sin_iva)}
+                >
+                  Usar el calculado
+                </button>
+              </p>
+            )}
           </div>
           <div>
             <Label>IVA %</Label>
             <Select
               value={String(form.iva_porcentaje)}
-              onValueChange={(v) => set("iva_porcentaje", Number(v))}
+              onValueChange={(v) => recalcVenta({ iva_porcentaje: Number(v) })}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -722,8 +839,18 @@ function ProductoDialog({
               </SelectContent>
             </Select>
           </div>
-          <div className="col-span-2 text-sm bg-muted/30 p-2 rounded">
-            <strong>Precio c/IVA:</strong> <span className="font-mono">{fmtMoney(cIva)}</span>
+          <div className="col-span-2 text-sm bg-muted/30 p-2 rounded space-y-1">
+            <div>
+              <strong>Precio c/IVA:</strong> <span className="font-mono">{fmtMoney(cIva)}</span>
+            </div>
+            <div className="text-[11px] text-muted-foreground font-mono">
+              lista {fmtMoney(form.precio_lista || 0)} → costo {fmtMoney(form.precio_fabrica || 0)}{" "}
+              → c/IVA {fmtMoney(calculado.costo_c_iva)}
+              {form.precio_sugerido_publico
+                ? ` → sugerido ${fmtMoney(form.precio_sugerido_publico)}`
+                : " → sin sugerido"}{" "}
+              → venta {fmtMoney(cIva)}
+            </div>
           </div>
           <div>
             <Label>Stock mínimo</Label>
@@ -770,7 +897,8 @@ function MarkupDialog({
       }),
     onSuccess: (r: any) => {
       const partes = [`${r.actualizados} con precio recalculado`];
-      if (r.sin_costo > 0) partes.push(`${r.sin_costo} sin costo cargado (markup guardado)`);
+      if (r.sin_base > 0)
+        partes.push(`${r.sin_base} sin sugerido ni costo cargado (markup guardado)`);
       toast.success(`Markup aplicado: ${partes.join(" · ")}`);
       onDone();
     },
@@ -793,8 +921,9 @@ function MarkupDialog({
             </div>
           ) : (
             <p className="text-sm">
-              Se aplicará a <strong>{productoIds.length}</strong> productos. Recalcula precio s/IVA
-              = fábrica × (1 + %).
+              Se aplicará a <strong>{productoIds.length}</strong> productos. Recalcula el precio de
+              venta: <strong>sugerido al público × (1 + %)</strong>, o costo × (1 + %) si el
+              producto no tiene sugerido.
             </p>
           )}
           <div>

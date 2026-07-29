@@ -963,6 +963,7 @@ export type Database = {
           precio_fabrica: number
           precio_lista: number
           precio_sin_iva: number
+          precio_sugerido_publico: number | null
           stock_minimo: number
           tamano_envase: number | null
           unidad_medida: string
@@ -984,6 +985,7 @@ export type Database = {
           precio_fabrica?: number
           precio_lista?: number
           precio_sin_iva?: number
+          precio_sugerido_publico?: number | null
           stock_minimo?: number
           tamano_envase?: number | null
           unidad_medida?: string
@@ -1005,6 +1007,7 @@ export type Database = {
           precio_fabrica?: number
           precio_lista?: number
           precio_sin_iva?: number
+          precio_sugerido_publico?: number | null
           stock_minimo?: number
           tamano_envase?: number | null
           unidad_medida?: string

@@ -3,10 +3,13 @@ import {
   FIELDS_TARGET,
   SINONIMOS,
   autoMapear,
+  calcularFila,
+  columnasDuplicadas,
   detectarFilaEncabezados,
   normalizar,
   numOr,
   parseNumAr,
+  sugeridoSinMapear,
 } from "./importar-productos";
 
 // Encabezados REALES de "LP N° 125 - Quimexur (12-6-2026).xlsx". Los espacios de
@@ -77,6 +80,74 @@ describe("autoMapear con la lista real de Quimexur", () => {
     const usadas = Object.values(autoMapear(LISTA_PLANA));
     expect(new Set(usadas).size).toBe(usadas.length);
   });
+
+  // El bug del 29/07/2026: esta columna existía en la lista y el sistema la
+  // ignoraba, así que la góndola quedaba por debajo del precio que sugiere el
+  // propio proveedor.
+  it("manda 'Sugerido al público C/IVA' al precio sugerido", () => {
+    expect(autoMapear(LISTA_PLANA).precio_sugerido_publico).toBe(" Sugerido al público C/IVA ");
+  });
+
+  it("una columna 'PRECIO SUGERIDO AL PUBLICO' no se la queda precio_sin_iva", () => {
+    const m = autoMapear(["CODIGO", "DESCRIPCION", "PRECIO SUGERIDO AL PUBLICO"]);
+    expect(m.precio_sugerido_publico).toBe("PRECIO SUGERIDO AL PUBLICO");
+    expect(m.precio_sin_iva).toBeUndefined();
+  });
+
+  // El sugerido se asume c/IVA y se divide por (1+iva). Si entrara una columna
+  // NETA, se le sacaría el IVA a un número que ya era neto: −17% en silencio.
+  it("una columna de sugerido SIN IVA no entra como sugerido", () => {
+    for (const h of ["PVP S/IVA", "Precio sugerido s/IVA", "SUGERIDO SIN IVA"]) {
+      const m = autoMapear(["CODIGO", "DESCRIPCION", h]);
+      expect(m.precio_sugerido_publico).toBeUndefined();
+    }
+  });
+
+  it("pero 'PVP' y 'PVP C/IVA' sí son el sugerido", () => {
+    expect(autoMapear(["CODIGO", "DESCRIPCION", "PVP"]).precio_sugerido_publico).toBe("PVP");
+    expect(autoMapear(["CODIGO", "DESCRIPCION", "PVP C/IVA"]).precio_sugerido_publico).toBe(
+      "PVP C/IVA",
+    );
+  });
+});
+
+describe("chequeos del mapeo manual", () => {
+  it("detecta la misma columna mapeada en dos campos (el caso del cliente)", () => {
+    expect(
+      columnasDuplicadas({
+        codigo: "CÓDIGO",
+        precio_lista: "PRECIO DE LISTA",
+        precio_fabrica: "PRECIO DE LISTA",
+      }),
+    ).toEqual(["PRECIO DE LISTA"]);
+  });
+
+  it("no marca nada cuando el mapeo está bien", () => {
+    expect(columnasDuplicadas(autoMapear(LISTA_PLANA))).toEqual([]);
+  });
+
+  it("ignora los campos sin mapear", () => {
+    expect(columnasDuplicadas({ codigo: "A", nombre: "", precio_lista: "" })).toEqual([]);
+  });
+
+  it("avisa si el archivo trae el sugerido y quedó sin mapear", () => {
+    const m = autoMapear(LISTA_PLANA);
+    delete m.precio_sugerido_publico;
+    expect(sugeridoSinMapear(LISTA_PLANA, m)).toBe(" Sugerido al público C/IVA ");
+  });
+
+  it("no avisa si está mapeado", () => {
+    expect(sugeridoSinMapear(LISTA_PLANA, autoMapear(LISTA_PLANA))).toBeNull();
+  });
+
+  it("no avisa si el archivo no trae ninguna columna de sugerido", () => {
+    const m = autoMapear(LISTA_ACTUALIZACION);
+    expect(sugeridoSinMapear(LISTA_ACTUALIZACION, m)).toBeNull();
+  });
+
+  it("no propone una columna neta como sugerido", () => {
+    expect(sugeridoSinMapear(["CODIGO", "PVP S/IVA"], { codigo: "CODIGO" })).toBeNull();
+  });
 });
 
 // El bug del 24/07/2026: el inventario de producción quedó cargado con el tamaño
@@ -119,5 +190,112 @@ describe("detectarFilaEncabezados", () => {
 
   it("si los encabezados están en la primera fila, devuelve 0", () => {
     expect(detectarFilaEncabezados([["CÓDIGO", "DESCRIPCIÓN", "PRECIO DE LISTA"]])).toBe(0);
+  });
+});
+
+// La fila real de "LP N° 125 - Quimexur", producto 4000-00400. Es el producto con
+// el que el cliente mostró que el sistema calculaba mal.
+const FILA_REAL = {
+  " CÓDIGO  ": "4000-00400",
+  " DESCRIPCIÓN ": "*IMPER*POLIURETANICA MEMBRANA LIQUIDA",
+  " ENV. ": 4,
+  " PRECIO DE LISTA ": 30774.4,
+  " Sugerido al público C/IVA ": 34370.6,
+};
+const PARAMS = { descuento: 42, markupDefault: 30 };
+
+describe("calcularFila — de la planilla a la cadena de precios", () => {
+  it("la fila real de Quimex: el precio de venta sale del sugerido", () => {
+    const f = calcularFila(FILA_REAL, autoMapear(LISTA_PLANA), PARAMS);
+    expect(f.codigo).toBe("4000-00400");
+    expect(f.envase).toBe(4);
+    expect(f.precio_lista).toBe(30774.4);
+    expect(f.precio_fabrica).toBe(17849.15); // lista − 42%
+    expect(f.costo_c_iva).toBe(21597.47); // lo que se le paga a Quimex
+    expect(f.precio_sugerido_publico).toBe(34370.6);
+    expect(f.precio_sin_iva).toBe(36927.09);
+    expect(f.venta_c_iva).toBe(44681.78); // sugerido + 30%
+    expect(f.origen).toBe("sugerido");
+  });
+
+  // EL BLOQUEANTE (review de Codex, §13.1 del spec): el importador escribe
+  // precio_sin_iva en TODAS las filas. Si al no mapear la columna no se le pasara
+  // el sugerido ya guardado, esta importación volvería a derivar el precio del
+  // costo y pisaría el neto: la góndola bajaría de $44.681 a $28.076 sin que nadie
+  // se entere. Omitir la columna del payload conserva el DATO, no el PRECIO.
+  it("sin mapear el sugerido, usa el que ya está guardado y NO degrada el precio", () => {
+    const mapping = autoMapear(LISTA_ACTUALIZACION); // esta solapa no trae el sugerido
+    const fila = { ...FILA_REAL };
+
+    const sinCatalogo = calcularFila(fila, mapping, PARAMS);
+    expect(sinCatalogo.origen).toBe("costo"); // producto nuevo: no hay de dónde sacarlo
+
+    const conCatalogo = calcularFila(fila, mapping, PARAMS, {
+      precio_sugerido_publico: 34370.6,
+      markup_porcentaje: null,
+    });
+    expect(conCatalogo.precio_sin_iva).toBe(36927.09);
+    expect(conCatalogo.venta_c_iva).toBe(44681.78);
+    expect(conCatalogo.origen).toBe("sugerido");
+  });
+
+  it("si el producto guardado no tiene sugerido, cae al cálculo por costo", () => {
+    const f = calcularFila(FILA_REAL, autoMapear(LISTA_ACTUALIZACION), PARAMS, {
+      precio_sugerido_publico: null,
+      markup_porcentaje: null,
+    });
+    expect(f.precio_sin_iva).toBe(23203.9);
+    expect(f.origen).toBe("costo");
+  });
+
+  // La columna mapeada manda: si la celda está vacía, ese producto pasa a no tener
+  // sugerido aunque antes lo tuviera. Es una lista nueva que dice que no lo trae.
+  it("columna mapeada con celda vacía: el sugerido se borra y el precio va por costo", () => {
+    const f = calcularFila(
+      { ...FILA_REAL, " Sugerido al público C/IVA ": "" },
+      autoMapear(LISTA_PLANA),
+      PARAMS,
+      { precio_sugerido_publico: 34370.6, markup_porcentaje: null },
+    );
+    expect(f.precio_sugerido_publico).toBeNull();
+    expect(f.origen).toBe("costo");
+  });
+
+  // Antes la importación recalculaba TODO con el markup default, así que a un
+  // producto con markup propio le quedaba un precio que contradecía su markup.
+  it("respeta el markup propio del producto", () => {
+    const f = calcularFila(FILA_REAL, autoMapear(LISTA_PLANA), PARAMS, {
+      precio_sugerido_publico: null,
+      markup_porcentaje: 50,
+    });
+    expect(f.markup).toBe(50);
+    expect(f.venta_c_iva).toBe(+(34370.6 * 1.5).toFixed(2));
+  });
+
+  it("un producto nuevo usa el markup default", () => {
+    expect(calcularFila(FILA_REAL, autoMapear(LISTA_PLANA), PARAMS).markup).toBe(30);
+  });
+
+  // El caso de la captura del cliente: la columna de precio mapeada al % de IVA.
+  // Ahora el IVA es un DIVISOR, así que un valor basura corrompería lo facturado.
+  it("un IVA imposible no corrompe el neto", () => {
+    const mapping = { ...autoMapear(LISTA_PLANA), iva_porcentaje: " Sugerido al público C/IVA " };
+    const f = calcularFila(FILA_REAL, mapping, PARAMS);
+    expect(f.iva_porcentaje).toBe(21);
+    expect(f.precio_sin_iva).toBe(36927.09);
+  });
+
+  it("números en formato argentino", () => {
+    const f = calcularFila(
+      {
+        ...FILA_REAL,
+        " PRECIO DE LISTA ": "30.774,40",
+        " Sugerido al público C/IVA ": "34.370,60",
+      },
+      autoMapear(LISTA_PLANA),
+      PARAMS,
+    );
+    expect(f.precio_fabrica).toBe(17849.15);
+    expect(f.venta_c_iva).toBe(44681.78);
   });
 });

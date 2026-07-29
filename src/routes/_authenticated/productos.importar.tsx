@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,14 +25,20 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   FIELDS_TARGET,
+  type ProductoGuardado,
   autoMapear,
+  calcularFila,
+  columnasDuplicadas,
   detectarFilaEncabezados,
   normalizar,
   numOr,
-  parseNumAr,
+  sugeridoSinMapear,
 } from "@/lib/importar-productos";
+import { DESCUENTO_PROVEEDOR_DEFAULT, MARKUP_DEFAULT } from "@/lib/precios";
+import { traerTodo } from "@/lib/supabase-paginado";
+import { fmtMoney } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/productos/importar")({
   component: ImportarProductos,
@@ -74,8 +80,14 @@ function ImportarProductos() {
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [sheetSel, setSheetSel] = useState<string>("");
   // Parámetros de precio (se inicializan desde settings y se guardan al importar).
-  const [descuento, setDescuento] = useState<number>(42);
-  const [markupDef, setMarkupDef] = useState<number>(50);
+  const [descuento, setDescuento] = useState<number>(DESCUENTO_PROVEEDOR_DEFAULT);
+  const [markupDef, setMarkupDef] = useState<number>(MARKUP_DEFAULT);
+  // Lo que ya está en el catálogo, por código: el sugerido y el markup propio de
+  // cada producto (ver calcularFila). Paginado, porque PostgREST corta en 1000 sin
+  // avisar y el catálogo tiene más: sin paginar, los últimos productos importarían
+  // con el cálculo equivocado y nadie se enteraría.
+  const [guardados, setGuardados] = useState<Map<string, ProductoGuardado>>(new Map());
+  const [catalogoListo, setCatalogoListo] = useState(false);
   useEffect(() => {
     supabase
       .from("settings")
@@ -87,6 +99,48 @@ function ImportarProductos() {
         if (data?.markup_default_porcentaje != null)
           setMarkupDef(Number(data.markup_default_porcentaje));
       });
+  }, []);
+  useEffect(() => {
+    let vivo = true;
+    traerTodo<{
+      codigo: string;
+      precio_sugerido_publico: number | null;
+      markup_porcentaje: number | null;
+    }>(async (desde, hasta) => {
+      const { data, error, count } = await supabase
+        .from("productos")
+        .select("codigo, precio_sugerido_publico, markup_porcentaje", { count: "exact" })
+        .order("codigo")
+        .range(desde, hasta);
+      return { data, error, count };
+    })
+      .then(({ filas, truncado }) => {
+        if (!vivo) return;
+        setGuardados(
+          new Map(
+            filas.map((p) => [
+              p.codigo,
+              {
+                precio_sugerido_publico:
+                  p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
+                markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
+              },
+            ]),
+          ),
+        );
+        // Si quedó incompleto, importar recalcularía mal los productos que faltan.
+        // Mejor no dejar importar que corromper precios en silencio.
+        setCatalogoListo(!truncado);
+        if (truncado) toast.error("No se pudo leer el catálogo completo. Recargá la página.");
+      })
+      .catch((e) => {
+        if (!vivo) return;
+        setCatalogoListo(false);
+        toast.error(`No se pudo leer el catálogo: ${e.message}`);
+      });
+    return () => {
+      vivo = false;
+    };
   }, []);
 
   const aplicarDatos = (parsedRows: Row[], parsedHeaders: string[]) => {
@@ -137,7 +191,7 @@ function ImportarProductos() {
     const { data: cats = [] } = await supabase.from("categorias").select("*");
     const { data: mks = [] } = await supabase.from("marcas").select("*");
     // Parámetros de precio elegidos en la UI; se persisten para próximas importaciones.
-    const markupDefault = Number(markupDef) || 50;
+    const markupDefault = Number(markupDef) || MARKUP_DEFAULT;
     const descuentoProveedor = Number(descuento) || 0;
     // Persistir estos parámetros como default global es una escritura admin-only
     // (RLS: solo is_admin puede tocar settings). Un empleado igual puede importar
@@ -199,39 +253,36 @@ function ImportarProductos() {
           }
         }
 
-        // Cadena de precios (misma que la pantalla de Productos):
-        //   precio_lista (Quimex) × (1 − descuento) = precio_fabrica (costo)
-        //   precio_fabrica × (1 + markup)           = precio_sin_iva (venta)
-        // Si la planilla trae el precio de lista, se deriva el costo con el descuento
-        // del proveedor. Si no, se usa el precio de fábrica de la planilla. El precio
-        // s/IVA se respeta si viene explícito; si no, se deriva con el markup default.
-        const precioLista = mapping.precio_lista ? numOr(r[mapping.precio_lista], 0) : 0;
-        const precioFabrica =
-          mapping.precio_lista && precioLista > 0
-            ? +(precioLista * (1 - descuentoProveedor / 100)).toFixed(2)
-            : mapping.precio_fabrica
-              ? numOr(r[mapping.precio_fabrica], 0)
-              : 0;
-        const precioSinIvaPlanilla = mapping.precio_sin_iva
-          ? parseNumAr(r[mapping.precio_sin_iva])
-          : NaN;
-        const precioSinIva =
-          Number.isFinite(precioSinIvaPlanilla) && precioSinIvaPlanilla > 0
-            ? precioSinIvaPlanilla
-            : +(precioFabrica * (1 + markupDefault / 100)).toFixed(2);
+        // Toda la cadena de precios vive en src/lib/precios.ts. Acá sólo se traduce
+        // la fila y se decide qué se escribe.
+        const f = calcularFila(
+          r,
+          mapping,
+          { descuento: descuentoProveedor, markupDefault },
+          guardados.get(codigo),
+        );
 
         // Un valor absurdo (típicamente el separador decimal mal interpretado: un
         // Excel en español que lee "2136004.80" como 213600480) daría el críptico
         // "numeric field overflow" de Postgres. Lo atajamos con un mensaje claro.
         const LIMITE = 999_999_999; // ningún precio de pinturería llega a mil millones
         for (const [campo, val, raw] of [
-          ["precio de lista", precioLista, mapping.precio_lista ? r[mapping.precio_lista] : ""],
+          ["precio de lista", f.precio_lista, mapping.precio_lista ? r[mapping.precio_lista] : ""],
           [
             "precio de fábrica",
-            precioFabrica,
+            f.precio_fabrica,
             mapping.precio_fabrica ? r[mapping.precio_fabrica] : "",
           ],
-          ["precio s/IVA", precioSinIva, mapping.precio_sin_iva ? r[mapping.precio_sin_iva] : ""],
+          [
+            "sugerido al público",
+            f.precio_sugerido_publico ?? 0,
+            mapping.precio_sugerido_publico ? r[mapping.precio_sugerido_publico] : "",
+          ],
+          [
+            "precio s/IVA",
+            f.precio_sin_iva,
+            mapping.precio_sin_iva ? r[mapping.precio_sin_iva] : "",
+          ],
         ] as [string, number, unknown][]) {
           if (val > LIMITE) {
             throw new Error(
@@ -249,21 +300,22 @@ function ImportarProductos() {
           categoria_id: cat_id ?? null,
           marca_id: mk_id ?? null,
           unidad_medida: String(r[mapping.unidad_medida] ?? "unidad") || "unidad",
-          precio_lista: +precioLista.toFixed(2),
-          precio_fabrica: precioFabrica,
-          precio_sin_iva: precioSinIva,
-          // Un IVA fuera de [0,100] es un mapeo/valor equivocado (típico: se mapeó una
-          // columna de precio "C/IVA" al % de IVA). Se ignora y se usa el default.
-          iva_porcentaje: (() => {
-            const x = numOr(r[mapping.iva_porcentaje], 21);
-            return x >= 0 && x <= 100 ? x : 21;
-          })(),
+          precio_lista: +f.precio_lista.toFixed(2),
+          precio_fabrica: f.precio_fabrica,
+          precio_sin_iva: f.precio_sin_iva,
+          // normalizarIva descarta lo que no sea una alícuota de AFIP. Importa más
+          // que antes: el IVA pasó a ser un DIVISOR (el sugerido viene c/IVA), así
+          // que un valor basura ya no ensucia la vista, corrompe lo que se factura.
+          iva_porcentaje: f.iva_porcentaje,
           stock_minimo: numOr(r[mapping.stock_minimo], 0),
           // R8: tamaño de envase (ENV). Vacío -> null (no todo producto lo trae).
-          tamano_envase: (() => {
-            const n = parseNumAr(mapping.tamano_envase ? r[mapping.tamano_envase] : "");
-            return Number.isFinite(n) ? n : null;
-          })(),
+          tamano_envase: f.envase,
+          // Sólo se escribe el sugerido si la columna está mapeada. Si no lo está,
+          // la clave se omite y el upsert no pisa lo que ya había guardado — que es
+          // justamente lo que calcularFila usó para derivar el precio de esta fila.
+          ...(mapping.precio_sugerido_publico
+            ? { precio_sugerido_publico: f.precio_sugerido_publico }
+            : {}),
         };
         // Deliberadamente NO se escribe stock_sucursal acá: la lista de precios no
         // trae stock (ver el comentario del encabezado del archivo).
@@ -284,6 +336,46 @@ function ImportarProductos() {
       toast.warning(`Importación con ${errs.length} errores. Revisá el detalle abajo.`);
     }
   };
+
+  // La vista previa calcula lo mismo que la importación, con la misma función:
+  // lo que se ve es lo que se guarda.
+  const paramsPrecio = {
+    descuento: Number(descuento) || 0,
+    markupDefault: Number(markupDef) || MARKUP_DEFAULT,
+  };
+  const calculadas = useMemo(
+    () =>
+      !mapping.codigo || !mapping.nombre
+        ? []
+        : rows.map((r) => {
+            const codigo = String(r[mapping.codigo] ?? "").trim();
+            return calcularFila(r, mapping, paramsPrecio, guardados.get(codigo));
+          }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, mapping, guardados, paramsPrecio.descuento, paramsPrecio.markupDefault],
+  );
+  const previa = calculadas.slice(0, 10);
+  const resumen = useMemo(() => {
+    const r = { sugerido: 0, costo: 0, manual: 0 };
+    for (const f of calculadas) r[f.origen]++;
+    return r;
+  }, [calculadas]);
+
+  const avisos = useMemo(() => {
+    const out: string[] = [];
+    for (const col of columnasDuplicadas(mapping)) {
+      out.push(
+        `La columna "${col.trim()}" está mapeada en más de un campo. Casi nunca es lo que se quiere: revisá que cada campo apunte a su columna.`,
+      );
+    }
+    const sinMapear = sugeridoSinMapear(headers, mapping);
+    if (sinMapear) {
+      out.push(
+        `El archivo trae la columna "${sinMapear.trim()}" y no está mapeada a "Sugerido al público (C/IVA)". Sin esa columna, el precio de venta se calcula desde el costo y queda por debajo del precio que sugiere el proveedor.`,
+      );
+    }
+    return out;
+  }, [mapping, headers]);
 
   return (
     <div className="space-y-4">
@@ -354,8 +446,8 @@ function ImportarProductos() {
                   onChange={(e) => setMarkupDef(Number(e.target.value))}
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Se aplica al costo para el precio de venta (si el producto no tiene markup
-                  propio).
+                  Se aplica al <strong>precio sugerido al público</strong>. Si el producto no tiene
+                  sugerido, se aplica al costo. Los productos con markup propio conservan el suyo.
                 </p>
               </div>
             </div>
@@ -389,23 +481,78 @@ function ImportarProductos() {
             </div>
           </Card>
 
+          {avisos.length > 0 && (
+            <Card className="p-4 border-warning/50 bg-warning/5">
+              <h3 className="font-semibold mb-2 flex items-center gap-2 text-sm">
+                <AlertTriangle className="h-4 w-4" /> Revisá el mapeo
+              </h3>
+              <ul className="text-xs space-y-1 list-disc pl-4">
+                {avisos.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           <Card className="p-4">
-            <h3 className="font-semibold mb-3">Vista previa ({rows.length} filas)</h3>
+            <h3 className="font-semibold mb-1">Vista previa ({rows.length} filas)</h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              Estos son los precios que se van a guardar, ya calculados.{" "}
+              {resumen.sugerido > 0 && (
+                <>
+                  <strong>{resumen.sugerido}</strong> desde el sugerido al público
+                  {" · "}
+                </>
+              )}
+              {resumen.costo > 0 && (
+                <>
+                  <strong>{resumen.costo}</strong> desde el costo
+                  {resumen.manual > 0 && " · "}
+                </>
+              )}
+              {resumen.manual > 0 && (
+                <>
+                  <strong>{resumen.manual}</strong> con el precio de la planilla
+                </>
+              )}
+            </p>
             <div className="max-h-64 overflow-auto text-xs">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {headers.map((h) => (
-                      <TableHead key={h}>{h}</TableHead>
-                    ))}
+                    <TableHead>Código</TableHead>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead className="text-right">Env.</TableHead>
+                    <TableHead className="text-right">Lista Quimex</TableHead>
+                    <TableHead className="text-right">Costo (−{descuento}%)</TableHead>
+                    <TableHead className="text-right">Costo c/IVA</TableHead>
+                    <TableHead className="text-right">Sugerido público</TableHead>
+                    <TableHead className="text-right">Venta c/IVA</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.slice(0, 10).map((r, i) => (
+                  {previa.map((f, i) => (
                     <TableRow key={i}>
-                      {headers.map((h) => (
-                        <TableCell key={h}>{String(r[h] ?? "")}</TableCell>
-                      ))}
+                      <TableCell className="font-mono">{f.codigo}</TableCell>
+                      <TableCell>{f.nombre}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {f.envase ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {f.precio_lista ? fmtMoney(f.precio_lista) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {f.precio_fabrica ? fmtMoney(f.precio_fabrica) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {f.costo_c_iva ? fmtMoney(f.costo_c_iva) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {f.precio_sugerido_publico ? fmtMoney(f.precio_sugerido_publico) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold">
+                        {fmtMoney(f.venta_c_iva)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -414,13 +561,15 @@ function ImportarProductos() {
             <Button
               className="mt-3"
               onClick={confirmar}
-              disabled={busy || !mapping.codigo || !mapping.nombre}
+              disabled={busy || !mapping.codigo || !mapping.nombre || !catalogoListo}
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               Confirmar importación
             </Button>
             {!mapping.codigo || !mapping.nombre ? (
               <p className="text-xs text-muted-foreground mt-2">Mapeá al menos Código y Nombre.</p>
+            ) : !catalogoListo ? (
+              <p className="text-xs text-muted-foreground mt-2">Leyendo el catálogo…</p>
             ) : null}
           </Card>
 

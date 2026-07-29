@@ -93,6 +93,19 @@ function ImportarProductos() {
   // con el cartel "Leyendo el catálogo…" para siempre.
   const [catalogo, setCatalogo] = useState<"cargando" | "listo" | "error">("cargando");
   const [progreso, setProgreso] = useState(0);
+  // "Proveedor de esta lista": etiqueta todas las filas del archivo. Es lo que
+  // permite que los 1104 productos de Quimex queden con su proveedor en la misma
+  // reimportación que ya hay que hacer por el precio sugerido.
+  const [proveedorId, setProveedorId] = useState<string>("");
+  const [proveedores, setProveedores] = useState<any[]>([]);
+  useEffect(() => {
+    supabase
+      .from("proveedores")
+      .select("id, razon_social, descuento_porcentaje")
+      .eq("activo", true)
+      .order("razon_social")
+      .then(({ data }) => setProveedores(data ?? []));
+  }, []);
   useEffect(() => {
     supabase
       .from("settings")
@@ -112,10 +125,13 @@ function ImportarProductos() {
         codigo: string;
         precio_sugerido_publico: number | null;
         markup_porcentaje: number | null;
+        proveedor_id: string | null;
       }>(async (desde, hasta) => {
         const { data, error, count } = await supabase
           .from("productos")
-          .select("codigo, precio_sugerido_publico, markup_porcentaje", { count: "exact" })
+          .select("codigo, precio_sugerido_publico, markup_porcentaje, proveedor_id", {
+            count: "exact",
+          })
           .order("codigo")
           .range(desde, hasta);
         return { data, error, count };
@@ -132,6 +148,7 @@ function ImportarProductos() {
               precio_sugerido_publico:
                 p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
               markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
+              proveedor_id: p.proveedor_id ?? null,
             },
           ]),
         ),
@@ -347,6 +364,8 @@ function ImportarProductos() {
           // que antes: el IVA pasó a ser un DIVISOR (el sugerido viene c/IVA), así
           // que un valor basura ya no ensucia la vista, corrompe lo que se factura.
           iva_porcentaje: f.iva_porcentaje,
+          // Sólo si se eligió uno: si no, no se pisa el que el producto ya tenía.
+          ...(proveedorId ? { proveedor_id: proveedorId } : {}),
           ...(mapping.categoria ? { categoria_id: cat_id ?? null } : {}),
           ...(mapping.marca ? { marca_id: mk_id ?? null } : {}),
           ...(mapping.unidad_medida
@@ -514,8 +533,40 @@ function ImportarProductos() {
           <Card className="p-4">
             <h3 className="font-semibold mb-3">Parámetros de precio</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <Label>Proveedor de esta lista</Label>
+                <Select
+                  value={proveedorId || "__none__"}
+                  onValueChange={(v) => {
+                    const id = v === "__none__" ? "" : v;
+                    setProveedorId(id);
+                    // El descuento del proveedor elegido se carga solo, pero queda
+                    // editable: la lista de hoy puede venir con otro.
+                    const prov = proveedores.find((x) => x.id === id);
+                    if (prov?.descuento_porcentaje != null)
+                      setDescuento(Number(prov.descuento_porcentaje));
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— (no cambiar el proveedor)</SelectItem>
+                    {proveedores.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.razon_social}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Todos los productos de este archivo van a quedar con este proveedor. Sirve para
+                  después poder filtrarlos y moverles los precios juntos. Si no elegís ninguno,{" "}
+                  <strong>no se toca</strong> el proveedor que ya tengan.
+                </p>
+              </div>
               <div>
-                <Label>Descuento de proveedor (Quimex) %</Label>
+                <Label>Descuento del proveedor %</Label>
                 <Input
                   type="number"
                   value={descuento}

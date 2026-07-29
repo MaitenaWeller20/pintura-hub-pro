@@ -52,7 +52,16 @@ import {
 } from "@/lib/precios";
 import { uuidv4 } from "@/lib/uuid";
 import { toast } from "sonner";
-import { Plus, Upload, Pencil, Printer, Percent, Trash2, ArchiveRestore } from "lucide-react";
+import {
+  Plus,
+  Upload,
+  Pencil,
+  Printer,
+  Percent,
+  Trash2,
+  ArchiveRestore,
+  History,
+} from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -540,42 +549,54 @@ function Productos() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {cu.isAdmin && (
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditing(p);
-                              setOpen(true);
-                            }}
-                            title="Editar"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          {p.archivado ? (
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title="Ver la historia de este producto"
+                          asChild
+                        >
+                          <Link to="/productos/$id/seguimiento" params={{ id: p.id }}>
+                            <History className="h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
+                        {cu.isAdmin && (
+                          <>
                             <Button
                               size="sm"
                               variant="ghost"
-                              title="Restaurar"
-                              data-testid={`restaurar-${p.codigo}`}
-                              onClick={() => restaurarM.mutate([p.id])}
+                              onClick={() => {
+                                setEditing(p);
+                                setOpen(true);
+                              }}
+                              title="Editar"
                             >
-                              <ArchiveRestore className="h-3.5 w-3.5 text-success" />
+                              <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              title="Eliminar"
-                              data-testid={`eliminar-${p.codigo}`}
-                              onClick={() => setAEliminar([p])}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          )}
-                        </div>
-                      )}
+                            {p.archivado ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="Restaurar"
+                                data-testid={`restaurar-${p.codigo}`}
+                                onClick={() => restaurarM.mutate([p.id])}
+                              >
+                                <ArchiveRestore className="h-3.5 w-3.5 text-success" />
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="Eliminar"
+                                data-testid={`eliminar-${p.codigo}`}
+                                onClick={() => setAEliminar([p])}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

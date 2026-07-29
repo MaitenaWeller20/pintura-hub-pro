@@ -33,6 +33,7 @@ import { Route as AuthenticatedVentasNuevaRouteImport } from './routes/_authenti
 import { Route as AuthenticatedProductosImportarRouteImport } from './routes/_authenticated/productos.importar'
 import { Route as AuthenticatedIngresosMercaderiaNuevoRouteImport } from './routes/_authenticated/ingresos-mercaderia.nuevo'
 import { Route as AuthenticatedComprasNuevaRouteImport } from './routes/_authenticated/compras.nueva'
+import { Route as AuthenticatedProductosIdSeguimientoRouteImport } from './routes/_authenticated/productos.$id.seguimiento'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -165,6 +166,12 @@ const AuthenticatedComprasNuevaRoute =
     path: '/compras/nueva',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedProductosIdSeguimientoRoute =
+  AuthenticatedProductosIdSeguimientoRouteImport.update({
+    id: '/productos/$id/seguimiento',
+    path: '/productos/$id/seguimiento',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -190,6 +197,7 @@ export interface FileRoutesByFullPath {
   '/ingresos-mercaderia/': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/productos/': typeof AuthenticatedProductosIndexRoute
   '/ventas/': typeof AuthenticatedVentasIndexRoute
+  '/productos/$id/seguimiento': typeof AuthenticatedProductosIdSeguimientoRoute
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
@@ -215,6 +223,7 @@ export interface FileRoutesByTo {
   '/ingresos-mercaderia': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/productos': typeof AuthenticatedProductosIndexRoute
   '/ventas': typeof AuthenticatedVentasIndexRoute
+  '/productos/$id/seguimiento': typeof AuthenticatedProductosIdSeguimientoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -242,6 +251,7 @@ export interface FileRoutesById {
   '/_authenticated/ingresos-mercaderia/': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/_authenticated/productos/': typeof AuthenticatedProductosIndexRoute
   '/_authenticated/ventas/': typeof AuthenticatedVentasIndexRoute
+  '/_authenticated/productos/$id/seguimiento': typeof AuthenticatedProductosIdSeguimientoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -269,6 +279,7 @@ export interface FileRouteTypes {
     | '/ingresos-mercaderia/'
     | '/productos/'
     | '/ventas/'
+    | '/productos/$id/seguimiento'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
@@ -294,6 +305,7 @@ export interface FileRouteTypes {
     | '/ingresos-mercaderia'
     | '/productos'
     | '/ventas'
+    | '/productos/$id/seguimiento'
   id:
     | '__root__'
     | '/_authenticated'
@@ -320,6 +332,7 @@ export interface FileRouteTypes {
     | '/_authenticated/ingresos-mercaderia/'
     | '/_authenticated/productos/'
     | '/_authenticated/ventas/'
+    | '/_authenticated/productos/$id/seguimiento'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -497,6 +510,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedComprasNuevaRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/productos/$id/seguimiento': {
+      id: '/_authenticated/productos/$id/seguimiento'
+      path: '/productos/$id/seguimiento'
+      fullPath: '/productos/$id/seguimiento'
+      preLoaderRoute: typeof AuthenticatedProductosIdSeguimientoRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -523,6 +543,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedIngresosMercaderiaIndexRoute: typeof AuthenticatedIngresosMercaderiaIndexRoute
   AuthenticatedProductosIndexRoute: typeof AuthenticatedProductosIndexRoute
   AuthenticatedVentasIndexRoute: typeof AuthenticatedVentasIndexRoute
+  AuthenticatedProductosIdSeguimientoRoute: typeof AuthenticatedProductosIdSeguimientoRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -550,6 +571,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedIngresosMercaderiaIndexRoute,
   AuthenticatedProductosIndexRoute: AuthenticatedProductosIndexRoute,
   AuthenticatedVentasIndexRoute: AuthenticatedVentasIndexRoute,
+  AuthenticatedProductosIdSeguimientoRoute:
+    AuthenticatedProductosIdSeguimientoRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

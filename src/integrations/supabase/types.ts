@@ -2374,6 +2374,53 @@ export type Database = {
         }
         Relationships: []
       }
+      seguimiento_producto: {
+        Row: {
+          cantidad: number | null
+          cantidad_anterior: number | null
+          cantidad_nueva: number | null
+          comprobante: string | null
+          con_quien: string | null
+          condicion_venta: string | null
+          created_at: string | null
+          id: string | null
+          motivo: string | null
+          producto_id: string | null
+          sucursal_id: string | null
+          tipo: Database["public"]["Enums"]["tipo_movimiento_stock"] | null
+          usuario_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_movimientos_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stock_inventario: {
         Row: {
           cantidad: number | null

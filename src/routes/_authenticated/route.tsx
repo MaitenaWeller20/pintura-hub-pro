@@ -1,14 +1,46 @@
-import { createFileRoute, Outlet, redirect, Link, useRouterState, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Outlet,
+  redirect,
+  Link,
+  useRouterState,
+  useNavigate,
+} from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
-  SidebarHeader, SidebarFooter,
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  SidebarHeader,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
 import {
-  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Truck, Wallet, Coins, BarChart3,
-  UserCog, Paintbrush, LogOut, Building2, Receipt, FileCheck2, Calculator, ShoppingBag, Banknote,
+  LayoutDashboard,
+  ShoppingCart,
+  Package,
+  Boxes,
+  Users,
+  Truck,
+  Wallet,
+  Coins,
+  BarChart3,
+  UserCog,
+  Paintbrush,
+  LogOut,
+  Building2,
+  Receipt,
+  FileCheck2,
+  Calculator,
+  ShoppingBag,
+  Banknote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,8 +77,16 @@ const groups: Array<{ label: string; items: MenuItem[] }> = [
     label: "Compras",
     items: [
       { to: "/compras", label: "Compras", icon: ShoppingBag, adminOnly: false },
-      { to: "/ingresos-mercaderia", label: "Ingresos de mercadería", icon: Truck, adminOnly: false },
+      {
+        to: "/ingresos-mercaderia",
+        label: "Ingresos de mercadería",
+        icon: Truck,
+        adminOnly: false,
+      },
       { to: "/proveedores", label: "Proveedores", icon: Building2, adminOnly: false },
+      // "Pagos a proveedores" completo, no "Pagos": /pagos es la plata que ENTRA
+      // de los clientes. Nombres parecidos, cosas opuestas.
+      { to: "/pagos-proveedores", label: "Pagos a proveedores", icon: Banknote, adminOnly: false },
       { to: "/gastos", label: "Gastos varios", icon: Banknote, adminOnly: false },
     ],
   },
@@ -80,7 +120,11 @@ function AuthenticatedLayout() {
   const navigate = useNavigate();
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Cargando…</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        Cargando…
+      </div>
+    );
   }
   if (!cu) return null;
 
@@ -135,9 +179,14 @@ function AuthenticatedLayout() {
 
           <SidebarFooter>
             <div className="px-2 py-2 text-xs group-data-[collapsible=icon]:hidden">
-              <div className="font-medium truncate">{cu.profile.nombre_completo || cu.profile.username}</div>
+              <div className="font-medium truncate">
+                {cu.profile.nombre_completo || cu.profile.username}
+              </div>
               <div className="flex items-center gap-1.5 mt-1">
-                <Badge variant={cu.isAdmin ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
+                <Badge
+                  variant={cu.isAdmin ? "default" : "secondary"}
+                  className="text-[10px] px-1.5 py-0"
+                >
                   {cu.isAdmin ? "ADMIN" : "EMPLEADO"}
                 </Badge>
                 {cu.sucursal && (
@@ -146,7 +195,12 @@ function AuthenticatedLayout() {
                   </span>
                 )}
               </div>
-              <Button variant="ghost" size="sm" className="w-full mt-2 justify-start" onClick={handleLogout}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full mt-2 justify-start"
+                onClick={handleLogout}
+              >
                 <LogOut className="h-3.5 w-3.5 mr-2" /> Salir
               </Button>
             </div>
@@ -167,7 +221,10 @@ function AuthenticatedLayout() {
             </nav>
             <div className="flex-1" />
             {cu.sucursal && !cu.isAdmin && (
-              <Badge variant="outline" className="gap-1"><Building2 className="h-3 w-3" />{cu.sucursal.nombre}</Badge>
+              <Badge variant="outline" className="gap-1">
+                <Building2 className="h-3 w-3" />
+                {cu.sucursal.nombre}
+              </Badge>
             )}
           </header>
           <main className="flex-1 overflow-auto p-4 md:p-6">

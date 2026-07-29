@@ -881,6 +881,33 @@ export type Database = {
         }
         Relationships: []
       }
+      precio_operaciones: {
+        Row: {
+          created_at: string
+          idempotency_key: string
+          operacion: string
+          porcentaje: number
+          productos: number
+          usuario_id: string
+        }
+        Insert: {
+          created_at?: string
+          idempotency_key: string
+          operacion: string
+          porcentaje: number
+          productos: number
+          usuario_id: string
+        }
+        Update: {
+          created_at?: string
+          idempotency_key?: string
+          operacion?: string
+          porcentaje?: number
+          productos?: number
+          usuario_id?: string
+        }
+        Relationships: []
+      }
       producto_codigos_proveedor: {
         Row: {
           codigo_proveedor: string
@@ -964,6 +991,7 @@ export type Database = {
           precio_lista: number
           precio_sin_iva: number
           precio_sugerido_publico: number | null
+          proveedor_id: string | null
           stock_minimo: number
           tamano_envase: number | null
           unidad_medida: string
@@ -986,6 +1014,7 @@ export type Database = {
           precio_lista?: number
           precio_sin_iva?: number
           precio_sugerido_publico?: number | null
+          proveedor_id?: string | null
           stock_minimo?: number
           tamano_envase?: number | null
           unidad_medida?: string
@@ -1008,6 +1037,7 @@ export type Database = {
           precio_lista?: number
           precio_sin_iva?: number
           precio_sugerido_publico?: number | null
+          proveedor_id?: string | null
           stock_minimo?: number
           tamano_envase?: number | null
           unidad_medida?: string
@@ -1026,6 +1056,20 @@ export type Database = {
             columns: ["marca_id"]
             isOneToOne: false
             referencedRelation: "marcas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "productos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "productos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
             referencedColumns: ["id"]
           },
         ]
@@ -1262,6 +1306,7 @@ export type Database = {
           condicion_iva: Database["public"]["Enums"]["tipo_cliente"]
           created_at: string
           cuit_dni: string | null
+          descuento_porcentaje: number | null
           direccion: string | null
           email: string | null
           id: string
@@ -1276,6 +1321,7 @@ export type Database = {
           condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
           created_at?: string
           cuit_dni?: string | null
+          descuento_porcentaje?: number | null
           direccion?: string | null
           email?: string | null
           id?: string
@@ -1290,6 +1336,7 @@ export type Database = {
           condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
           created_at?: string
           cuit_dni?: string | null
+          descuento_porcentaje?: number | null
           direccion?: string | null
           email?: string | null
           id?: string
@@ -2383,6 +2430,15 @@ export type Database = {
       }
       caja_esperado: { Args: { _sesion_id: string }; Returns: Json }
       caja_sesion_actual: { Args: { p_sucursal_id: string }; Returns: string }
+      cambiar_precios_masivo: {
+        Args: {
+          p_idempotency_key: string
+          p_operacion: string
+          p_porcentaje: number
+          p_producto_ids: string[]
+        }
+        Returns: Json
+      }
       cc_registrar_por_venta: {
         Args: { _venta_id: string }
         Returns: undefined

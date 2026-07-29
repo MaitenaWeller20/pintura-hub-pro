@@ -1,0 +1,295 @@
+-- ============================================================
+-- PROVEEDOR EN PRODUCTOS + cambios de precio masivos transaccionales.
+--
+-- El pedido: "KUM cambió la lista de precios, ahora le tienen que aumentar un
+-- 20%, a veces un 10%, entonces que se pueda seleccionar todos los productos de
+-- este proveedor para aplicarle el markup que sea".
+--
+-- Hoy los productos no tienen proveedor, y el descuento comercial del 42% vive
+-- en settings como si fuera de todos cuando en realidad es de Quimex.
+--
+-- Ver docs/superpowers/specs/2026-07-29-proveedor-en-productos-design.md
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 1. El proveedor del producto
+-- ------------------------------------------------------------
+ALTER TABLE public.productos
+  ADD COLUMN IF NOT EXISTS proveedor_id uuid REFERENCES public.proveedores(id);
+CREATE INDEX IF NOT EXISTS idx_productos_proveedor ON public.productos (proveedor_id);
+
+COMMENT ON COLUMN public.productos.proveedor_id IS
+  'Proveedor cuya LISTA DE PRECIOS gobierna el costo de este producto. NO es "los proveedores a los que se les puede comprar": para eso está producto_codigos_proveedor, que es una tabla de equivalencias de códigos y admite varios proveedores por producto.';
+
+-- ------------------------------------------------------------
+-- 2. El descuento comercial pasa a ser del proveedor
+-- ------------------------------------------------------------
+ALTER TABLE public.proveedores
+  ADD COLUMN IF NOT EXISTS descuento_porcentaje numeric(6,2);
+
+DO $$ BEGIN
+  ALTER TABLE public.proveedores
+    ADD CONSTRAINT proveedores_descuento_valido
+    CHECK (descuento_porcentaje IS NULL
+           OR (descuento_porcentaje >= 0 AND descuento_porcentaje < 100));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+COMMENT ON COLUMN public.proveedores.descuento_porcentaje IS
+  'Descuento comercial que este proveedor le hace al negocio sobre su precio de lista. NULL = usar settings.descuento_proveedor_porcentaje. 0 es un valor válido (comprar a precio de lista) y NO cae al global.';
+
+-- El global quedó sin tope en 20260720100000. Como NULL en el proveedor significa
+-- "usá el global", un 142 ahí vuelve a producir costos negativos y deja el
+-- catálogo invendible (crear_venta rechaza precios negativos).
+DO $$ BEGIN
+  ALTER TABLE public.settings
+    ADD CONSTRAINT settings_descuento_valido
+    CHECK (descuento_proveedor_porcentaje >= 0 AND descuento_proveedor_porcentaje < 100);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Cambiar el descuento comercial mueve el costo de TODO el catálogo de ese
+-- proveedor. Hasta ahora la tabla la podía escribir cualquier autenticado y el
+-- trigger sólo cuidaba la cuenta corriente.
+CREATE OR REPLACE FUNCTION public.guard_proveedores_credito()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NULL OR public.is_admin(auth.uid()) THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF COALESCE(NEW.condicion_cta_cte, false) IS TRUE THEN
+      RAISE EXCEPTION 'Sólo un administrador puede habilitar cuenta corriente de proveedor';
+    END IF;
+    IF NEW.descuento_porcentaje IS NOT NULL THEN
+      RAISE EXCEPTION 'Sólo un administrador puede fijar el descuento comercial del proveedor';
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.condicion_cta_cte IS DISTINCT FROM OLD.condicion_cta_cte THEN
+      RAISE EXCEPTION 'Sólo un administrador puede cambiar la cuenta corriente del proveedor';
+    END IF;
+    IF NEW.descuento_porcentaje IS DISTINCT FROM OLD.descuento_porcentaje THEN
+      RAISE EXCEPTION 'Sólo un administrador puede cambiar el descuento comercial del proveedor';
+    END IF;
+  END IF;
+  RETURN NEW;
+END; $$;
+
+-- ------------------------------------------------------------
+-- 3. Registro de operaciones masivas de precio
+--
+-- No hay historial de precios y no se pidió uno. Pero "aumentar 20%" NO es
+-- idempotente: aplicarlo dos veces da +44% y no se deshace con un botón. Esta
+-- tabla es la que hace que un doble click, un reintento o un F5 no repitan la
+-- operación — y de paso deja registrado quién movió los precios y cuándo.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.precio_operaciones (
+  idempotency_key uuid PRIMARY KEY,
+  operacion       text NOT NULL CHECK (operacion IN ('MARKUP','AUMENTO','RECALCULAR_COSTO')),
+  porcentaje      numeric(6,2) NOT NULL,
+  productos       integer NOT NULL,
+  usuario_id      uuid NOT NULL REFERENCES auth.users(id),
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_precio_operaciones_fecha
+  ON public.precio_operaciones (created_at DESC);
+
+GRANT SELECT ON public.precio_operaciones TO authenticated;
+GRANT ALL ON public.precio_operaciones TO service_role;
+ALTER TABLE public.precio_operaciones ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "precio_op select" ON public.precio_operaciones;
+CREATE POLICY "precio_op select" ON public.precio_operaciones
+  FOR SELECT TO authenticated USING (public.is_admin(auth.uid()));
+
+-- ------------------------------------------------------------
+-- 4. cambiar_precios_masivo
+--
+-- Toda la cadena de precios de src/lib/precios.ts, en SQL y en UNA transacción.
+--
+-- Por qué acá y no en el cliente: el camino viejo hacía un UPDATE por producto
+-- desde el navegador. Con 1104 productos son minutos, y si se cortaba a la mitad
+-- quedaba medio catálogo con precio nuevo y medio con el viejo, sin ninguna marca
+-- de dónde se cortó. Para 'AUMENTO', que no es idempotente, eso es irreparable.
+--
+-- Operaciones:
+--   MARKUP            fija markup_porcentaje = p_porcentaje.                 idempotente
+--   AUMENTO           multiplica el precio de LISTA por (1+p/100) y RE-DERIVA
+--                     el costo con el descuento del proveedor.           NO idempotente
+--   RECALCULAR_COSTO  re-deriva el costo desde la lista con el descuento
+--                     actual, sin tocar la lista.                            idempotente
+--
+-- REGLA de los precios a mano: las tres operaciones actualizan siempre los
+-- precios que vienen del PROVEEDOR (lista, costo, sugerido), pero recalculan el
+-- precio de VENTA sólo si el guardado coincide con la fórmula. Un precio puesto a
+-- dedo es una decisión del negocio; se conserva y se informa aparte.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.cambiar_precios_masivo(
+  p_producto_ids    uuid[],
+  p_operacion       text,
+  p_porcentaje      numeric,
+  p_idempotency_key uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_uid          uuid := auth.uid();
+  v_previa       public.precio_operaciones%ROWTYPE;
+  v_encontrados  integer;
+  v_pedidos      integer := COALESCE(array_length(p_producto_ids, 1), 0);
+  v_actualizados integer := 0;
+  v_manual       integer := 0;
+  v_sin_base     integer := 0;
+  v_factor       numeric;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'No autenticado';
+  END IF;
+  IF NOT public.is_admin(v_uid) THEN
+    RAISE EXCEPTION 'Sólo un administrador puede cambiar precios de forma masiva';
+  END IF;
+  IF p_operacion NOT IN ('MARKUP','AUMENTO','RECALCULAR_COSTO') THEN
+    RAISE EXCEPTION 'Operación desconocida: %', p_operacion;
+  END IF;
+  IF p_idempotency_key IS NULL THEN
+    RAISE EXCEPTION 'Falta la clave de idempotencia';
+  END IF;
+  IF v_pedidos = 0 THEN
+    RAISE EXCEPTION 'No se seleccionó ningún producto';
+  END IF;
+  -- Un markup o un aumento negativo es casi siempre un tipeo. -100% sería regalar.
+  IF p_porcentaje IS NULL OR p_porcentaje < 0 OR p_porcentaje > 1000 THEN
+    RAISE EXCEPTION 'Porcentaje fuera de rango: %', p_porcentaje;
+  END IF;
+
+  -- Reintento / doble click / F5: la misma operación no se aplica dos veces.
+  SELECT * INTO v_previa FROM public.precio_operaciones
+   WHERE idempotency_key = p_idempotency_key;
+  IF FOUND THEN
+    RETURN jsonb_build_object(
+      'ya_aplicado', true, 'actualizados', 0, 'precio_manual', 0, 'sin_base', 0,
+      'productos', v_previa.productos);
+  END IF;
+
+  v_factor := 1 + p_porcentaje / 100.0;
+
+  -- Se bloquean las filas antes de tocarlas: si una venta está leyendo el precio
+  -- (crear_venta hace FOR UPDATE sobre productos), esto espera en vez de pisarla.
+  CREATE TEMP TABLE _objetivo ON COMMIT DROP AS
+  SELECT p.id,
+         p.precio_lista,
+         p.precio_fabrica,
+         p.precio_sugerido_publico,
+         p.precio_sin_iva,
+         p.iva_porcentaje,
+         COALESCE(p.markup_porcentaje, s.markup_default_porcentaje, 30) AS markup,
+         COALESCE(prov.descuento_porcentaje, s.descuento_proveedor_porcentaje, 42) AS descuento
+    FROM public.productos p
+    CROSS JOIN LATERAL (SELECT * FROM public.settings LIMIT 1) s
+    LEFT JOIN public.proveedores prov ON prov.id = p.proveedor_id
+   WHERE p.id = ANY(p_producto_ids)
+   FOR UPDATE OF p;
+
+  SELECT count(*) INTO v_encontrados FROM _objetivo;
+  IF v_encontrados <> v_pedidos THEN
+    RAISE EXCEPTION 'Se seleccionaron % productos pero se encontraron %. No se aplicó nada.',
+      v_pedidos, v_encontrados;
+  END IF;
+
+  -- Un solo UPDATE. Cada columna decide su valor nuevo según la operación, y el
+  -- precio de venta se recalcula sólo si el guardado coincidía con la fórmula
+  -- vieja (o sea: si no estaba puesto a mano).
+  WITH calc AS (
+    SELECT o.id,
+           o.markup, o.descuento, o.iva_porcentaje AS iva,
+           -- ¿el precio guardado lo explica la fórmula, con los valores VIEJOS?
+           (CASE
+              WHEN o.precio_sugerido_publico > 0 THEN
+                abs(o.precio_sin_iva
+                    - round(o.precio_sugerido_publico * (1 + o.markup/100.0)
+                            / (1 + o.iva_porcentaje/100.0), 2)) <= 0.01
+              WHEN o.precio_fabrica > 0 THEN
+                abs(o.precio_sin_iva - round(o.precio_fabrica * (1 + o.markup/100.0), 2)) <= 0.01
+              ELSE false
+            END) AS derivado,
+           -- ¿tiene alguna base sobre la que operar?
+           (o.precio_lista > 0 OR o.precio_fabrica > 0
+            OR COALESCE(o.precio_sugerido_publico, 0) > 0) AS con_base,
+           -- lista nueva
+           (CASE WHEN p_operacion = 'AUMENTO' AND o.precio_lista > 0
+                 THEN round(o.precio_lista * v_factor, 2)
+                 ELSE o.precio_lista END) AS lista_new,
+           -- sugerido nuevo
+           (CASE WHEN p_operacion = 'AUMENTO' AND o.precio_sugerido_publico > 0
+                 THEN round(o.precio_sugerido_publico * v_factor, 2)
+                 ELSE o.precio_sugerido_publico END) AS sug_new,
+           -- markup nuevo
+           (CASE WHEN p_operacion = 'MARKUP' THEN p_porcentaje ELSE o.markup END) AS mk_new,
+           o.precio_lista, o.precio_fabrica, o.precio_sin_iva
+      FROM _objetivo o
+  ), calc2 AS (
+    SELECT c.*,
+           -- costo nuevo: si hay lista, se RE-DERIVA con el descuento (nunca se
+           -- multiplica el costo guardado, que puede venir de un descuento
+           -- equivocado o de una edición a mano). Si no hay lista, la única base
+           -- es el costo, así que ahí sí se multiplica.
+           (CASE
+              WHEN p_operacion IN ('AUMENTO','RECALCULAR_COSTO') AND c.lista_new > 0
+                THEN round(c.lista_new * (1 - c.descuento/100.0), 2)
+              WHEN p_operacion = 'AUMENTO' AND c.precio_lista = 0 AND c.precio_fabrica > 0
+                THEN round(c.precio_fabrica * v_factor, 2)
+              ELSE c.precio_fabrica
+            END) AS costo_new
+      FROM calc c
+  ), final AS (
+    SELECT c.*,
+           (CASE
+              WHEN c.sug_new > 0
+                THEN round(c.sug_new * (1 + c.mk_new/100.0) / (1 + c.iva/100.0), 2)
+              ELSE round(c.costo_new * (1 + c.mk_new/100.0), 2)
+            END) AS venta_new
+      FROM calc2 c
+  )
+  UPDATE public.productos p
+     SET precio_lista            = f.lista_new,
+         precio_fabrica          = f.costo_new,
+         precio_sugerido_publico = f.sug_new,
+         markup_porcentaje       = CASE WHEN p_operacion = 'MARKUP'
+                                        THEN p_porcentaje ELSE p.markup_porcentaje END,
+         -- Sólo se toca la venta si estaba derivada y el resultado es > 0. Un
+         -- precio a mano se conserva; vender a $0 no es una opción.
+         precio_sin_iva          = CASE WHEN f.derivado AND f.venta_new > 0
+                                        THEN f.venta_new ELSE p.precio_sin_iva END
+    FROM final f
+   WHERE p.id = f.id AND f.con_base;
+
+  SELECT count(*) FILTER (WHERE NOT con_base),
+         count(*) FILTER (WHERE con_base AND NOT derivado),
+         count(*) FILTER (WHERE con_base AND derivado)
+    INTO v_sin_base, v_manual, v_actualizados
+    FROM (
+      SELECT (o.precio_lista > 0 OR o.precio_fabrica > 0
+              OR COALESCE(o.precio_sugerido_publico, 0) > 0) AS con_base,
+             (CASE
+                WHEN o.precio_sugerido_publico > 0 THEN
+                  abs(o.precio_sin_iva
+                      - round(o.precio_sugerido_publico * (1 + o.markup/100.0)
+                              / (1 + o.iva_porcentaje/100.0), 2)) <= 0.01
+                WHEN o.precio_fabrica > 0 THEN
+                  abs(o.precio_sin_iva - round(o.precio_fabrica * (1 + o.markup/100.0), 2)) <= 0.01
+                ELSE false
+              END) AS derivado
+        FROM _objetivo o
+    ) x;
+
+  INSERT INTO public.precio_operaciones
+    (idempotency_key, operacion, porcentaje, productos, usuario_id)
+  VALUES (p_idempotency_key, p_operacion, p_porcentaje, v_pedidos, v_uid);
+
+  RETURN jsonb_build_object(
+    'ya_aplicado', false,
+    'actualizados', v_actualizados,
+    'precio_manual', v_manual,
+    'sin_base', v_sin_base,
+    'productos', v_pedidos);
+END; $$;
+
+REVOKE ALL ON FUNCTION public.cambiar_precios_masivo(uuid[], text, numeric, uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.cambiar_precios_masivo(uuid[], text, numeric, uuid) TO authenticated;

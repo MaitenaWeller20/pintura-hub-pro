@@ -93,6 +93,7 @@ function Productos() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState<string>("all");
+  const [provFilter, setProvFilter] = useState<string>("all");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
@@ -118,7 +119,10 @@ function Productos() {
       const { filas } = await traerTodo<any>(async (desde, hasta) => {
         const { data, error, count } = await supabase
           .from("productos")
-          .select("*, categoria:categorias(id,nombre), marca:marcas(id,nombre)", { count: "exact" })
+          .select(
+            "*, categoria:categorias(id,nombre), marca:marcas(id,nombre), proveedor:proveedores(id,razon_social,descuento_porcentaje)",
+            { count: "exact" },
+          )
           .order("nombre")
           .order("id")
           .range(desde, hasta);
@@ -131,6 +135,12 @@ function Productos() {
     queryKey: ["categorias"],
     queryFn: async () =>
       ((await supabase.from("categorias").select("*").order("nombre")).data ?? []) as any[],
+  });
+  const { data: proveedores = [] } = useQuery({
+    queryKey: ["proveedores"],
+    queryFn: async () =>
+      ((await supabase.from("proveedores").select("id, razon_social, descuento_porcentaje").order("razon_social"))
+        .data ?? []) as any[],
   });
   const { data: marcas = [] } = useQuery({
     queryKey: ["marcas"],
@@ -145,6 +155,10 @@ function Productos() {
         if (!verArchivados && p.archivado) return false;
         if (verArchivados && !p.archivado) return false;
         if (catFilter !== "all" && p.categoria_id !== catFilter) return false;
+        // "sin" encuentra los que quedaron sin etiquetar; si no, son invisibles.
+        if (provFilter === "sin" && p.proveedor_id != null) return false;
+        if (provFilter !== "all" && provFilter !== "sin" && p.proveedor_id !== provFilter)
+          return false;
         if (
           q &&
           !`${p.codigo} ${p.nombre} ${p.marca?.nombre ?? ""}`
@@ -154,7 +168,7 @@ function Productos() {
           return false;
         return true;
       }),
-    [productos, q, catFilter, verArchivados],
+    [productos, q, catFilter, provFilter, verArchivados],
   );
 
   const toggleSel = (id: string) =>
@@ -377,6 +391,20 @@ function Productos() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={provFilter} onValueChange={setProvFilter}>
+            <SelectTrigger className="w-52">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los proveedores</SelectItem>
+              <SelectItem value="sin">Sin proveedor</SelectItem>
+              {proveedores.map((p: any) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.razon_social}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {cu.isAdmin && (
             <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer ml-auto">
               <Checkbox
@@ -409,7 +437,7 @@ function Productos() {
                 <TableHead>Código</TableHead>
                 <TableHead>Nombre</TableHead>
                 <TableHead className="text-right">Env.</TableHead>
-                <TableHead>Marca</TableHead>
+                <TableHead>Proveedor</TableHead>
                 <TableHead className="text-right">Lista</TableHead>
                 <TableHead className="text-right">Costo</TableHead>
                 <TableHead className="text-right">Costo c/IVA</TableHead>
@@ -450,7 +478,9 @@ function Productos() {
                     <TableCell className="text-right text-muted-foreground text-xs tabular-nums">
                       {p.tamano_envase ?? "—"}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{p.marca?.nombre}</TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {p.proveedor?.razon_social ?? "—"}
+                    </TableCell>
                     <TableCell className="text-right font-mono text-muted-foreground">
                       {v.lista ? fmtMoney(v.lista) : "—"}
                     </TableCell>

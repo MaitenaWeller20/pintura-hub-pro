@@ -48,7 +48,14 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Cambiar el descuento comercial mueve el costo de TODO el catálogo de ese
 -- proveedor. Hasta ahora la tabla la podía escribir cualquier autenticado y el
--- trigger sólo cuidaba la cuenta corriente.
+-- trigger sólo cuidaba la cuenta corriente y el criterio de códigos.
+--
+-- OJO al redefinir esta función: es la TERCERA versión. `CREATE OR REPLACE`
+-- reemplaza el cuerpo entero, así que hay que arrastrar TODAS las protecciones
+-- anteriores o se borran en silencio:
+--   20260715100000  condicion_cta_cte
+--   20260724100000  codigos_coinciden_con_los_propios
+--   20260729110000  descuento_porcentaje              (esta)
 CREATE OR REPLACE FUNCTION public.guard_proveedores_credito()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
@@ -59,12 +66,18 @@ BEGIN
     IF COALESCE(NEW.condicion_cta_cte, false) IS TRUE THEN
       RAISE EXCEPTION 'Sólo un administrador puede habilitar cuenta corriente de proveedor';
     END IF;
+    IF COALESCE(NEW.codigos_coinciden_con_los_propios, false) IS TRUE THEN
+      RAISE EXCEPTION 'Sólo un administrador puede declarar que los códigos del proveedor son los propios';
+    END IF;
     IF NEW.descuento_porcentaje IS NOT NULL THEN
       RAISE EXCEPTION 'Sólo un administrador puede fijar el descuento comercial del proveedor';
     END IF;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.condicion_cta_cte IS DISTINCT FROM OLD.condicion_cta_cte THEN
       RAISE EXCEPTION 'Sólo un administrador puede cambiar la cuenta corriente del proveedor';
+    END IF;
+    IF NEW.codigos_coinciden_con_los_propios IS DISTINCT FROM OLD.codigos_coinciden_con_los_propios THEN
+      RAISE EXCEPTION 'Sólo un administrador puede cambiar el criterio de códigos del proveedor';
     END IF;
     IF NEW.descuento_porcentaje IS DISTINCT FROM OLD.descuento_porcentaje THEN
       RAISE EXCEPTION 'Sólo un administrador puede cambiar el descuento comercial del proveedor';

@@ -213,3 +213,102 @@ export const ORIGEN_AYUDA: Record<OrigenPrecio, string> = {
   costo: "El producto no tiene precio sugerido, así que la venta sale del costo + el markup.",
   manual: "El producto no tiene ni sugerido ni costo cargado: el precio está puesto a mano.",
 };
+
+// ---------------------------------------------------------------------------
+// Operaciones masivas de precio
+//
+// El cálculo REAL lo hace la RPC `cambiar_precios_masivo` en SQL, en una
+// transacción. Esto de acá es el ESPEJO para la vista previa: le muestra a la
+// persona qué va a pasar antes de apretar el botón. Los dos tienen que dar lo
+// mismo; si divergen, el que manda es el SQL y esto es un bug.
+// Ver docs/superpowers/specs/2026-07-29-proveedor-en-productos-design.md §6.
+// ---------------------------------------------------------------------------
+
+export type OperacionPrecio = "MARKUP" | "AUMENTO" | "RECALCULAR_COSTO";
+
+export const OPERACION_LABEL: Record<OperacionPrecio, string> = {
+  MARKUP: "Poner markup",
+  AUMENTO: "Aumentar los precios",
+  RECALCULAR_COSTO: "Recalcular el costo",
+};
+
+export type ProductoOperable = EntradaPrecio & {
+  precio_lista?: number | null;
+  precio_sin_iva?: number | null;
+  proveedor?: { descuento_porcentaje?: number | null } | null;
+};
+
+export type ResultadoOperacion = {
+  precio_lista: number;
+  precio_fabrica: number;
+  precio_sugerido_publico: number | null;
+  precio_sin_iva: number;
+  venta_c_iva: number;
+  /** Tiene alguna base sobre la que operar. Si no, se saltea. */
+  con_base: boolean;
+  /** El precio guardado lo explicaba la fórmula (o sea: no estaba puesto a mano). */
+  derivado: boolean;
+};
+
+export function simularOperacion(
+  p: ProductoOperable,
+  op: OperacionPrecio,
+  pct: number,
+  ctx: { markupDefault?: number | null; descuentoGlobal?: number | null } = {},
+): ResultadoOperacion {
+  const factor = 1 + num(pct, 0) / 100;
+  const lista = num(p.precio_lista, 0);
+  const costo = num(p.precio_fabrica, 0);
+  const sugerido = num(p.precio_sugerido_publico, 0);
+  const descuento = descuentoEfectivo(p.proveedor, {
+    descuento_proveedor_porcentaje: ctx.descuentoGlobal,
+  });
+  const markupViejo = markupEfectivo(p, { markupDefault: ctx.markupDefault });
+  const markupNuevo = op === "MARKUP" ? num(pct, markupViejo) : markupViejo;
+
+  const con_base = lista > 0 || costo > 0 || sugerido > 0;
+  const derivado = coincideConFormula(p, { markupDefault: ctx.markupDefault });
+
+  const listaNueva = op === "AUMENTO" && lista > 0 ? r2(lista * factor) : lista;
+  const sugeridoNuevo =
+    op === "AUMENTO" && sugerido > 0
+      ? r2(sugerido * factor)
+      : p.precio_sugerido_publico == null
+        ? null
+        : sugerido;
+
+  // El costo se RE-DERIVA desde la lista siempre que haya lista: multiplicar el
+  // costo guardado propagaría cualquier error que ya tuviera (un descuento
+  // equivocado, una edición a mano). Sin lista, la única base es el costo.
+  let costoNuevo = costo;
+  if ((op === "AUMENTO" || op === "RECALCULAR_COSTO") && listaNueva > 0) {
+    costoNuevo = costoDeLista(listaNueva, descuento);
+  } else if (op === "AUMENTO" && lista === 0 && costo > 0) {
+    costoNuevo = r2(costo * factor);
+  }
+
+  const calc = calcularPrecios(
+    {
+      precio_fabrica: costoNuevo,
+      precio_sugerido_publico: sugeridoNuevo,
+      markup_porcentaje: markupNuevo,
+      iva_porcentaje: p.iva_porcentaje,
+    },
+    { markupDefault: ctx.markupDefault },
+  );
+
+  // Un precio puesto a mano se conserva: la operación mueve los precios que
+  // vienen del proveedor, no la decisión comercial de quien lo escribió.
+  const ventaNueva = derivado && calc.precio_sin_iva > 0 ? calc.precio_sin_iva : num(p.precio_sin_iva, 0);
+  const iva = normalizarIva(p.iva_porcentaje);
+
+  return {
+    precio_lista: con_base ? listaNueva : lista,
+    precio_fabrica: con_base ? costoNuevo : costo,
+    precio_sugerido_publico: con_base ? sugeridoNuevo : (p.precio_sugerido_publico ?? null),
+    precio_sin_iva: con_base ? ventaNueva : num(p.precio_sin_iva, 0),
+    venta_c_iva: r2((con_base ? ventaNueva : num(p.precio_sin_iva, 0)) * (1 + iva / 100)),
+    con_base,
+    derivado,
+  };
+}

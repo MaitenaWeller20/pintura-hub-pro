@@ -153,6 +153,26 @@ if echo "$neg" | grep -q "fuera de rango"; then echo "  ✓ rechaza porcentaje n
 desc=$($PSQL -c "UPDATE public.settings SET descuento_proveedor_porcentaje = 142;" 2>&1 || true)
 if echo "$desc" | grep -q "settings_descuento_valido"; then echo "  ✓ rechaza un descuento global de 142"; else echo "  ✗ aceptó 142 — $desc"; fallos=$((fallos+1)); fi
 
+# guard_proveedores_credito ya va por su TERCERA versión y cada una la reescribe
+# entera con CREATE OR REPLACE. La de 20260729110000 se escribió mirando la
+# primera y borró en silencio la protección que había agregado la segunda. Este
+# test fija las tres para que no vuelva a pasar.
+echo "── 7. El guard de proveedores protege las TRES cosas ─────"
+for campo in "condicion_cta_cte = true" \
+             "codigos_coinciden_con_los_propios = true" \
+             "descuento_porcentaje = 10"; do
+  out=$($PSQL -tAc "
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub',(SELECT id::text FROM auth.users WHERE email='empleado@local.test'),
+                    'role','authenticated')::text, false);
+UPDATE public.proveedores SET $campo WHERE razon_social='TEST KUM';" 2>&1 || true)
+  if echo "$out" | grep -q "administrador"; then
+    echo "  ✓ un empleado no puede cambiar ${campo%% *}"
+  else
+    echo "  ✗ un empleado PUDO cambiar ${campo%% *} — $out"; fallos=$((fallos+1))
+  fi
+done
+
 echo "── Limpieza ──────────────────────────────────────────────"
 $PSQL <<'SQL' > /dev/null
 DELETE FROM public.productos WHERE codigo LIKE 'MAS-%';

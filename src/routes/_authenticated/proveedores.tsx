@@ -50,7 +50,7 @@ function ProveedoresPage() {
       </SectionCard>
 
       <DataTable
-        columns={["Razón social", "CUIT", "Condición IVA", "Cta Cte", "Teléfono", ""]}
+        columns={["Razón social", "CUIT", "Condición IVA", "Cta Cte", "Descuento", "Teléfono", ""]}
         loading={isLoading}
         isEmpty={filtered.length === 0}
         empty={{ text: "No hay proveedores para mostrar." }}
@@ -64,6 +64,11 @@ function ProveedoresPage() {
             <TableCell className="font-mono text-xs">{p.cuit_dni ?? "—"}</TableCell>
             <TableCell className="text-muted-foreground text-xs">{tipoClienteLabel[p.condicion_iva]}</TableCell>
             <TableCell>{p.condicion_cta_cte ? <StatusPill tone="success">Sí</StatusPill> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+            <TableCell className="tabular-nums">
+              {p.descuento_porcentaje == null
+                ? <span className="text-xs text-muted-foreground">global</span>
+                : `${Number(p.descuento_porcentaje)}%`}
+            </TableCell>
             <TableCell>{p.telefono ?? "—"}</TableCell>
             <TableCell>
               <div className="flex gap-1 justify-end">
@@ -86,6 +91,7 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
   const [form, setForm] = useState<any>(editing ?? {
     razon_social: "", cuit_dni: "", condicion_iva: "RESPONSABLE_INSCRIPTO",
     telefono: "", email: "", direccion: "", condicion_cta_cte: false, activo: true,
+    descuento_porcentaje: null,
   });
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   const cuitError = validarCuitDni(form.cuit_dni);
@@ -139,6 +145,26 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
           <div><Label>Teléfono</Label><Input value={form.telefono ?? ""} onChange={(e) => set("telefono", e.target.value)} /></div>
           <div><Label>Email</Label><Input value={form.email ?? ""} onChange={(e) => set("email", e.target.value)} /></div>
           <div className="col-span-2"><Label>Dirección</Label><Input value={form.direccion ?? ""} onChange={(e) => set("direccion", e.target.value)} /></div>
+          <div className="col-span-2">
+            <Label>
+              Descuento comercial %{" "}
+              <span className="text-xs text-muted-foreground">(vacío = usa el general)</span>
+            </Label>
+            <Input
+              type="number" min={0} max={99} step="0.01"
+              value={form.descuento_porcentaje ?? ""}
+              disabled={!cu?.isAdmin}
+              onChange={(e) =>
+                set("descuento_porcentaje", e.target.value === "" ? null : Number(e.target.value))
+              }
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              El descuento que este proveedor le hace sobre su precio de lista. Con eso se calcula el
+              costo: <strong>precio de lista − este %</strong>. Cambiarlo <strong>no recalcula</strong> los
+              costos que ya están cargados —para eso, en Productos, filtrá por este proveedor y usá{" "}
+              <strong>Recalcular el costo</strong>.
+            </p>
+          </div>
           <label className="col-span-2 flex items-center gap-2 text-sm border border-border rounded p-2 bg-muted/30">
             <input type="checkbox" checked={!!form.condicion_cta_cte} disabled={!cu?.isAdmin}
               onChange={(e) => set("condicion_cta_cte", e.target.checked)} />

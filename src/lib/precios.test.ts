@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   ALICUOTAS_IVA,
+  DESCUENTO_PROVEEDOR_DEFAULT,
   MARKUP_DEFAULT,
   calcularPrecios,
   costoDeLista,
   normalizarIva,
   baseDelPrecio,
+  descuentoEfectivo,
   coincideConFormula,
 } from "./precios";
 
@@ -31,6 +33,36 @@ describe("costoDeLista", () => {
     expect(costoDeLista("", DESCUENTO)).toBe(0);
     // Sin descuento válido cae al del negocio, no a 0% (que inflaría el costo).
     expect(costoDeLista(LISTA, null)).toBe(COSTO);
+  });
+});
+
+describe("descuentoEfectivo", () => {
+  it("el del proveedor le gana al global", () => {
+    expect(descuentoEfectivo({ descuento_porcentaje: 35 }, { descuento_proveedor_porcentaje: 42 }))
+      .toBe(35);
+  });
+
+  it("sin descuento propio hereda el global", () => {
+    expect(
+      descuentoEfectivo({ descuento_porcentaje: null }, { descuento_proveedor_porcentaje: 42 }),
+    ).toBe(42);
+    expect(descuentoEfectivo(null, { descuento_proveedor_porcentaje: 42 })).toBe(42);
+  });
+
+  // Un proveedor al que se le compra a precio de lista, sin descuento. Si esto
+  // cayera al global, sus costos quedarían 42% más baratos de lo que son.
+  it("un descuento de 0 es válido y NO cae al global", () => {
+    expect(descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_proveedor_porcentaje: 42 }))
+      .toBe(0);
+  });
+
+  it("sin nada cargado usa el del negocio", () => {
+    expect(descuentoEfectivo(null, null)).toBe(DESCUENTO_PROVEEDOR_DEFAULT);
+    expect(DESCUENTO_PROVEEDOR_DEFAULT).toBe(42);
+  });
+
+  it("se enchufa con costoDeLista", () => {
+    expect(costoDeLista(LISTA, descuentoEfectivo({ descuento_porcentaje: 35 }, null))).toBe(20003.36);
   });
 });
 

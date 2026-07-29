@@ -38,6 +38,27 @@ const num = (v: unknown, def: number): number => {
 };
 
 /**
+ * El descuento comercial que corresponde aplicarle a un producto.
+ *
+ * Escalera: el del proveedor, si no el global de settings, si no el del negocio.
+ * Es la misma forma que ya tiene el markup (`producto ?? settings ?? default`),
+ * para no inventar un concepto nuevo.
+ *
+ * Pregunta por `null`, NO por falsy: un descuento de **0 es válido** —comprarle a
+ * un proveedor a precio de lista, sin descuento— y no puede caer al global. Es el
+ * mismo error que antes convertía un markup de 0% en 30%.
+ */
+export function descuentoEfectivo(
+  proveedor?: { descuento_porcentaje?: number | null } | null,
+  settings?: { descuento_proveedor_porcentaje?: number | null } | null,
+): number {
+  if (proveedor?.descuento_porcentaje != null) return Number(proveedor.descuento_porcentaje);
+  if (settings?.descuento_proveedor_porcentaje != null)
+    return Number(settings.descuento_proveedor_porcentaje);
+  return DESCUENTO_PROVEEDOR_DEFAULT;
+}
+
+/**
  * Costo (precio de fábrica) desde el precio de lista del proveedor.
  *
  * Se llama SÓLO donde se ingiere una lista: la importación y el campo "Precio de

@@ -1024,7 +1024,9 @@ function PreciosDialog({
     r: simularOperacion(p, op, porcentaje, { markupDefault, descuentoGlobal }),
   }));
   const conBase = simulados.filter((s: any) => s.r.con_base);
-  const aMano = conBase.filter((s: any) => !s.r.derivado).length;
+  const cambian = conBase.filter((s: any) => s.r.cambia);
+  const aMano = cambian.filter((s: any) => !s.r.derivado).length;
+  const sinCambio = conBase.length - cambian.length;
   const sinBase = simulados.length - conBase.length;
 
   const m = useMutation({
@@ -1128,17 +1130,18 @@ function PreciosDialog({
                 de darse cuenta antes. "Aumentar" no se deshace con un botón. */}
             <div className="rounded-lg bg-muted/30 p-3 text-xs space-y-1">
               <p className="font-medium">Así van a quedar:</p>
-              {conBase.slice(0, 3).map(({ p, r }: any) => (
+              {cambian.slice(0, 3).map(({ p, r }: any) => (
                 <div key={p.id} className="font-mono flex flex-wrap gap-x-3">
                   <span className="min-w-[12rem] truncate">{p.nombre}</span>
                   {/* Se muestra la columna que ESTA operación cambia: mostrar la
                       lista en "recalcular el costo" —que no la toca— dejaba a la
                       vista previa sin decir nada sobre lo único que iba a pasar. */}
-                  {op === "RECALCULAR_COSTO" ? (
+                  {op !== "MARKUP" && (
                     <span className="text-muted-foreground">
                       costo {fmtMoney(p.precio_fabrica ?? 0)} → {fmtMoney(r.precio_fabrica)}
                     </span>
-                  ) : (
+                  )}
+                  {op === "AUMENTO" && (
                     <span className="text-muted-foreground">
                       lista {fmtMoney(p.precio_lista ?? 0)} → {fmtMoney(r.precio_lista)}
                     </span>
@@ -1150,8 +1153,18 @@ function PreciosDialog({
                   </span>
                 </div>
               ))}
-              {conBase.length > 3 && (
-                <p className="text-muted-foreground">…y {conBase.length - 3} productos más</p>
+              {cambian.length > 3 && (
+                <p className="text-muted-foreground">…y {cambian.length - 3} productos más</p>
+              )}
+              {cambian.length === 0 && (
+                <p className="text-muted-foreground">
+                  Ninguno de los seleccionados cambia con esta operación: ya están como corresponde.
+                </p>
+              )}
+              {sinCambio > 0 && cambian.length > 0 && (
+                <p className="text-muted-foreground">
+                  {sinCambio} ya están como corresponde y no se tocan.
+                </p>
               )}
               {aMano > 0 && (
                 <p className="text-muted-foreground">

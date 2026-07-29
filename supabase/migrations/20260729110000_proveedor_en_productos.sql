@@ -173,6 +173,13 @@ BEGIN
     RAISE EXCEPTION 'Porcentaje fuera de rango: %', p_porcentaje;
   END IF;
 
+  -- Serializa los llamados con la MISMA clave. Sin esto, dos clicks simultáneos
+  -- pasaban los dos el SELECT de abajo y el perdedor moría con el error crudo del
+  -- índice único ("duplicate key value violates...") por una operación que SÍ se
+  -- había aplicado. Los datos aguantaban (rollback completo), pero el cartel era
+  -- incomprensible. Mismo recurso que ajustar_stock_masivo.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_idempotency_key::text, 0));
+
   -- Reintento / doble click / F5: la misma operación no se aplica dos veces.
   SELECT * INTO v_previa FROM public.precio_operaciones
    WHERE idempotency_key = p_idempotency_key;
@@ -193,8 +200,19 @@ BEGIN
 
   v_factor := 1 + p_porcentaje / 100.0;
 
-  -- Se bloquean las filas antes de tocarlas: si una venta está leyendo el precio
-  -- (crear_venta hace FOR UPDATE sobre productos), esto espera en vez de pisarla.
+  -- ANTI-DEADLOCK. Bloquear las filas por id (o en orden de scan) NO alcanza:
+  -- crear_venta recorre sus ítems en el orden del payload, no por producto_id. Una
+  -- operación masiva que toma A y espera B, contra una venta que tomó B y espera
+  -- A, es un ciclo — y Postgres mata a una de las dos. Reproducido: la que moría
+  -- era LA VENTA, con "deadlock detected", en pleno horario de mostrador.
+  --
+  -- Un único lock de tabla al principio, sin tener nada tomado, hace imposible el
+  -- ciclo: el SHARE ROW EXCLUSIVE choca con el ROW EXCLUSIVE de los INSERT/UPDATE
+  -- de las demás RPC, así que la venta ESPERA en vez de morir. Es el mismo recurso
+  -- que ajustar_stock_masivo (ver §5.3 de 2026-07-24-conteo-fisico-design.md).
+  -- El costo es frenar las ventas mientras corre: 1500 productos tardan ~40 ms.
+  LOCK TABLE public.productos IN SHARE ROW EXCLUSIVE MODE;
+
   CREATE TEMP TABLE _objetivo ON COMMIT DROP AS
   SELECT p.id,
          p.precio_lista,
@@ -208,8 +226,7 @@ BEGIN
     FROM public.productos p
     CROSS JOIN LATERAL (SELECT * FROM public.settings LIMIT 1) s
     LEFT JOIN public.proveedores prov ON prov.id = p.proveedor_id
-   WHERE p.id = ANY(p_producto_ids)
-   FOR UPDATE OF p;
+   WHERE p.id = ANY(p_producto_ids);
 
   SELECT count(*) INTO v_encontrados FROM _objetivo;
   IF v_encontrados <> v_pedidos THEN
@@ -282,7 +299,12 @@ BEGIN
          precio_sin_iva          = CASE WHEN f.derivado AND f.venta_new > 0
                                         THEN f.venta_new ELSE p.precio_sin_iva END
     FROM final f
-   WHERE p.id = f.id AND f.con_base;
+   -- MARKUP guarda el % en TODOS los seleccionados, tengan base o no: cuando
+   -- después se les cargue el costo, el precio sale solo con ese markup. Es lo que
+   -- hacía el camino viejo y lo que informa el cartel. Para AUMENTO y
+   -- RECALCULAR_COSTO sí se saltean los que no tienen base: multiplicar cero da
+   -- cero.
+   WHERE p.id = f.id AND (f.con_base OR p_operacion = 'MARKUP');
 
   -- Los contadores se leen comparando lo que QUEDÓ contra el estado previo que
   -- guardó _objetivo, no recalculando las condiciones. Antes se calculaban aparte

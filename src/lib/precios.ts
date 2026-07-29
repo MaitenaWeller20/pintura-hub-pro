@@ -29,7 +29,25 @@ export const ALICUOTAS_IVA = [0, 2.5, 5, 10.5, 21, 27] as const;
 /** Dos productos con el mismo precio pueden diferir un centavo por redondeo. */
 const CENTAVO = 0.01;
 
-const r2 = (n: number) => +n.toFixed(2);
+/**
+ * Redondeo a dos decimales que coincide con `round(numeric, 2)` de Postgres.
+ *
+ * `toFixed(2)` redondea el double BINARIO, y para muchos `x.xx5` cae un centavo
+ * abajo (10000.05 × 1.3 da 13000.064999999999 en binario → "13000.06", cuando el
+ * decimal exacto es 13000.065 → 13000.07). Postgres opera sobre `numeric`, que es
+ * decimal exacto, y redondea medio-hacia-arriba.
+ *
+ * Esa diferencia de un centavo importa porque la RPC `cambiar_precios_masivo`
+ * calcula en SQL y este archivo es su ESPEJO para la vista previa: los dos deciden
+ * si un precio "coincide con la fórmula" con tolerancia de un centavo, así que un
+ * centavo de diferencia los daba vuelta en direcciones opuestas. La pantalla
+ * prometía no tocar un precio puesto a mano y el SQL lo pisaba (+16% en el caso
+ * reproducido), o al revés: mostraba un cambio que nunca ocurría.
+ *
+ * `toPrecision(15)` mata el ruido binario antes de redondear. Verificado contra
+ * Postgres sobre 3000 combinaciones: 0 diferencias (con toFixed eran 123).
+ */
+const r2 = (n: number) => Math.round(Number((n * 100).toPrecision(15))) / 100;
 
 const num = (v: unknown, def: number): number => {
   if (v === null || v === undefined || v === "") return def;
@@ -248,6 +266,8 @@ export type ResultadoOperacion = {
   con_base: boolean;
   /** El precio guardado lo explicaba la fórmula (o sea: no estaba puesto a mano). */
   derivado: boolean;
+  /** Esta operación le cambia algo. La RPC cuenta aparte los que no cambian. */
+  cambia: boolean;
 };
 
 export function simularOperacion(
@@ -303,13 +323,23 @@ export function simularOperacion(
     derivado && calc.precio_sin_iva > 0 ? calc.precio_sin_iva : num(p.precio_sin_iva, 0);
   const iva = normalizarIva(p.iva_porcentaje);
 
+  const aplica = con_base || op === "MARKUP";
+  const salida = {
+    precio_lista: aplica ? listaNueva : lista,
+    precio_fabrica: aplica ? costoNuevo : costo,
+    precio_sugerido_publico: aplica ? sugeridoNuevo : (p.precio_sugerido_publico ?? null),
+    precio_sin_iva: aplica ? ventaNueva : num(p.precio_sin_iva, 0),
+  };
   return {
-    precio_lista: con_base ? listaNueva : lista,
-    precio_fabrica: con_base ? costoNuevo : costo,
-    precio_sugerido_publico: con_base ? sugeridoNuevo : (p.precio_sugerido_publico ?? null),
-    precio_sin_iva: con_base ? ventaNueva : num(p.precio_sin_iva, 0),
-    venta_c_iva: r2((con_base ? ventaNueva : num(p.precio_sin_iva, 0)) * (1 + iva / 100)),
+    ...salida,
+    venta_c_iva: r2(salida.precio_sin_iva * (1 + iva / 100)),
     con_base,
     derivado,
+    cambia:
+      salida.precio_lista !== lista ||
+      salida.precio_fabrica !== costo ||
+      salida.precio_sugerido_publico !== (p.precio_sugerido_publico ?? null) ||
+      salida.precio_sin_iva !== num(p.precio_sin_iva, 0) ||
+      (op === "MARKUP" && num(pct, markupViejo) !== num(p.markup_porcentaje, NaN)),
   };
 }

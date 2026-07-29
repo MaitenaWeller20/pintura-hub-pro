@@ -9,6 +9,7 @@ import {
   baseDelPrecio,
   descuentoEfectivo,
   coincideConFormula,
+  simularOperacion,
 } from "./precios";
 
 // Números REALES de "LP N° 125 - Quimexur", producto 4000-00400
@@ -38,8 +39,9 @@ describe("costoDeLista", () => {
 
 describe("descuentoEfectivo", () => {
   it("el del proveedor le gana al global", () => {
-    expect(descuentoEfectivo({ descuento_porcentaje: 35 }, { descuento_proveedor_porcentaje: 42 }))
-      .toBe(35);
+    expect(
+      descuentoEfectivo({ descuento_porcentaje: 35 }, { descuento_proveedor_porcentaje: 42 }),
+    ).toBe(35);
   });
 
   it("sin descuento propio hereda el global", () => {
@@ -52,8 +54,9 @@ describe("descuentoEfectivo", () => {
   // Un proveedor al que se le compra a precio de lista, sin descuento. Si esto
   // cayera al global, sus costos quedarían 42% más baratos de lo que son.
   it("un descuento de 0 es válido y NO cae al global", () => {
-    expect(descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_proveedor_porcentaje: 42 }))
-      .toBe(0);
+    expect(
+      descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_proveedor_porcentaje: 42 }),
+    ).toBe(0);
   });
 
   it("sin nada cargado usa el del negocio", () => {
@@ -62,7 +65,9 @@ describe("descuentoEfectivo", () => {
   });
 
   it("se enchufa con costoDeLista", () => {
-    expect(costoDeLista(LISTA, descuentoEfectivo({ descuento_porcentaje: 35 }, null))).toBe(20003.36);
+    expect(costoDeLista(LISTA, descuentoEfectivo({ descuento_porcentaje: 35 }, null))).toBe(
+      20003.36,
+    );
   });
 });
 
@@ -273,5 +278,109 @@ describe("coincideConFormula — ¿el precio guardado es el que da la fórmula h
     expect(coincideConFormula(sinMarkupPropio, { markupDefault: 30 })).toBe(true);
     expect(coincideConFormula(sinMarkupPropio, { markupDefault: 35 })).toBe(false);
     expect(baseDelPrecio(sinMarkupPropio)).toBe("sugerido"); // la base NO cambia
+  });
+});
+
+// simularOperacion es el ESPEJO de la RPC `cambiar_precios_masivo` para la vista
+// previa. Sin historial de precios ni deshacer, esa pantalla es la única defensa
+// contra un aumento mal aplicado: si el espejo y el SQL dicen cosas distintas, la
+// pantalla miente. Los dos primeros casos son los que un review adversarial
+// reprodujo contra la base real.
+describe("simularOperacion — el espejo de la RPC", () => {
+  // El precio guardado está a un centavo EXACTO de la fórmula. Con toFixed, JS
+  // decía "no coincide" (y la pantalla prometía no tocarlo) mientras Postgres
+  // decía "coincide" y lo pisaba: la góndola se movía +16% sin aviso.
+  it("clasifica igual que Postgres en el borde del centavo (arriba)", () => {
+    const p = {
+      precio_lista: 20000,
+      precio_fabrica: 10000.05,
+      precio_sugerido_publico: null,
+      precio_sin_iva: 13000.08,
+      iva_porcentaje: 21,
+      markup_porcentaje: null,
+    };
+    // round(10000.05 * 1.3, 2) = 13000.07 en Postgres; con toFixed daba 13000.06.
+    // Sin precio_sin_iva, para que no tome la rama del override explícito.
+    expect(
+      calcularPrecios({ ...p, precio_sin_iva: null }, { markupDefault: 30 }).precio_sin_iva,
+    ).toBe(13000.07);
+    expect(coincideConFormula(p, { markupDefault: 30 })).toBe(true);
+    expect(simularOperacion(p, "RECALCULAR_COSTO", 0, { markupDefault: 30 }).derivado).toBe(true);
+  });
+
+  it("clasifica igual que Postgres en el borde del centavo (abajo)", () => {
+    const p = {
+      precio_lista: 20000,
+      precio_fabrica: 10000.05,
+      precio_sugerido_publico: null,
+      precio_sin_iva: 13000.05,
+      iva_porcentaje: 21,
+      markup_porcentaje: null,
+    };
+    expect(coincideConFormula(p, { markupDefault: 30 })).toBe(false);
+    expect(simularOperacion(p, "RECALCULAR_COSTO", 0, { markupDefault: 30 }).derivado).toBe(false);
+  });
+
+  it("AUMENTO: sube la lista y RE-DERIVA el costo con el descuento del proveedor", () => {
+    const r = simularOperacion(
+      {
+        precio_lista: LISTA,
+        precio_fabrica: COSTO,
+        precio_sugerido_publico: SUGERIDO,
+        precio_sin_iva: 36927.09,
+        iva_porcentaje: 21,
+        markup_porcentaje: MARKUP,
+      },
+      "AUMENTO",
+      20,
+      { markupDefault: MARKUP, descuentoGlobal: 42 },
+    );
+    expect(r.precio_lista).toBe(36929.28);
+    expect(r.precio_fabrica).toBe(21418.98); // 36929.28 × 0.58, NO 17849.15 × 1.2
+    expect(r.precio_sugerido_publico).toBe(41244.72);
+    // El mismo número que devolvió la RPC en scripts/test-precios-masivo.sh: el
+    // espejo y el SQL tienen que coincidir hasta el centavo.
+    expect(r.precio_sin_iva).toBe(44312.51);
+    expect(r.venta_c_iva).toBe(53618.14);
+    expect(r.cambia).toBe(true);
+  });
+
+  it("usa el descuento del proveedor, no el global", () => {
+    const r = simularOperacion(
+      {
+        precio_lista: 10000,
+        precio_fabrica: 6500,
+        precio_sin_iva: 8450,
+        iva_porcentaje: 21,
+        proveedor: { descuento_porcentaje: 35 },
+      },
+      "RECALCULAR_COSTO",
+      0,
+      { markupDefault: 30, descuentoGlobal: 42 },
+    );
+    expect(r.precio_fabrica).toBe(6500); // 10000 × 0.65, no × 0.58
+    expect(r.cambia).toBe(false); // ya estaba bien
+  });
+
+  // El toast decía "0 con precio recalculado" cuando en realidad no había nada
+  // que cambiar, y se leía como "falló".
+  it("marca cambia=false cuando la operación no toca nada", () => {
+    const p = {
+      precio_lista: 10000,
+      precio_fabrica: 5800,
+      precio_sin_iva: 7540,
+      iva_porcentaje: 21,
+      markup_porcentaje: 30,
+    };
+    expect(simularOperacion(p, "RECALCULAR_COSTO", 0, { markupDefault: 30 }).cambia).toBe(false);
+    expect(simularOperacion(p, "MARKUP", 30, { markupDefault: 30 }).cambia).toBe(false);
+    expect(simularOperacion(p, "MARKUP", 40, { markupDefault: 30 }).cambia).toBe(true);
+  });
+
+  it("un producto sin base no cambia con AUMENTO, pero sí acepta un markup", () => {
+    const p = { precio_lista: 0, precio_fabrica: 0, precio_sin_iva: 5000, iva_porcentaje: 21 };
+    expect(simularOperacion(p, "AUMENTO", 20, { markupDefault: 30 }).con_base).toBe(false);
+    expect(simularOperacion(p, "AUMENTO", 20, { markupDefault: 30 }).precio_sin_iva).toBe(5000);
+    expect(simularOperacion(p, "MARKUP", 40, { markupDefault: 30 }).cambia).toBe(true);
   });
 });

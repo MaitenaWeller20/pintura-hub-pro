@@ -476,7 +476,11 @@ function NuevaVenta() {
     !comboInvalido &&
     (!esRemitoObra || nombreObra.trim().length > 0) &&
     // Una nota sin factura asociada no se puede emitir en AFIP.
-    (!esNota || !!cbteAsocId);
+    (!esNota || !!cbteAsocId) &&
+    // Al contado se cobra entero. Lo que se lleva sin pagar va por cuenta
+    // corriente, que para eso está. Las notas quedan afuera: se acreditan o se
+    // cargan a la cuenta, no se pagan en el momento. Mismo criterio que crear_venta.
+    (esCtaCte || esNota || Math.abs(totales.total) < 0.01 || totales.saldo <= 0.01);
 
   return (
     <div className="space-y-4">
@@ -898,7 +902,9 @@ function NuevaVenta() {
           </div>
           {pagos.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              Sin pagos. La venta puede ser $0 o quedar pendiente.
+              {esCtaCte
+                ? "En cuenta corriente no se cobra ahora: queda como deuda del cliente."
+                : "Sin pagos. Al contado hay que cobrar el total; si se lo lleva sin pagar, poné cuenta corriente."}
             </p>
           ) : (
             <div className="space-y-2">

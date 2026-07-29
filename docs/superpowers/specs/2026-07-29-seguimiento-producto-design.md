@@ -1,7 +1,7 @@
 # Seguimiento de un producto — Diseño
 
 **Fecha:** 2026-07-29
-**Estado:** Spec escrito. Pendiente: review con Codex, implementación.
+**Estado:** Spec revisado con Codex (§8, 4 hallazgos incorporados). Pendiente: implementación.
 **Viene de:** `2026-07-29-correcciones-cliente-backlog.md` §8.
 
 ---
@@ -59,6 +59,8 @@ SELECT m.id, m.producto_id, m.sucursal_id, m.created_at, m.tipo,
        m.cantidad, m.cantidad_anterior, m.cantidad_nueva, m.motivo, m.usuario_id,
        -- Con quién fue el movimiento y con qué papel. referencia_id es un uuid
        -- suelto sin FK: de qué tabla es lo dice el tipo del movimiento.
+       -- El CASE cubre el enum ENTERO. Los que no tienen contraparte (ajustes,
+       -- ingreso inicial) devuelven NULL a propósito, no por olvido.
        CASE m.tipo
          WHEN 'VENTA'                        THEN cli.razon_social
          WHEN 'ANULACION_VENTA'              THEN cli.razon_social
@@ -67,6 +69,12 @@ SELECT m.id, m.producto_id, m.sucursal_id, m.created_at, m.tipo,
          WHEN 'ANULACION_COMPRA'             THEN prov_c.razon_social
          WHEN 'INGRESO_MERCADERIA'           THEN prov_i.razon_social
          WHEN 'ANULACION_INGRESO_MERCADERIA' THEN prov_i.razon_social
+         -- Las transferencias SÍ tienen referencia: el remito entre sucursales
+         -- (20260721150000_r7_remito_aprueba_destino.sql:105).
+         WHEN 'TRANSFERENCIA_OUT'            THEN 'Transferencia a otra sucursal'
+         WHEN 'TRANSFERENCIA_IN'             THEN 'Transferencia desde otra sucursal'
+         WHEN 'AJUSTE'                       THEN NULL   -- conteo físico o ajuste manual
+         WHEN 'INGRESO_INICIAL'              THEN NULL
        END AS con_quien,
        CASE m.tipo
          WHEN 'VENTA'  THEN v.numero_comprobante
@@ -102,11 +110,22 @@ CREATE INDEX IF NOT EXISTS idx_stock_mov_producto_fecha
 
 Sin él, mirar un producto escanea toda la tabla de movimientos.
 
-**RLS:** la vista hereda de las tablas. `stock_movimientos` tiene hoy `USING (true)` para lectura,
-así que un empleado ve movimientos de las dos sucursales — pero `ventas` sí filtra por sucursal, así
-que "con quién" le va a aparecer vacío en las de la otra. Es inconsistente y se anota, pero
-**arreglarlo no es de este chunk**: cambiar la RLS de `stock_movimientos` toca Inventario, el conteo
-físico y los reportes. Se deja el filtro de sucursal por defecto en la sucursal propia.
+**RLS — con `security_invoker`, y no es un detalle.** Una vista normal corre con los permisos de su
+**dueño**, así que una vista de `postgres` sobre tablas con RLS **la saltea**. Este repo ya lo sabe:
+`stock_inventario` se creó con `WITH (security_invoker = true)`
+(`20260724160000_conteo_fisico_stock.sql:116`) y deja `false` sólo donde quiere visibilidad global a
+propósito (`20260718140000_seguridad_bajas_g6.sql:65`). Sin eso, esta vista sería una **fuga**: un
+empleado vería los clientes y los comprobantes de la otra sucursal.
+
+```sql
+CREATE VIEW public.seguimiento_producto WITH (security_invoker = true) AS ...
+```
+
+Aun con eso, `stock_movimientos` tiene `USING (true)`, así que el empleado ve los movimientos de las
+dos sucursales (el "con quién" sí queda filtrado, porque `ventas` filtra). **El filtro de sucursal
+de la pantalla NO es seguridad**, es comodidad. Cambiar la RLS de `stock_movimientos` toca
+Inventario, el conteo físico y los reportes: queda anotado como deuda, explícitamente, y no se hace
+en este chunk.
 
 ---
 
@@ -128,8 +147,12 @@ Fecha        Movimiento          Cant.   Saldo   Con quién           Comprobant
 27/10/2025   Venta                   −2      14   Consumidor final   B 0003-00007342
 ```
 
-- **Saldo** sale de `cantidad_nueva`, que ya se guarda por movimiento: no se recalcula sumando,
-  que se desincronizaría de la realidad ante cualquier ajuste.
+- **Saldo** sale de `cantidad_nueva`, que se guarda por movimiento: no se recalcula sumando, que se
+  desincronizaría ante cualquier ajuste. Pero la columna **nació nullable** y hay movimientos
+  históricos sin snapshot (el repo tiene un diagnóstico que los cuenta:
+  `supabase/snippets/diagnostico-stock-envase.sql:187`). Cuando falta, la celda dice **"—"** en vez
+  de inventar un número. Antes de dar el chunk por terminado hay que **contar cuántos hay en
+  producción** y decirlo.
 - Las entradas en verde y las salidas en rojo, con signo. Es la lectura de un vistazo que pidieron.
 - Los tres números de arriba (stock, entró, salió) son del período y la sucursal elegidos.
 - Vacío honesto: *"Este producto no tiene movimientos en el período elegido."* Un producto sin
@@ -173,3 +196,18 @@ resumen acompañe.
 2. La pantalla, con el filtro de sucursal y período.
 3. El botón en `/productos`.
 4. Tests SQL + e2e.
+
+---
+
+## 8. Hallazgos del review del spec con Codex
+
+1. **BLOQUEANTE — la RLS de la vista estaba mal planteada.** Una vista normal corre con los permisos
+   del dueño y **saltea RLS**: sin `security_invoker = true`, un empleado vería los clientes y
+   comprobantes de la otra sucursal. Es una fuga, no una inconsistencia. El repo ya usa ese patrón
+   en `stock_inventario`.
+2. **El `CASE` no cubría el enum entero.** Faltaban `AJUSTE`, `TRANSFERENCIA_IN/OUT` e
+   `INGRESO_INICIAL`, y las transferencias sí tienen referencia (el remito entre sucursales).
+3. **`cantidad_nueva` no está garantizada históricamente**: nació nullable y hay movimientos viejos
+   sin snapshot. → se muestra "—" y se cuenta cuántos hay en producción antes de cerrar.
+4. **El filtro de sucursal de la pantalla no es seguridad**, porque `stock_movimientos` tiene
+   `USING (true)`. Queda anotado como deuda explícita.

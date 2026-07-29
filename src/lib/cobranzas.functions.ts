@@ -100,6 +100,7 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
     // completo y en silencio, y parecía que "solo se aplicaba al primero".
     let actualizados = 0; // con precio recalculado
     let sinBase = 0; // markup guardado, pero sin sugerido ni costo para recalcular
+    const fallidos: string[] = []; // el UPDATE devolvió error
     for (const p of lista) {
       const patch: any = {};
       if (data.sobrescribir_individual) patch.markup_porcentaje = data.markup_porcentaje;
@@ -120,13 +121,22 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
         },
         { markupDefault: data.markup_porcentaje },
       );
-      if (nuevoPrecio > 0) {
-        patch.precio_sin_iva = nuevoPrecio;
-        actualizados++;
-      } else sinBase++;
+      const recalculado = nuevoPrecio > 0;
+      if (recalculado) patch.precio_sin_iva = nuevoPrecio;
       if (Object.keys(patch).length > 0) {
-        await supabase.from("productos").update(patch).eq("id", p.id);
+        // El error del UPDATE NO se puede ignorar: sin esto, una escritura que
+        // falla (RLS, constraint, red) se contaba como exitosa y el cartel decía
+        // "N con precio recalculado" sobre productos que quedaron con el precio
+        // viejo. Un cambio de precios que miente sobre lo que hizo es peor que uno
+        // que falla.
+        const { error } = await supabase.from("productos").update(patch).eq("id", p.id);
+        if (error) {
+          fallidos.push(p.id);
+          continue;
+        }
       }
+      if (recalculado) actualizados++;
+      else sinBase++;
     }
     if (data.setear_como_default) {
       await supabase
@@ -134,5 +144,5 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
         .update({ markup_default_porcentaje: data.markup_porcentaje })
         .eq("id", true);
     }
-    return { actualizados, sin_base: sinBase };
+    return { actualizados, sin_base: sinBase, fallidos: fallidos.length };
   });

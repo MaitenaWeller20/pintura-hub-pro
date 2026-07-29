@@ -928,8 +928,16 @@ function MarkupDialog({
     onSuccess: (r: any) => {
       const partes = [`${r.actualizados} con precio recalculado`];
       if (r.sin_base > 0)
-        partes.push(`${r.sin_base} sin sugerido ni costo cargado (markup guardado)`);
-      toast.success(`Markup aplicado: ${partes.join(" · ")}`);
+        partes.push(
+          `${r.sin_base} no se pudieron recalcular porque no tienen ni sugerido ni costo cargado (les quedó guardado el %: cuando les cargues el costo, el precio sale solo)`,
+        );
+      if (r.fallidos > 0) {
+        toast.error(
+          `${r.fallidos} productos NO se pudieron guardar y quedaron con el precio viejo. ${partes.join(" · ")}`,
+        );
+      } else {
+        toast.success(`Markup aplicado: ${partes.join(" · ")}`);
+      }
       onDone();
     },
     onError: (e: any) => toast.error(e.message),

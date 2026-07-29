@@ -299,7 +299,8 @@ export function simularOperacion(
 
   // Un precio puesto a mano se conserva: la operación mueve los precios que
   // vienen del proveedor, no la decisión comercial de quien lo escribió.
-  const ventaNueva = derivado && calc.precio_sin_iva > 0 ? calc.precio_sin_iva : num(p.precio_sin_iva, 0);
+  const ventaNueva =
+    derivado && calc.precio_sin_iva > 0 ? calc.precio_sin_iva : num(p.precio_sin_iva, 0);
   const iva = normalizarIva(p.iva_porcentaje);
 
   return {

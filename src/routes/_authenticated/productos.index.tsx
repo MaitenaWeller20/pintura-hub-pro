@@ -38,21 +38,24 @@ import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
 import {
   MARKUP_DEFAULT,
+  OPERACION_LABEL,
   ORIGEN_AYUDA,
   ORIGEN_LABEL,
+  type OperacionPrecio,
   type OrigenPrecio,
   baseDelPrecio,
   calcularPrecios,
   coincideConFormula,
   costoDeLista,
+  simularOperacion,
 } from "@/lib/precios";
+import { uuidv4 } from "@/lib/uuid";
 import { toast } from "sonner";
 import { Plus, Upload, Pencil, Printer, Percent, Trash2, ArchiveRestore } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useServerFn } from "@tanstack/react-start";
-import { aplicarMarkup } from "@/lib/cobranzas.functions";
 import { eliminarProductos, restaurarProductos } from "@/lib/productos.functions";
 import {
   AlertDialog,
@@ -139,8 +142,12 @@ function Productos() {
   const { data: proveedores = [] } = useQuery({
     queryKey: ["proveedores"],
     queryFn: async () =>
-      ((await supabase.from("proveedores").select("id, razon_social, descuento_porcentaje").order("razon_social"))
-        .data ?? []) as any[],
+      ((
+        await supabase
+          .from("proveedores")
+          .select("id, razon_social, descuento_porcentaje")
+          .order("razon_social")
+      ).data ?? []) as any[],
   });
   const { data: marcas = [] } = useQuery({
     queryKey: ["marcas"],
@@ -351,7 +358,7 @@ function Productos() {
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => setOpenMarkup(true)}>
-                  <Percent className="h-4 w-4 mr-1" /> Aplicar markup
+                  <Percent className="h-4 w-4 mr-1" /> Cambiar precios
                 </Button>
                 <Button variant="outline" asChild>
                   <Link to="/productos/importar">Importar</Link>
@@ -592,12 +599,13 @@ function Productos() {
         }}
       />
 
-      <MarkupDialog
+      <PreciosDialog
         open={openMarkup}
         onClose={() => setOpenMarkup(false)}
-        productoIds={Array.from(seleccion)}
+        productosSel={filtered.filter((p: any) => seleccion.has(p.id))}
         totalFiltrado={filtered.length}
-        currentDefault={markupDefault}
+        markupDefault={markupDefault}
+        descuentoGlobal={descuentoProveedor}
         onApplyAll={() => setSeleccion(new Set(filtered.map((p: any) => p.id)))}
         onDone={() => {
           qc.invalidateQueries({ queryKey: ["productos"] });
@@ -933,85 +941,177 @@ function ProductoDialog({
   );
 }
 
-function MarkupDialog({
+function PreciosDialog({
   open,
   onClose,
-  productoIds,
+  productosSel,
   totalFiltrado,
-  currentDefault,
+  markupDefault,
+  descuentoGlobal,
   onApplyAll,
   onDone,
 }: any) {
-  const aplicar = useServerFn(aplicarMarkup);
-  const [pct, setPct] = useState<number | null>(currentDefault);
-  const [setDefault, setSetDefault] = useState(false);
+  const [op, setOp] = useState<OperacionPrecio>("MARKUP");
+  const [pct, setPct] = useState<number | null>(markupDefault);
+  // Una clave por intento. La RPC la usa para que un doble click, un reintento o
+  // un F5 no repitan la operación: "aumentar 20%" dos veces da +44% y no se
+  // deshace con un botón. Se renueva recién cuando una operación termina bien.
+  const [clave, setClave] = useState(() => uuidv4());
+
+  const ids = productosSel.map((p: any) => p.id);
+  const porcentaje = op === "RECALCULAR_COSTO" ? 0 : (pct ?? 0);
+
+  const simulados = productosSel.map((p: any) => ({
+    p,
+    r: simularOperacion(p, op, porcentaje, { markupDefault, descuentoGlobal }),
+  }));
+  const conBase = simulados.filter((s: any) => s.r.con_base);
+  const aMano = conBase.filter((s: any) => !s.r.derivado).length;
+  const sinBase = simulados.length - conBase.length;
+
   const m = useMutation({
-    mutationFn: async () =>
-      aplicar({
-        data: {
-          producto_ids: productoIds,
-          markup_porcentaje: Number(pct || 0),
-          setear_como_default: setDefault,
-          sobrescribir_individual: true,
-        },
-      }),
+    mutationFn: async () => {
+      const { data, error } = await supabase.rpc("cambiar_precios_masivo", {
+        p_producto_ids: ids,
+        p_operacion: op,
+        p_porcentaje: porcentaje,
+        p_idempotency_key: clave,
+      });
+      if (error) throw new Error(error.message);
+      return data as any;
+    },
     onSuccess: (r: any) => {
-      const partes = [`${r.actualizados} con precio recalculado`];
-      if (r.sin_base > 0)
-        partes.push(
-          `${r.sin_base} no se pudieron recalcular porque no tienen ni sugerido ni costo cargado (les quedó guardado el %: cuando les cargues el costo, el precio sale solo)`,
-        );
-      if (r.fallidos > 0) {
-        toast.error(
-          `${r.fallidos} productos NO se pudieron guardar y quedaron con el precio viejo. ${partes.join(" · ")}`,
-        );
+      if (r?.ya_aplicado) {
+        toast.info("Esta operación ya se había aplicado. No se volvió a hacer.");
       } else {
-        toast.success(`Markup aplicado: ${partes.join(" · ")}`);
+        const partes = [`${r.actualizados} con precio recalculado`];
+        if (r.precio_manual > 0)
+          partes.push(
+            `${r.precio_manual} tienen el precio puesto a mano y se dejaron como estaban`,
+          );
+        if (r.sin_base > 0) partes.push(`${r.sin_base} sin precio de lista ni costo cargado`);
+        toast.success(partes.join(" · "));
       }
+      setClave(uuidv4());
       onDone();
     },
     onError: (e: any) => toast.error(e.message),
   });
 
+  const etiquetaBoton =
+    op === "RECALCULAR_COSTO"
+      ? `Recalcular el costo de ${ids.length} productos`
+      : `${OPERACION_LABEL[op]} ${porcentaje}% a ${ids.length} productos`;
+
+  const OPCIONES: [OperacionPrecio, string, string][] = [
+    [
+      "MARKUP",
+      "Poner este % de ganancia",
+      "Al precio sugerido al público le suma este %, y ese es el precio de venta. Si el producto no tiene sugerido, se lo suma al costo.",
+    ],
+    [
+      "AUMENTO",
+      "Aumentar los precios este %",
+      "Para cuando el proveedor manda lista nueva. Sube el precio de lista y el sugerido, y el costo se recalcula con el descuento del proveedor.",
+    ],
+    [
+      "RECALCULAR_COSTO",
+      "Recalcular el costo con el descuento actual",
+      "Para después de cambiarle el descuento a un proveedor. No toca el precio de lista.",
+    ],
+  ];
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Aplicar % de markup</DialogTitle>
+          <DialogTitle>Cambiar precios</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          {productoIds.length === 0 ? (
-            <div className="text-sm">
-              <p className="mb-2">No hay productos seleccionados.</p>
-              <Button size="sm" variant="outline" onClick={onApplyAll}>
-                Seleccionar los {totalFiltrado} visibles
-              </Button>
-            </div>
-          ) : (
-            <p className="text-sm">
-              Se aplicará a <strong>{productoIds.length}</strong> productos. Recalcula el precio de
-              venta: <strong>sugerido al público × (1 + %)</strong>, o costo × (1 + %) si el
-              producto no tiene sugerido.
-            </p>
-          )}
-          <div>
-            <Label>% Markup</Label>
-            <NumberInput value={pct} onValueChange={setPct} />
+
+        {ids.length === 0 ? (
+          <div className="text-sm">
+            <p className="mb-2">No hay productos seleccionados.</p>
+            <Button size="sm" variant="outline" onClick={onApplyAll}>
+              Seleccionar los {totalFiltrado} que se ven
+            </Button>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={setDefault} onCheckedChange={(v) => setSetDefault(!!v)} />
-            Setear este % como default global (afecta a productos sin markup propio).
-          </label>
-        </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {OPCIONES.map(([valor, titulo, ayuda]) => (
+                <label
+                  key={valor}
+                  className={`flex gap-3 items-start rounded-lg border p-3 cursor-pointer ${
+                    op === valor ? "border-primary bg-primary/5" : "border-border"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    className="mt-1"
+                    checked={op === valor}
+                    onChange={() => setOp(valor)}
+                  />
+                  <span>
+                    <span className="text-sm font-medium">{titulo}</span>
+                    <span className="block text-[11px] text-muted-foreground">{ayuda}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {op !== "RECALCULAR_COSTO" && (
+              <div className="max-w-[10rem]">
+                <Label>%</Label>
+                <NumberInput value={pct} onValueChange={setPct} />
+              </div>
+            )}
+
+            {/* No hay historial de precios: esta pantalla es la única oportunidad
+                de darse cuenta antes. "Aumentar" no se deshace con un botón. */}
+            <div className="rounded-lg bg-muted/30 p-3 text-xs space-y-1">
+              <p className="font-medium">Así van a quedar:</p>
+              {conBase.slice(0, 3).map(({ p, r }: any) => (
+                <div key={p.id} className="font-mono flex flex-wrap gap-x-3">
+                  <span className="min-w-[12rem] truncate">{p.nombre}</span>
+                  <span className="text-muted-foreground">
+                    lista {fmtMoney(p.precio_lista ?? 0)} → {fmtMoney(r.precio_lista)}
+                  </span>
+                  <span>
+                    venta{" "}
+                    {fmtMoney(Number(p.precio_sin_iva) * (1 + Number(p.iva_porcentaje) / 100))} →{" "}
+                    {fmtMoney(r.venta_c_iva)}
+                  </span>
+                </div>
+              ))}
+              {conBase.length > 3 && (
+                <p className="text-muted-foreground">…y {conBase.length - 3} productos más</p>
+              )}
+              {aMano > 0 && (
+                <p className="text-muted-foreground">
+                  {aMano} tienen el precio de venta puesto a mano: se les actualiza el costo, pero
+                  el precio de venta queda como está.
+                </p>
+              )}
+              {sinBase > 0 && (
+                <p className="text-muted-foreground">
+                  {sinBase} no tienen precio de lista ni costo cargado: no se tocan.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={m.isPending}>
             Cancelar
           </Button>
           <Button
             onClick={() => m.mutate()}
-            disabled={m.isPending || productoIds.length === 0 || pct === null}
+            disabled={
+              m.isPending || ids.length === 0 || (op !== "RECALCULAR_COSTO" && pct === null)
+            }
           >
-            Aplicar
+            {etiquetaBoton}
           </Button>
         </DialogFooter>
       </DialogContent>

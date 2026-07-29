@@ -632,6 +632,39 @@ export type Database = {
           },
         ]
       }
+      documento_secuencias: {
+        Row: {
+          sucursal_id: string
+          tipo: string
+          ultimo_numero: number
+        }
+        Insert: {
+          sucursal_id: string
+          tipo: string
+          ultimo_numero?: number
+        }
+        Update: {
+          sucursal_id?: string
+          tipo?: string
+          ultimo_numero?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "documento_secuencias_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "documento_secuencias_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fiscal_config: {
         Row: {
           arca_cert_enc: string | null
@@ -1221,7 +1254,9 @@ export type Database = {
           forma_pago: string
           id: string
           monto: number
+          numero: string | null
           proveedor_id: string
+          saldo_posterior: number | null
           sucursal_id: string
           usuario_id: string
         }
@@ -1235,7 +1270,9 @@ export type Database = {
           forma_pago: string
           id?: string
           monto: number
+          numero?: string | null
           proveedor_id: string
+          saldo_posterior?: number | null
           sucursal_id: string
           usuario_id: string
         }
@@ -1249,7 +1286,9 @@ export type Database = {
           forma_pago?: string
           id?: string
           monto?: number
+          numero?: string | null
           proveedor_id?: string
+          saldo_posterior?: number | null
           sucursal_id?: string
           usuario_id?: string
         }
@@ -2485,24 +2524,44 @@ export type Database = {
         }
         Returns: string
       }
-      crear_compra: {
-        Args: {
-          p_condicion?: string
-          p_fecha_comprobante: string
-          p_fecha_vencimiento: string
-          p_items: Json
-          p_numero: string
-          p_observaciones?: string
-          p_pagos: Json
-          p_percepciones?: number
-          p_proveedor_id: string
-          p_sucursal_id: string
-          p_tipo_comprobante: string
-        }
-        Returns: {
-          compra_id: string
-        }[]
-      }
+      crear_compra:
+        | {
+            Args: {
+              p_condicion?: string
+              p_fecha_comprobante: string
+              p_fecha_vencimiento: string
+              p_items: Json
+              p_numero: string
+              p_observaciones?: string
+              p_pagos: Json
+              p_percepciones?: number
+              p_proveedor_id: string
+              p_sucursal_id: string
+              p_tipo_comprobante: string
+            }
+            Returns: {
+              compra_id: string
+            }[]
+          }
+        | {
+            Args: {
+              p_condicion?: string
+              p_fecha_comprobante: string
+              p_fecha_vencimiento: string
+              p_iva_total: number
+              p_numero: string
+              p_observaciones?: string
+              p_pagos: Json
+              p_percepciones: number
+              p_proveedor_id: string
+              p_subtotal_sin_iva: number
+              p_sucursal_id: string
+              p_tipo_comprobante: string
+            }
+            Returns: {
+              compra_id: string
+            }[]
+          }
       crear_producto_desde_ingreso: {
         Args: {
           p_codigo: string
@@ -2563,6 +2622,10 @@ export type Database = {
           _sucursal_id: string
           _tipo: Database["public"]["Enums"]["tipo_comprobante"]
         }
+        Returns: string
+      }
+      next_documento_numero: {
+        Args: { _prefijo: string; _sucursal_id: string; _tipo: string }
         Returns: string
       }
       normalizar_codigo: { Args: { p_texto: string }; Returns: string }

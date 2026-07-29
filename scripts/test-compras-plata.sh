@@ -137,7 +137,37 @@ chequear "el saldo del primer recibo NO cambió con el segundo pago" "$saldo1" \
 chequear "los dos pagos tienen números distintos" "2" \
   "$(q "select count(distinct numero)::text from public.proveedor_pagos where proveedor_id='$PROV'")"
 
-echo "── 7. Un empleado no puede anular ────────────────────────"
+echo "── 7. Validaciones del proveedor (se habían perdido) ─────"
+# La reescritura de crear_compra perdió estas dos. Sin ellas se podía generar
+# deuda contra un proveedor inactivo o sin cuenta corriente habilitada — y
+# habilitarla es una decisión de admin protegida por un trigger, así que
+# saltearla por acá la volvía decorativa.
+$PSQL -c "INSERT INTO public.proveedores (razon_social, activo, condicion_cta_cte) VALUES ('PROV INACTIVO TEST', false, true), ('PROV SIN CC TEST', true, false);" > /dev/null
+INACT=$(q "select id::text from public.proveedores where razon_social='PROV INACTIVO TEST'")
+SINCC=$(q "select id::text from public.proveedores where razon_social='PROV SIN CC TEST'")
+
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.crear_compra('$INACT'::uuid,'$SUC'::uuid,'FACTURA_A','A-INACT',
+  current_date, NULL, 100, 21, 0, '[]'::jsonb, 'CTA_CTE', NULL);
+SQL
+)
+if echo "$out" | grep -qi "inactivo"; then echo "  ✓ rechaza un proveedor inactivo"; else echo "  ✗ aceptó proveedor inactivo"; fallos=$((fallos+1)); fi
+
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.crear_compra('$SINCC'::uuid,'$SUC'::uuid,'FACTURA_A','A-SINCC',
+  current_date, NULL, 100, 21, 0, '[]'::jsonb, 'CTA_CTE', NULL);
+SQL
+)
+if echo "$out" | grep -qi "cuenta corriente habilitada"; then echo "  ✓ rechaza CTA_CTE sin cuenta corriente habilitada"; else echo "  ✗ aceptó CTA_CTE sin habilitar"; fallos=$((fallos+1)); fi
+
+echo "── 8. El pago escribe la forma de pago en el libro ───────"
+# La reescritura también había perdido esto, y Cuentas Corrientes lo muestra.
+chequear "el movimiento de cuenta corriente guarda la forma de pago" "EFECTIVO" \
+  "$(q "select forma_pago from public.proveedor_cc_movimientos where proveedor_id='$PROV' and tipo='CREDITO' order by created_at limit 1")"
+
+echo "── 9. Un empleado no puede anular ────────────────────────"
 out=$($PSQL <<SQL 2>&1 || true
 $(auth empleado@local.test)
 SELECT public.anular_compra((SELECT id FROM public.compras WHERE numero_comprobante='A-0001-PUENTE'));
@@ -153,7 +183,8 @@ DELETE FROM public.proveedor_pagos pp USING public.proveedores p
  WHERE p.id = pp.proveedor_id AND p.razon_social = 'PROV COMPRAS TEST';
 DELETE FROM public.compras c USING public.proveedores p
  WHERE p.id = c.proveedor_id AND p.razon_social = 'PROV COMPRAS TEST';
-DELETE FROM public.proveedores WHERE razon_social = 'PROV COMPRAS TEST';
+DELETE FROM public.proveedores WHERE razon_social IN
+  ('PROV COMPRAS TEST','PROV INACTIVO TEST','PROV SIN CC TEST');
 DELETE FROM public.productos WHERE codigo = 'CMP-TEST';
 SQL
 

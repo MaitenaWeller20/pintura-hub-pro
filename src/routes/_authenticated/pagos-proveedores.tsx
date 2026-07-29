@@ -65,6 +65,12 @@ function PagosProveedores() {
       ).data ?? []) as any[],
   });
 
+  const { data: sucursales = [] } = useQuery({
+    queryKey: ["sucursales"],
+    queryFn: async () =>
+      ((await supabase.from("sucursales").select("id, nombre").order("numero")).data ?? []) as any[],
+  });
+
   const { data: pagos = [], isLoading } = useQuery({
     queryKey: ["pagos-proveedores"],
     queryFn: async () =>
@@ -131,6 +137,13 @@ function PagosProveedores() {
 
     doc.setFontSize(14);
     doc.text("RECIBO DE PAGO A PROVEEDOR", 14, y + 6);
+    // Un recibo de un pago anulado que no dice que está anulado es un papel que
+    // prueba algo que no pasó.
+    if (p.estado === "ANULADO") {
+      doc.setTextColor(200, 0, 0);
+      doc.text("ANULADO", 150, y + 6);
+      doc.setTextColor(0, 0, 0);
+    }
     doc.setFontSize(10);
     doc.text(`N° ${p.numero ?? "—"}`, 14, y + 13);
     doc.text(`Fecha: ${fmtDateTime(p.created_at)}`, 90, y + 13);
@@ -214,7 +227,7 @@ function PagosProveedores() {
       </SectionCard>
 
       <DataTable
-        columns={["N°", "Fecha", "Proveedor", "Forma de pago", "Monto", "Estado", ""]}
+        columns={["N°", "Fecha", "Proveedor", "Origen", "Forma de pago", "Monto", "Estado", ""]}
         loading={isLoading}
         isEmpty={pagos.length === 0}
         empty={{ text: "Todavía no se registró ningún pago a proveedores." }}
@@ -255,7 +268,9 @@ function PagosProveedores() {
         open={abrirPago}
         onClose={() => setAbrirPago(false)}
         proveedores={proveedores}
-        sucursalId={cu.sucursal?.id ?? ""}
+        sucursales={sucursales}
+        esAdmin={cu.isAdmin}
+        sucursalPropia={cu.sucursal?.id ?? ""}
         onDone={() => {
           qc.invalidateQueries({ queryKey: ["pagos-proveedores"] });
           qc.invalidateQueries({ queryKey: ["proveedor-cc-saldos"] });
@@ -266,14 +281,18 @@ function PagosProveedores() {
   );
 }
 
-function DialogoPago({ open, onClose, proveedores, sucursalId, onDone }: any) {
+function DialogoPago({ open, onClose, proveedores, sucursales, esAdmin, sucursalPropia, onDone }: any) {
   const [proveedorId, setProveedorId] = useState("");
   const [monto, setMonto] = useState<number | null>(null);
   const [forma, setForma] = useState("EFECTIVO");
+  // Un admin puede no tener sucursal propia, y la plata sale de UNA caja. Sin
+  // esto el diálogo mandaba "" y la RPC fallaba con un error incomprensible.
+  const [sucursalId, setSucursalId] = useState(sucursalPropia);
 
   const m = useMutation({
     mutationFn: async () => {
       if (!proveedorId) throw new Error("Elegí el proveedor.");
+      if (!sucursalId) throw new Error("Elegí de qué sucursal sale la plata.");
       if (!(Number(monto) > 0)) throw new Error("El monto tiene que ser mayor a cero.");
       const { error } = await supabase.rpc("registrar_pago_proveedor", {
         p_proveedor_id: proveedorId,
@@ -314,6 +333,23 @@ function DialogoPago({ open, onClose, proveedores, sucursalId, onDone }: any) {
               </SelectContent>
             </Select>
           </div>
+          {esAdmin && (
+            <div>
+              <Label>Sucursal * <span className="text-xs text-muted-foreground">(de qué caja sale)</span></Label>
+              <Select value={sucursalId} onValueChange={setSucursalId}>
+                <SelectTrigger data-testid="pago-sucursal">
+                  <SelectValue placeholder="Elegí…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(sucursales ?? []).map((s: any) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <Label>Monto *</Label>
             <NumberInput value={monto} onValueChange={setMonto} />

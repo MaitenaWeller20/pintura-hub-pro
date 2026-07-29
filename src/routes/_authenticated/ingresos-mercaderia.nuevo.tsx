@@ -262,8 +262,9 @@ function NuevoIngreso() {
           <div className="flex gap-2 items-start text-sm">
             <AlertTriangle className="h-4 w-4 mt-0.5 text-destructive shrink-0" />
             <p>
-              Este borrador quedó bloqueado: <strong>{bloqueo}</strong>. No se puede confirmar.
-              Anulalo desde el listado y cargá el remito de nuevo.
+              Este borrador quedó bloqueado: <strong>{bloqueo}</strong>. No se puede confirmar ni
+              corrigiéndolo a mano. Dejalo así —un borrador no toca el stock— y cargá el remito de
+              nuevo desde <strong>Nuevo ingreso</strong>.
             </p>
           </div>
         </SectionCard>

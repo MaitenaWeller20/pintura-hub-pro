@@ -10,6 +10,10 @@
 # Uso:
 #   ./scripts/crear-admin-local.sh                          # admin@local.test / admin1234
 #   ./scripts/crear-admin-local.sh mi@mail.com miClave123   # email y clave a medida
+#   ./scripts/crear-admin-local.sh empleado@local.test empleado1234 "Empleado" empleado
+#
+# El cuarto argumento es el rol (admin por defecto). Los tests de RLS necesitan
+# un empleado además del admin: sin él pasan por el motivo equivocado.
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,6 +21,7 @@ cd "$(dirname "$0")/.."
 EMAIL="${1:-admin@local.test}"
 PASSWORD="${2:-admin1234}"
 NOMBRE="${3:-Admin Local}"
+ROL="${4:-admin}"
 
 # Cargar el .env local (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY locales).
 [ -f .env ] || { echo "❌ No hay .env. Copiá .env.example a .env y completá las claves LOCALES (las imprime 'supabase start')."; exit 1; }
@@ -29,11 +34,12 @@ case "$SUPABASE_URL" in
   *) echo "❌ SUPABASE_URL ($SUPABASE_URL) no apunta a local. Este script es SOLO para la base local."; exit 1;;
 esac
 
-EMAIL="$EMAIL" PASSWORD="$PASSWORD" NOMBRE="$NOMBRE" python3 - <<'PY'
+EMAIL="$EMAIL" PASSWORD="$PASSWORD" NOMBRE="$NOMBRE" ROL="$ROL" python3 - <<'PY'
 import json, os, urllib.request, urllib.error
 U = os.environ["SUPABASE_URL"].rstrip("/")
 K = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 EMAIL, PASSWORD, NOMBRE = os.environ["EMAIL"], os.environ["PASSWORD"], os.environ["NOMBRE"]
+ROL = os.environ.get("ROL", "admin")
 H = {"apikey": K, "Authorization": "Bearer " + K, "Content-Type": "application/json"}
 
 def call(method, path, body=None, extra=None):
@@ -65,7 +71,7 @@ call("POST", "/rest/v1/profiles",
       "sucursal_id": suc_id, "activo": True},
      extra={"Prefer": "resolution=merge-duplicates"})
 call("POST", "/rest/v1/user_roles",
-     {"user_id": uid, "role": "admin"},
+     {"user_id": uid, "role": ROL},
      extra={"Prefer": "resolution=merge-duplicates"})
 
 print(f"✓ Profile + rol admin listos.")

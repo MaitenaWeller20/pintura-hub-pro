@@ -41,6 +41,7 @@ import {
   Calculator,
   ShoppingBag,
   Banknote,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +63,7 @@ const groups: Array<{ label: string; items: MenuItem[] }> = [
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
       { to: "/ventas", label: "Ventas", icon: ShoppingCart, adminOnly: false },
+      { to: "/presupuestos", label: "Presupuestos", icon: FileText, adminOnly: false },
       { to: "/remitos", label: "Remitos", icon: Truck, adminOnly: false },
     ],
   },

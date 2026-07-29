@@ -26,6 +26,18 @@ $PSQL <<'SQL' > /dev/null
 DELETE FROM public.presupuesto_items i USING public.presupuestos p
  WHERE p.id=i.presupuesto_id AND p.observaciones IS NOT DISTINCT FROM 'TEST-PRES';
 DELETE FROM public.presupuestos WHERE observaciones IS NOT DISTINCT FROM 'TEST-PRES';
+-- La corrida anterior dejó una VENTA que referencia el producto: sin borrarla
+-- primero, el DELETE del producto choca contra la FK y el script no es
+-- repetible. La segunda corrida mediría otra cosa.
+DELETE FROM public.venta_pagos vp USING public.ventas v
+ WHERE v.id = vp.venta_id AND v.observaciones LIKE 'Presupuesto %-PRES-%';
+DELETE FROM public.cuenta_corriente_movimientos ccm USING public.ventas v
+ WHERE v.id = ccm.venta_id AND v.observaciones LIKE 'Presupuesto %-PRES-%';
+DELETE FROM public.venta_items vi USING public.ventas v
+ WHERE v.id = vi.venta_id AND v.observaciones LIKE 'Presupuesto %-PRES-%';
+UPDATE public.presupuestos SET estado='ANULADO', venta_id=NULL
+ WHERE venta_id IN (SELECT id FROM public.ventas WHERE observaciones LIKE 'Presupuesto %-PRES-%');
+DELETE FROM public.ventas WHERE observaciones LIKE 'Presupuesto %-PRES-%';
 DELETE FROM public.stock_movimientos m USING public.productos p
  WHERE p.id=m.producto_id AND p.codigo='PRE-TEST';
 DELETE FROM public.stock_sucursal s USING public.productos p

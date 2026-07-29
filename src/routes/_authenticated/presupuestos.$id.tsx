@@ -359,12 +359,15 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                {/* Sólo facturas. REMITO y FAC_INTERNA_CTA_CTE tienen condición
+                    FORZADA en crear_venta (remito va siempre a cuenta corriente e
+                    ignora los pagos; la factura interna va siempre a contado), así
+                    que ofrecerlas acá dejaba elegir combinaciones que el servidor
+                    pisa: un pago que se ignora, o una venta sin caja ni deuda.
+                    Para esos comprobantes está el flujo normal de Ventas. */}
                 <SelectContent>
-                  {["FACTURA_B", "FACTURA_A", "REMITO", "FAC_INTERNA_CTA_CTE"].map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {t.replace(/_/g, " ")}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="FACTURA_B">Factura B</SelectItem>
+                  <SelectItem value="FACTURA_A">Factura A</SelectItem>
                 </SelectContent>
               </Select>
             </div>

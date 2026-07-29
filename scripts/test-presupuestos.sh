@@ -153,13 +153,51 @@ if echo "$out" | grep -qi "presupuesto_convertido_tiene_venta"; then
   echo "  ✓ no se puede quedar CONVERTIDO sin venta"
 else echo "  ✗ aceptó CONVERTIDO sin venta"; fallos=$((fallos+1)); fi
 
-echo "── 7. Un empleado no ve los de otra sucursal ─────────────"
+echo "── 7. Descuento inválido e IVA que cambió ────────────────"
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1,'descuento_porcentaje',150)),
+  NULL, 'Malo', NULL, 'TEST-PRES');
+SQL
+)
+if echo "$out" | grep -qi "Descuento inválido"; then echo "  ✓ rechaza un descuento de 150 (antes lo clampaba)"; else echo "  ✗ aceptó descuento 150"; fallos=$((fallos+1)); fi
+
+# El IVA no se puede congelar (crear_venta usa el del producto). Si cambió, el
+# total del presupuesto ya no es el que se cobraría.
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
+  NULL, 'IVA cambiado', NULL, 'TEST-PRES');
+SQL
+IVAP=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='IVA cambiado'")
+$PSQL -c "UPDATE public.productos SET iva_porcentaje = 10.5 WHERE codigo='PRE-TEST';" > /dev/null
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$IVAP'::uuid, '$CLI'::uuid,
+  'FACTURA_B'::public.tipo_comprobante, 'CTA_CTE'::public.condicion_venta, '[]'::jsonb, gen_random_uuid());
+SQL
+)
+if echo "$out" | grep -qi "Cambió el IVA"; then echo "  ✓ no convierte si cambió el IVA"; else echo "  ✗ convirtió con el IVA cambiado"; fallos=$((fallos+1)); fi
+$PSQL -c "UPDATE public.productos SET iva_porcentaje = 21 WHERE codigo='PRE-TEST';" > /dev/null
+
+echo "── 8. Un empleado no ve los de otra sucursal ─────────────"
 otra=$(q "select count(*)::text from public.sucursales")
 if [[ "$otra" -gt 1 ]]; then
+  # psql entra como `postgres`, que SALTEA RLS: sin SET ROLE este check pasaba
+  # aunque la RLS no existiera. Hay que ponerse el rol de la app.
   emp=$($PSQL -tAc "
 $(auth empleado@local.test)
+SET ROLE authenticated;
 SELECT count(*) FROM public.presupuestos WHERE sucursal_id <> public.current_sucursal_id();" 2>&1 | tail -1)
   chequear "no ve presupuestos de otra sucursal" "0" "$emp"
+  # Y que sí vea los suyos, para que el 0 de arriba no sea "no ve nada".
+  propios=$($PSQL -tAc "
+$(auth admin@local.test)
+SET ROLE authenticated;
+SELECT count(*) > 0 FROM public.presupuestos;" 2>&1 | tail -1)
+  chequear "un admin sí los ve" "t" "$propios"
 else
   echo "  · (una sola sucursal en la base local, se saltea)"
 fi

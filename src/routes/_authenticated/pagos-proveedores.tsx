@@ -68,7 +68,8 @@ function PagosProveedores() {
   const { data: sucursales = [] } = useQuery({
     queryKey: ["sucursales"],
     queryFn: async () =>
-      ((await supabase.from("sucursales").select("id, nombre").order("numero")).data ?? []) as any[],
+      ((await supabase.from("sucursales").select("id, nombre").order("numero")).data ??
+        []) as any[],
   });
 
   const { data: pagos = [], isLoading } = useQuery({
@@ -83,29 +84,25 @@ function PagosProveedores() {
       ).data ?? []) as any[],
   });
 
-  // El saldo por proveedor sale del libro de cuenta corriente, que es el mismo
-  // que usa Cuentas Corrientes: un solo lugar donde vive la verdad de la deuda.
-  const { data: movs = [] } = useQuery({
+  // El saldo sale de la vista `proveedor_cc_saldos`, que suma en la BASE.
+  //
+  // Sumar los movimientos en el cliente parece más simple y es un bug: PostgREST
+  // corta en 1000 filas sin avisar, y un DEBITO por compra más un CREDITO por
+  // pago llegan a mil en menos de un año. Reproducido con 1204 movimientos: la
+  // pantalla decía "debés $4.626" cuando el saldo real era $4.830.
+  //
+  // La vista existe desde 20260715150000 y su comentario dice textual: "el
+  // frontend sumaba los movimientos en el cliente, lo que podía truncarse por el
+  // límite de filas de PostgREST". Reimplementarlo era repetir un bug ya resuelto.
+  const { data: saldosRows = [] } = useQuery({
     queryKey: ["proveedor-cc-saldos"],
     queryFn: async () =>
-      ((
-        await supabase
-          .from("proveedor_cc_movimientos")
-          .select("proveedor_id, tipo, monto, estado")
-          .eq("estado", "CONFIRMADO")
-      ).data ?? []) as any[],
+      ((await supabase.from("proveedor_cc_saldos").select("*")).data ?? []) as any[],
   });
-
-  const saldos = useMemo(() => {
-    const m = new Map<string, { debe: number; pago: number }>();
-    for (const x of movs) {
-      const a = m.get(x.proveedor_id) ?? { debe: 0, pago: 0 };
-      if (x.tipo === "DEBITO") a.debe += Number(x.monto);
-      else a.pago += Number(x.monto);
-      m.set(x.proveedor_id, a);
-    }
-    return m;
-  }, [movs]);
+  const saldos = useMemo(
+    () => new Map(saldosRows.map((r: any) => [r.proveedor_id, r])),
+    [saldosRows],
+  );
 
   const { data: fiscal } = useQuery({
     queryKey: ["fiscal-publica"],
@@ -206,14 +203,17 @@ function PagosProveedores() {
             <p className="text-sm text-muted-foreground">No hay proveedores cargados.</p>
           )}
           {proveedores.map((p: any) => {
-            const s = saldos.get(p.id) ?? { debe: 0, pago: 0 };
-            const saldo = s.debe - s.pago;
-            if (s.debe === 0 && s.pago === 0) return null;
+            const s = saldos.get(p.id);
+            if (!s) return null;
+            const debe = Number(s.total_debe ?? 0);
+            const pago = Number(s.total_pagado ?? 0);
+            const saldo = Number(s.saldo ?? 0);
+            if (debe === 0 && pago === 0) return null;
             return (
               <div key={p.id} className="rounded-lg border border-border p-3 text-sm">
                 <p className="font-medium">{p.razon_social}</p>
                 <p className="text-xs text-muted-foreground">
-                  Compraste {fmtMoney(s.debe)} · pagaste {fmtMoney(s.pago)}
+                  Compraste {fmtMoney(debe)} · pagaste {fmtMoney(pago)}
                 </p>
                 <p
                   className={`text-lg font-mono font-semibold ${saldo > 0 ? "text-warning" : "text-success"}`}
@@ -281,7 +281,15 @@ function PagosProveedores() {
   );
 }
 
-function DialogoPago({ open, onClose, proveedores, sucursales, esAdmin, sucursalPropia, onDone }: any) {
+function DialogoPago({
+  open,
+  onClose,
+  proveedores,
+  sucursales,
+  esAdmin,
+  sucursalPropia,
+  onDone,
+}: any) {
   const [proveedorId, setProveedorId] = useState("");
   const [monto, setMonto] = useState<number | null>(null);
   const [forma, setForma] = useState("EFECTIVO");
@@ -335,7 +343,9 @@ function DialogoPago({ open, onClose, proveedores, sucursales, esAdmin, sucursal
           </div>
           {esAdmin && (
             <div>
-              <Label>Sucursal * <span className="text-xs text-muted-foreground">(de qué caja sale)</span></Label>
+              <Label>
+                Sucursal * <span className="text-xs text-muted-foreground">(de qué caja sale)</span>
+              </Label>
               <Select value={sucursalId} onValueChange={setSucursalId}>
                 <SelectTrigger data-testid="pago-sucursal">
                   <SelectValue placeholder="Elegí…" />

@@ -45,3 +45,28 @@ describe("montoEnLetras", () => {
     expect(montoEnLetras(-50)).toContain("menos");
   });
 });
+
+// Hallazgos del review adversarial. El "Son:" de un recibo existe para atrapar un
+// número mal tipeado: producirlo mal EN SILENCIO es peor que no producirlo.
+describe("montoEnLetras — los bordes que mentían", () => {
+  it("no inventa un número para importes gigantes", () => {
+    // Decía "treinta y cuatro millones..." sobre $1.234.567.890,12.
+    expect(montoEnLetras(1234567890.12)).toBe("(importe fuera de rango)");
+    expect(montoEnLetras(1000000000)).toBe("(importe fuera de rango)");
+    expect(montoEnLetras(999999999999.99)).toBe("(importe fuera de rango)");
+  });
+
+  it("el tope sí se escribe", () => {
+    expect(montoEnLetras(999999999)).toContain("novecientos noventa y nueve millones");
+  });
+
+  it("veintiún millones, no veintiuno", () => {
+    expect(montoEnLetras(21000000)).toBe("veintiún millones con 00/100 pesos");
+    expect(montoEnLetras(31000000)).toBe("treinta y un millones con 00/100 pesos");
+  });
+
+  it("los centavos nunca dan 100", () => {
+    expect(montoEnLetras(0.999)).toBe("uno con 00/100 pesos");
+    expect(montoEnLetras(1.995)).toBe("dos con 00/100 pesos");
+  });
+});

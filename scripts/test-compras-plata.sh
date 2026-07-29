@@ -167,7 +167,20 @@ echo "── 8. El pago escribe la forma de pago en el libro ──────�
 chequear "el movimiento de cuenta corriente guarda la forma de pago" "EFECTIVO" \
   "$(q "select forma_pago from public.proveedor_cc_movimientos where proveedor_id='$PROV' and tipo='CREDITO' order by created_at limit 1")"
 
-echo "── 9. Un empleado no puede anular ────────────────────────"
+echo "── 9. El pago tiene tope y su número es único ────────────"
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.registrar_pago_proveedor('$PROV'::uuid, '$SUC'::uuid, 1000000000, 'EFECTIVO');
+SQL
+)
+if echo "$out" | grep -qi "no parece un pago válido"; then echo "  ✓ rechaza un monto absurdo"; else echo "  ✗ aceptó mil millones"; fallos=$((fallos+1)); fi
+chequear "el número de recibo es único" "1" \
+  "$(q "select count(*)::text from pg_indexes where indexname='uq_proveedor_pagos_numero'")"
+# Una sucursal nueva no puede numerar igual que otra: antes las dos caían en 'SUC'.
+chequear "el prefijo sale del código de la sucursal" "OHI" \
+  "$(q "select left(public.next_documento_numero((select id from public.sucursales order by numero limit 1),'TEST_PREFIJO','X'),3)")"
+
+echo "── 10. Un empleado no puede anular ───────────────────────"
 out=$($PSQL <<SQL 2>&1 || true
 $(auth empleado@local.test)
 SELECT public.anular_compra((SELECT id FROM public.compras WHERE numero_comprobante='A-0001-PUENTE'));
@@ -186,6 +199,7 @@ DELETE FROM public.compras c USING public.proveedores p
 DELETE FROM public.proveedores WHERE razon_social IN
   ('PROV COMPRAS TEST','PROV INACTIVO TEST','PROV SIN CC TEST');
 DELETE FROM public.productos WHERE codigo = 'CMP-TEST';
+DELETE FROM public.documento_secuencias WHERE tipo = 'TEST_PREFIJO';
 SQL
 
 if [[ $fallos -eq 0 ]]; then echo -e "\n✅ Todo verde.\n"; else echo -e "\n❌ $fallos fallo(s).\n"; exit 1; fi

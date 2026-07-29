@@ -77,6 +77,8 @@ function NuevoIngreso() {
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [filas, setFilas] = useState<Fila[]>([]);
   const [bloqueo, setBloqueo] = useState<string | null>(null);
+  const [descartadas, setDescartadas] = useState({ sinProducto: 0, ignoradas: 0 });
+  const [estadoIngreso, setEstadoIngreso] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [idempotencyKey] = useState(() => uuidv4());
 
@@ -99,8 +101,18 @@ function NuevoIngreso() {
       ).data ?? []) as any[],
   });
 
-  // Retomar un borrador. Puede ser uno viejo que quedó de la extracción con IA:
-  // sus ítems se editan igual, porque son los mismos ítems.
+  // Retomar un borrador. Puede ser uno viejo que quedó de la extracción con IA, y
+  // ahí hay dos trampas que costaron caro:
+  //
+  //  - `confirmar_ingreso_mercaderia` hace DELETE + re-INSERT de lo que mande esta
+  //    pantalla. Si se cargaran sólo las filas con producto, las que la IA no pudo
+  //    matchear DESAPARECEN sin decir nada: mercadería del remito que nunca entra
+  //    al stock.
+  //  - Las filas marcadas IGNORADA se reenviaban como MANUAL, así que SÍ sumaban
+  //    stock — justo lo que la usuaria había decidido que no entrara.
+  //
+  // Las dos se cuentan y se avisan: esta pantalla no puede representar esos
+  // estados, así que lo mínimo honesto es decir cuántos quedaron afuera.
   useEffect(() => {
     if (!idExistente) return;
     (async () => {
@@ -115,22 +127,28 @@ function NuevoIngreso() {
       setNumero(ing.numero_remito_proveedor ?? "");
       if (ing.fecha_remito) setFecha(String(ing.fecha_remito).slice(0, 10));
       setBloqueo(ing.bloqueo_confirmacion ?? null);
+      setEstadoIngreso(ing.estado ?? null);
       const { data: its } = await supabase
         .from("ingreso_mercaderia_items")
         .select("*")
         .eq("ingreso_id", idExistente)
         .order("linea");
+      const todos = its ?? [];
+      const usables = todos.filter((it: any) => it.producto_id && it.origen_match !== "IGNORADA");
+      const sinProducto = todos.filter((it: any) => !it.producto_id).length;
+      const ignoradas = todos.filter(
+        (it: any) => it.producto_id && it.origen_match === "IGNORADA",
+      ).length;
+      setDescartadas({ sinProducto, ignoradas });
       setFilas(
-        (its ?? [])
-          .filter((it: any) => it.producto_id)
-          .map((it: any, i: number) => ({
-            linea: i + 1,
-            producto_id: it.producto_id,
-            codigo: it.codigo ?? "",
-            descripcion: it.descripcion ?? "",
-            cantidad: it.cantidad == null ? null : Number(it.cantidad),
-            codigo_proveedor: it.codigo_proveedor ?? it.codigo ?? "",
-          })),
+        usables.map((it: any, i: number) => ({
+          linea: i + 1,
+          producto_id: it.producto_id,
+          codigo: it.codigo ?? "",
+          descripcion: it.descripcion ?? "",
+          cantidad: it.cantidad == null ? null : Number(it.cantidad),
+          codigo_proveedor: it.codigo_proveedor ?? it.codigo ?? "",
+        })),
       );
     })();
   }, [idExistente]);
@@ -173,7 +191,9 @@ function NuevoIngreso() {
   const actualizar = (linea: number, patch: Partial<Fila>) =>
     setFilas((prev) => prev.map((f) => (f.linea === linea ? { ...f, ...patch } : f)));
   const borrar = (linea: number) =>
-    setFilas((prev) => prev.filter((f) => f.linea !== linea).map((f, i) => ({ ...f, linea: i + 1 })));
+    setFilas((prev) =>
+      prev.filter((f) => f.linea !== linea).map((f, i) => ({ ...f, linea: i + 1 })),
+    );
 
   const listas = useMemo(() => filas.filter((f) => (f.cantidad ?? 0) > 0).length, [filas]);
   const sinCantidad = filas.length - listas;
@@ -257,6 +277,45 @@ function NuevoIngreso() {
           corrigiéndolo a mano: la RPC lo rechaza siempre y no hay forma de
           limpiar el bloqueo. Mejor decirlo acá que dejar que choque contra un
           error que no puede resolver. */}
+      {/* Un ingreso ya confirmado o anulado no se edita: la pantalla se cargaba
+          igual y el error recién aparecía al confirmar. */}
+      {estadoIngreso && estadoIngreso !== "BORRADOR" && (
+        <SectionCard>
+          <div className="flex gap-2 items-start text-sm">
+            <AlertTriangle className="h-4 w-4 mt-0.5 text-destructive shrink-0" />
+            <p>
+              Este ingreso está <strong>{estadoIngreso.toLowerCase()}</strong>: no se puede
+              modificar. Si querés cargar otro remito, entrá por <strong>Nuevo ingreso</strong>.
+            </p>
+          </div>
+        </SectionCard>
+      )}
+
+      {(descartadas.sinProducto > 0 || descartadas.ignoradas > 0) && (
+        <SectionCard>
+          <div className="flex gap-2 items-start text-sm">
+            <AlertTriangle className="h-4 w-4 mt-0.5 text-warning shrink-0" />
+            <div>
+              <p className="font-medium">Este borrador venía de la lectura automática.</p>
+              <ul className="text-xs text-muted-foreground list-disc pl-4 mt-1">
+                {descartadas.sinProducto > 0 && (
+                  <li>
+                    <strong>{descartadas.sinProducto}</strong> renglones no tenían producto asignado
+                    y no se cargaron. Si estaban en el remito, buscalos y agregalos a mano.
+                  </li>
+                )}
+                {descartadas.ignoradas > 0 && (
+                  <li>
+                    <strong>{descartadas.ignoradas}</strong> renglones estaban marcados para ignorar
+                    y se dejaron afuera.
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </SectionCard>
+      )}
+
       {bloqueo && (
         <SectionCard>
           <div className="flex gap-2 items-start text-sm">
@@ -308,7 +367,11 @@ function NuevoIngreso() {
           </div>
           <div>
             <Label>N° de remito</Label>
-            <Input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="0001-00001234" />
+            <Input
+              value={numero}
+              onChange={(e) => setNumero(e.target.value)}
+              placeholder="0001-00001234"
+            />
           </div>
           <div>
             <Label>Fecha</Label>
@@ -428,6 +491,7 @@ function NuevoIngreso() {
             disabled={
               confirmarM.isPending ||
               !!bloqueo ||
+              (!!estadoIngreso && estadoIngreso !== "BORRADOR") ||
               filas.length === 0 ||
               sinCantidad > 0 ||
               !proveedorId ||

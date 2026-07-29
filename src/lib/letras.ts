@@ -75,6 +75,9 @@ function hasta999(n: number): string {
   return partes.join(" ");
 }
 
+/** El tope que puede escribir esta función. Más arriba, mentiría. */
+export const MAXIMO_EN_LETRAS = 999_999_999;
+
 function enteroEnLetras(n: number): string {
   if (n === 0) return "cero";
   if (n < 0) return `menos ${enteroEnLetras(-n)}`;
@@ -85,7 +88,16 @@ function enteroEnLetras(n: number): string {
   const partes: string[] = [];
 
   if (millones > 0) {
-    partes.push(millones === 1 ? "un millón" : `${hasta999(millones)} millones`);
+    // `hasta999` sólo sabe hasta 999. Con más de mil millones devolvía "" y el
+    // resultado quedaba PLAUSIBLE y equivocado: 1.234.567.890 se leía "treinta y
+    // cuatro millones...". El "Son:" del recibo existe justamente para atrapar un
+    // número mal tipeado; producirlo mal en silencio es peor que no producirlo.
+    if (millones > 999) return "(importe fuera de rango)";
+    // "veintiún millones", no "veintiuno millones".
+    const m = hasta999(millones)
+      .replace(/\bveintiuno$/, "veintiún")
+      .replace(/\buno$/, "un");
+    partes.push(millones === 1 ? "un millón" : `${m} millones`);
   }
   if (miles > 0) {
     // "mil", no "un mil".
@@ -104,8 +116,12 @@ function enteroEnLetras(n: number): string {
  */
 export function montoEnLetras(monto: number): string {
   const n = Number.isFinite(monto) ? Math.abs(monto) : 0;
-  const entero = Math.floor(n);
-  const centavos = Math.round((n - entero) * 100);
+  if (n > MAXIMO_EN_LETRAS) return "(importe fuera de rango)";
+  // Los centavos se redondean ANTES de partir el entero: 0.999 daba
+  // "cero con 100/100", que no es un centavo válido.
+  const total = Math.round(n * 100);
+  const entero = Math.floor(total / 100);
+  const centavos = total % 100;
   const texto = enteroEnLetras(entero);
   const signo = monto < 0 ? "menos " : "";
   return `${signo}${texto} con ${String(centavos).padStart(2, "0")}/100 pesos`;

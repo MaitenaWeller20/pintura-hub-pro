@@ -88,11 +88,11 @@ function IngresosPage() {
       />
 
       <DataTable
-        columns={["Fecha", "Proveedor", "Remito", "Extracción", "Estado", ""]}
+        columns={["Fecha", "Proveedor", "Remito", "Estado", ""]}
         loading={isLoading}
         isEmpty={ingresos.length === 0}
         empty={{
-          text: "Todavía no cargaste ingresos de mercadería. Subí el remito del proveedor y el sistema lo lee solo.",
+          text: "Todavía no cargaste ingresos de mercadería. Entrá en Nuevo ingreso, buscá cada producto del remito y poné cuánto entró.",
         }}
       >
         {ordenados.map((i: any) => (
@@ -100,17 +100,7 @@ function IngresosPage() {
             <TableCell className="text-xs">{fmtDate(i.fecha_carga)}</TableCell>
             <TableCell>{i.proveedor?.razon_social ?? "—"}</TableCell>
             <TableCell className="font-mono text-xs">{i.numero_remito_proveedor ?? "—"}</TableCell>
-            <TableCell>
-              {i.extraccion_estado === "ERROR" ? (
-                <StatusPill tone="danger" data-testid="extraccion-error">
-                  Error
-                </StatusPill>
-              ) : i.extraccion_estado === "PENDIENTE" ? (
-                <StatusPill tone="neutral">Pendiente</StatusPill>
-              ) : (
-                <span className="text-xs text-muted-foreground">OK</span>
-              )}
-            </TableCell>
+
             <TableCell>
               <StatusPill tone={ESTADO_TONE[i.estado as keyof typeof ESTADO_TONE] ?? "neutral"}>
                 {ESTADO_LABEL[i.estado as keyof typeof ESTADO_LABEL] ?? i.estado}

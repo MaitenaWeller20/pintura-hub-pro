@@ -137,10 +137,18 @@ function NuevoIngreso() {
 
   // Buscador contra el catálogo — "tiene que buscarlo al producto en productos,
   // que sería la lista de precios que cargamos".
+  //
+  // Se manda lo tipeado en los DOS parámetros: `buscar_productos_similares` busca
+  // por nombre en `p_texto` y por código sólo en `p_codigo`, así que mandando uno
+  // solo la mitad de las búsquedas no encuentra nada. Buscar "4000-00400" tiene
+  // que traer el producto igual que buscar "membrana".
   const { data: resultados = [], isFetching: buscando } = useQuery({
     queryKey: ["buscar-producto-ingreso", busqueda],
     enabled: busqueda.trim().length >= 2,
-    queryFn: async () => (await buscarProductosIngreso({ data: { texto: busqueda.trim() } })) as any[],
+    queryFn: async () =>
+      (await buscarProductosIngreso({
+        data: { texto: busqueda.trim(), codigo: busqueda.trim() },
+      })) as any[],
   });
 
   const agregar = (p: any) => {

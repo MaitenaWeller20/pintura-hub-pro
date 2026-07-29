@@ -69,11 +69,26 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
     const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
     if (!isAdmin) throw new Error("Solo admin");
 
-    const { data: prods } = await supabase
-      .from("productos")
-      .select("id, precio_fabrica, precio_sugerido_publico, markup_porcentaje, iva_porcentaje")
-      .in("id", data.producto_ids);
-    const lista = (prods ?? []) as any[];
+    // En tandas: PostgREST corta en db-max-rows (1000) sin avisar, y esta pantalla
+    // ofrece "seleccionar los N visibles" sobre un catálogo de 1100+. Sin trocear,
+    // los últimos productos quedaban con el precio viejo y el toast informaba
+    // "1000 recalculados" como si estuviera todo hecho.
+    // Ver src/lib/supabase-paginado.ts.
+    const TANDA = 500;
+    const lista: any[] = [];
+    for (let i = 0; i < data.producto_ids.length; i += TANDA) {
+      const { data: prods, error } = await supabase
+        .from("productos")
+        .select("id, precio_fabrica, precio_sugerido_publico, markup_porcentaje, iva_porcentaje")
+        .in("id", data.producto_ids.slice(i, i + TANDA));
+      if (error) throw new Error(error.message);
+      lista.push(...(prods ?? []));
+    }
+    if (lista.length < data.producto_ids.length) {
+      throw new Error(
+        `Se seleccionaron ${data.producto_ids.length} productos pero sólo se pudieron leer ${lista.length}. No se aplicó nada.`,
+      );
+    }
 
     // El markup se guarda en TODOS los seleccionados (así queda registrado el % que
     // el negocio quiere para cada producto). El precio de venta se RECALCULA con la
@@ -88,12 +103,20 @@ export const aplicarMarkup = createServerFn({ method: "POST" })
     for (const p of lista) {
       const patch: any = {};
       if (data.sobrescribir_individual) patch.markup_porcentaje = data.markup_porcentaje;
+      // Con sobrescribir_individual el % nuevo pisa el de cada producto. Sin él,
+      // cada producto conserva SU markup y el % nuevo actúa sólo como default para
+      // los que no tienen uno propio. Antes se recalculaba siempre con el % nuevo
+      // sin guardarlo, así que un producto con markup propio 50% quedaba con el
+      // precio del 30% y el markup diciendo 50%: incoherente, y la tabla lo
+      // marcaba como "manual".
       const { precio_sin_iva: nuevoPrecio } = calcularPrecios(
         {
           precio_fabrica: p.precio_fabrica,
           precio_sugerido_publico: p.precio_sugerido_publico,
           iva_porcentaje: p.iva_porcentaje,
-          markup_porcentaje: data.markup_porcentaje,
+          markup_porcentaje: data.sobrescribir_individual
+            ? data.markup_porcentaje
+            : p.markup_porcentaje,
         },
         { markupDefault: data.markup_porcentaje },
       );

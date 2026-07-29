@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,7 +87,12 @@ function ImportarProductos() {
   // avisar y el catálogo tiene más: sin paginar, los últimos productos importarían
   // con el cálculo equivocado y nadie se enteraría.
   const [guardados, setGuardados] = useState<Map<string, ProductoGuardado>>(new Map());
-  const [catalogoListo, setCatalogoListo] = useState(false);
+  // "cargando" | "listo" | "error": si falla, el botón queda deshabilitado y hace
+  // falta decir QUÉ pasó y ofrecer reintentar. Antes el error y la carga eran el
+  // mismo estado, así que un corte de red de dos segundos dejaba el botón muerto
+  // con el cartel "Leyendo el catálogo…" para siempre.
+  const [catalogo, setCatalogo] = useState<"cargando" | "listo" | "error">("cargando");
+  const [progreso, setProgreso] = useState(0);
   useEffect(() => {
     supabase
       .from("settings")
@@ -100,53 +105,69 @@ function ImportarProductos() {
           setMarkupDef(Number(data.markup_default_porcentaje));
       });
   }, []);
-  useEffect(() => {
-    let vivo = true;
-    traerTodo<{
-      codigo: string;
-      precio_sugerido_publico: number | null;
-      markup_porcentaje: number | null;
-    }>(async (desde, hasta) => {
-      const { data, error, count } = await supabase
-        .from("productos")
-        .select("codigo, precio_sugerido_publico, markup_porcentaje", { count: "exact" })
-        .order("codigo")
-        .range(desde, hasta);
-      return { data, error, count };
-    })
-      .then(({ filas, truncado }) => {
-        if (!vivo) return;
-        setGuardados(
-          new Map(
-            filas.map((p) => [
-              p.codigo,
-              {
-                precio_sugerido_publico:
-                  p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
-                markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
-              },
-            ]),
-          ),
-        );
-        // Si quedó incompleto, importar recalcularía mal los productos que faltan.
-        // Mejor no dejar importar que corromper precios en silencio.
-        setCatalogoListo(!truncado);
-        if (truncado) toast.error("No se pudo leer el catálogo completo. Recargá la página.");
-      })
-      .catch((e) => {
-        if (!vivo) return;
-        setCatalogoListo(false);
-        toast.error(`No se pudo leer el catálogo: ${e.message}`);
+  const cargarCatalogo = useCallback(async () => {
+    setCatalogo("cargando");
+    try {
+      const { filas, truncado } = await traerTodo<{
+        codigo: string;
+        precio_sugerido_publico: number | null;
+        markup_porcentaje: number | null;
+      }>(async (desde, hasta) => {
+        const { data, error, count } = await supabase
+          .from("productos")
+          .select("codigo, precio_sugerido_publico, markup_porcentaje", { count: "exact" })
+          .order("codigo")
+          .range(desde, hasta);
+        return { data, error, count };
       });
-    return () => {
-      vivo = false;
-    };
+      setGuardados(
+        new Map(
+          filas.map((p) => [
+            // Indexado por el código YA recortado: la fila de la planilla se
+            // busca con `codigo.trim()` (que es además lo que se va a guardar).
+            // Sin esto, un código con un espacio de más en la base no encontraba
+            // su sugerido y el precio se degradaba al cálculo por costo.
+            String(p.codigo ?? "").trim(),
+            {
+              precio_sugerido_publico:
+                p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
+              markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
+            },
+          ]),
+        ),
+      );
+      // Si quedó incompleto, importar recalcularía mal los productos que faltan.
+      // Mejor no dejar importar que corromper precios en silencio.
+      setCatalogo(truncado ? "error" : "listo");
+      if (truncado) toast.error("El catálogo se leyó incompleto. Probá de nuevo.");
+    } catch (e: any) {
+      setCatalogo("error");
+      toast.error(`No se pudo leer el catálogo: ${e.message}`);
+    }
   }, []);
+  useEffect(() => {
+    cargarCatalogo();
+  }, [cargarCatalogo]);
+
+  // Cerrar la pestaña a mitad de una importación deja el catálogo mitad viejo y
+  // mitad nuevo, sin ninguna marca de dónde se cortó. Son varios minutos: hay que
+  // avisar antes de que se vaya.
+  useEffect(() => {
+    if (!busy) return;
+    const avisar = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [busy]);
 
   const aplicarDatos = (parsedRows: Row[], parsedHeaders: string[]) => {
+    // Una columna sin nombre rompía la pantalla entera: el <SelectItem> del mapeo
+    // no acepta value="" y tiraba el error boundary. Pasa con cualquier planilla
+    // que traiga columnas vacías al final (las "__EMPTY" del Excel de Quimex ya
+    // vienen con nombre; un CSV con celdas de más, no).
+    const limpios = parsedHeaders.filter((h) => String(h ?? "").trim() !== "");
     setRows(parsedRows);
-    setHeaders(parsedHeaders);
-    setMapping(autoMapear(parsedHeaders));
+    setHeaders(limpios);
+    setMapping(autoMapear(limpios));
   };
 
   // Al elegir una solapa del Excel, la re-parseamos (detectando la fila de headers).
@@ -191,7 +212,9 @@ function ImportarProductos() {
     const { data: cats = [] } = await supabase.from("categorias").select("*");
     const { data: mks = [] } = await supabase.from("marcas").select("*");
     // Parámetros de precio elegidos en la UI; se persisten para próximas importaciones.
-    const markupDefault = Number(markupDef) || MARKUP_DEFAULT;
+    // `|| MARKUP_DEFAULT` convertía un markup de 0% en 30%. Un 0 es una decisión
+    // válida (vender al costo), no un campo vacío.
+    const markupDefault = Number.isFinite(Number(markupDef)) ? Number(markupDef) : MARKUP_DEFAULT;
     const descuentoProveedor = Number(descuento) || 0;
     // Persistir estos parámetros como default global es una escritura admin-only
     // (RLS: solo is_admin puede tocar settings). Un empleado igual puede importar
@@ -210,6 +233,7 @@ function ImportarProductos() {
     const mkMap = new Map((mks ?? []).map((m: any) => [m.nombre.toLowerCase(), m.id]));
 
     for (let i = 0; i < rows.length; i++) {
+      setProgreso(i);
       const r = rows[i];
       try {
         const codigo = String(r[mapping.codigo] ?? "").trim();
@@ -284,22 +308,38 @@ function ImportarProductos() {
             mapping.precio_sin_iva ? r[mapping.precio_sin_iva] : "",
           ],
         ] as [string, number, unknown][]) {
-          if (val > LIMITE) {
+          if (val > LIMITE || val < 0) {
             throw new Error(
-              `El ${campo} (${raw || val}) parece mal formateado. Suele pasar al abrir el Excel de Quimex en Excel con configuración argentina, que interpreta el punto decimal como separador de miles. Subí el archivo original sin re-guardarlo, o revisá el separador decimal.`,
+              `El ${campo} (${raw || val}) no parece un precio válido. Suele pasar al abrir el Excel de Quimex en Excel con configuración argentina, que interpreta el punto decimal como separador de miles. Subí el archivo original sin re-guardarlo, o revisá el separador decimal.`,
             );
           }
         }
 
+        // Un producto sin ningún precio se vendería a $0 en el mostrador. Pasa con
+        // las filas de la lista que vienen con el precio en blanco (discontinuados,
+        // "consultar", separadores). Antes se escribían igual y quedaban en cero sin
+        // que nadie lo viera: la vista previa muestra 10 filas de 1104.
+        if (f.precio_sin_iva <= 0) {
+          throw new Error(
+            "La fila no tiene ningún precio (ni de lista, ni de fábrica, ni sugerido). El producto quedaría en $0, así que no se importa.",
+          );
+        }
+
+        // REGLA: la importación sólo escribe lo que la planilla TRAE.
+        //
+        // Todo campo que se mande incondicionalmente se borra cuando la planilla no
+        // lo tiene. La lista de Quimex es CÓDIGO / DESCRIPCIÓN / ENV. / PRECIO DE
+        // LISTA / Sugerido: no trae marca, ni categoría, ni unidad, ni stock mínimo.
+        // Escribirlos igual dejaba el catálogo entero sin marca, sin categoría y con
+        // el stock mínimo en cero (adiós alertas de reposición) en la primera
+        // reimportación. Es el mismo error que puso el tamaño de envase como stock:
+        // escribir un campo que el archivo no trae.
         const payload = {
           codigo,
           nombre,
           // Re-importar un código lo trae de vuelta al catálogo activo: si estaba
           // archivado (eliminado), se desarchiva — lo estás cargando de la lista real.
           archivado: false,
-          categoria_id: cat_id ?? null,
-          marca_id: mk_id ?? null,
-          unidad_medida: String(r[mapping.unidad_medida] ?? "unidad") || "unidad",
           precio_lista: +f.precio_lista.toFixed(2),
           precio_fabrica: f.precio_fabrica,
           precio_sin_iva: f.precio_sin_iva,
@@ -307,13 +347,18 @@ function ImportarProductos() {
           // que antes: el IVA pasó a ser un DIVISOR (el sugerido viene c/IVA), así
           // que un valor basura ya no ensucia la vista, corrompe lo que se factura.
           iva_porcentaje: f.iva_porcentaje,
-          stock_minimo: numOr(r[mapping.stock_minimo], 0),
+          ...(mapping.categoria ? { categoria_id: cat_id ?? null } : {}),
+          ...(mapping.marca ? { marca_id: mk_id ?? null } : {}),
+          ...(mapping.unidad_medida
+            ? { unidad_medida: String(r[mapping.unidad_medida] ?? "unidad") || "unidad" }
+            : {}),
+          ...(mapping.stock_minimo ? { stock_minimo: numOr(r[mapping.stock_minimo], 0) } : {}),
           // R8: tamaño de envase (ENV). Vacío -> null (no todo producto lo trae).
-          tamano_envase: f.envase,
-          // Sólo se escribe el sugerido si la columna está mapeada. Si no lo está,
-          // la clave se omite y el upsert no pisa lo que ya había guardado — que es
-          // justamente lo que calcularFila usó para derivar el precio de esta fila.
-          ...(mapping.precio_sugerido_publico
+          ...(mapping.tamano_envase ? { tamano_envase: f.envase } : {}),
+          // El sugerido se escribe sólo si esta fila TRAE uno. Ni una columna sin
+          // mapear ni una celda en blanco pisan lo que ya estaba guardado — que es
+          // justamente lo que calcularFila usó para derivar este precio.
+          ...(f.precio_sugerido_publico != null
             ? { precio_sugerido_publico: f.precio_sugerido_publico }
             : {}),
         };
@@ -328,6 +373,11 @@ function ImportarProductos() {
       }
     }
     setBusy(false);
+    setProgreso(0);
+    // El mapa de sugeridos quedó viejo después de escribir: si la persona corrige
+    // el mapeo y vuelve a confirmar sin recargar, tiene que partir de lo que quedó
+    // realmente guardado.
+    await cargarCatalogo();
     setErrors(errs);
     if (errs.length === 0) {
       toast.success(`${rows.length} productos importados`);
@@ -356,31 +406,68 @@ function ImportarProductos() {
   );
   const previa = calculadas.slice(0, 10);
   const resumen = useMemo(() => {
-    const r = { sugerido: 0, costo: 0, manual: 0 };
-    for (const f of calculadas) r[f.origen]++;
+    const r = { sugerido: 0, costo: 0, manual: 0, sinPrecio: 0, sugeridoHeredado: 0 };
+    for (const f of calculadas) {
+      r[f.origen]++;
+      if (f.precio_sin_iva <= 0) r.sinPrecio++;
+      // Sin la columna mapeada, un sugerido sólo puede venir del catálogo: el
+      // precio de venta de esa fila queda clavado en el de la lista ANTERIOR.
+      if (!mapping.precio_sugerido_publico && f.precio_sugerido_publico != null)
+        r.sugeridoHeredado++;
+    }
     return r;
-  }, [calculadas]);
+  }, [calculadas, mapping.precio_sugerido_publico]);
 
   const avisos = useMemo(() => {
     const out: string[] = [];
+    const nombreCampo = (k: string) => FIELDS_TARGET.find((f) => f.key === k)?.label ?? k;
     for (const col of columnasDuplicadas(mapping)) {
+      const campos = Object.entries(mapping)
+        .filter(([, v]) => v === col)
+        .map(([k]) => `«${nombreCampo(k)}»`)
+        .join(" y ");
       out.push(
-        `La columna "${col.trim()}" está mapeada en más de un campo. Casi nunca es lo que se quiere: revisá que cada campo apunte a su columna.`,
+        `Estás usando la columna «${col.trim()}» para dos cosas a la vez: ${campos}. Dejala en una sola.`,
       );
     }
     const sinMapear = sugeridoSinMapear(headers, mapping);
     if (sinMapear) {
       out.push(
-        `El archivo trae la columna "${sinMapear.trim()}" y no está mapeada a "Sugerido al público (C/IVA)". Sin esa columna, el precio de venta se calcula desde el costo y queda por debajo del precio que sugiere el proveedor.`,
+        `El archivo trae la columna «${sinMapear.trim()}» y no la estás usando para el sugerido al público. Elegila arriba, en «Sugerido al público (C/IVA)». Si no, los precios de venta se calculan desde el costo y salen más baratos de lo que sugiere el proveedor.`,
+      );
+    }
+    // El sugerido guardado envejece: si esta lista no lo trae, el precio de venta
+    // se queda clavado en el de la lista anterior mientras el costo sube. Es mejor
+    // que degradar al cálculo por costo, pero hay que decirlo.
+    if (!mapping.precio_sugerido_publico && resumen.sugeridoHeredado > 0) {
+      out.push(
+        `Este archivo no trae la columna del sugerido al público: ${resumen.sugeridoHeredado} productos van a conservar el sugerido de la lista anterior, así que su precio de venta no se va a mover aunque suba el costo. Si el proveedor actualizó los precios sugeridos, subí la lista completa.`,
+      );
+    }
+    // Una columna de precio explícito le gana al sugerido (§3.2) y lo anula sin
+    // que se note: sólo cambia un número en el resumen.
+    if (mapping.precio_sin_iva && mapping.precio_sugerido_publico) {
+      out.push(
+        `Estás usando «${mapping.precio_sin_iva.trim()}» como precio de venta final. Ese precio le gana al sugerido al público: el markup no se le va a aplicar a esas filas.`,
+      );
+    }
+    if (resumen.sinPrecio > 0) {
+      out.push(
+        `${resumen.sinPrecio} filas no tienen ningún precio. Esos productos NO se van a importar (quedarían a $0). Revisá que la columna del precio esté bien elegida.`,
       );
     }
     return out;
-  }, [mapping, headers]);
+  }, [mapping, headers, resumen.sugeridoHeredado, resumen.sinPrecio]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/productos" })}>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={() => navigate({ to: "/productos" })}
+        >
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-2xl font-bold">Importar productos</h1>
@@ -453,7 +540,7 @@ function ImportarProductos() {
             </div>
           </Card>
           <Card className="p-4">
-            <h3 className="font-semibold mb-3">Mapeo de columnas</h3>
+            <h3 className="font-semibold mb-3">¿Qué columna del archivo es cada dato?</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {FIELDS_TARGET.map((f) => (
                 <div key={f.key}>
@@ -468,7 +555,7 @@ function ImportarProductos() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">— (sin mapear)</SelectItem>
+                      <SelectItem value="__none__">— (no la uso)</SelectItem>
                       {headers.map((h) => (
                         <SelectItem key={h} value={h}>
                           {h}
@@ -484,7 +571,7 @@ function ImportarProductos() {
           {avisos.length > 0 && (
             <Card className="p-4 border-warning/50 bg-warning/5">
               <h3 className="font-semibold mb-2 flex items-center gap-2 text-sm">
-                <AlertTriangle className="h-4 w-4" /> Revisá el mapeo
+                <AlertTriangle className="h-4 w-4" /> Antes de importar, revisá esto
               </h3>
               <ul className="text-xs space-y-1 list-disc pl-4">
                 {avisos.map((a, i) => (
@@ -498,22 +585,18 @@ function ImportarProductos() {
             <h3 className="font-semibold mb-1">Vista previa ({rows.length} filas)</h3>
             <p className="text-xs text-muted-foreground mb-3">
               Estos son los precios que se van a guardar, ya calculados.{" "}
-              {resumen.sugerido > 0 && (
-                <>
-                  <strong>{resumen.sugerido}</strong> desde el sugerido al público
-                  {" · "}
-                </>
-              )}
-              {resumen.costo > 0 && (
-                <>
-                  <strong>{resumen.costo}</strong> desde el costo
-                  {resumen.manual > 0 && " · "}
-                </>
-              )}
-              {resumen.manual > 0 && (
-                <>
-                  <strong>{resumen.manual}</strong> con el precio de la planilla
-                </>
+              {[
+                resumen.sugerido > 0 && `${resumen.sugerido} desde el sugerido al público`,
+                resumen.costo > 0 && `${resumen.costo} desde el costo`,
+                resumen.manual > 0 && `${resumen.manual} con el precio que trae el archivo`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              {resumen.sinPrecio > 0 && (
+                <span className="text-destructive">
+                  {" "}
+                  · {resumen.sinPrecio} sin ningún precio (no se importan)
+                </span>
               )}
             </p>
             <div className="max-h-64 overflow-auto text-xs">
@@ -561,15 +644,31 @@ function ImportarProductos() {
             <Button
               className="mt-3"
               onClick={confirmar}
-              disabled={busy || !mapping.codigo || !mapping.nombre || !catalogoListo}
+              disabled={busy || !mapping.codigo || !mapping.nombre || catalogo !== "listo"}
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
-              Confirmar importación
+              {busy ? `Importando… ${progreso + 1} de ${rows.length}` : "Confirmar importación"}
             </Button>
-            {!mapping.codigo || !mapping.nombre ? (
-              <p className="text-xs text-muted-foreground mt-2">Mapeá al menos Código y Nombre.</p>
-            ) : !catalogoListo ? (
+            {busy ? (
+              <p className="text-xs text-muted-foreground mt-2">
+                Puede tardar unos minutos. <strong>No cierres esta pestaña</strong>: si se corta a
+                la mitad, van a quedar productos con el precio nuevo y otros con el viejo. Si eso
+                pasa, volvé a subir el mismo archivo — importar dos veces no duplica nada.
+              </p>
+            ) : !mapping.codigo || !mapping.nombre ? (
+              <p className="text-xs text-muted-foreground mt-2">
+                Elegí al menos qué columna es el Código y cuál el Nombre.
+              </p>
+            ) : catalogo === "cargando" ? (
               <p className="text-xs text-muted-foreground mt-2">Leyendo el catálogo…</p>
+            ) : catalogo === "error" ? (
+              <p className="text-xs text-destructive mt-2">
+                No se pudo leer el catálogo, así que importar ahora podría bajar precios que ya
+                estaban bien.{" "}
+                <button type="button" className="underline" onClick={() => cargarCatalogo()}>
+                  Reintentar
+                </button>
+              </p>
             ) : null}
           </Card>
 

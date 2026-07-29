@@ -5,7 +5,8 @@ import {
   calcularPrecios,
   costoDeLista,
   normalizarIva,
-  origenDelPrecio,
+  baseDelPrecio,
+  coincideConFormula,
 } from "./precios";
 
 // Números REALES de "LP N° 125 - Quimexur", producto 4000-00400
@@ -122,13 +123,13 @@ describe("calcularPrecios — la cadena completa", () => {
     expect(r.origen).toBe("manual");
   });
 
-  it("pero si el explícito coincide con la fórmula, se reporta como derivado", () => {
-    const r = calcularPrecios({
-      ...base,
-      precio_sugerido_publico: SUGERIDO,
-      precio_sin_iva: 36927.09,
-    });
-    expect(r.origen).toBe("sugerido");
+  // `origen` de calcularPrecios dice POR QUÉ RAMA salió el número, que es lo que
+  // necesita el resumen de la importación. Para etiquetar un producto ya guardado
+  // está baseDelPrecio, que es otra pregunta y da "sugerido" acá.
+  it("origen es la rama que se usó, no el dato que el producto tiene", () => {
+    const e = { ...base, precio_sugerido_publico: SUGERIDO, precio_sin_iva: 36927.09 };
+    expect(calcularPrecios(e).origen).toBe("manual"); // el precio vino de la planilla
+    expect(baseDelPrecio(e)).toBe("sugerido"); // pero el producto tiene sugerido
   });
 
   it("un IVA inválido no corrompe el neto: cae a 21", () => {
@@ -178,7 +179,22 @@ describe("ida y vuelta del redondeo", () => {
   });
 });
 
-describe("origenDelPrecio — qué explica el precio guardado", () => {
+describe("baseDelPrecio — de qué dato sale el precio (hecho, no deducción)", () => {
+  it("con sugerido cargado, la base es el sugerido", () => {
+    expect(baseDelPrecio({ precio_fabrica: COSTO, precio_sugerido_publico: SUGERIDO })).toBe(
+      "sugerido",
+    );
+  });
+  it("sin sugerido pero con costo, la base es el costo", () => {
+    expect(baseDelPrecio({ precio_fabrica: COSTO, precio_sugerido_publico: null })).toBe("costo");
+  });
+  it("sin ninguno de los dos, el precio está a mano", () => {
+    expect(baseDelPrecio({ precio_sin_iva: 5000 })).toBe("manual");
+    expect(baseDelPrecio({ precio_fabrica: 0, precio_sugerido_publico: 0 })).toBe("manual");
+  });
+});
+
+describe("coincideConFormula — ¿el precio guardado es el que da la fórmula hoy?", () => {
   const prod = {
     precio_fabrica: COSTO,
     precio_sugerido_publico: SUGERIDO,
@@ -187,40 +203,43 @@ describe("origenDelPrecio — qué explica el precio guardado", () => {
   };
 
   it("reconoce un precio derivado del sugerido", () => {
-    expect(origenDelPrecio({ ...prod, precio_sin_iva: 36927.09 })).toBe("sugerido");
+    expect(coincideConFormula({ ...prod, precio_sin_iva: 36927.09 })).toBe(true);
   });
 
   it("reconoce un precio derivado del costo", () => {
     expect(
-      origenDelPrecio({ ...prod, precio_sugerido_publico: null, precio_sin_iva: 23203.9 }),
-    ).toBe("costo");
+      coincideConFormula({ ...prod, precio_sugerido_publico: null, precio_sin_iva: 23203.9 }),
+    ).toBe(true);
   });
 
-  // Sin esto la tabla mostraría "sug." sobre un precio que nadie derivó del
-  // sugerido: el diálogo deja escribirlo a mano y el alta rápida de Ingresos de
-  // mercadería crea productos con el neto directo.
-  it("un precio puesto a mano se declara manual, aunque el producto tenga sugerido", () => {
-    expect(origenDelPrecio({ ...prod, precio_sin_iva: 25000 })).toBe("manual");
+  it("un precio puesto a mano no coincide", () => {
+    expect(coincideConFormula({ ...prod, precio_sin_iva: 25000 })).toBe(false);
   });
 
-  it("tolera un centavo de diferencia", () => {
-    expect(origenDelPrecio({ ...prod, precio_sin_iva: 36927.1 })).toBe("sugerido");
-    expect(origenDelPrecio({ ...prod, precio_sin_iva: 36927.08 })).toBe("sugerido");
-    expect(origenDelPrecio({ ...prod, precio_sin_iva: 36927.2 })).toBe("manual");
+  it("tolera un centavo", () => {
+    expect(coincideConFormula({ ...prod, precio_sin_iva: 36927.1 })).toBe(true);
+    expect(coincideConFormula({ ...prod, precio_sin_iva: 36927.08 })).toBe(true);
+    expect(coincideConFormula({ ...prod, precio_sin_iva: 36927.2 })).toBe(false);
   });
 
-  it("un producto creado a mano, sin costo ni sugerido, es manual", () => {
-    expect(origenDelPrecio({ precio_sin_iva: 5000 })).toBe("manual");
+  // El bug que reportaron los dos reviews: si `coincideConFormula` le pasara el
+  // precio guardado a calcularPrecios, éste tomaría la rama del override explícito
+  // y todo coincidiría siempre consigo mismo.
+  it("no se compara contra sí mismo", () => {
+    expect(coincideConFormula({ ...prod, precio_sin_iva: 999999 })).toBe(false);
   });
 
-  it("coincide con lo que devuelve calcularPrecios", () => {
-    for (const e of [
-      { ...prod },
-      { ...prod, precio_sugerido_publico: null },
-      { ...prod, precio_fabrica: 0, precio_sugerido_publico: null },
-    ]) {
-      const r = calcularPrecios(e);
-      expect(origenDelPrecio({ ...e, precio_sin_iva: r.precio_sin_iva })).toBe(r.origen);
-    }
+  it("un producto sin base nunca 'coincide' (no hay fórmula que aplicar)", () => {
+    expect(coincideConFormula({ precio_sin_iva: 5000 })).toBe(false);
+  });
+
+  // Cambiar el markup default deja ~1100 productos sin coincidir. Es CIERTO (sus
+  // precios se calcularon con el markup viejo) y por eso el badge dice "≠" en tono
+  // neutro y no "puesto a mano", que sería una acusación falsa.
+  it("cambiar el markup default hace que dejen de coincidir", () => {
+    const sinMarkupPropio = { ...prod, markup_porcentaje: null, precio_sin_iva: 36927.09 };
+    expect(coincideConFormula(sinMarkupPropio, { markupDefault: 30 })).toBe(true);
+    expect(coincideConFormula(sinMarkupPropio, { markupDefault: 35 })).toBe(false);
+    expect(baseDelPrecio(sinMarkupPropio)).toBe("sugerido"); // la base NO cambia
   });
 });

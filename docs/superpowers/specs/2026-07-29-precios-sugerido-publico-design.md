@@ -1,8 +1,9 @@
 # Precio de venta desde el sugerido al público — Diseño
 
 **Fecha:** 2026-07-29
-**Estado:** Spec revisado con Codex (§13, 9 hallazgos incorporados). Pendiente: implementación,
-review adversarial del código, review del código con Codex, tests, deploy, Playwright.
+**Estado:** Implementado y verificado. Spec revisado con Codex (§13, 9 hallazgos). Código revisado
+con Codex y tres agentes adversariales (§14, 20 hallazgos). 171 unit tests + e2e con navegador real
+(`scripts/test-precios-sugerido-e2e.mjs`). Pendiente: deploy y reimportación de la lista (§12).
 **Viene de:** `2026-07-29-correcciones-cliente-backlog.md` §1 y §2.
 
 ---
@@ -76,11 +77,13 @@ Dos síntomas más, del mismo problema:
   (backlog §3). Acá el descuento sigue siendo global en `settings`.
 - **Redondeo comercial** (a $10, a $100, terminaciones en 9). Nadie lo pidió.
 - **Volver read-only el precio de venta.** Se puede seguir poniendo un precio a dedo; lo que cambia
-  es que el sistema lo declara (`origen: "manual"`, §3.3) en vez de disfrazarlo de calculado.
+  es que el sistema lo declara (§3.3) en vez de disfrazarlo de calculado.
 - **Historial de precios.** No se pidió y no existe hoy.
-- **Batchear `aplicarMarkup`.** Hoy hace un `UPDATE` por producto en un loop. Con la selección
-  actual (a mano) alcanza; cuando el chunk §3 permita seleccionar los cientos de productos de un
-  proveedor de una, hay que medirlo. Se anota, no se hace acá.
+- **Batchear los `UPDATE` de `aplicarMarkup` y los `upsert` de la importación.** Los dos hacen un
+  round-trip por producto. La LECTURA sí se troceó (era un bug: cortaba en 1000, §14.6); las
+  escrituras siguen de a una para poder informar el error de cada fila. Con 1104 productos son 3 a 6
+  minutos, y por eso la pantalla muestra el progreso y avisa antes de cerrar la pestaña (§6.6). Si
+  molesta, se batchea en el chunk del filtro por proveedor.
 
 ---
 
@@ -133,48 +136,29 @@ El caso 1 se mantiene porque ya existe (`productos.importar.tsx:215-221`) y es l
 importar una lista que ya trae el precio final calculado. Sacarlo sería romper un camino que hoy
 funciona, sin que nadie lo haya pedido.
 
-### 3.3 `origen` se calcula comparando, no suponiendo
+### 3.3 Dos preguntas distintas, dos funciones
 
-`origen` no es *"tiene sugerido"*. Es **qué explica el precio que está guardado**: se calcula la
-fórmula y se compara contra `precio_sin_iva` real.
+Un producto necesita responder dos cosas que se confunden fácil:
 
-```
-origen = "sugerido"  si hay sugerido y precio_sin_iva coincide con sugerido × (1+markup) / (1+iva)
-         "costo"     si no hay sugerido y precio_sin_iva coincide con costo × (1+markup)
-         "manual"    si no coincide con ninguna         (tolerancia: 1 centavo)
-```
-
-Sin esto, la marquita miente. El diálogo de productos deja escribir el precio de venta a mano
-(`productos.index.tsx:702`) y el alta rápida de Ingresos de mercadería crea productos poniendo
-`precio_sin_iva` directo, sin lista ni costo ni sugerido
-(`ingresos-mercaderia.nuevo.tsx:634`, `20260724110000_ingresos_mercaderia_rpcs.sql:442`). Los dos
-son caminos manuales legítimos — una pinturería necesita poder poner un precio a dedo. Lo que no se
-puede es que después el sistema muestre `sug.` sobre un precio que nadie derivó del sugerido.
-
-**El precio de venta sigue siendo editable a mano.** No se vuelve read-only: se vuelve honesto.
-
-Con los números reales:
-
-| | con sugerido | sin sugerido |
+| Pregunta | Función | Qué devuelve |
 |---|---|---|
-| precio_lista | 30.774,40 | 30.774,40 |
-| precio_fabrica (−42%) | 17.849,15 | 17.849,15 |
-| costo_c_iva | 21.597,47 | 21.597,47 |
-| precio_sugerido_publico | 34.370,60 | — |
-| precio_sin_iva (guardado) | **36.927,09** | 23.203,90 |
-| venta c/IVA | **44.681,78** | 28.076,72 |
+| ¿De qué dato sale su precio? | `baseDelPrecio` | `sugerido` si tiene uno cargado, si no `costo`, si no `manual` |
+| ¿El precio guardado es el que da la fórmula hoy? | `coincideConFormula` | `true` / `false` |
 
-### Por qué se sigue guardando `precio_sin_iva`
+La primera es un **hecho** sobre lo que el producto tiene cargado: no puede mentir. La segunda es un
+**chequeo** contra los parámetros actuales.
 
-Porque es lo que se factura. `venta_items.precio_lista_sin_iva` y toda la facturación AFIP leen el
-neto y el % de IVA por separado. El sugerido viene c/IVA, así que se **des-IVA-iza al guardar** y
-`precio_sin_iva` sigue siendo el único número que las ventas consultan. No cambia nada aguas abajo.
+Separarlas importa. Un intento anterior las mezclaba en un solo `origen` que devolvía `"manual"`
+cuando el precio no coincidía — y eso **acusa a quien no hizo nada**: alcanza con cambiar el markup
+default de 30 a 35 para que ~1100 productos que nadie tocó pasen a decir "precio puesto a mano". Con
+las dos separadas, esos productos siguen diciendo `sugerido` (que es verdad) y suman un `≠` neutro
+que dice lo único que se sabe: *este precio no sale de la fórmula actual, puede estar a mano o
+calculado con un markup anterior*.
 
-**Regla de redondeo:** `precio_sin_iva` se redondea a 2 decimales al guardar, y el c/IVA que
-muestran las pantallas **siempre se deriva de ese `precio_sin_iva` guardado** — nunca se muestra el
-`sugerido × markup` crudo. Puede dar un centavo de diferencia contra la multiplicación directa, y
-eso es deliberado: lo que se ve en pantalla tiene que coincidir con lo que va a salir en la
-factura, no con un número intermedio.
+**El precio de venta sigue siendo editable a mano.** No se vuelve read-only: se vuelve honesto. El
+diálogo deja escribirlo (`productos.index.tsx`) y el alta rápida de Ingresos de mercadería crea
+productos con el neto directo (`20260724110000_ingresos_mercaderia_rpcs.sql:442`): los dos son
+caminos legítimos.
 
 ---
 
@@ -580,3 +564,106 @@ Codex verificó que nada más depende de esto: la venta lee `productos.precio_si
 y no desde `productos` (`fiscal.functions.ts:386`), Compras usa `precio_fabrica` como costo
 (`compras.nueva.tsx:106`), Remitos no lee precios, y Stock/conteo tampoco. La condición es que el
 importador deje el neto consistente — de ahí el peso del hallazgo 1.
+
+---
+
+## 14. Hallazgos del review del CÓDIGO
+
+Cuatro revisiones independientes sobre el commit `7b61bef`: Codex, y tres agentes adversariales con
+lentes distintos (corrección del cálculo, regresiones, flujo real de uso). Veinte hallazgos; todos
+incorporados. Los tres más graves eran **preexistentes** y los habría disparado el paso §12 de este
+mismo spec — reimportar la lista de Quimex.
+
+### Lo que borraba datos
+
+1. **Reimportar la lista borraba marca, categoría, unidad, stock mínimo y envase de los 1104
+   productos.** El upsert mandaba esos campos **siempre**; la lista de Quimex es CÓDIGO /
+   DESCRIPCIÓN / ENV. / PRECIO DE LISTA / Sugerido y no trae ninguno, así que quedaban en null / 0 /
+   "unidad". Adiós al filtro por categoría, a la columna Marca y a las alertas de reposición de
+   `/stock`. Es la misma clase de bug que puso el tamaño de envase como stock: **escribir un campo
+   que el archivo no trae**. → la importación ahora sólo escribe lo que la planilla realmente tiene.
+2. **Una celda vacía en la columna del sugerido borraba el sugerido guardado** y devolvía ese
+   producto al cálculo por costo. La protección de §6.3 era por COLUMNA y tenía que ser por FILA:
+   las listas de proveedor no llenan el sugerido en todos los renglones, y un blanco no significa
+   "este producto ya no tiene precio sugerido". Había un test que bendecía el comportamiento
+   equivocado; se dio vuelta.
+3. **Una fila sin ningún precio dejaba el producto a $0** y se vendía así en el mostrador. Pasa con
+   los renglones "consultar" o discontinuados. La vista previa muestra 10 filas de 1104, así que no
+   se veía. → esas filas no se importan y se cuentan en rojo en el resumen.
+
+### Lo que rompía precios
+
+4. **`normalizarIva` perdió el parseo de números argentinos** (regresión introducida por este mismo
+   cambio): un IVA `"10,5"` de un CSV se leía como 21. Antes eso sólo cambiaba lo que se le cobraba
+   al cliente; ahora el IVA **divide** al sugerido, así que también decide el neto: ~8,7% menos por
+   unidad para el negocio, y una alícuota mal declarada. → se parsea con `parseNumAr` **antes** de
+   `normalizarIva`, que ahora documenta que sólo acepta números.
+5. **El diálogo ponía el precio en $0 al tocar el IVA.** Regresión: antes el select de IVA no
+   recalculaba. Un producto sin costo ni sugerido (los que crea el alta rápida de Ingresos de
+   mercadería) daba fórmula = 0 y el form lo guardaba. → `recalcVenta` deja el precio como está
+   cuando no hay de dónde calcular.
+6. **`aplicarMarkup` se cortaba en 1000 productos, en silencio.** El `.in("id", ...)` no estaba
+   paginado, y la pantalla ofrece "seleccionar los 1104 visibles": 104 quedaban con el precio viejo
+   y el toast decía "1000 recalculados". → se lee en tandas de 500 y se aborta si falta alguno.
+7. **`aplicarMarkup` con `sobrescribir_individual: false`** recalculaba con el % nuevo sin
+   guardarlo, dejando precio y markup incoherentes. No es alcanzable desde la UI, pero la server fn
+   lo acepta. → sin sobrescribir, cada producto conserva su markup y el % nuevo actúa de default.
+8. **Un descuento > 100% escribía precios negativos** y dejaba el catálogo invendible
+   (`crear_venta` los rechaza). → la guarda de valores absurdos ahora también mira el límite
+   inferior.
+9. **Un markup de 0% se convertía en 30%** (`|| MARKUP_DEFAULT`). Vender al costo es una decisión
+   válida, no un campo vacío.
+
+### Lo que mentía
+
+10. **La marquita se volvía ámbar en masa.** Con `origen` calculado por comparación, cambiar el
+    markup default dejaba ~1100 productos diciendo "precio puesto a mano" sin que nadie los tocara.
+    → se separó en `baseDelPrecio` (hecho) y `coincideConFormula` (chequeo), §3.3.
+11. **`coincideConFormula` se comparaba contra sí misma** si se le pasaba el precio guardado a
+    `calcularPrecios`: tomaba la rama del override explícito y todo coincidía siempre. → se excluye
+    el precio guardado al calcular la fórmula, con test.
+12. **El aviso "está puesto a mano" aparecía en un producto nuevo vacío**, diciendo "la fórmula
+    daría $0,00".
+13. **Al sacar la columna IVA de la tabla**, un producto mal seteado en 10,5% o Exento dejaba de
+    verse — y es lo que se le factura a AFIP. → se muestra un chip con la alícuota **sólo cuando no
+    es 21%**: la anomalía salta y el caso común no ocupa lugar.
+
+### Lo que dejaba a alguien colgado
+
+14. **Si fallaba la lectura del catálogo, el botón quedaba muerto para siempre** con el cartel
+    "Leyendo el catálogo…". Error y carga eran el mismo estado. → tres estados, mensaje que dice qué
+    pasó, y botón de reintentar.
+15. **1103 upserts sin progreso ni guarda al cerrar la pestaña**: 3 a 6 minutos con sólo un spinner,
+    que se lee como "se colgó". Cortarlo a la mitad deja medio catálogo a precio nuevo y medio al
+    viejo. → contador "N de 1104", `beforeunload`, botón de volver deshabilitado, y un texto que
+    aclara que reimportar el mismo archivo no duplica nada.
+16. **El mapa de sugeridos quedaba viejo** si una importación fallaba y se reintentaba sin recargar.
+    → se relee después de importar.
+
+### Lo que no avisaba
+
+17. **Una lista de actualización sin la columna del sugerido congela el precio de venta** en el
+    sugerido de la lista anterior mientras el costo sube. Es mejor que degradar al costo, pero
+    envejece: con un aumento de lista del 60% el margen se come solo y la pantalla no decía nada. →
+    aviso con el número de productos afectados.
+18. **Una columna de precio explícito le gana al sugerido** (§3.2) y lo anula sin que se note. →
+    aviso.
+19. **`sugeridoSinMapear` se callaba si la columna del sugerido estaba mapeada a otro campo** —
+    justo lo que hizo el cliente (la mandó a "IVA %"), que es peor que no mapearla.
+20. **Códigos con espacios de más** no encontraban su sugerido guardado (el mapa se indexaba con el
+    código crudo y la fila se buscaba con `.trim()`). → se indexa recortado.
+
+### Menores incorporados
+
+Sinónimos `NETO` y `sin impuestos` en la guarda de columnas netas (`PVP NETO` habría entrado como
+bruto). Un `·` colgado en el resumen del caso feliz. Textos: se sacó "mapear" del vocabulario de la
+pantalla, los avisos nombran los campos concretos en vez de hablar en general, y el diálogo del
+markup masivo explica la cuenta en castellano en vez de en notación matemática.
+
+### Verificado, sin hallazgo
+
+El redondeo (fuzz sobre miles de combinaciones de sugerido × markup × IVA: la deriva máxima es el
+centavo declarado). La migración (idempotente, no recalcula nada, el `SET DEFAULT` sólo afecta
+instalaciones nuevas). Ventas, facturación AFIP, remitos, compras, cuentas corrientes, ingresos y
+stock: ninguno lee la columna nueva ni cambia de comportamiento. Y la afirmación central —"todo cae
+en la rama por costo hasta que se reimporte"— se confirmó con los números reales de producción.

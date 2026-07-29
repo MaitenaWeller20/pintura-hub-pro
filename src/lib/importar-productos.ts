@@ -105,8 +105,16 @@ const RECHAZAR_CABECERA: Record<string, (normalizada: string) => boolean> = {
   // el sinónimo amplio ("pvp", "sugerido") se la llevaría y se le sacaría el IVA
   // a un número que ya era neto: todos esos precios bajarían ~17% en silencio.
   // "S/IVA" normaliza a "siva" y "SIN IVA" a "siniva" — hay que mirar los dos.
+  // También "NETO" y "sin impuestos", que son la misma trampa con otro nombre.
+  // Ante la duda se RECHAZA: no auto-mapear cuesta un click; auto-mapear un neto
+  // como si fuera bruto baja todos esos precios un 17% sin que nadie lo note.
   precio_sugerido_publico: (h) =>
-    (h.includes("siva") || h.includes("siniva")) && !h.includes("civa") && !h.includes("coniva"),
+    (h.includes("siva") ||
+      h.includes("siniva") ||
+      h.includes("neto") ||
+      h.includes("sinimpuesto")) &&
+    !h.includes("civa") &&
+    !h.includes("coniva"),
 };
 
 export function autoMapear(headers: string[]): Record<string, string> {
@@ -148,11 +156,16 @@ export function columnasDuplicadas(mapping: Record<string, string>): string[] {
 }
 
 /**
- * Una columna del archivo que parece el sugerido al público y quedó sin mapear.
+ * Una columna del archivo que parece el sugerido al público y NO está mapeada al
+ * campo del sugerido.
  *
  * Sin este aviso, re-importar la lista olvidándose de mapearla haría que los
  * precios vuelvan al cálculo por costo: el bug que esta feature arregla, de vuelta
  * y sin que nadie se entere.
+ *
+ * Deliberadamente NO se saltean las cabeceras ya usadas por otro campo: mapear la
+ * columna del sugerido a "Precio s/IVA" o a "IVA %" —que es exactamente lo que
+ * hizo el cliente— es todavía peor que no mapearla, y también hay que avisarlo.
  */
 export function sugeridoSinMapear(
   headers: string[],
@@ -160,11 +173,10 @@ export function sugeridoSinMapear(
 ): string | null {
   if (mapping.precio_sugerido_publico) return null;
   const rechazar = RECHAZAR_CABECERA.precio_sugerido_publico;
-  const usados = new Set(Object.values(mapping).filter(Boolean));
   return (
     headers.find((h) => {
       const n = normalizar(h);
-      return !usados.has(h) && !rechazar(n) && (n.includes("sugerido") || n.includes("pvp"));
+      return !rechazar(n) && (n.includes("sugerido") || n.includes("pvp"));
     }) ?? null
   );
 }
@@ -232,10 +244,25 @@ export function calcularFila(
       : mapping.precio_fabrica
         ? numOr(r[mapping.precio_fabrica], 0)
         : 0;
-  const precio_sugerido_publico = mapping.precio_sugerido_publico
-    ? numOrNull(r[mapping.precio_sugerido_publico])
-    : (guardado?.precio_sugerido_publico ?? null);
-  const iva_porcentaje = normalizarIva(mapping.iva_porcentaje ? r[mapping.iva_porcentaje] : 21);
+  // Una CELDA vacía es lo mismo que una columna sin mapear: la planilla no trae
+  // el dato, así que se conserva el guardado. La protección tiene que ser por
+  // FILA y no por columna — las listas de proveedor no llenan el sugerido en
+  // todos los renglones, y un blanco no significa "este producto ya no tiene
+  // precio sugerido", significa "acá no lo pusieron". Tomarlo como un borrado
+  // devolvía ese producto al cálculo por costo: −40% de un plumazo.
+  // Para sacarle el sugerido a un producto se edita el producto.
+  const precio_sugerido_publico =
+    (mapping.precio_sugerido_publico ? numOrNull(r[mapping.precio_sugerido_publico]) : null) ??
+    guardado?.precio_sugerido_publico ??
+    null;
+  // parseNumAr PRIMERO: en un CSV (o en una columna de texto del Excel) el IVA
+  // llega como "10,5", y `normalizarIva` sólo entiende números — lo descartaría y
+  // caería a 21. Antes eso sólo cambiaba lo que se le cobraba al cliente; ahora el
+  // IVA divide al sugerido, así que también decide el neto que se factura: un
+  // producto al 10,5% leído como 21% le deja al negocio ~8,7% menos por unidad.
+  const iva_porcentaje = normalizarIva(
+    mapping.iva_porcentaje ? numOr(r[mapping.iva_porcentaje], 21) : 21,
+  );
 
   return {
     codigo: String(r[mapping.codigo] ?? "").trim(),

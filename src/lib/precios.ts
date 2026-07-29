@@ -56,6 +56,10 @@ export const costoDeLista = (lista: unknown, descuento: unknown): number =>
  * hay que sacarle el IVA para guardar el neto). Con el cálculo viejo un IVA basura
  * sólo ensuciaba la vista; ahora corrompe el número que se factura. El caso real:
  * la columna "Sugerido al público C/IVA" mapeada por error al campo "IVA %".
+ *
+ * OJO: espera un NÚMERO. No parsea el formato argentino ("10,5") — eso es trabajo
+ * de quien lee la planilla, que tiene `parseNumAr`. Si se le pasa "10,5" crudo lo
+ * descarta y devuelve 21, que es exactamente el bug que se quiere evitar.
  */
 export function normalizarIva(v: unknown): number {
   const n = num(v, NaN);
@@ -115,55 +119,76 @@ export function calcularPrecios(e: EntradaPrecio, p: Parametros = {}): PrecioCal
   const sugerido = num(e.precio_sugerido_publico, 0);
   const explicito = num(e.precio_sin_iva, 0);
 
+  // `origen` acá es POR QUÉ RAMA salió este número, que es lo que necesita el
+  // resumen de la importación ("N desde el sugerido, N desde el costo, N con el
+  // precio que trae la planilla"). Para etiquetar un producto ya guardado se usa
+  // `baseDelPrecio`, que es otra pregunta.
   let precio_sin_iva: number;
-  if (explicito > 0) precio_sin_iva = r2(explicito);
-  else if (sugerido > 0) precio_sin_iva = r2((sugerido * factorMk) / factorIva);
-  else precio_sin_iva = r2(costo * factorMk);
+  let origen: OrigenPrecio;
+  if (explicito > 0) {
+    precio_sin_iva = r2(explicito);
+    origen = "manual";
+  } else if (sugerido > 0) {
+    precio_sin_iva = r2((sugerido * factorMk) / factorIva);
+    origen = "sugerido";
+  } else {
+    precio_sin_iva = r2(costo * factorMk);
+    origen = "costo";
+  }
 
   return {
     costo_c_iva: r2(costo * factorIva),
     precio_sin_iva,
     venta_c_iva: r2(precio_sin_iva * factorIva),
     markup,
-    // El origen se DECIDE comparando, no suponiendo: así un precio explícito que
-    // igual coincide con la fórmula se reporta como derivado, y uno que no
-    // coincide se reporta como manual. Una sola definición de "de dónde salió".
-    origen: origenDelPrecio({ ...e, precio_sin_iva }, p),
+    origen,
   };
 }
 
 const coincide = (a: number, b: number) => Math.abs(r2(a) - r2(b)) <= CENTAVO + 1e-9;
 
 /**
- * Qué explica el precio YA guardado de un producto.
- *
- * No es lo mismo que "tiene sugerido". El diálogo de productos deja escribir el
- * precio de venta a mano y el alta rápida de Ingresos de mercadería crea productos
- * poniendo el neto directo, sin lista ni costo ni sugerido: los dos son caminos
- * legítimos. Lo que no puede pasar es que la tabla muestre "sug." sobre un precio
- * que el sugerido no explica. Por eso se compara contra la fórmula en vez de
- * asumir.
+ * De qué dato SALE el precio de un producto. Es un hecho sobre lo que tiene
+ * cargado, no una deducción: nunca puede mentir.
  */
-export function origenDelPrecio(
-  e: EntradaPrecio & { precio_sin_iva?: number | null },
-  p: Parametros = {},
-): OrigenPrecio {
-  const markup = markupEfectivo(e, p);
-  const iva = normalizarIva(e.iva_porcentaje);
-  const factorIva = 1 + iva / 100;
-  const factorMk = 1 + markup / 100;
-
-  const actual = num(e.precio_sin_iva, 0);
-  const sugerido = num(e.precio_sugerido_publico, 0);
-  const costo = num(e.precio_fabrica, 0);
-
-  if (sugerido > 0 && coincide(actual, (sugerido * factorMk) / factorIva)) return "sugerido";
-  if (costo > 0 && coincide(actual, costo * factorMk)) return "costo";
+export function baseDelPrecio(e: EntradaPrecio): OrigenPrecio {
+  if (num(e.precio_sugerido_publico, 0) > 0) return "sugerido";
+  if (num(e.precio_fabrica, 0) > 0) return "costo";
   return "manual";
 }
 
+/**
+ * ¿El precio guardado es el que da la fórmula HOY?
+ *
+ * Separado de `baseDelPrecio` a propósito. Cuando no coinciden puede ser porque
+ * alguien escribió el precio a mano, o porque el precio se calculó con un markup
+ * anterior — y no hay forma de distinguirlos sin guardar la procedencia. Llamar
+ * "manual" a lo segundo es acusar: cambiar el markup default deja ~1100 productos
+ * sin coincidir de un saque, y ninguno fue tocado por nadie.
+ *
+ * Lo que sí es cierto en los dos casos, y es lo que se muestra: este precio no
+ * sale de la fórmula actual, así que conviene mirarlo.
+ */
+export function coincideConFormula(
+  e: EntradaPrecio & { precio_sin_iva?: number | null },
+  p: Parametros = {},
+): boolean {
+  const guardado = num(e.precio_sin_iva, 0);
+  if (guardado <= 0) return false;
+  if (baseDelPrecio(e) === "manual") return false;
+  // Sin `precio_sin_iva`: si se lo pasáramos, `calcularPrecios` tomaría la rama
+  // del override explícito y el precio coincidiría siempre consigo mismo.
+  return coincide(guardado, calcularPrecios({ ...e, precio_sin_iva: null }, p).precio_sin_iva);
+}
+
 export const ORIGEN_LABEL: Record<OrigenPrecio, string> = {
-  sugerido: "sug.",
+  sugerido: "sugerido",
   costo: "costo",
-  manual: "manual",
+  manual: "a mano",
+};
+
+export const ORIGEN_AYUDA: Record<OrigenPrecio, string> = {
+  sugerido: "El precio de venta sale del precio sugerido al público + el markup.",
+  costo: "El producto no tiene precio sugerido, así que la venta sale del costo + el markup.",
+  manual: "El producto no tiene ni sugerido ni costo cargado: el precio está puesto a mano.",
 };

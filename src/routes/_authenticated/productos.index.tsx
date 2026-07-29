@@ -38,11 +38,13 @@ import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
 import {
   MARKUP_DEFAULT,
+  ORIGEN_AYUDA,
   ORIGEN_LABEL,
   type OrigenPrecio,
+  baseDelPrecio,
   calcularPrecios,
+  coincideConFormula,
   costoDeLista,
-  origenDelPrecio,
 } from "@/lib/precios";
 import { toast } from "sonner";
 import { Plus, Upload, Pencil, Printer, Percent, Trash2, ArchiveRestore } from "lucide-react";
@@ -217,7 +219,8 @@ function Productos() {
       costoCIva: +(Number(p.precio_fabrica ?? 0) * (1 + iva / 100)).toFixed(2),
       lista: Number(p.precio_lista ?? 0),
       sugerido: p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
-      origen: origenDelPrecio(p, { markupDefault }),
+      origen: baseDelPrecio(p),
+      coincide: coincideConFormula(p, { markupDefault }),
     };
   };
 
@@ -467,20 +470,36 @@ function Productos() {
                       )}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold whitespace-nowrap">
-                      {fmtMoney(v.cIva)}{" "}
+                      {fmtMoney(v.cIva)}
+                      {/* El IVA ya no tiene columna propia (no entraba), pero un
+                          producto mal seteado en 10,5% o Exento es lo que se le
+                          factura a AFIP: si no es 21%, se muestra acá para que se
+                          vea de una. */}
+                      {Number(p.iva_porcentaje) !== 21 && (
+                        <Badge
+                          variant="outline"
+                          className="ml-1 text-[10px] font-sans border-warning/50 text-warning"
+                          title="Este producto no tiene IVA 21%. Es la alícuota que se le va a facturar a AFIP."
+                        >
+                          IVA {p.iva_porcentaje}%
+                        </Badge>
+                      )}
                       <Badge
                         variant="outline"
                         className={`ml-1 text-[10px] font-sans ${ORIGEN_TONO[v.origen]}`}
-                        title={
-                          v.origen === "sugerido"
-                            ? "Sale del precio sugerido al público + el markup"
-                            : v.origen === "costo"
-                              ? "Sale del costo + el markup (el producto no tiene sugerido)"
-                              : "Precio puesto a mano: no lo explica ni el sugerido ni el costo"
-                        }
+                        title={ORIGEN_AYUDA[v.origen]}
                       >
                         {ORIGEN_LABEL[v.origen]}
                       </Badge>
+                      {!v.coincide && v.origen !== "manual" && (
+                        <Badge
+                          variant="outline"
+                          className="ml-1 text-[10px] font-sans border-border text-muted-foreground"
+                          title={`El precio guardado no es el que da la fórmula hoy (markup ${markupDefault}%). Puede estar puesto a mano, o calculado con un markup anterior. "Aplicar markup" lo recalcula.`}
+                        >
+                          ≠
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       {cu.isAdmin && (
@@ -625,18 +644,22 @@ function ProductoDialog({
   const recalcVenta = (patch: Record<string, any>) =>
     setForm((f: any) => {
       const next = { ...f, ...patch };
-      return {
-        ...next,
-        precio_sin_iva: calcularPrecios(
-          {
-            precio_fabrica: next.precio_fabrica,
-            precio_sugerido_publico: next.precio_sugerido_publico,
-            markup_porcentaje: next.markup_porcentaje,
-            iva_porcentaje: next.iva_porcentaje,
-          },
-          { markupDefault },
-        ).precio_sin_iva,
-      };
+      const calc = calcularPrecios(
+        {
+          precio_fabrica: next.precio_fabrica,
+          precio_sugerido_publico: next.precio_sugerido_publico,
+          markup_porcentaje: next.markup_porcentaje,
+          iva_porcentaje: next.iva_porcentaje,
+        },
+        { markupDefault },
+      );
+      // Sin sugerido ni costo la fórmula da 0, y pisar el precio con 0 dejaría al
+      // producto vendiéndose gratis. Pasa de verdad: el alta rápida de Ingresos de
+      // mercadería crea productos con el neto directo y el costo en 0, así que
+      // abrir Editar y cambiar el IVA los ponía en $0 sin decir nada. Cuando no hay
+      // de dónde calcular, el precio cargado queda como está.
+      if (calc.precio_sin_iva <= 0) return next;
+      return { ...next, precio_sin_iva: calc.precio_sin_iva };
     });
 
   const m = useMutation({
@@ -692,7 +715,13 @@ function ProductoDialog({
     },
     { markupDefault },
   );
-  const esManual = origenDelPrecio(form, { markupDefault }) === "manual";
+  // Sólo tiene sentido avisar "está a mano" si hay una fórmula con la que
+  // compararlo. En un producto nuevo (todo en cero) el aviso decía "la fórmula
+  // daría $0", que no le sirve a nadie.
+  const esManual =
+    Number(form.precio_sin_iva || 0) > 0 &&
+    calculado.precio_sin_iva > 0 &&
+    !coincideConFormula(form, { markupDefault });
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -810,9 +839,10 @@ function ProductoDialog({
               onValueChange={(v) => set("precio_sin_iva", v ?? 0)}
             />
             {esManual && (
-              <p className="text-[11px] text-warning mt-1">
-                Precio puesto a mano. La fórmula daría{" "}
-                <strong className="font-mono">{fmtMoney(calculado.precio_sin_iva)}</strong>.{" "}
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Este precio no es el que da la fórmula, que daría{" "}
+                <strong className="font-mono">{fmtMoney(calculado.precio_sin_iva)}</strong>. Puede
+                estar puesto a mano, o calculado con un markup anterior.{" "}
                 <button
                   type="button"
                   className="underline"
@@ -845,7 +875,7 @@ function ProductoDialog({
             </div>
             <div className="text-[11px] text-muted-foreground font-mono">
               lista {fmtMoney(form.precio_lista || 0)} → costo {fmtMoney(form.precio_fabrica || 0)}{" "}
-              → c/IVA {fmtMoney(calculado.costo_c_iva)}
+              → costo c/IVA {fmtMoney(calculado.costo_c_iva)}
               {form.precio_sugerido_publico
                 ? ` → sugerido ${fmtMoney(form.precio_sugerido_publico)}`
                 : " → sin sugerido"}{" "}

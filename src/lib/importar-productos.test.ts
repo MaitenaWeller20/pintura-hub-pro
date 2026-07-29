@@ -248,17 +248,42 @@ describe("calcularFila — de la planilla a la cadena de precios", () => {
     expect(f.origen).toBe("costo");
   });
 
-  // La columna mapeada manda: si la celda está vacía, ese producto pasa a no tener
-  // sugerido aunque antes lo tuviera. Es una lista nueva que dice que no lo trae.
-  it("columna mapeada con celda vacía: el sugerido se borra y el precio va por costo", () => {
+  // La protección tiene que ser por FILA, no por columna. Las listas de proveedor
+  // no llenan el sugerido en todos los renglones, y un blanco no significa "este
+  // producto ya no tiene precio sugerido": significa "acá no lo pusieron".
+  // Tomarlo como borrado devolvía ese producto al cálculo por costo, −40% de un
+  // plumazo, que es el bug que esta feature arregla.
+  it("celda vacía con la columna mapeada: se conserva el sugerido guardado", () => {
     const f = calcularFila(
       { ...FILA_REAL, " Sugerido al público C/IVA ": "" },
       autoMapear(LISTA_PLANA),
       PARAMS,
       { precio_sugerido_publico: 34370.6, markup_porcentaje: null },
     );
+    expect(f.precio_sugerido_publico).toBe(34370.6);
+    expect(f.precio_sin_iva).toBe(36927.09);
+    expect(f.origen).toBe("sugerido");
+  });
+
+  it("celda vacía y sin sugerido guardado: recién ahí va por costo", () => {
+    const f = calcularFila(
+      { ...FILA_REAL, " Sugerido al público C/IVA ": "" },
+      autoMapear(LISTA_PLANA),
+      PARAMS,
+    );
     expect(f.precio_sugerido_publico).toBeNull();
     expect(f.origen).toBe("costo");
+  });
+
+  // Regresión propia: `normalizarIva` sólo entiende números, así que el IVA hay
+  // que parsearlo con parseNumAr ANTES. Un "10,5" leído como 21 le deja al negocio
+  // ~8,7% menos por unidad y declara una alícuota que no corresponde.
+  it("un IVA en formato argentino ('10,5') no se pierde", () => {
+    const mapping = { ...autoMapear(LISTA_PLANA), iva_porcentaje: "IVA" };
+    const f = calcularFila({ ...FILA_REAL, IVA: "10,5" }, mapping, PARAMS);
+    expect(f.iva_porcentaje).toBe(10.5);
+    expect(f.precio_sin_iva).toBe(40436);
+    expect(f.venta_c_iva).toBe(44681.78);
   });
 
   // Antes la importación recalculaba TODO con el markup default, así que a un
@@ -297,5 +322,31 @@ describe("calcularFila — de la planilla a la cadena de precios", () => {
     );
     expect(f.precio_fabrica).toBe(17849.15);
     expect(f.venta_c_iva).toBe(44681.78);
+  });
+});
+
+// Hallazgos del review del código con Codex (§14 del spec).
+describe("robustez del mapeo (review Codex)", () => {
+  it("una columna 'NETO' o 'sin impuestos' no entra como sugerido", () => {
+    for (const h of ["PVP NETO", "Precio sugerido neto", "SUGERIDO SIN IMPUESTOS"]) {
+      expect(autoMapear(["CODIGO", "DESCRIPCION", h]).precio_sugerido_publico).toBeUndefined();
+    }
+  });
+
+  // Mapear la columna del sugerido a "IVA %" o a "Precio s/IVA" —que es lo que
+  // hizo el cliente— es PEOR que no mapearla. También hay que avisarlo.
+  it("avisa aunque la columna del sugerido esté mapeada a otro campo", () => {
+    expect(
+      sugeridoSinMapear(LISTA_PLANA, {
+        codigo: " CÓDIGO  ",
+        iva_porcentaje: " Sugerido al público C/IVA ",
+      }),
+    ).toBe(" Sugerido al público C/IVA ");
+    expect(
+      sugeridoSinMapear(LISTA_PLANA, {
+        codigo: " CÓDIGO  ",
+        precio_sin_iva: " Sugerido al público C/IVA ",
+      }),
+    ).toBe(" Sugerido al público C/IVA ");
   });
 });

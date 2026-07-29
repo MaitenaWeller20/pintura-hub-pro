@@ -230,7 +230,11 @@ function NuevoPresupuesto() {
               O el nombre suelto{" "}
               <span className="text-xs text-muted-foreground">(para cualquier cliente)</span>
             </Label>
-            <Input value={nombreCliente} onChange={(e) => setNombreCliente(e.target.value)} />
+            <Input
+              value={nombreCliente}
+              onChange={(e) => setNombreCliente(e.target.value)}
+              data-testid="presup-nombre-cliente"
+            />
           </div>
           <div>
             <Label>

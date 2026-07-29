@@ -314,3 +314,36 @@ Dos de plata, reproducidos contra la base local antes de arreglarlos.
    (`= 'NaN'::numeric`) más un CHECK que exige un número real.
 7. **BAJA — el link a la venta no iba a ninguna parte útil.** → el aviso ahora dice que la venta
    lleva el número del presupuesto en sus observaciones.
+
+---
+
+## 12. Hallazgos del code review de Codex
+
+1. **ALTA — la clave derivada chocaba con las ventas normales.** Usar `p_presupuesto_id` tal cual
+   como `idempotency_key` lo mete en el mismo espacio que las claves que manda la pantalla de ventas:
+   si ya existía una venta con esa clave, `crear_venta` la devolvía y el presupuesto quedaba
+   `CONVERTIDO` apuntando a una venta ajena, sin ítems propios, sin stock ni cobro. → la clave sale
+   de un hash con prefijo (`md5('presupuesto:' || id)`) y, además, si esa venta ya existe con el
+   presupuesto todavía abierto, la RPC corta: eso no puede ser un reintento nuestro.
+2. **ALTA — una conversión CONTADO sin pagos sacaba la mercadería gratis.** La venta quedaba
+   `CONTADO` / `PENDIENTE` / `total_pagado = 0`: no entra a la caja y tampoco genera deuda de cuenta
+   corriente, así que la plata no aparece en ningún lado. La pantalla siempre manda el total; la RPC
+   ahora lo exige. *(La misma permisividad existe en `crear_venta` para todos los flujos: es de
+   antes, queda anotada.)*
+3. **MEDIA — reintentar una conversión que sí funcionó daba error.** Si se perdía la respuesta, el
+   segundo intento moría en "ya está convertido" aunque la venta existiera. → devuelve esa misma
+   venta, que es lo que promete una operación idempotente; sólo avisa si le mandan otro cliente.
+4. **MEDIA — deadlock entre la conversión y una venta manual.** El orden canónico de locks estaba
+   sólo en la conversión: `crear_venta` lockea los productos en el orden en que vengan en `p_items`,
+   así que dos cajas con los mismos dos productos en distinto orden se traban cruzadas. El problema
+   es viejo y de `crear_venta`. → un `PERFORM … ORDER BY p.id FOR UPDATE` antes del loop, aditivo,
+   escrito sobre la definición **viva** (que es la de `r5_nota_debito_recargo`, no la de `r6`:
+   verificado con `diff` contra `pg_proc`).
+5. **MEDIA — listados truncados.** El listado bajaba los últimos 300 y filtraba en memoria: buscar un
+   presupuesto viejo por número no lo encontraba nunca. Los clientes se cargaban con `limit(500)`,
+   así que el 501 no se podía elegir. Y el spec prometía buscar **por fecha** (palabras de la
+   clienta) y eso no estaba. → filtros al servidor, rango de fechas, y un `ClientePicker` que busca
+   contra PostgREST. Cuando el listado llega al tope, el subtítulo lo dice.
+6. **BAJA — `producto_tiene_presupuesto` quedaba suelta.** Cualquier autenticado podía preguntar si
+   un producto figura en presupuestos que su RLS no lo deja leer. → `REVOKE` (la usa sólo
+   `eliminar_productos`, que corre como dueña) más el índice por `producto_id` que la FK no crea.

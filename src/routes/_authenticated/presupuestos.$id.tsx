@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { ClientePicker } from "@/components/cliente-picker";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
@@ -289,19 +290,6 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
   // transferencia dejaba un faltante de caja por ese monto.
   const [formaPago, setFormaPago] = useState("EFECTIVO");
 
-  const { data: clientes = [] } = useQuery({
-    queryKey: ["clientes-activos"],
-    queryFn: async () =>
-      ((
-        await supabase
-          .from("clientes")
-          .select("id, razon_social")
-          .eq("activo", true)
-          .order("razon_social")
-          .limit(500)
-      ).data ?? []) as any[],
-  });
-
   const m = useMutation({
     mutationFn: async () => {
       if (!clienteId) throw new Error("Elegí el cliente.");
@@ -340,18 +328,12 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
           </p>
           <div>
             <Label>Cliente *</Label>
-            <Select value={clienteId} onValueChange={setClienteId}>
-              <SelectTrigger data-testid="conv-cliente">
-                <SelectValue placeholder="Elegí…" />
-              </SelectTrigger>
-              <SelectContent>
-                {clientes.map((c: any) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.razon_social}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ClientePicker
+              value={clienteId}
+              onChange={setClienteId}
+              testId="conv-cliente"
+              placeholder="Elegí…"
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

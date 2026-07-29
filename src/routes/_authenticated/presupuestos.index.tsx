@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
@@ -38,29 +38,46 @@ function Presupuestos() {
   const { data: cu } = useCurrentUser();
   const [q, setQ] = useState("");
   const [estado, setEstado] = useState("todos");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
 
+  // Los filtros van al servidor. Antes se bajaban los últimos 300 y se filtraba
+  // en memoria: buscar un presupuesto viejo por número no lo encontraba nunca, y
+  // la pantalla no daba ninguna señal de que faltaban filas.
   const { data: presupuestos = [], isLoading } = useQuery({
-    queryKey: ["presupuestos"],
-    queryFn: async () =>
-      ((
-        await supabase
-          .from("presupuestos")
-          .select("*, cliente:clientes(razon_social)")
-          .order("fecha", { ascending: false })
-          .limit(300)
-      ).data ?? []) as any[],
+    queryKey: ["presupuestos", q, estado, desde, hasta],
+    queryFn: async () => {
+      // El nombre del cliente vive en otra tabla; se resuelven primero los ids
+      // que matchean para poder buscarlos en la misma consulta.
+      let idsCliente: string[] = [];
+      if (q) {
+        idsCliente = (
+          (await supabase.from("clientes").select("id").ilike("razon_social", `%${q}%`).limit(20))
+            .data ?? []
+        ).map((c: any) => c.id);
+      }
+
+      let sel = supabase
+        .from("presupuestos")
+        .select("*, cliente:clientes(razon_social)")
+        .order("fecha", { ascending: false })
+        .limit(300);
+
+      if (estado !== "todos") sel = sel.eq("estado", estado);
+      if (desde) sel = sel.gte("fecha", desde);
+      // `fecha` es timestamptz: sin el corrimiento, "hasta el 29" dejaría afuera
+      // todo lo del propio 29.
+      if (hasta) sel = sel.lt("fecha", `${hasta}T23:59:59.999`);
+      if (q) {
+        const partes = [`numero.ilike.%${q}%`, `nombre_cliente.ilike.%${q}%`];
+        if (idsCliente.length) partes.push(`cliente_id.in.(${idsCliente.join(",")})`);
+        sel = sel.or(partes.join(","));
+      }
+      return ((await sel).data ?? []) as any[];
+    },
   });
 
-  const filtrados = useMemo(
-    () =>
-      presupuestos.filter((p: any) => {
-        if (estado !== "todos" && p.estado !== estado) return false;
-        if (!q) return true;
-        const texto = `${p.numero} ${p.cliente?.razon_social ?? ""} ${p.nombre_cliente ?? ""}`;
-        return texto.toLowerCase().includes(q.toLowerCase());
-      }),
-    [presupuestos, q, estado],
-  );
+  const filtrados = presupuestos;
 
   if (!cu) return null;
 
@@ -68,7 +85,11 @@ function Presupuestos() {
     <div className="space-y-4">
       <PageHeader
         title="Presupuestos"
-        subtitle={`${filtrados.length} de ${presupuestos.length}`}
+        subtitle={
+          filtrados.length === 300
+            ? "300 presupuestos (los más nuevos) — afiná la búsqueda o las fechas"
+            : `${filtrados.length} presupuesto${filtrados.length === 1 ? "" : "s"}`
+        }
         actions={
           <Button asChild>
             <Link to="/presupuestos/nuevo">
@@ -81,7 +102,7 @@ function Presupuestos() {
       <SectionCard>
         <div className="flex flex-wrap gap-2">
           <Input
-            placeholder="Buscar por número o cliente…"
+            placeholder="Número o cliente…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="max-w-xs"
@@ -98,6 +119,25 @@ function Presupuestos() {
               <SelectItem value="ANULADO">Anulados</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-1">
+            <Input
+              type="date"
+              value={desde}
+              onChange={(e) => setDesde(e.target.value)}
+              className="w-40"
+              aria-label="Desde"
+              data-testid="presup-desde"
+            />
+            <span className="text-muted-foreground text-sm">a</span>
+            <Input
+              type="date"
+              value={hasta}
+              onChange={(e) => setHasta(e.target.value)}
+              className="w-40"
+              aria-label="Hasta"
+              data-testid="presup-hasta"
+            />
+          </div>
         </div>
       </SectionCard>
 

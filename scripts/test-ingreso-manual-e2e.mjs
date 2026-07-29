@@ -28,21 +28,34 @@ const chequear = (n, ok, d) => {
   if (!ok) fallos.push(n);
 };
 
-const browser = await chromium.launch();
-const page = await browser.newPage();
-page.on("pageerror", (e) => fallos.push(`error de página: ${e.message}`));
-
-try {
-  console.log("── Sembrando ────────────────────────────────────────────");
+const limpiar = () =>
   psql(`
     DELETE FROM public.producto_codigos_proveedor pcp USING public.productos p
      WHERE p.id = pcp.producto_id AND p.codigo = 'ING-E2E';
+    DELETE FROM public.ingreso_mercaderia_items i
+     WHERE i.ingreso_id IN (
+       SELECT ing.id FROM public.ingresos_mercaderia ing
+        JOIN public.proveedores pr ON pr.id = ing.proveedor_id
+       WHERE pr.razon_social = 'PROV E2E INGRESO')
+        OR i.producto_id IN (SELECT id FROM public.productos WHERE codigo = 'ING-E2E');
+    DELETE FROM public.ingresos_mercaderia ing USING public.proveedores pr
+     WHERE pr.id = ing.proveedor_id AND pr.razon_social = 'PROV E2E INGRESO';
     DELETE FROM public.stock_movimientos m USING public.productos p
      WHERE p.id = m.producto_id AND p.codigo = 'ING-E2E';
     DELETE FROM public.stock_sucursal s USING public.productos p
      WHERE p.id = s.producto_id AND p.codigo = 'ING-E2E';
     DELETE FROM public.productos WHERE codigo = 'ING-E2E';
     DELETE FROM public.proveedores WHERE razon_social = 'PROV E2E INGRESO';
+  `);
+
+const browser = await chromium.launch();
+const page = await browser.newPage();
+page.on("pageerror", (e) => fallos.push(`error de página: ${e.message}`));
+
+try {
+  console.log("── Sembrando ────────────────────────────────────────────");
+  limpiar();
+  psql(`
     INSERT INTO public.proveedores (razon_social) VALUES ('PROV E2E INGRESO');
     INSERT INTO public.productos (codigo, nombre, precio_sin_iva, iva_porcentaje)
     VALUES ('ING-E2E', 'PRODUCTO E2E INGRESO MANUAL', 1000, 21);
@@ -109,17 +122,7 @@ try {
   );
 } finally {
   await browser.close();
-  psql(`
-    DELETE FROM public.producto_codigos_proveedor pcp USING public.productos p
-     WHERE p.id = pcp.producto_id AND p.codigo = 'ING-E2E';
-    DELETE FROM public.ingreso_mercaderia_items i USING public.productos p
-     WHERE p.id = i.producto_id AND p.codigo = 'ING-E2E';
-    DELETE FROM public.stock_movimientos m USING public.productos p
-     WHERE p.id = m.producto_id AND p.codigo = 'ING-E2E';
-    DELETE FROM public.stock_sucursal s USING public.productos p
-     WHERE p.id = s.producto_id AND p.codigo = 'ING-E2E';
-    DELETE FROM public.productos WHERE codigo = 'ING-E2E';
-  `);
+  limpiar();
 }
 
 console.log(fallos.length === 0 ? "\n✅ Todo verde.\n" : `\n❌ ${fallos.length} fallo(s):\n${fallos.map((f) => `   - ${f}`).join("\n")}\n`);

@@ -108,6 +108,34 @@ try {
             on p.id=s.producto_id where p.codigo='E2E-PRES'`) === "50.00",
   );
 
+  console.log("── El buscador pega contra el servidor ──────────────────");
+  const numero = psql(`select numero from public.presupuestos where id='${pres}'`);
+  await page.goto(`${BASE}/presupuestos`);
+  await page.waitForSelector('[data-testid="buscar-presupuesto"]');
+  await page.locator('[data-testid="buscar-presupuesto"]').fill(numero);
+  await page.waitForTimeout(1500);
+  chequear(
+    "encuentra el presupuesto por número",
+    await page.getByText(numero).first().isVisible(),
+    "no aparece",
+  );
+  await page.locator('[data-testid="buscar-presupuesto"]').fill("E2E PRESUPUESTO");
+  await page.waitForTimeout(1500);
+  chequear(
+    "y también por nombre de cliente suelto",
+    await page.getByText(numero).first().isVisible(),
+    "no aparece",
+  );
+  // Una fecha futura no tiene que traer nada: el filtro por fecha existe.
+  await page.locator('[data-testid="buscar-presupuesto"]').fill("");
+  await page.locator('[data-testid="presup-desde"]').fill("2099-01-01");
+  await page.waitForTimeout(1500);
+  chequear(
+    "el filtro por fecha filtra de verdad",
+    !(await page.getByText(numero).first().isVisible().catch(() => false)),
+    "el presupuesto sigue apareciendo con desde=2099",
+  );
+
   console.log("── El producto sube de precio ───────────────────────────");
   psql(`UPDATE public.productos SET precio_sin_iva = 15000 WHERE codigo='E2E-PRES';`);
 
@@ -117,7 +145,7 @@ try {
   await page.locator('[data-testid="convertir"]').click();
   await page.waitForSelector('[data-testid="conv-cliente"]');
   await page.locator('[data-testid="conv-cliente"]').click();
-  await page.getByRole("option").first().click();
+  await page.getByRole("option").first().click();  // buscador contra el servidor
   // El pago se mandaba SIEMPRE como efectivo: una conversión cobrada por
   // transferencia dejaba un faltante en el arqueo por ese monto.
   await page.locator('[data-testid="conv-forma-pago"]').click();

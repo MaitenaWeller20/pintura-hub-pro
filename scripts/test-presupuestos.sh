@@ -30,24 +30,25 @@ DELETE FROM public.presupuestos WHERE observaciones IS NOT DISTINCT FROM 'TEST-P
 -- primero, el DELETE del producto choca contra la FK y el script no es
 -- repetible. La segunda corrida mediría otra cosa.
 DELETE FROM public.venta_pagos vp USING public.ventas v
- WHERE v.id = vp.venta_id AND v.observaciones LIKE 'Presupuesto %-PRES-%';
+ WHERE v.id = vp.venta_id AND v.observaciones ~ '^(Presupuesto .*-PRES-|VENTA AJENA TEST)';
 DELETE FROM public.cuenta_corriente_movimientos ccm USING public.ventas v
- WHERE v.id = ccm.venta_id AND v.observaciones LIKE 'Presupuesto %-PRES-%';
+ WHERE v.id = ccm.venta_id AND v.observaciones ~ '^(Presupuesto .*-PRES-|VENTA AJENA TEST)';
 DELETE FROM public.venta_items vi USING public.ventas v
- WHERE v.id = vi.venta_id AND v.observaciones LIKE 'Presupuesto %-PRES-%';
+ WHERE v.id = vi.venta_id AND v.observaciones ~ '^(Presupuesto .*-PRES-|VENTA AJENA TEST)';
 UPDATE public.presupuestos SET estado='ANULADO', venta_id=NULL
- WHERE venta_id IN (SELECT id FROM public.ventas WHERE observaciones LIKE 'Presupuesto %-PRES-%');
-DELETE FROM public.ventas WHERE observaciones LIKE 'Presupuesto %-PRES-%';
+ WHERE venta_id IN (SELECT id FROM public.ventas WHERE observaciones ~ '^(Presupuesto .*-PRES-|VENTA AJENA TEST)');
+DELETE FROM public.ventas WHERE observaciones ~ '^(Presupuesto .*-PRES-|VENTA AJENA TEST)';
 DELETE FROM public.stock_movimientos m USING public.productos p
  WHERE p.id=m.producto_id AND p.codigo='PRE-TEST';
 DELETE FROM public.stock_sucursal s USING public.productos p
  WHERE p.id=s.producto_id AND p.codigo='PRE-TEST';
 DELETE FROM public.productos WHERE codigo='PRE-TEST';
-DELETE FROM public.clientes WHERE razon_social='CLIENTE PRES TEST';
+DELETE FROM public.clientes WHERE razon_social IN ('CLIENTE PRES TEST','OTRO PRES TEST');
 
 INSERT INTO public.productos (codigo,nombre,precio_sin_iva,iva_porcentaje,activo,archivado)
 VALUES ('PRE-TEST','PRODUCTO PRESUPUESTO',10000,21,true,false);
-INSERT INTO public.clientes (razon_social, condicion_cta_cte) VALUES ('CLIENTE PRES TEST', true);
+INSERT INTO public.clientes (razon_social, condicion_cta_cte)
+VALUES ('CLIENTE PRES TEST', true), ('OTRO PRES TEST', true);
 INSERT INTO public.stock_sucursal (producto_id, sucursal_id, cantidad)
 VALUES ((SELECT id FROM public.productos WHERE codigo='PRE-TEST'),
         (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1), 100)
@@ -57,6 +58,7 @@ SQL
 SUC=$(q "select id::text from public.sucursales order by numero limit 1")
 PROD=$(q "select id::text from public.productos where codigo='PRE-TEST'")
 CLI=$(q "select id::text from public.clientes where razon_social='CLIENTE PRES TEST'")
+OTRO=$(q "select id::text from public.clientes where razon_social='OTRO PRES TEST'")
 
 echo "── 1. Crear un presupuesto no toca nada ──────────────────"
 $PSQL > /dev/null <<SQL
@@ -116,14 +118,31 @@ chequear "genera la deuda de cuenta corriente" "1" \
 chequear "deja kardex de VENTA" "1" \
   "$(q "select count(*)::text from public.stock_movimientos m join public.productos p on p.id=m.producto_id where p.codigo='PRE-TEST' and m.tipo='VENTA'")"
 
-echo "── 5. No se puede convertir dos veces ────────────────────"
-out=$($PSQL <<SQL 2>&1 || true
+echo "── 5. Reintentar la MISMA conversión ─────────────────────"
+# Si se perdió la respuesta (mobile, pestaña cerrada), el segundo intento tiene
+# que devolver la venta que ya se hizo, no un error — y sobre todo no una
+# segunda venta que descuente el stock de nuevo.
+VENTA1=$(q "select venta_id::text from public.presupuestos where id='$PRES'")
+stock1=$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")
+VENTA2=$($PSQL -tA <<SQL 2>&1 || true
 $(auth admin@local.test)
-SELECT public.convertir_presupuesto_en_venta('$PRES'::uuid, '$CLI'::uuid,
+SELECT venta_id::text FROM public.convertir_presupuesto_en_venta('$PRES'::uuid, '$CLI'::uuid,
   'FACTURA_B'::public.tipo_comprobante, 'CTA_CTE'::public.condicion_venta, '[]'::jsonb, gen_random_uuid());
 SQL
 )
-if echo "$out" | grep -qi "ya está convertido"; then echo "  ✓ rechaza la segunda conversión"; else echo "  ✗ dejó convertir dos veces"; fallos=$((fallos+1)); fi
+chequear "el reintento devuelve la MISMA venta" "$VENTA1" "$(echo "$VENTA2" | tail -1)"
+chequear "no descontó stock dos veces" "$stock1" \
+  "$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")"
+chequear "no creó una segunda venta" "1" \
+  "$(q "select count(*)::text from public.ventas where observaciones like 'Presupuesto %' and id='$VENTA1'")"
+
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$PRES'::uuid, '$OTRO'::uuid,
+  'FACTURA_B'::public.tipo_comprobante, 'CTA_CTE'::public.condicion_venta, '[]'::jsonb, gen_random_uuid());
+SQL
+)
+if echo "$out" | grep -qi "a nombre de otro cliente"; then echo "  ✓ avisa si el reintento viene con otro cliente"; else echo "  ✗ aceptó cambiar el cliente"; fallos=$((fallos+1)); fi
 
 echo "── 6. Validaciones y estados ─────────────────────────────"
 out=$($PSQL <<SQL 2>&1 || true
@@ -241,7 +260,75 @@ SQL
 )
 if echo "$out" | grep -qi "Cantidad inválida"; then echo "  ✓ rechaza una cantidad NaN"; else echo "  ✗ aceptó NaN"; fallos=$((fallos+1)); fi
 
-echo "── 9. Borrar un producto presupuestado ───────────────────"
+echo "── 9. Hallazgos del code review de Codex ─────────────────"
+# CONTADO sin pagos: la venta quedaba CONTADO/PENDIENTE/total_pagado=0. La
+# mercadería sale, no entra a la caja y tampoco genera deuda: la plata no está
+# en ningún lado.
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',2)),
+  NULL, 'Sin cobrar', NULL, 'TEST-PRES');
+SQL
+SINPAGO=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='Sin cobrar'")
+stockA=$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$SINPAGO'::uuid,'$CLI'::uuid,
+  'FACTURA_B'::public.tipo_comprobante,'CONTADO'::public.condicion_venta,'[]'::jsonb, gen_random_uuid());
+SQL
+)
+if echo "$out" | grep -qi "se cobra entera"; then echo "  ✓ una conversión contado sin pagos se rechaza"; else echo "  ✗ sacó la mercadería sin cobrarla"; fallos=$((fallos+1)); fi
+chequear "y no tocó el stock" "$stockA" \
+  "$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")"
+# Un pago que cubre el total sí pasa.
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$SINPAGO'::uuid,'$CLI'::uuid,
+  'FACTURA_B'::public.tipo_comprobante,'CONTADO'::public.condicion_venta,
+  jsonb_build_array(jsonb_build_object('forma_pago','EFECTIVO','monto',
+    (SELECT total FROM public.presupuestos WHERE id='$SINPAGO'))), gen_random_uuid());
+SQL
+chequear "con el pago completo sí convierte y queda PAGADO" "PAGADO" \
+  "$(q "select v.estado_pago::text from public.ventas v join public.presupuestos p on p.venta_id=v.id where p.id='$SINPAGO'")"
+
+# La clave derivada NO puede chocar con la de una venta normal: si choca,
+# crear_venta devuelve la venta VIEJA y el presupuesto queda apuntando a una
+# venta ajena, sin items propios ni stock movido.
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
+  NULL, 'Clave', NULL, 'TEST-PRES');
+SQL
+CHOQUE=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='Clave'")
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA_B'::public.tipo_comprobante,
+  'CTA_CTE'::public.condicion_venta,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
+  '[]'::jsonb, 0, 'VENTA AJENA TEST', NULL, NULL, NULL,
+  md5('presupuesto:' || '$CHOQUE')::uuid);
+SQL
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$CHOQUE'::uuid,'$CLI'::uuid,
+  'FACTURA_B'::public.tipo_comprobante,'CTA_CTE'::public.condicion_venta,'[]'::jsonb, gen_random_uuid());
+SQL
+)
+if echo "$out" | grep -qi "clave de este presupuesto"; then echo "  ✓ no se apropia de una venta ajena con la misma clave"; else echo "  ✗ se quedó con una venta ajena"; fallos=$((fallos+1)); fi
+chequear "el presupuesto sigue abierto" "ABIERTO" \
+  "$(q "select estado from public.presupuestos where id='$CHOQUE'")"
+
+# crear_venta prelockea los productos por id: sin eso, dos cajas con los mismos
+# productos en distinto orden se deadlockean.
+chequear "crear_venta lockea los productos en orden" "true" \
+  "$(q "select (position('ORDER BY p.id FOR UPDATE' in prosrc) > 0)::text from pg_proc where proname='crear_venta'")"
+# El helper no puede quedar suelto: era un oráculo sobre presupuestos ajenos.
+chequear "producto_tiene_presupuesto no es ejecutable por authenticated" "false" \
+  "$(q "select has_function_privilege('authenticated','public.producto_tiene_presupuesto(uuid)','EXECUTE')::text")"
+
+echo "── 10. Borrar un producto presupuestado ──────────────────"
 # presupuesto_items tiene FK a productos: el producto caía en la rama del DELETE
 # real y la excepción abortaba TODA la transacción — un borrado masivo de 50
 # productos no borraba ninguno.
@@ -269,7 +356,7 @@ $PSQL > /dev/null <<SQL
 UPDATE public.productos SET archivado=false WHERE id='$PROD';
 SQL
 
-echo "── 10. Un empleado no ve los de otra sucursal ────────────"
+echo "── 11. Un empleado no ve los de otra sucursal ────────────"
 otra=$(q "select count(*)::text from public.sucursales")
 if [[ "$otra" -gt 1 ]]; then
   # psql entra como `postgres`, que SALTEA RLS: sin SET ROLE este check pasaba

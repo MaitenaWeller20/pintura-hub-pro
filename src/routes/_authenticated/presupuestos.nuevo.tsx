@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { ClientePicker } from "@/components/cliente-picker";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
@@ -64,18 +65,6 @@ function NuevoPresupuesto() {
     queryKey: ["sucursales"],
     queryFn: async () =>
       ((await supabase.from("sucursales").select("*").order("numero")).data ?? []) as any[],
-  });
-  const { data: clientes = [] } = useQuery({
-    queryKey: ["clientes-activos"],
-    queryFn: async () =>
-      ((
-        await supabase
-          .from("clientes")
-          .select("id, razon_social")
-          .eq("activo", true)
-          .order("razon_social")
-          .limit(500)
-      ).data ?? []) as any[],
   });
 
   const { data: resultados = [], isFetching } = useQuery({
@@ -208,22 +197,13 @@ function NuevoPresupuesto() {
             <Label>
               Cliente <span className="text-xs text-muted-foreground">(si ya está cargado)</span>
             </Label>
-            <Select
-              value={clienteId || "__none__"}
-              onValueChange={(v) => setClienteId(v === "__none__" ? "" : v)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— (todavía no)</SelectItem>
-                {clientes.map((c: any) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.razon_social}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ClientePicker
+              value={clienteId}
+              onChange={setClienteId}
+              testId="presup-cliente"
+              placeholder="— (todavía no)"
+              permitirVacio
+            />
           </div>
           <div>
             <Label>

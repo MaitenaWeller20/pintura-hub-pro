@@ -941,6 +941,169 @@ export type Database = {
         }
         Relationships: []
       }
+      presupuesto_items: {
+        Row: {
+          cantidad: number
+          codigo: string
+          descripcion: string
+          descuento_porcentaje: number
+          id: string
+          iva_monto: number
+          iva_porcentaje: number
+          precio_lista_sin_iva: number
+          precio_sin_iva: number
+          presupuesto_id: string
+          producto_id: string
+          subtotal_con_iva: number
+          subtotal_sin_iva: number
+        }
+        Insert: {
+          cantidad: number
+          codigo: string
+          descripcion: string
+          descuento_porcentaje?: number
+          id?: string
+          iva_monto: number
+          iva_porcentaje: number
+          precio_lista_sin_iva: number
+          precio_sin_iva: number
+          presupuesto_id: string
+          producto_id: string
+          subtotal_con_iva: number
+          subtotal_sin_iva: number
+        }
+        Update: {
+          cantidad?: number
+          codigo?: string
+          descripcion?: string
+          descuento_porcentaje?: number
+          id?: string
+          iva_monto?: number
+          iva_porcentaje?: number
+          precio_lista_sin_iva?: number
+          precio_sin_iva?: number
+          presupuesto_id?: string
+          producto_id?: string
+          subtotal_con_iva?: number
+          subtotal_sin_iva?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "presupuesto_items_presupuesto_id_fkey"
+            columns: ["presupuesto_id"]
+            isOneToOne: false
+            referencedRelation: "presupuestos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuesto_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuesto_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+        ]
+      }
+      presupuestos: {
+        Row: {
+          cliente_id: string | null
+          created_at: string
+          estado: string
+          fecha: string
+          id: string
+          iva_total: number
+          nombre_cliente: string | null
+          numero: string
+          observaciones: string | null
+          subtotal_sin_iva: number
+          sucursal_id: string
+          total: number
+          updated_at: string
+          usuario_id: string
+          validez_hasta: string | null
+          venta_id: string | null
+        }
+        Insert: {
+          cliente_id?: string | null
+          created_at?: string
+          estado?: string
+          fecha?: string
+          id?: string
+          iva_total?: number
+          nombre_cliente?: string | null
+          numero: string
+          observaciones?: string | null
+          subtotal_sin_iva?: number
+          sucursal_id: string
+          total?: number
+          updated_at?: string
+          usuario_id: string
+          validez_hasta?: string | null
+          venta_id?: string | null
+        }
+        Update: {
+          cliente_id?: string | null
+          created_at?: string
+          estado?: string
+          fecha?: string
+          id?: string
+          iva_total?: number
+          nombre_cliente?: string | null
+          numero?: string
+          observaciones?: string | null
+          subtotal_sin_iva?: number
+          sucursal_id?: string
+          total?: number
+          updated_at?: string
+          usuario_id?: string
+          validez_hasta?: string | null
+          venta_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "presupuestos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuestos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
+            foreignKeyName: "presupuestos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "presupuestos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuestos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       producto_codigos_proveedor: {
         Row: {
           codigo_proveedor: string
@@ -2495,6 +2658,10 @@ export type Database = {
         Returns: undefined
       }
       anular_pago_proveedor: { Args: { p_pago_id: string }; Returns: undefined }
+      anular_presupuesto: {
+        Args: { p_presupuesto_id: string }
+        Returns: undefined
+      }
       anular_venta: {
         Args: { p_venta_id: string }
         Returns: {
@@ -2563,6 +2730,21 @@ export type Database = {
         }
         Returns: string
       }
+      convertir_presupuesto_en_venta: {
+        Args: {
+          p_cliente_id: string
+          p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
+          p_idempotency_key?: string
+          p_pagos?: Json
+          p_presupuesto_id: string
+          p_tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
       crear_borrador_ingreso: {
         Args: {
           p_archivo_path?: string
@@ -2609,6 +2791,20 @@ export type Database = {
               compra_id: string
             }[]
           }
+      crear_presupuesto: {
+        Args: {
+          p_cliente_id?: string
+          p_items: Json
+          p_nombre_cliente?: string
+          p_observaciones?: string
+          p_sucursal_id: string
+          p_validez_hasta?: string
+        }
+        Returns: {
+          numero: string
+          presupuesto_id: string
+        }[]
+      }
       crear_producto_desde_ingreso: {
         Args: {
           p_codigo: string

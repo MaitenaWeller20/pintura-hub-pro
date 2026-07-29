@@ -156,32 +156,40 @@ El corazón. En una transacción:
 4. Crea la venta **con los precios del presupuesto**.
 5. Marca el presupuesto `CONVERTIDO` con su `venta_id`.
 
-#### La decisión de §5.2, resuelta: función interna compartida
+#### La decisión de §5.2, resuelta: NO se toca `crear_venta`
 
-La premisa original de este spec estaba **equivocada**. `crear_venta` **ya acepta un precio de
-afuera**: toma `precio_unitario_sin_iva` por ítem con `COALESCE(..., v_precio_lista)`
-(`20260721170000_r5_nota_debito_recargo.sql:222`), y la UI se lo manda cuando alguien pisa el precio
-a mano (`ventas.nueva.tsx:425`). El "agujero" que yo quería preservar ya está abierto por diseño.
+La premisa original de este spec estaba equivocada, y al mirar la función viva
+aparece algo mejor todavía: **no hace falta tocar `crear_venta` en absoluto.**
 
-Aun así, **agregar un `p_precios_congelados` público sería peor**: un parámetro peligroso en la
-puerta pública no se protege con "la UI no lo conoce".
+`crear_venta` ya acepta `precio_unitario_sin_iva` por ítem, con
+`COALESCE((it->>'precio_unitario_sin_iva')::numeric, v_precio_lista)`
+(línea 188 de la definición viva). La UI se lo manda cuando alguien pisa el precio a mano.
 
-**Se extrae el cuerpo vigente de `crear_venta` a `_crear_venta_interna`, sin `GRANT` público**, y
-`crear_venta` queda como wrapper. `convertir_presupuesto_en_venta` llama a la interna. Comparten
-todo: idempotencia con advisory lock, auth de sucursal, cliente activo, coherencia de Factura A,
-percepciones, stock negativo por perfil, notas asociadas, límite de crédito, numeración, stock con
-kardex, pagos con vuelto y cuenta corriente. Nada se duplica.
+Entonces `convertir_presupuesto_en_venta` sólo tiene que:
 
-**Cambiar la firma exige `DROP FUNCTION` primero** — el mismo problema que ya documenta
-`20260718121000_g4_validaciones_crear_venta.sql:26` y que apareció en el chunk de compras.
+1. leer los ítems del presupuesto **de la tabla** (escrita por el servidor),
+2. armar el `p_items` con esos precios,
+3. llamar a `crear_venta` normalmente.
+
+El precio no viene del navegador sino de una tabla que sólo escriben las RPC, así que la propiedad
+de seguridad se mantiene sin agregar ningún parámetro nuevo ni extraer nada.
+
+**Esto es estrictamente mejor que la opción "función interna":** cero cirugía sobre el corazón
+transaccional del sistema (idempotencia, stock, caja, límite de crédito, numeración, AFIP), cero
+riesgo de que dos copias se separen, cero `DROP FUNCTION` sobre una firma de 12 parámetros. El
+review pedía no duplicar; la respuesta correcta resultó ser no tocar.
 
 #### El orden de los locks
 
-La conversión hereda de `crear_venta` el bloqueo de productos **en el orden del payload**
-(`20260721170000…sql:207`). Dos ventas con los mismos productos en distinto orden pueden
-deadlockear — un problema que ya existe hoy, no lo trae este chunk. Aprovechando que se toca el
-núcleo, **la interna ordena los ítems por `producto_id` antes de bloquear**, que es la forma barata
-de que no haya ciclo.
+La conversión hereda de `crear_venta` el bloqueo de productos **en el orden del payload**. Dos
+ventas con los mismos productos en distinto orden pueden deadlockear — un problema que ya existe
+hoy y que este chunk no trae.
+
+Como no se toca `crear_venta`, la mitigación va donde sí se puede: **la conversión arma su `p_items`
+ordenado por `producto_id`**. Dos conversiones concurrentes de presupuestos que comparten productos
+piden los locks en el mismo orden, así que entre ellas no hay ciclo. Contra una venta manual el
+riesgo preexistente sigue igual, y arreglarlo es cirugía sobre `crear_venta` que no vale la pena
+para este chunk.
 
 (Contra `cambiar_precios_masivo` no hay riesgo: su `LOCK TABLE ... SHARE ROW EXCLUSIVE` no choca con
 el `ROW SHARE` de un `SELECT FOR UPDATE`.)
@@ -262,8 +270,10 @@ Nada de esto cambia el comportamiento de lo que ya existe: es una entidad nueva,
 ## 10. Hallazgos del review del spec con Codex
 
 1. **BLOQUEANTE — la premisa de §5.2 estaba equivocada**: `crear_venta` ya acepta precio externo por
-   ítem. Aun así, un parámetro público nuevo sería peor que extraer el núcleo. → función interna sin
-   GRANT, decisión tomada y justificada.
+   ítem. Mirando la función viva se llegó a algo mejor que las dos opciones que el spec proponía:
+   **no tocar `crear_venta`**. La conversión le pasa los precios leídos de `presupuesto_items` —una
+   tabla que sólo escriben las RPC— por el parámetro que ya existe. Cero cirugía sobre el corazón
+   transaccional.
 2. **BLOQUEANTE — `PRESUPUESTO` no puede entrar al enum `tipo_comprobante`**: es el dominio fiscal, y
    `esComprobanteFiscal` trata como fiscal todo lo que no esté en su lista de internos. → la
    secuencia de documentos internos, que ya quedó hecha en el chunk de compras.

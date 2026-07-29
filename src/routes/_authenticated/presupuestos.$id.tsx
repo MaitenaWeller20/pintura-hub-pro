@@ -30,8 +30,7 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { fmtMoney, fmtDate } from "@/lib/format";
-import { uuidv4 } from "@/lib/uuid";
+import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
 import { toast } from "sonner";
 import { ArrowLeft, Printer, Loader2, AlertTriangle } from "lucide-react";
 import jsPDF from "jspdf";
@@ -187,12 +186,11 @@ function DetallePresupuesto() {
       {p.estado === "CONVERTIDO" && (
         <SectionCard>
           <p className="text-sm">
-            Este presupuesto ya se convirtió en una venta.{" "}
-            {p.venta_id && (
-              <Link to="/ventas" className="underline">
-                Ver en Ventas
-              </Link>
-            )}
+            Este presupuesto ya se convirtió en una venta. Buscala en{" "}
+            <Link to="/ventas" className="underline">
+              Ventas
+            </Link>{" "}
+            por <strong>{p.numero}</strong>: la venta lleva ese número en sus observaciones.
           </p>
         </SectionCard>
       )}
@@ -286,7 +284,10 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
   const [clienteId, setClienteId] = useState(presupuesto?.cliente_id ?? "");
   const [tipo, setTipo] = useState("FACTURA_B");
   const [condicion, setCondicion] = useState("CONTADO");
-  const [clave, setClave] = useState(() => uuidv4());
+  // El pago se registraba SIEMPRE como efectivo. El arqueo compara el bucket
+  // EFECTIVO contra la plata contada, así que cada conversión cobrada por
+  // transferencia dejaba un faltante de caja por ese monto.
+  const [formaPago, setFormaPago] = useState("EFECTIVO");
 
   const { data: clientes = [] } = useQuery({
     queryKey: ["clientes-activos"],
@@ -312,14 +313,14 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
         p_pagos:
           condicion === "CTA_CTE"
             ? []
-            : ([{ forma_pago: "EFECTIVO", monto: Number(presupuesto.total) }] as any),
-        p_idempotency_key: clave,
+            : ([{ forma_pago: formaPago, monto: Number(presupuesto.total) }] as any),
+        // La clave de idempotencia la deriva la RPC del propio presupuesto:
+        // mandarla desde acá permitía que dos presupuestos compartieran venta.
       });
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
       toast.success("Venta creada con los precios del presupuesto.");
-      setClave(uuidv4());
       onDone();
     },
     onError: (e: any) => toast.error(e.message),
@@ -384,6 +385,30 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
               </Select>
             </div>
           </div>
+          {condicion === "CONTADO" && (
+            <div>
+              <Label>Cómo paga</Label>
+              <Select value={formaPago} onValueChange={setFormaPago}>
+                <SelectTrigger data-testid="conv-forma-pago">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[
+                    "EFECTIVO",
+                    "TRANSFERENCIA",
+                    "TARJETA_DEBITO",
+                    "TARJETA_CREDITO",
+                    "MERCADO_PAGO",
+                    "CHEQUE",
+                  ].map((f) => (
+                    <SelectItem key={f} value={f}>
+                      {formaPagoLabel[f] ?? f}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={m.isPending}>

@@ -182,7 +182,94 @@ SQL
 if echo "$out" | grep -qi "Cambió el IVA"; then echo "  ✓ no convierte si cambió el IVA"; else echo "  ✗ convirtió con el IVA cambiado"; fallos=$((fallos+1)); fi
 $PSQL -c "UPDATE public.productos SET iva_porcentaje = 21 WHERE codigo='PRE-TEST';" > /dev/null
 
-echo "── 8. Un empleado no ve los de otra sucursal ─────────────"
+echo "── 8. Hallazgos del review adversarial ───────────────────"
+# La clave de idempotencia la elegía quien llama, y crear_venta devuelve la venta
+# VIEJA si ya existe: mandando la misma clave en dos presupuestos, el segundo
+# quedaba CONVERTIDO apuntando a la venta del primero. La mercadería nunca salía
+# del stock y nadie la cobraba.
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
+  NULL, 'Idem A', NULL, 'TEST-PRES');
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',5)),
+  NULL, 'Idem B', NULL, 'TEST-PRES');
+SQL
+IA=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='Idem A'")
+IB=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='Idem B'")
+MISMA='88888888-8888-8888-8888-888888888888'
+stock0=$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$IA'::uuid,'$CLI'::uuid,
+  'FACTURA_B'::public.tipo_comprobante,'CTA_CTE'::public.condicion_venta,'[]'::jsonb,'$MISMA'::uuid);
+SELECT public.convertir_presupuesto_en_venta('$IB'::uuid,'$CLI'::uuid,
+  'FACTURA_B'::public.tipo_comprobante,'CTA_CTE'::public.condicion_venta,'[]'::jsonb,'$MISMA'::uuid);
+SQL
+chequear "la misma clave NO hace que dos presupuestos compartan venta" "2" \
+  "$(q "select count(distinct venta_id)::text from public.presupuestos where id in ('$IA','$IB')")"
+chequear "el stock bajó por los dos (1 + 5)" \
+  "$(q "select ($stock0 - 6)::text")" \
+  "$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")"
+
+# El guard de comprobante estaba SÓLO en la pantalla: por RPC directa se llegaba
+# a cobrar sin que la plata entrara a la caja.
+$PSQL > /dev/null <<SQL
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
+  NULL, 'Remito', NULL, 'TEST-PRES');
+SQL
+REM=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='Remito'")
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.convertir_presupuesto_en_venta('$REM'::uuid,'$CLI'::uuid,
+  'REMITO'::public.tipo_comprobante,'CONTADO'::public.condicion_venta,'[]'::jsonb, gen_random_uuid());
+SQL
+)
+if echo "$out" | grep -qi "se convierte en factura"; then echo "  ✓ la RPC rechaza un remito, no sólo la pantalla"; else echo "  ✗ aceptó REMITO por RPC"; fallos=$((fallos+1)); fi
+
+# NaN: `v_cant <= 0` es false y `NaN > 0` es true, así que ninguna comparación
+# normal lo atrapa. Llegaba a dejar total = NaN.
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.crear_presupuesto('$SUC'::uuid,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad','NaN')),
+  NULL, 'NaN', NULL, 'TEST-PRES');
+SQL
+)
+if echo "$out" | grep -qi "Cantidad inválida"; then echo "  ✓ rechaza una cantidad NaN"; else echo "  ✗ aceptó NaN"; fallos=$((fallos+1)); fi
+
+echo "── 9. Borrar un producto presupuestado ───────────────────"
+# presupuesto_items tiene FK a productos: el producto caía en la rama del DELETE
+# real y la excepción abortaba TODA la transacción — un borrado masivo de 50
+# productos no borraba ninguno.
+$PSQL > /dev/null <<SQL
+INSERT INTO public.productos (codigo,nombre,precio_sin_iva,iva_porcentaje)
+VALUES ('PRE-LIMPIO','PRODUCTO SIN HISTORIAL',1000,21)
+ON CONFLICT (codigo) DO UPDATE SET archivado=false;
+SQL
+LIMPIO=$(q "select id::text from public.productos where codigo='PRE-LIMPIO'")
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.eliminar_productos(ARRAY['$PROD','$LIMPIO']::uuid[]);
+SQL
+)
+if echo "$out" | grep -qi "violates foreign key"; then
+  echo "  ✗ la FK del presupuesto abortó el borrado masivo"; fallos=$((fallos+1))
+else
+  echo "  ✓ el borrado masivo no revienta por la FK del presupuesto"
+fi
+chequear "el presupuestado se archivó (no se borró)" "true" \
+  "$(q "select archivado::text from public.productos where id='$PROD'")"
+chequear "el que no tenía historial sí se borró" "0" \
+  "$(q "select count(*)::text from public.productos where codigo='PRE-LIMPIO'")"
+$PSQL > /dev/null <<SQL
+UPDATE public.productos SET archivado=false WHERE id='$PROD';
+SQL
+
+echo "── 10. Un empleado no ve los de otra sucursal ────────────"
 otra=$(q "select count(*)::text from public.sucursales")
 if [[ "$otra" -gt 1 ]]; then
   # psql entra como `postgres`, que SALTEA RLS: sin SET ROLE este check pasaba

@@ -283,3 +283,34 @@ Nada de esto cambia el comportamiento de lo que ya existe: es una entidad nueva,
 5. **El cliente hay que validarlo en la RPC**, no sólo en la pantalla.
 6. **Faltaba la columna del descuento**: el spec decía que quedaba registrado y la tabla no lo
    guardaba.
+
+---
+
+## 11. Hallazgos del review adversarial del código
+
+Dos de plata, reproducidos contra la base local antes de arreglarlos.
+
+1. **ALTA — la clave de idempotencia la elegía quien llamaba.** `crear_venta` cortocircuita si ya
+   existe una venta con esa clave y devuelve **la venta vieja**; la conversión no distinguía "venta
+   nueva" de "venta preexistente". Mandando la misma clave en dos presupuestos distintos, el segundo
+   quedaba `CONVERTIDO` apuntando a la venta del primero: la mercadería nunca salía del stock y nadie
+   la cobraba. Reproducido: dos presupuestos de 1 y 9 unidades, el stock bajó 1 en vez de 10.
+   → la clave la deriva la RPC del propio `p_presupuesto_id`, más un índice único sobre `venta_id`.
+2. **ALTA — el tipo de comprobante se limitaba sólo en el `<Select>`.** Por RPC directa: `REMITO` +
+   `CONTADO` cobra sin que la plata entre a la caja; `FAC_INTERNA_CTA_CTE` + `CTA_CTE` saca stock sin
+   deuda y sin pago. → el guard se movió adentro de la RPC (sólo `FACTURA_A/B/C`).
+3. **MEDIA — el pago se registraba siempre como `EFECTIVO`.** El arqueo compara el bucket EFECTIVO
+   contra la plata contada, así que cada conversión cobrada por transferencia dejaba un faltante de
+   caja por ese monto. → selector de forma de pago en el diálogo de conversión.
+4. **MEDIA — `eliminar_productos` reventaba con la FK de `presupuesto_items`.** El producto caía en
+   la rama del `DELETE` real y la excepción abortaba toda la transacción: un borrado masivo de 50
+   productos no borraba ninguno. → un presupuesto cuenta como historial, se archiva. Archivar toca
+   `archivado` y `crear_venta` mira `activo`, así que el presupuesto abierto se sigue pudiendo
+   convertir.
+5. **MEDIA — TOCTOU entre el guard de IVA y el lock.** Se validaba el IVA y recién después
+   `crear_venta` tomaba los locks. → los productos se lockean ordenados por id **antes** del guard.
+6. **BAJA — `NaN` pasaba las validaciones.** `NaN <= 0` es `false` y `NaN > 0` es `true`, así que ni
+   la comparación ni el CHECK lo atrapaban, y el total quedaba en `NaN`. → rechazo explícito
+   (`= 'NaN'::numeric`) más un CHECK que exige un número real.
+7. **BAJA — el link a la venta no iba a ninguna parte útil.** → el aviso ahora dice que la venta
+   lleva el número del presupuesto en sus observaciones.

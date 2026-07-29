@@ -118,6 +118,10 @@ try {
   await page.waitForSelector('[data-testid="conv-cliente"]');
   await page.locator('[data-testid="conv-cliente"]').click();
   await page.getByRole("option").first().click();
+  // El pago se mandaba SIEMPRE como efectivo: una conversión cobrada por
+  // transferencia dejaba un faltante en el arqueo por ese monto.
+  await page.locator('[data-testid="conv-forma-pago"]').click();
+  await page.getByRole("option", { name: "Transferencia" }).click();
   await page.locator('[data-testid="conv-confirmar"]').click();
   await page.waitForTimeout(3000);
 
@@ -130,6 +134,12 @@ try {
       psql(`select precio_unitario_sin_iva::text from public.venta_items where venta_id='${venta}'`) ===
         "9000.00",
       psql(`select precio_unitario_sin_iva::text from public.venta_items where venta_id='${venta}'`),
+    );
+    chequear(
+      "el pago quedó como transferencia, no como efectivo",
+      psql(`select forma_pago::text from public.venta_pagos where venta_id='${venta}'`) ===
+        "TRANSFERENCIA",
+      psql(`select forma_pago::text from public.venta_pagos where venta_id='${venta}'`),
     );
     chequear(
       "ahora SÍ descontó stock (50 − 2)",

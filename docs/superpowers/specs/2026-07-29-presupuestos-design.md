@@ -1,7 +1,7 @@
 # Presupuestos — Diseño
 
 **Fecha:** 2026-07-29
-**Estado:** Spec escrito. Pendiente: review con Codex, implementación.
+**Estado:** Spec revisado con Codex (§10, 6 hallazgos incorporados). Pendiente: implementación.
 **Viene de:** `2026-07-29-correcciones-cliente-backlog.md` §7.
 
 ---
@@ -96,6 +96,11 @@ CREATE TABLE public.presupuesto_items (
   codigo           text NOT NULL,
   descripcion      text NOT NULL,
   cantidad         numeric(14,2) NOT NULL CHECK (cantidad > 0),
+  -- El precio de catálogo y el descuento van POR SEPARADO: el presupuesto tiene
+  -- que poder decir "te hago 10% sobre $1.000", no sólo "$900".
+  precio_lista_sin_iva numeric(14,2) NOT NULL CHECK (precio_lista_sin_iva >= 0),
+  descuento_porcentaje numeric(5,2)  NOT NULL DEFAULT 0
+                         CHECK (descuento_porcentaje >= 0 AND descuento_porcentaje <= 100),
   precio_sin_iva   numeric(14,2) NOT NULL CHECK (precio_sin_iva >= 0),
   iva_porcentaje   numeric(5,2)  NOT NULL,
   subtotal_sin_iva numeric(14,2) NOT NULL,
@@ -108,9 +113,15 @@ El `CHECK` que ata `estado = 'CONVERTIDO'` con `venta_id IS NOT NULL` es lo que 
 estado incoherente "convertido pero no se sabe en qué venta", que es justo el que después nadie
 puede explicar.
 
-**Numeración:** se reusa `siguiente_numero_comprobante(sucursal, tipo)`, que ya existe y ya es
-atómica (`20260630021321…sql:83`). Se le suma el tipo `PRESUPUESTO` con prefijo `PRES`. Reusarla es
-lo correcto: escribir una numeración propia sería repetir un problema de concurrencia ya resuelto.
+**Numeración:** `next_documento_numero(sucursal, 'PRESUPUESTO', 'PRES')`, la secuencia de documentos
+**internos** creada en `20260729120000_compras_plata.sql`.
+
+Deliberadamente **NO** se agrega `PRESUPUESTO` al enum `tipo_comprobante`: ese enum es el dominio
+fiscal (ventas y AFIP), `next_comprobante_numero` tiene un `CASE` cerrado que falla si falta el
+prefijo (`20260713130000_auditoria_correcciones.sql:25`), y `esComprobanteFiscal`
+(`src/lib/fiscal/codigos.ts:32`) trata como fiscal todo lo que no esté en su lista de internos: un
+presupuesto colado ahí quedaría fiscal por default. La secuencia interna tiene la misma garantía de
+atomicidad, sin tocar el borde fiscal.
 
 **RLS:** igual que ventas — admin ve todo, empleado ve su sucursal. Escritura sólo por las RPC.
 
@@ -136,33 +147,44 @@ No toca stock. No toca caja. No genera deuda.
 
 El corazón. En una transacción:
 
-1. Bloquea el presupuesto (`FOR UPDATE`) y valida que esté `ABIERTO`. **Un presupuesto se convierte
-   una sola vez**; el lock es lo que evita que dos personas lo conviertan a la vez y salgan dos
-   ventas por la misma mercadería.
-2. Avisa —no bloquea— si está vencido: la decisión de respetar un precio viejo es del negocio.
-3. Crea la venta **con los precios del presupuesto**, no con los de hoy. Este es el punto de toda la
-   feature.
-4. Descuenta stock, mueve caja y genera la deuda: de acá en adelante es una venta normal.
-5. Marca el presupuesto `CONVERTIDO` y le guarda el `venta_id`.
+1. Bloquea el presupuesto (`FOR UPDATE`) y valida que esté `ABIERTO`. **Se convierte una sola vez**;
+   el lock evita que dos personas lo conviertan a la vez y salgan dos ventas por la misma mercadería.
+2. **Valida el cliente en la RPC**, no sólo en la pantalla: `ventas.cliente_id` es `NOT NULL` y
+   `crear_venta` exige que exista y esté activo. Si el presupuesto ya tenía uno y se pasa otro, se
+   permite —se hizo "para cualquier cliente"— y queda registrado cuál se usó.
+3. Avisa —no bloquea— si está vencido.
+4. Crea la venta **con los precios del presupuesto**.
+5. Marca el presupuesto `CONVERTIDO` con su `venta_id`.
 
-**Cómo se implementa sin duplicar `crear_venta`.** `crear_venta` calcula los precios desde
-`productos` y no acepta precios de afuera —correctamente—. Duplicar sus ~200 líneas (stock, caja,
-cuenta corriente, numeración, validaciones) para cambiar de dónde sale un número sería garantizar
-que las dos copias se separen con el tiempo.
+#### La decisión de §5.2, resuelta: función interna compartida
 
-Entonces: se le agrega a `crear_venta` un parámetro `p_precios_congelados jsonb DEFAULT NULL`, que
-**sólo `convertir_presupuesto_en_venta` usa**, pasándole los precios que leyó de
-`presupuesto_items` dentro de la misma transacción. Como el valor no viene del navegador sino de una
-tabla escrita por el servidor, la propiedad de seguridad se mantiene. Y para que no se pueda abusar
-desde afuera, la RPC de conversión es la única con permiso de pasarlo: `crear_venta` rechaza
-`p_precios_congelados` si el llamador no es la otra RPC (se valida con un parámetro interno que la
-UI no conoce; alternativa más simple y preferida si el review lo confirma: mover el cuerpo común a
-una función interna `_crear_venta_interna` que las dos llamen, y dejar `crear_venta` como la puerta
-pública sin ese parámetro).
+La premisa original de este spec estaba **equivocada**. `crear_venta` **ya acepta un precio de
+afuera**: toma `precio_unitario_sin_iva` por ítem con `COALESCE(..., v_precio_lista)`
+(`20260721170000_r5_nota_debito_recargo.sql:222`), y la UI se lo manda cuando alguien pisa el precio
+a mano (`ventas.nueva.tsx:425`). El "agujero" que yo quería preservar ya está abierto por diseño.
 
-**La decisión concreta a validar con Codex:** función interna compartida (preferida) vs. parámetro
-extra en `crear_venta`. Las dos evitan la duplicación; la primera evita además tener que custodiar
-un parámetro peligroso en la puerta pública.
+Aun así, **agregar un `p_precios_congelados` público sería peor**: un parámetro peligroso en la
+puerta pública no se protege con "la UI no lo conoce".
+
+**Se extrae el cuerpo vigente de `crear_venta` a `_crear_venta_interna`, sin `GRANT` público**, y
+`crear_venta` queda como wrapper. `convertir_presupuesto_en_venta` llama a la interna. Comparten
+todo: idempotencia con advisory lock, auth de sucursal, cliente activo, coherencia de Factura A,
+percepciones, stock negativo por perfil, notas asociadas, límite de crédito, numeración, stock con
+kardex, pagos con vuelto y cuenta corriente. Nada se duplica.
+
+**Cambiar la firma exige `DROP FUNCTION` primero** — el mismo problema que ya documenta
+`20260718121000_g4_validaciones_crear_venta.sql:26` y que apareció en el chunk de compras.
+
+#### El orden de los locks
+
+La conversión hereda de `crear_venta` el bloqueo de productos **en el orden del payload**
+(`20260721170000…sql:207`). Dos ventas con los mismos productos en distinto orden pueden
+deadlockear — un problema que ya existe hoy, no lo trae este chunk. Aprovechando que se toca el
+núcleo, **la interna ordena los ítems por `producto_id` antes de bloquear**, que es la forma barata
+de que no haya ciclo.
+
+(Contra `cambiar_precios_masivo` no hay riesgo: su `LOCK TABLE ... SHARE ROW EXCLUSIVE` no choca con
+el `ROW SHARE` de un `SELECT FOR UPDATE`.)
 
 ### 5.3 `anular_presupuesto(id)`
 
@@ -234,3 +256,20 @@ productos con los precios presupuestados.
 5. Tests SQL + e2e.
 
 Nada de esto cambia el comportamiento de lo que ya existe: es una entidad nueva, al lado.
+
+---
+
+## 10. Hallazgos del review del spec con Codex
+
+1. **BLOQUEANTE — la premisa de §5.2 estaba equivocada**: `crear_venta` ya acepta precio externo por
+   ítem. Aun así, un parámetro público nuevo sería peor que extraer el núcleo. → función interna sin
+   GRANT, decisión tomada y justificada.
+2. **BLOQUEANTE — `PRESUPUESTO` no puede entrar al enum `tipo_comprobante`**: es el dominio fiscal, y
+   `esComprobanteFiscal` trata como fiscal todo lo que no esté en su lista de internos. → la
+   secuencia de documentos internos, que ya quedó hecha en el chunk de compras.
+3. **La función se llama `next_comprobante_numero`**, no `siguiente_numero_comprobante`.
+4. **El orden de los locks de productos** puede deadlockear entre dos conversiones. → la interna
+   ordena por `producto_id`.
+5. **El cliente hay que validarlo en la RPC**, no sólo en la pantalla.
+6. **Faltaba la columna del descuento**: el spec decía que quedaba registrado y la tabla no lo
+   guardaba.

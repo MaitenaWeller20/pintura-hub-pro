@@ -84,23 +84,28 @@ try {
 
   const guardar = page.getByRole("button", { name: "Guardar" });
   chequear(
-    "sin cobrar, Guardar está bloqueado",
+    "sin cobrar un peso, Guardar está bloqueado",
     await guardar.isDisabled(),
     "el botón está habilitado con la venta sin pagar",
   );
   chequear(
     "y la pantalla dice qué hacer",
-    await page.getByText(/hay que cobrar el total/i).isVisible(),
+    await page.getByText(/hay que cobrar algo/i).isVisible(),
     "no aparece el aviso",
   );
 
-  console.log("── Cobrando el total ────────────────────────────────────");
+  console.log("── Cobrando una parte (el fiado del mostrador) ──────────");
   await page.getByRole("button", { name: /Agregar pago|Pago/i }).first().click();
   await page.waitForTimeout(600);
+  // El pago viene con el total; lo bajo a una seña.
+  const monto = page.locator("text=Monto").locator("..").locator("input");
+  await monto.fill("500");
+  await monto.blur();
+  await page.waitForTimeout(600);
   chequear(
-    "con el pago completo se puede guardar",
+    "con una parte cobrada ya se puede guardar",
     await guardar.isEnabled(),
-    "sigue bloqueado después de cargar el pago",
+    "sigue bloqueado con el pago parcial",
   );
 
   await guardar.click();
@@ -111,12 +116,16 @@ try {
   );
   chequear("la venta se guardó", venta === "1", `hay ${venta} ventas`);
   if (venta === "1") {
-    chequear(
-      "quedó PAGADA",
-      psql(`select v.estado_pago::text from public.ventas v
+    const estado = psql(`select v.estado_pago::text from public.ventas v
               join public.venta_items vi on vi.venta_id=v.id
-              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`) === "PAGADO",
-      psql(`select v.estado_pago::text from public.ventas v
+              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`);
+    chequear("quedó PARCIAL, no PAGADA", estado === "PARCIAL", estado);
+    chequear(
+      "y guardó los 500 cobrados",
+      psql(`select v.total_pagado::text from public.ventas v
+              join public.venta_items vi on vi.venta_id=v.id
+              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`) === "500.00",
+      psql(`select v.total_pagado::text from public.ventas v
               join public.venta_items vi on vi.venta_id=v.id
               join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`),
     );

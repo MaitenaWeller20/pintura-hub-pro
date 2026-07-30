@@ -477,10 +477,11 @@ function NuevaVenta() {
     (!esRemitoObra || nombreObra.trim().length > 0) &&
     // Una nota sin factura asociada no se puede emitir en AFIP.
     (!esNota || !!cbteAsocId) &&
-    // Al contado se cobra entero. Lo que se lleva sin pagar va por cuenta
-    // corriente, que para eso está. Las notas quedan afuera: se acreditan o se
+    // Al contado se cobra algo: el parcial se permite (queda PARCIAL y el saldo
+    // se ve arriba), pero la mercadería no sale sin cobrar un peso — para eso
+    // está la cuenta corriente. Las notas quedan afuera: se acreditan o se
     // cargan a la cuenta, no se pagan en el momento. Mismo criterio que crear_venta.
-    (esCtaCte || esNota || Math.abs(totales.total) < 0.01 || totales.saldo <= 0.01);
+    (esCtaCte || esNota || Math.abs(totales.total) < 0.01 || Math.abs(totales.pagado) >= 0.01);
 
   return (
     <div className="space-y-4">
@@ -904,7 +905,7 @@ function NuevaVenta() {
             <p className="text-sm text-muted-foreground py-4 text-center">
               {esCtaCte
                 ? "En cuenta corriente no se cobra ahora: queda como deuda del cliente."
-                : "Sin pagos. Al contado hay que cobrar el total; si se lo lleva sin pagar, poné cuenta corriente."}
+                : "Sin pagos. Al contado hay que cobrar algo, aunque sea una parte; si se lo lleva sin pagar nada, poné cuenta corriente."}
             </p>
           ) : (
             <div className="space-y-2">

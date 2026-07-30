@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# "Al contado se cobra entero" (migración 20260729220000).
+# "Al contado se cobra algo" (migraciones 20260729220000 y 20260729230000).
 #   supabase migration up --local && ./scripts/crear-admin-local.sh
 #   ./scripts/test-venta-contado.sh
 #
 # Antes, una venta CONTADO sin pagos quedaba PENDIENTE con el stock ya
 # descontado: la plata no entraba a la caja ni quedaba como deuda de nadie.
+# El pago PARCIAL sí se permite: es el fiado del mostrador, y el saldo se ve.
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -71,14 +72,29 @@ SQL
 echo "── 1. Contado sin cobrar nada ────────────────────────────"
 s0=$(stock)
 out=$(venta CONTADO "'[]'::jsonb")
-rechaza "rechaza la venta al contado sin pagos" "se cobra entera" "$out"
-rechaza "y dice cuánto falta" "2420" "$out"
+rechaza "rechaza la venta al contado sin cobrar nada" "aunque sea una parte" "$out"
+rechaza "y le dice qué hacer" "cuenta corriente" "$out"
 chequear "no movió el stock" "$s0" "$(stock)"
 
-echo "── 2. Contado a medio pagar ──────────────────────────────"
-out=$(venta CONTADO "jsonb_build_array(jsonb_build_object('forma_pago','EFECTIVO','monto',1000))")
-rechaza "rechaza el pago parcial" "faltan \\\$1420" "$out"
-chequear "tampoco movió el stock" "$s0" "$(stock)"
+echo "── 2. Contado a medio pagar (SÍ se permite) ──────────────"
+venta CONTADO "jsonb_build_array(jsonb_build_object('forma_pago','EFECTIVO','monto',1000))" > /dev/null
+chequear "la venta parcial entra" "PARCIAL" \
+  "$(q "select estado_pago::text from public.ventas where observaciones='TEST-CONTADO'")"
+chequear "registra lo que se cobró" "1000.00" \
+  "$(q "select total_pagado::text from public.ventas where observaciones='TEST-CONTADO'")"
+chequear "el saldo queda a la vista (2420 − 1000)" "1420.00" \
+  "$(q "select (total - total_pagado)::text from public.ventas where observaciones='TEST-CONTADO'")"
+chequear "y la mercadería salió (100 − 2)" "98.00" "$(stock)"
+# La siguiente sección cuenta ventas: dejo la mesa limpia.
+$PSQL > /dev/null <<SQL
+DELETE FROM public.venta_pagos vp USING public.ventas v
+ WHERE v.id=vp.venta_id AND v.observaciones='TEST-CONTADO';
+DELETE FROM public.venta_items vi USING public.ventas v
+ WHERE v.id=vi.venta_id AND v.observaciones='TEST-CONTADO';
+DELETE FROM public.ventas WHERE observaciones='TEST-CONTADO';
+UPDATE public.stock_sucursal SET cantidad = 100
+ WHERE producto_id = '$PROD';
+SQL
 
 echo "── 3. Contado cobrado entero ─────────────────────────────"
 venta CONTADO "jsonb_build_array(jsonb_build_object('forma_pago','EFECTIVO','monto',2420))" > /dev/null
@@ -102,7 +118,7 @@ chequear "y generó la deuda" "1" \
 
 # Un pago de más sigue dando vuelto, no error.
 out=$(venta CONTADO "jsonb_build_array(jsonb_build_object('forma_pago','EFECTIVO','monto',3000))")
-if echo "$out" | grep -qi "se cobra entera"; then echo "  ✗ rechazó un pago con vuelto"; fallos=$((fallos+1)); else echo "  ✓ el pago con vuelto sigue pasando"; fi
+if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un pago con vuelto"; fallos=$((fallos+1)); else echo "  ✓ el pago con vuelto sigue pasando"; fi
 
 # Un comprobante en cero no necesita cobro.
 out=$($PSQL <<SQL 2>&1 || true
@@ -113,7 +129,7 @@ SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FAC_INTERNA_CTA_CTE'::publi
   '[]'::jsonb, 0, 'TEST-CONTADO', NULL, NULL, NULL, gen_random_uuid());
 SQL
 )
-if echo "$out" | grep -qi "se cobra entera"; then echo "  ✗ rechazó un comprobante en cero"; fallos=$((fallos+1)); else echo "  ✓ el comprobante en cero no pide cobro"; fi
+if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un comprobante en cero"; fallos=$((fallos+1)); else echo "  ✓ el comprobante en cero no pide cobro"; fi
 
 # Una nota de crédito se acredita a la cuenta, no se paga en el momento.
 FAC=$($PSQL -tA <<SQL 2>&1 | tail -1
@@ -133,7 +149,7 @@ SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_
   '[]'::jsonb, 0, 'TEST-CONTADO', NULL, NULL, '$FAC'::uuid, gen_random_uuid());
 SQL
 )
-if echo "$out" | grep -qi "se cobra entera"; then echo "  ✗ rechazó una nota de crédito"; fallos=$((fallos+1)); else echo "  ✓ la nota de crédito no pide cobro"; fi
+if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó una nota de crédito"; fallos=$((fallos+1)); else echo "  ✓ la nota de crédito no pide cobro"; fi
 
 echo "── 5. Limpieza ───────────────────────────────────────────"
 $PSQL <<'SQL' > /dev/null

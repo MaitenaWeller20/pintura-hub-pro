@@ -278,7 +278,7 @@ SELECT public.convertir_presupuesto_en_venta('$SINPAGO'::uuid,'$CLI'::uuid,
   'FACTURA_B'::public.tipo_comprobante,'CONTADO'::public.condicion_venta,'[]'::jsonb, gen_random_uuid());
 SQL
 )
-if echo "$out" | grep -qi "se cobra entera"; then echo "  ✓ una conversión contado sin pagos se rechaza"; else echo "  ✗ sacó la mercadería sin cobrarla"; fallos=$((fallos+1)); fi
+if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✓ una conversión contado sin cobrar nada se rechaza"; else echo "  ✗ sacó la mercadería sin cobrarla"; fallos=$((fallos+1)); fi
 chequear "y no tocó el stock" "$stockA" \
   "$(q "select cantidad::text from public.stock_sucursal s join public.productos p on p.id=s.producto_id where p.codigo='PRE-TEST'")"
 # Un pago que cubre el total sí pasa.

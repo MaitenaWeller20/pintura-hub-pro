@@ -30,6 +30,16 @@ import { NumberInput } from "@/components/ui/number-input";
 import { fmtMoney, formaPagoLabel } from "@/lib/format";
 import { Trash2, Plus, ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { uuidv4 } from "@/lib/uuid";
+import {
+  ALICUOTAS_COMPRA,
+  calcularImporteCompra,
+  faltanteCompra,
+  modoIvaSugerido,
+  paraRpc,
+  redondearACentavos,
+  type ModoIva,
+} from "@/lib/compras-importe";
 
 export const Route = createFileRoute("/_authenticated/compras/nueva")({
   component: NuevaCompra,
@@ -45,12 +55,17 @@ interface ItemRow {
 }
 interface PagoRow {
   id: string;
+  /** Vacío = todavía no eligió. Nunca se adivina: la plata sale de la caja. */
   forma_pago: string;
-  monto: number;
+  monto: number | null;
   detalle: Record<string, any>;
 }
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
+
+/** Id fijo de la fila que se pre-carga sola: si cambiara en cada render, el
+ *  input perdería el foco mientras se escribe el total. */
+const ID_PAGO_AUTO = "pago-auto";
 
 function NuevaCompra() {
   const { data: cu } = useCurrentUser();
@@ -66,9 +81,14 @@ function NuevaCompra() {
   const [condicion, setCondicion] = useState<"CONTADO" | "CTA_CTE">("CONTADO");
   const [percepciones, setPercepciones] = useState<number | null>(0);
   const [observaciones, setObservaciones] = useState("");
-  const [subtotal, setSubtotal] = useState<number | null>(null);
-  const [ivaTotal, setIvaTotal] = useState<number | null>(null);
+  // El dato que trae el papel es el TOTAL. El neto y el IVA se despejan de ahí.
+  const [total, setTotal] = useState<number | null>(null);
+  const [modoIva, setModoIva] = useState<ModoIva>(modoIvaSugerido("FACTURA_A"));
+  const [tasaIva, setTasaIva] = useState<number>(21);
+  const [ivaManual, setIvaManual] = useState<number | null>(null);
+  const [ivaTocado, setIvaTocado] = useState(false);
   const [pagos, setPagos] = useState<PagoRow[]>([]);
+  const [pagosTocados, setPagosTocados] = useState(false);
   const [showProv, setShowProv] = useState(false);
 
   const effSucursal = sucursalId || cu?.sucursal?.id || "";
@@ -96,36 +116,82 @@ function NuevaCompra() {
     [proveedores, proveedorId],
   );
 
-  const totales = useMemo(() => {
-    const r2 = (n: number) => +n.toFixed(2);
-    const sub = r2(Number(subtotal || 0));
-    const iva = r2(Number(ivaTotal || 0));
-    const total = r2(sub + iva + r2(Number(percepciones || 0)));
-    const pagado = esCtaCte
-      ? 0
-      : pagos.reduce((a: number, p: any) => a + r2(Number(p.monto || 0)), 0);
-    return { sub, iva, total, pagado, saldo: total - pagado };
-  }, [subtotal, ivaTotal, percepciones, pagos, esCtaCte]);
+  const importe = useMemo(
+    () => calcularImporteCompra({ total, percepciones, modoIva, tasaIva, ivaManual }),
+    [total, percepciones, modoIva, tasaIva, ivaManual],
+  );
 
+  const pagado = useMemo(
+    () => (esCtaCte ? 0 : pagos.reduce((a, p) => a + Number(p.monto || 0), 0)),
+    [pagos, esCtaCte],
+  );
+
+  // El desglose por defecto lo decide el TIPO de comprobante: una Factura A
+  // discrimina IVA, una B/C o un remito no. Sin esto, el default único dejaría
+  // cada Factura A guardada con iva_total en cero y el dato no serviría más.
+  // Se pisa sólo mientras nadie tocó el control a mano.
   useEffect(() => {
-    if (esCtaCte && pagos.length) setPagos([]);
-  }, [esCtaCte, pagos.length]);
+    if (ivaTocado) return;
+    setModoIva(modoIvaSugerido(tipoComp));
+  }, [tipoComp, ivaTocado]);
 
-  const addPago = () =>
+  // Si el proveedor elegido no tiene cuenta corriente, la condición no puede
+  // quedar en CTA_CTE: el <SelectItem> deshabilitado impide ELEGIRLA, no impide
+  // que sobreviva de un proveedor anterior. Sin esto la pantalla oculta los
+  // pagos y el rechazo llega recién del servidor.
+  useEffect(() => {
+    if (provSel && !provSel.condicion_cta_cte) setCondicion("CONTADO");
+  }, [provSel]);
+
+  // Una compra al contado se paga entera (lo exige la RPC), así que el monto del
+  // pago es el total. Se pre-carga para no obligar a escribir dos veces el mismo
+  // número — pero la FORMA queda vacía a propósito: acá sale plata de la caja de
+  // verdad, y dejar "Efectivo" puesto de fábrica haría que apretar Guardar sin
+  // mirar registre un egreso en efectivo de algo que quizás fue transferencia.
+  //
+  // La sincronización se corta apenas alguien toca un monto, agrega o borra una
+  // fila: a partir de ahí manda la persona. Elegir la forma NO cuenta como
+  // tocar el monto.
+  useEffect(() => {
+    if (esCtaCte || pagosTocados) return;
+    setPagos((prev) => {
+      // Con el total en cero se vacía el MONTO, no se borra la fila: borrarla
+      // perdería la forma de pago ya elegida, y borrar el total para
+      // reescribirlo es lo primero que hace cualquiera al corregir un número.
+      const monto = importe.total > 0 ? importe.total : null;
+      if (prev.length === 0) {
+        return monto === null ? prev : [{ id: ID_PAGO_AUTO, forma_pago: "", monto, detalle: {} }];
+      }
+      if (prev.length === 1 && prev[0].monto === monto) return prev;
+      return [{ ...prev[0], id: ID_PAGO_AUTO, monto }];
+    });
+  }, [esCtaCte, pagosTocados, importe.total]);
+
+  const addPago = () => {
+    setPagosTocados(true);
     setPagos((p) => [
       ...p,
       {
-        id: crypto.randomUUID(),
-        forma_pago: "EFECTIVO",
-        monto: Math.max(0, totales.saldo),
+        // uuidv4() y no crypto.randomUUID(): esa API no existe fuera de contexto
+        // seguro (entrar por IP de la red sobre http), y ahí "Agregar pago"
+        // tiraba TypeError sin que pasara nada. Mismo bug que el conteo físico.
+        id: uuidv4(),
+        forma_pago: "",
+        monto: Math.max(0, +(importe.total - pagado).toFixed(2)),
         detalle: {},
       },
     ]);
-  const updPago = (id: string, k: string, v: any) =>
+  };
+  const updPago = (id: string, k: string, v: any) => {
+    if (k === "monto") setPagosTocados(true);
     setPagos((p) => p.map((x) => (x.id === id ? { ...x, [k]: v } : x)));
+  };
   const updPagoDet = (id: string, k: string, v: any) =>
     setPagos((p) => p.map((x) => (x.id === id ? { ...x, detalle: { ...x.detalle, [k]: v } } : x)));
-  const rmPago = (id: string) => setPagos((p) => p.filter((x) => x.id !== id));
+  const rmPago = (id: string) => {
+    setPagosTocados(true);
+    setPagos((p) => p.filter((x) => x.id !== id));
+  };
 
   const m = useMutation({
     mutationFn: async () => {
@@ -136,8 +202,10 @@ function NuevaCompra() {
         p_numero: numero.trim(),
         p_fecha_comprobante: fechaComp,
         p_fecha_vencimiento: (fechaVto || null) as any,
-        p_subtotal_sin_iva: Number(subtotal || 0),
-        p_iva_total: Number(ivaTotal || 0),
+        ...paraRpc(importe),
+        // En cuenta corriente los pagos no se mandan, pero tampoco se borran del
+        // formulario: si alguien prueba cambiar la condición y vuelve, no pierde
+        // el detalle de la transferencia que ya había escrito.
         p_pagos: esCtaCte
           ? []
           : pagos
@@ -147,7 +215,6 @@ function NuevaCompra() {
                 monto: Number(p.monto),
                 detalle: p.detalle,
               })),
-        p_percepciones: Number(percepciones || 0),
         p_condicion: condicion,
         p_observaciones: observaciones || undefined,
       });
@@ -161,14 +228,19 @@ function NuevaCompra() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const pagosOk = esCtaCte || Math.abs(totales.pagado - totales.total) <= 0.01;
-  const canSave =
-    !!effSucursal &&
-    !!proveedorId &&
-    !!numero.trim() &&
-    !!fechaComp &&
-    totales.total > 0 &&
-    pagosOk;
+  // Un solo lugar decide si se puede guardar Y por qué no. Antes eran un
+  // booleano mudo y un cartel rojo que hablaba de los pagos aunque el problema
+  // fuera otro: la clienta se quedó mirando un botón gris sin ninguna pista.
+  const faltante = faltanteCompra({
+    sucursalId: effSucursal,
+    proveedorId,
+    numero,
+    fechaComprobante: fechaComp,
+    importe,
+    esCtaCte,
+    pagos,
+  });
+  const canSave = faltante === null;
 
   return (
     <div className="space-y-4">
@@ -177,10 +249,22 @@ function NuevaCompra() {
         subtitle="Registrá cuánta plata se le debe al proveedor"
         actions={
           <>
+            {faltante && (
+              <span
+                className="text-xs text-muted-foreground max-w-[16rem] text-right leading-tight hidden sm:block"
+                data-testid="compra-faltante"
+              >
+                {faltante}
+              </span>
+            )}
             <Button variant="outline" size="sm" onClick={() => navigate({ to: "/compras" })}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Volver
             </Button>
-            <Button onClick={() => m.mutate()} disabled={!canSave || m.isPending}>
+            <Button
+              onClick={() => m.mutate()}
+              disabled={!canSave || m.isPending}
+              title={faltante ?? "Guardar la compra"}
+            >
               {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Guardar
             </Button>
           </>
@@ -312,59 +396,129 @@ function NuevaCompra() {
           </div>
         </SectionCard>
 
-        <SectionCard title="Totales">
-          <div className="space-y-1 text-sm">
-            {/* Se escriben mirando la factura. Antes salían de sumar los ítems;
-                sin ítems, los pone la persona — que es lo que hace igual con la
-                calculadora. El IVA va suelto y no derivado de un porcentaje único:
-                en una factura real conviven alícuotas distintas y percepciones, y
-                recomponerlo sería inventar un número que no está en el papel. */}
-            <div className="flex justify-between items-center gap-2">
-              <Label className="text-sm m-0">Subtotal s/IVA:</Label>
+        {/* El importe se carga como viene en el papel: el TOTAL primero, con el
+            IVA adentro, y el desglose después. Antes se pedía "Subtotal s/IVA"
+            en un input chiquito al costado, y la clienta no lo reconoció como
+            campo: el total quedaba en cero y Guardar no se habilitaba nunca.
+            Ver docs/superpowers/specs/2026-08-03-compras-importe-design.md */}
+        <SectionCard title="Importe de la compra">
+          <div className="space-y-3 text-sm">
+            <div>
+              <Label htmlFor="compra-total">Total del comprobante *</Label>
               <NumberInput
-                value={subtotal}
-                onValueChange={setSubtotal}
-                className="h-7 w-32 text-right"
-                data-testid="compra-subtotal"
+                id="compra-total"
+                value={total}
+                // Al centavo desde el vamos: si no, el campo podía quedar
+                // mostrando "1.005" mientras el TOTAL y la base decían 1,01.
+                onValueChange={(v) => setTotal(redondearACentavos(v))}
+                className="h-11 text-lg text-right font-mono"
+                placeholder="0,00"
+                autoFocus
+                data-testid="compra-total"
               />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                El número final que dice la factura o el remito, con el IVA ya incluido.
+              </p>
             </div>
-            <div className="flex justify-between items-center gap-2">
-              <Label className="text-sm m-0">IVA:</Label>
-              <NumberInput
-                value={ivaTotal}
-                onValueChange={setIvaTotal}
-                className="h-7 w-32 text-right"
-                data-testid="compra-iva"
-              />
-            </div>
-            <div className="flex justify-between items-center gap-2">
-              <Label className="text-sm m-0">Percepciones:</Label>
-              <NumberInput
-                value={percepciones}
-                onValueChange={setPercepciones}
-                className="h-7 w-28 text-right"
-              />
-            </div>
-            <div className="flex justify-between text-lg font-bold border-t border-border pt-2 mt-2">
-              <span>TOTAL:</span>
-              <span className="font-mono">{fmtMoney(totales.total)}</span>
-            </div>
-            {!esCtaCte ? (
-              <>
-                <div className="flex justify-between text-success">
-                  <span>A pagar:</span>
-                  <span className="font-mono">{fmtMoney(totales.pagado)}</span>
+
+            <div className="border-t border-border pt-3 space-y-2">
+              <div>
+                <Label className="text-xs">IVA incluido</Label>
+                <Select
+                  value={modoIva === "tasa" ? String(tasaIva) : modoIva}
+                  onValueChange={(v) => {
+                    setIvaTocado(true);
+                    if (v === "sin" || v === "manual") setModoIva(v);
+                    else {
+                      setModoIva("tasa");
+                      setTasaIva(Number(v));
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-9" data-testid="compra-modo-iva">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sin">Sin desglosar</SelectItem>
+                    {ALICUOTAS_COMPRA.map((a) => (
+                      <SelectItem key={a} value={String(a)}>
+                        {String(a).replace(".", ",")}%
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="manual">Escribir el monto…</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {modoIva === "manual" && (
+                <div className="flex justify-between items-center gap-2">
+                  <Label className="text-xs m-0">Monto de IVA:</Label>
+                  <NumberInput
+                    value={ivaManual}
+                    onValueChange={(v) => setIvaManual(redondearACentavos(v))}
+                    className="h-8 w-32 text-right"
+                    data-testid="compra-iva-manual"
+                  />
                 </div>
-                {!pagosOk && (
-                  <p className="text-[11px] text-destructive">
-                    Los pagos deben cubrir exactamente el total.
-                  </p>
-                )}
-              </>
-            ) : (
-              <div className="flex justify-between text-warning font-semibold border-t border-border pt-2">
+              )}
+
+              <div className="flex justify-between items-center gap-2">
+                <Label className="text-xs m-0">Percepciones:</Label>
+                <NumberInput
+                  value={percepciones}
+                  onValueChange={setPercepciones}
+                  className="h-8 w-32 text-right"
+                  data-testid="compra-percepciones"
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Percepciones de IVA o Ingresos Brutos que algunas facturas cobran aparte.{" "}
+                <strong>Ya vienen sumadas en el total</strong>: si la factura no las trae, dejá 0.
+              </p>
+            </div>
+
+            {importe.error && (
+              <p className="text-xs text-destructive" data-testid="compra-error-importe">
+                {importe.error}
+              </p>
+            )}
+
+            <div className="border-t border-border pt-2 space-y-1 text-muted-foreground text-xs">
+              <div className="flex justify-between">
+                <span>Neto s/IVA:</span>
+                <span className="font-mono" data-testid="compra-neto">
+                  {fmtMoney(importe.neto)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>IVA:</span>
+                <span className="font-mono" data-testid="compra-iva">
+                  {fmtMoney(importe.iva)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-between text-lg font-bold border-t border-border pt-2">
+              <span>TOTAL:</span>
+              <span className="font-mono" data-testid="compra-total-calculado">
+                {fmtMoney(importe.total)}
+              </span>
+            </div>
+
+            {esCtaCte ? (
+              <div className="flex justify-between text-warning font-semibold">
                 <span>Va a deuda:</span>
-                <span className="font-mono">{fmtMoney(totales.total)}</span>
+                <span className="font-mono">{fmtMoney(importe.total)}</span>
+              </div>
+            ) : (
+              <div className="flex justify-between text-success">
+                {/* Antes esta línea decía "A pagar" y mostraba lo YA cargado en
+                    formas de pago. Con el total en cero afirmaba que había que
+                    pagar $120.000 de una compra que valía $0. */}
+                <span>Pagado:</span>
+                <span className="font-mono" data-testid="compra-pagado">
+                  {fmtMoney(pagado)}
+                </span>
               </div>
             )}
           </div>
@@ -381,7 +535,8 @@ function NuevaCompra() {
           </div>
           {pagos.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              Agregá cómo se pagó la compra (debe cubrir el total).
+              Escribí primero el total; el pago se completa solo y sólo tenés que elegir con qué se
+              pagó.
             </p>
           ) : (
             <div className="space-y-2">
@@ -391,13 +546,15 @@ function NuevaCompra() {
                   className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-2 border border-border rounded"
                 >
                   <div className="col-span-3">
-                    <Label className="text-xs">Forma</Label>
+                    <Label className="text-xs">Forma *</Label>
                     <Select
                       value={p.forma_pago}
                       onValueChange={(v) => updPago(p.id, "forma_pago", v)}
                     >
-                      <SelectTrigger className="h-9">
-                        <SelectValue />
+                      <SelectTrigger className="h-9" data-testid="pago-forma">
+                        {/* Arranca vacío a propósito: de acá sale plata de la caja
+                            y el sistema no adivina si fue efectivo o transferencia. */}
+                        <SelectValue placeholder="Elegí…" />
                       </SelectTrigger>
                       <SelectContent>
                         {/* A un proveedor solo se le paga en efectivo, transferencia o cheque. */}
@@ -414,7 +571,8 @@ function NuevaCompra() {
                     <NumberInput
                       className="h-9"
                       value={p.monto}
-                      onValueChange={(v) => updPago(p.id, "monto", v ?? 0)}
+                      onValueChange={(v) => updPago(p.id, "monto", redondearACentavos(v))}
+                      data-testid="pago-monto"
                     />
                   </div>
                   <div className="col-span-6">

@@ -33,7 +33,16 @@ import { uuidv4 } from "@/lib/uuid";
 import { useServerFn } from "@tanstack/react-start";
 import { ajusteStock, conteoFisico } from "@/lib/stock.functions";
 import { toast } from "sonner";
-import { Pencil, Printer, ClipboardList } from "lucide-react";
+import { Pencil, Printer, ClipboardList, Upload, Loader2, AlertTriangle, Download } from "lucide-react";
+import * as XLSX from "xlsx";
+import {
+  TOPE_ITEMS,
+  aCsv,
+  detectarColumnas,
+  procesarConteo,
+  type Columnas,
+  type ItemVolcado,
+} from "@/lib/importar-conteo";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -177,6 +186,7 @@ function Stock() {
   // cuando un guardado termina OK (para el próximo lote de la misma sesión).
   const idemKey = useRef<string>(uuidv4());
   const [cancelarAbierto, setCancelarAbierto] = useState(false);
+  const [importarAbierto, setImportarAbierto] = useState(false);
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -309,6 +319,21 @@ function Stock() {
     setContado(new Map());
     setContando(true);
   };
+
+  // Un solo setState para las ~1600 filas. Llamar al setter una vez por fila
+  // dispararía 1600 renders de una tabla de 2266 inputs controlados.
+  const volcarImportacion = useCallback((items: ItemVolcado[]) => {
+    setContado((prev) => {
+      const next = new Map(prev);
+      for (const it of items) next.set(it.producto_id, it.cantidad);
+      return next;
+    });
+    setImportarAbierto(false);
+    toast.success(
+      `${items.length} producto${items.length === 1 ? "" : "s"} cargados en el conteo. ` +
+        `Revisalos y después apretá "Guardar conteo".`,
+    );
+  }, []);
 
   const cerrarConteo = () => {
     setContado(new Map());
@@ -466,6 +491,9 @@ function Stock() {
               placeholder="Motivo"
             />
             <div className="ml-auto flex gap-2">
+              <Button variant="outline" onClick={() => setImportarAbierto(true)}>
+                <Upload className="mr-1 h-4 w-4" /> Importar desde archivo
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => (itemsConteo.length ? setCancelarAbierto(true) : cerrarConteo())}
@@ -485,6 +513,17 @@ function Stock() {
             es "lo conté y no hay". Lo que se venda mientras contás se suma después, no se pisa.
           </p>
         </div>
+      )}
+
+      {importarAbierto && (
+        <ImportarConteoDialog
+          sucursalId={sucId}
+          sucursalNombre={sucNombre}
+          catalogo={filas}
+          yaCargados={contado}
+          onClose={() => setImportarAbierto(false)}
+          onVolcar={volcarImportacion}
+        />
       )}
 
       <Dialog open={cancelarAbierto} onOpenChange={setCancelarAbierto}>
@@ -568,5 +607,397 @@ function Stock() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Llenar el conteo desde un archivo.
+ *
+ * NO guarda nada: vuelca los números en los inputs del conteo, que es donde la
+ * persona los revisa y desde donde después sale el "Guardar conteo" de siempre.
+ * El archivo no es un acto de fe — se ve producto por producto qué va a quedar
+ * antes de escribir en la base.
+ * Ver docs/superpowers/specs/2026-08-03-importar-conteo-design.md
+ */
+function ImportarConteoDialog({
+  sucursalId,
+  sucursalNombre,
+  catalogo,
+  yaCargados,
+  onClose,
+  onVolcar,
+}: {
+  sucursalId: string;
+  sucursalNombre: string;
+  catalogo: FilaInventario[];
+  /** Lo que ya está tipeado en el conteo. Importar lo reemplaza. */
+  yaCargados: Map<string, number | null>;
+  onClose: () => void;
+  onVolcar: (items: ItemVolcado[]) => void;
+}) {
+  const [nombreArchivo, setNombreArchivo] = useState("");
+  const [encabezados, setEncabezados] = useState<string[]>([]);
+  const [filasArchivo, setFilasArchivo] = useState<Array<Record<string, unknown>>>([]);
+  const [cols, setCols] = useState<Columnas>({
+    codigo: null,
+    cantidad: null,
+    deposito: null,
+    fecha: null,
+  });
+  const [negativosComoCero, setNegativosComoCero] = useState(false);
+  const [archivoCompleto, setArchivoCompleto] = useState(false);
+  const [confirmaSucursal, setConfirmaSucursal] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [leyendo, setLeyendo] = useState(false);
+
+  const catalogoLigero = useMemo(
+    () => catalogo.map((f) => ({ producto_id: f.producto_id, codigo: f.codigo })),
+    [catalogo],
+  );
+
+  const res = useMemo(
+    () =>
+      filasArchivo.length
+        ? procesarConteo(filasArchivo, cols, catalogoLigero, {
+            negativosComoCero,
+            archivoCompleto,
+          })
+        : null,
+    [filasArchivo, cols, catalogoLigero, negativosComoCero, archivoCompleto],
+  );
+
+  // ¿Hubo movimientos en el sistema DESPUÉS de la foto que trae el archivo?
+  //
+  // Importa porque el conteo PISA: lo que se cargue reemplaza la cantidad. La
+  // RPC sabe respetar lo que se mueva después de abrir el conteo, pero no sabe
+  // nada de lo que pasó entre que se sacó la foto y ahora — eso se perdería sin
+  // que nadie se entere. Así que se cuenta y se muestra.
+  const { data: movsPosteriores, isFetching: contandoMovs, isError: fallaMovs } = useQuery({
+    queryKey: ["movs-post-snapshot", sucursalId, res?.fechaSnapshot],
+    enabled: !!sucursalId && !!res?.fechaSnapshot,
+    queryFn: async () => {
+      const { count, error: e } = await supabase
+        .from("stock_movimientos")
+        .select("id", { count: "exact", head: true })
+        .eq("sucursal_id", sucursalId)
+        .gt("created_at", res!.fechaSnapshot!);
+      if (e) throw e;
+      return count ?? 0;
+    },
+  });
+
+  const leerArchivo = async (file: File) => {
+    setLeyendo(true);
+    setError(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      if (wb.SheetNames.length === 0) throw new Error("El archivo no tiene ninguna hoja.");
+      // Sólo la primera hoja: adivinar cuál de varias es "la buena" sería inventar.
+      const hoja = wb.Sheets[wb.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json<Record<string, unknown>>(hoja, { defval: "" });
+      if (filas.length === 0) throw new Error("La primera hoja está vacía.");
+      const heads = Object.keys(filas[0]);
+      setEncabezados(heads);
+      setFilasArchivo(filas);
+      setCols(detectarColumnas(heads));
+      setNombreArchivo(file.name);
+      // Todo lo que decide sobre datos vuelve a cero con cada archivo. Dejar
+      // "inventario completo" prendido de una importación anterior y subir
+      // después un archivo parcial pondría en 0 todo lo que no figure.
+      setConfirmaSucursal(false);
+      setNegativosComoCero(false);
+      setArchivoCompleto(false);
+    } catch (e: any) {
+      setError(e.message ?? "No se pudo leer el archivo.");
+      setFilasArchivo([]);
+      setEncabezados([]);
+    } finally {
+      setLeyendo(false);
+    }
+  };
+
+  // Cuántos de los que trae el archivo YA tienen un número puesto a mano (o de
+  // una importación anterior). Importar los reemplaza, y perder una corrección
+  // hecha a mano sin que nadie avise es la clase de cosa que se descubre tarde.
+  const pisados = res
+    ? res.aVolcar.filter((i) => yaCargados.get(i.producto_id) != null).length
+    : 0;
+
+  const bajarCsv = (nombre: string, filas: Array<Record<string, string | number>>) => {
+    const url = URL.createObjectURL(new Blob([aCsv(filas)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Todo lo que impide volcar, en un solo lugar y en orden.
+  const bloqueo = (): string | null => {
+    if (!res) return "Elegí un archivo.";
+    if (!cols.codigo || !cols.cantidad) return "Elegí qué columna es el código y cuál la cantidad.";
+    if (res.depositosMezclados)
+      return "El archivo mezcla varios depósitos. Subí uno por sucursal.";
+    if (res.excedeTope)
+      return `Son ${res.aVolcar.length} productos y el máximo por conteo es ${TOPE_ITEMS}. Partilo en dos.`;
+    if (res.aVolcar.length === 0) return "No hay ningún producto para cargar.";
+    if (!confirmaSucursal) return "Confirmá que el archivo es de esta sucursal.";
+    return null;
+  };
+  const noPuede = bloqueo();
+
+  const Linea = ({
+    n,
+    children,
+    tono = "",
+    accion,
+  }: {
+    n: number;
+    children: React.ReactNode;
+    tono?: string;
+    accion?: () => void;
+  }) => (
+    <div className="flex items-center gap-2 text-sm">
+      <span className={`w-14 text-right font-mono font-semibold ${tono}`}>{n}</span>
+      <span className={tono}>{children}</span>
+      {accion && n > 0 && (
+        <Button size="sm" variant="ghost" className="h-6 px-2" onClick={accion}>
+          <Download className="mr-1 h-3 w-3" /> bajar
+        </Button>
+      )}
+    </div>
+  );
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Importar el conteo desde un archivo</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div>
+            <Label>Archivo (.csv, .xlsx, .xls)</Label>
+            <Input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              data-testid="conteo-archivo"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) leerArchivo(f);
+              }}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Si tenés el PDF del sistema viejo, convertilo antes con{" "}
+              <code className="rounded bg-muted px-1">scripts/existencias-pdf-a-csv.py</code>: ese
+              script verifica que no falten páginas y que las cantidades cuadren con el total del
+              reporte.
+            </p>
+          </div>
+
+          {leyendo && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Leyendo…
+            </p>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          {encabezados.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              {(["codigo", "cantidad"] as const).map((campo) => (
+                <div key={campo}>
+                  <Label className="text-xs">
+                    {campo === "codigo" ? "Columna del código *" : "Columna de la cantidad *"}
+                  </Label>
+                  <Select
+                    value={cols[campo] ?? "__none__"}
+                    onValueChange={(v) =>
+                      setCols((c) => ({ ...c, [campo]: v === "__none__" ? null : v }))
+                    }
+                  >
+                    <SelectTrigger className="h-9" data-testid={`conteo-col-${campo}`}>
+                      <SelectValue placeholder="Elegí…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— sin elegir —</SelectItem>
+                      {encabezados.map((h) => (
+                        <SelectItem key={h} value={h}>
+                          {h}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {res && (
+            <>
+              {/* La sucursal es lo único que puede arruinar datos de verdad: subir
+                  el archivo de una sucursal contando la otra escribe 1600
+                  cantidades reales en el lugar equivocado. Y los nombres de
+                  depósito del sistema viejo no son confiables (el de General Paz
+                  se llama "Casa Forma"), así que NO se adivina: se muestran los
+                  dos y se pide confirmación siempre. */}
+              <div className="rounded-lg border border-warning/40 bg-warning/5 p-3">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground">El archivo dice</div>
+                    <div className="font-semibold" data-testid="conteo-deposito">
+                      {res.deposito ?? "— no lo aclara —"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Estás contando</div>
+                    <div className="font-semibold">{sucursalNombre}</div>
+                  </div>
+                </div>
+                <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={confirmaSucursal}
+                    data-testid="conteo-confirma-sucursal"
+                    onChange={(e) => setConfirmaSucursal(e.target.checked)}
+                  />
+                  <span>
+                    Confirmo que este archivo es el stock de <strong>{sucursalNombre}</strong>.
+                  </span>
+                </label>
+              </div>
+
+              {res.fechaSnapshot && (
+                <div className="rounded-lg border border-border p-3 text-sm">
+                  <div>
+                    El archivo es una <strong>foto del {res.fechaSnapshot.replace("T", " ")}</strong>
+                    .
+                  </div>
+                  {contandoMovs ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Buscando movimientos posteriores…
+                    </p>
+                  ) : fallaMovs || typeof movsPosteriores !== "number" ? (
+                    <p className="mt-1 flex items-start gap-1.5 text-xs text-warning">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        No se pudo verificar si hubo movimientos después de esa fecha. Revisá que la
+                        fecha del archivo sea válida.
+                      </span>
+                    </p>
+                  ) : movsPosteriores === 0 ? (
+                    <p className="mt-1 text-xs text-success">
+                      No hubo ningún movimiento de stock en esta sucursal desde entonces.
+                    </p>
+                  ) : (
+                    <p className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        Hubo <strong>{movsPosteriores}</strong> movimientos de stock en esta
+                        sucursal después de esa hora. Lo que cargues los va a pisar.
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-1 rounded-lg border border-border p-3">
+                <Linea n={res.filasLeidas}>filas leídas</Linea>
+                <Linea n={res.aVolcar.length} tono="text-success">
+                  se van a cargar en el conteo
+                </Linea>
+                <Linea
+                  n={res.noEncontrados.length}
+                  tono={res.noEncontrados.length ? "text-warning" : ""}
+                  accion={() =>
+                    bajarCsv("no-encontrados.csv", res.noEncontrados as any)
+                  }
+                >
+                  no están en el catálogo — se saltean
+                </Linea>
+                <Linea
+                  n={res.repetidos.length}
+                  tono={res.repetidos.length ? "text-warning" : ""}
+                  accion={() => bajarCsv("repetidos.csv", res.repetidos.map((c) => ({ codigo: c })))}
+                >
+                  códigos repetidos en el archivo — se saltean
+                </Linea>
+                <Linea
+                  n={res.ilegibles.length}
+                  tono={res.ilegibles.length ? "text-warning" : ""}
+                  accion={() => bajarCsv("ilegibles.csv", res.ilegibles as any)}
+                >
+                  cantidades ilegibles
+                </Linea>
+                {res.sinCodigo > 0 && <Linea n={res.sinCodigo}>filas sin código (ignoradas)</Linea>}
+                <Linea n={res.faltantesDelCatalogo}>
+                  productos del catálogo que no vinieron en el archivo
+                </Linea>
+                {pisados > 0 && (
+                  <Linea n={pisados} tono="text-warning">
+                    ya tenían un número cargado — se van a <strong>reemplazar</strong>
+                  </Linea>
+                )}
+              </div>
+
+              {res.negativos.length > 0 && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={negativosComoCero}
+                    data-testid="conteo-negativos"
+                    onChange={(e) => setNegativosComoCero(e.target.checked)}
+                  />
+                  <span>
+                    <strong>{res.negativos.length} productos vienen en negativo</strong> — cargarlos
+                    como 0.
+                    <span className="block text-xs text-muted-foreground">
+                      El sistema viejo permite stock negativo; significa que se vendió más de lo que
+                      tenía registrado. Físicamente no se puede tener −1, así que 0 es lo más
+                      cercano a la verdad — pero es una corrección nuestra, no un dato del archivo.
+                      Si lo dejás sin tildar, esos productos no se tocan.
+                    </span>
+                  </span>
+                </label>
+              )}
+
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={archivoCompleto}
+                  data-testid="conteo-completo"
+                  onChange={(e) => setArchivoCompleto(e.target.checked)}
+                />
+                <span>
+                  <strong>Este archivo es el inventario completo de la sucursal</strong>
+                  <span className="block text-xs text-muted-foreground">
+                    Si lo tildás, los {res.faltantesDelCatalogo} productos del catálogo que no
+                    figuran en el archivo se cuentan como <strong>0</strong>. Sin tildar no se
+                    tocan, que es lo seguro: un archivo parcial no dice nada sobre lo que no lista.
+                  </span>
+                </span>
+              </label>
+            </>
+          )}
+        </div>
+
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+          {noPuede && <span className="text-xs text-muted-foreground sm:mr-auto">{noPuede}</span>}
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!!noPuede}
+            data-testid="conteo-volcar"
+            onClick={() => res && onVolcar(res.aVolcar)}
+          >
+            Cargar {res?.aVolcar.length ?? 0} en el conteo
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

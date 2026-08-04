@@ -12,6 +12,7 @@ import { fmtMoney, fmtDateTime } from "@/lib/format";
 import { rangeToUtc, todayLocalISO } from "@/lib/dates";
 import { ShoppingCart, Wallet, Clock, AlertTriangle, Plus, Boxes, Receipt } from "lucide-react";
 import type { ComponentType } from "react";
+import { puedeVer } from "@/lib/secciones";
 
 export const Route = createFileRoute("/_authenticated/")({
   component: Dashboard,
@@ -135,6 +136,7 @@ function Dashboard() {
   });
 
   const nombre = cu?.profile.nombre_completo?.split(" ")[0] || cu?.profile.username || "";
+  const permisos = { isAdmin: !!cu?.isAdmin, secciones: cu?.secciones ?? null };
 
   return (
     <div>
@@ -145,11 +147,23 @@ function Dashboard() {
         }
       />
 
+      {/* Los accesos rápidos respetan los permisos por sección. Si no, un
+          usuario sin Ventas veía "Nueva venta" y al hacer clic caía en el panel
+          de "no tenés acceso": el guard lo frenaba igual, pero la pantalla le
+          ofrecía algo que no podía hacer. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <QuickAction to="/ventas/nueva" icon={Plus} label="Nueva venta" tone="primary" />
-        <QuickAction to="/pagos" icon={Wallet} label="Cobros" tone="success" />
-        <QuickAction to="/stock" icon={Boxes} label="Ver stock" tone="info" />
-        <QuickAction to="/cuentas-corrientes" icon={Receipt} label="Cuentas ctes" tone="warning" />
+        {puedeVer("ventas", permisos) && (
+          <QuickAction to="/ventas/nueva" icon={Plus} label="Nueva venta" tone="primary" />
+        )}
+        {puedeVer("pagos", permisos) && (
+          <QuickAction to="/pagos" icon={Wallet} label="Cobros" tone="success" />
+        )}
+        {puedeVer("stock", permisos) && (
+          <QuickAction to="/stock" icon={Boxes} label="Ver stock" tone="info" />
+        )}
+        {puedeVer("cuentas_corrientes", permisos) && (
+          <QuickAction to="/cuentas-corrientes" icon={Receipt} label="Cuentas ctes" tone="warning" />
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -189,9 +203,11 @@ function Dashboard() {
             </span>
           }
           actions={
-            <Button size="sm" variant="ghost" asChild>
-              <Link to="/stock">Ver stock</Link>
-            </Button>
+            puedeVer("stock", permisos) ? (
+              <Button size="sm" variant="ghost" asChild>
+                <Link to="/stock">Ver stock</Link>
+              </Button>
+            ) : null
           }
         >
           {(stats?.stockBajo ?? []).length === 0 ? (
@@ -217,9 +233,11 @@ function Dashboard() {
             </span>
           }
           actions={
-            <Button size="sm" variant="ghost" asChild>
-              <Link to="/ventas">Ver todas</Link>
-            </Button>
+            puedeVer("ventas", permisos) ? (
+              <Button size="sm" variant="ghost" asChild>
+                <Link to="/ventas">Ver todas</Link>
+              </Button>
+            ) : null
           }
         >
           {(stats?.ultimas ?? []).length === 0 ? (

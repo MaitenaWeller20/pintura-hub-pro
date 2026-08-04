@@ -42,9 +42,18 @@ import {
   ShoppingBag,
   Banknote,
   FileText,
+  Lock,
 } from "lucide-react";
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  GRUPOS,
+  SECCIONES,
+  primeraSeccion,
+  seccionDeRuta,
+  seccionesDe,
+} from "@/lib/secciones";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
@@ -55,71 +64,56 @@ export const Route = createFileRoute("/_authenticated")({
   component: AuthenticatedLayout,
 });
 
-type MenuItem = { to: string; label: string; icon: typeof LayoutDashboard; adminOnly: boolean };
-
-const groups: Array<{ label: string; items: MenuItem[] }> = [
-  {
-    label: "Operación",
-    items: [
-      { to: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
-      { to: "/ventas", label: "Ventas", icon: ShoppingCart, adminOnly: false },
-      { to: "/presupuestos", label: "Presupuestos", icon: FileText, adminOnly: false },
-      { to: "/remitos", label: "Remitos", icon: Truck, adminOnly: false },
-    ],
-  },
-  {
-    label: "Catálogo",
-    items: [
-      { to: "/productos", label: "Productos", icon: Package, adminOnly: false },
-      { to: "/stock", label: "Stock", icon: Boxes, adminOnly: false },
-      { to: "/clientes", label: "Clientes", icon: Users, adminOnly: false },
-    ],
-  },
-  {
-    label: "Compras",
-    items: [
-      { to: "/compras", label: "Compras", icon: ShoppingBag, adminOnly: false },
-      {
-        to: "/ingresos-mercaderia",
-        label: "Ingresos de mercadería",
-        icon: Truck,
-        adminOnly: false,
-      },
-      { to: "/proveedores", label: "Proveedores", icon: Building2, adminOnly: false },
-      // "Pagos a proveedores" completo, no "Pagos": /pagos es la plata que ENTRA
-      // de los clientes. Nombres parecidos, cosas opuestas.
-      { to: "/pagos-proveedores", label: "Pagos a proveedores", icon: Banknote, adminOnly: false },
-      { to: "/gastos", label: "Gastos varios", icon: Banknote, adminOnly: false },
-    ],
-  },
-  {
-    label: "Cobranzas",
-    items: [
-      { to: "/pagos", label: "Pagos", icon: Wallet, adminOnly: false },
-      { to: "/cuentas-corrientes", label: "Cuentas corrientes", icon: Receipt, adminOnly: false },
-      { to: "/arqueo", label: "Rendición de caja", icon: Coins, adminOnly: false },
-    ],
-  },
-  {
-    label: "Administración",
-    items: [
-      { to: "/reportes", label: "Reportes", icon: BarChart3, adminOnly: true },
-      { to: "/facturacion", label: "Facturación AFIP", icon: FileCheck2, adminOnly: true },
-      { to: "/usuarios", label: "Usuarios", icon: UserCog, adminOnly: true },
-    ],
-  },
-];
-
-const allItems = groups.flatMap((g) => g.items);
+// La lista de secciones vive en src/lib/secciones.ts, compartida con el guard de
+// ruta y con la pantalla de permisos. Acá queda sólo el ícono de cada una: si el
+// menú tuviera su propia lista, el permiso ocultaría el link pero la URL escrita
+// a mano seguiría entrando — que es el bug clásico de esta feature.
+const ICONOS: Record<string, typeof LayoutDashboard> = {
+  dashboard: LayoutDashboard,
+  ventas: ShoppingCart,
+  presupuestos: FileText,
+  remitos: Truck,
+  productos: Package,
+  stock: Boxes,
+  clientes: Users,
+  compras: ShoppingBag,
+  ingresos_mercaderia: Truck,
+  proveedores: Building2,
+  // "Pagos a proveedores" completo, no "Pagos": /pagos es la plata que ENTRA
+  // de los clientes. Nombres parecidos, cosas opuestas.
+  pagos_proveedores: Banknote,
+  gastos: Banknote,
+  pagos: Wallet,
+  cuentas_corrientes: Receipt,
+  arqueo: Coins,
+  reportes: BarChart3,
+  facturacion: FileCheck2,
+  usuarios: UserCog,
+};
 
 function isActive(to: string, path: string) {
-  return to === "/" ? path === "/" : path.startsWith(to);
+  return to === "/" ? path === "/" : path === to || path.startsWith(to + "/");
 }
 
 function AuthenticatedLayout() {
   const { data: cu, loading } = useCurrentUser();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
+
+  const permisos = { isAdmin: !!cu?.isAdmin, secciones: cu?.secciones ?? null };
+  const permitidas = cu ? new Set(seccionesDe(permisos)) : new Set<string>();
+  const seccionActual = seccionDeRuta(path);
+  // Una ruta que no está en el catálogo (no hay ninguna hoy) no se bloquea: es
+  // más seguro mostrarla que dejar a alguien afuera por un olvido del catálogo.
+  const sinAcceso = !!cu && !!seccionActual && !permitidas.has(seccionActual.key);
+  const aterrizaje = cu ? primeraSeccion(permisos) : null;
+
+  // Si entra a "/" y no tiene el dashboard, se lo manda a la primera pantalla
+  // que sí tenga. Mostrarle el panel de "sin acceso" apenas se loguea sería
+  // técnicamente correcto y prácticamente inservible.
+  useEffect(() => {
+    if (path === "/" && sinAcceso && aterrizaje) navigate({ to: aterrizaje.ruta });
+  }, [path, sinAcceso, aterrizaje, navigate]);
 
   if (loading) {
     return (
@@ -135,7 +129,7 @@ function AuthenticatedLayout() {
     navigate({ to: "/auth" });
   };
 
-  const current = allItems.find((i) => isActive(i.to, path));
+  const current = seccionActual;
 
   return (
     <SidebarProvider>
@@ -154,24 +148,27 @@ function AuthenticatedLayout() {
           </SidebarHeader>
 
           <SidebarContent>
-            {groups.map((group) => {
-              const items = group.items.filter((i) => !i.adminOnly || cu.isAdmin);
+            {GRUPOS.map((grupo) => {
+              const items = SECCIONES.filter((s) => s.grupo === grupo && permitidas.has(s.key));
               if (items.length === 0) return null;
               return (
-                <SidebarGroup key={group.label}>
-                  <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+                <SidebarGroup key={grupo}>
+                  <SidebarGroupLabel>{grupo}</SidebarGroupLabel>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      {items.map((item) => (
-                        <SidebarMenuItem key={item.to}>
-                          <SidebarMenuButton asChild isActive={isActive(item.to, path)}>
-                            <Link to={item.to}>
-                              <item.icon className="h-4 w-4" />
-                              <span>{item.label}</span>
-                            </Link>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
+                      {items.map((item) => {
+                        const Icono = ICONOS[item.key] ?? LayoutDashboard;
+                        return (
+                          <SidebarMenuItem key={item.key}>
+                            <SidebarMenuButton asChild isActive={isActive(item.ruta, path)}>
+                              <Link to={item.ruta}>
+                                <Icono className="h-4 w-4" />
+                                <span>{item.label}</span>
+                              </Link>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>
@@ -230,7 +227,33 @@ function AuthenticatedLayout() {
             )}
           </header>
           <main className="flex-1 overflow-auto p-4 md:p-6">
-            <Outlet />
+            {/* Un panel y no un redirect: el guard de sesión ya redirige desde
+                beforeLoad, y encadenar dos redirects es la receta del loop. */}
+            {sinAcceso ? (
+              <div className="max-w-md mx-auto mt-12 text-center space-y-3">
+                <Lock className="h-8 w-8 mx-auto text-muted-foreground" />
+                <h2 className="text-lg font-semibold">No tenés acceso a esta pantalla</h2>
+                {aterrizaje ? (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      Tu usuario no tiene habilitada la sección{" "}
+                      <strong>{seccionActual?.label}</strong>. Si la necesitás, pedísela a un
+                      administrador.
+                    </p>
+                    <Button onClick={() => navigate({ to: aterrizaje.ruta })}>
+                      Ir a {aterrizaje.label}
+                    </Button>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Tu usuario no tiene <strong>ninguna</strong> sección habilitada. Pedile a un
+                    administrador que te habilite alguna.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <Outlet />
+            )}
           </main>
         </div>
       </div>

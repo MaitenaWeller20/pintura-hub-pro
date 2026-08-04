@@ -86,11 +86,12 @@ Secciones: `dashboard, ventas, presupuestos, remitos, productos, stock, clientes
 compras, ingresos_mercaderia, proveedores, pagos_proveedores, gastos, pagos,
 cuentas_corrientes, arqueo, reportes, facturacion, usuarios`.
 
-`usuarios` se marca `soloAdmin` y **no es otorgable**: es la pantalla que reparte
-los permisos, y además todas sus acciones son server functions con `is_admin`, así
-que otorgarla mostraría una pantalla donde todo falla. `reportes` y `facturacion`
-sí pasan a ser otorgables — hoy son adminOnly por costumbre, no por una regla de
-servidor.
+`usuarios`, `reportes` y `facturacion` se marcan `soloAdmin` y **no son
+otorgables**. La primera versión de esta spec hacía otorgables a las dos últimas
+—"son adminOnly por costumbre, no por una regla de servidor"— y era falso: las
+tres tienen un `beforeLoad` propio que rechaza a los no-admin, y facturación
+además tiene server functions con `requireAdmin`. Ofrecerlas en la lista de
+permisos prometería algo que el servidor no va a cumplir. Ver §8.1.
 
 ### 4.2 Dónde se guarda
 
@@ -137,8 +138,9 @@ La escritura desde la app va por una server function nueva,
 ninguna sea `soloAdmin` — si no, un `PATCH` con `secciones: ['../../etc']` guardaría
 basura que después nadie sabe de dónde salió.
 
-**No se puede editar las propias secciones**, ni siquiera siendo admin: evita el
-autobloqueo y es un chequeo de una línea.
+No hace falta impedir que un admin edite sus propias secciones: un admin ve todo
+igual, así que no puede autobloquearse. (La primera versión de esta spec incluía
+esa regla con esa justificación equivocada. Ver §8.5.)
 
 ### 4.4 Cómo se aplica
 
@@ -232,8 +234,73 @@ acceso.
 
 ## 8. Review de la spec (Codex)
 
-_Pendiente._
+Cinco hallazgos. Los dos importantes cambiaron el diseño:
+
+1. **`reportes` y `facturacion` NO pueden ser otorgables.** Las dos rutas ya
+   rechazan a los no-admin en su propio `beforeLoad`
+   (`reportes.tsx:25`, `facturacion.tsx:39`), y facturación tiene server
+   functions con `requireAdmin`. Ofrecerlas en la lista de permisos habría
+   prometido algo que el servidor no cumple: el usuario rebotaría antes de ver la
+   pantalla, o entraría a una donde todo falla. **Corregido**: las tres
+   (`reportes`, `facturacion`, `usuarios`) quedan `soloAdmin`, no otorgables.
+2. **Contradicción con el contrato.** La spec prometía "quién ve la plata lo
+   sigue mandando el rol" y al mismo tiempo hacía otorgable Reportes. Se resuelve
+   con lo anterior.
+3. **`seccionDeRuta` necesita match por ruta más larga**: `/pagos` y
+   `/pagos-proveedores` se solapan. **Corregido** y con test propio: se ordena de
+   ruta más larga a más corta y se exige que el corte caiga en un separador.
+4. **Rutas con `beforeLoad` propio esquivan el panel de "sin acceso".** Cierto, y
+   deja de importar con la corrección 1: las únicas tres que tienen `beforeLoad`
+   de admin son justo las no otorgables.
+5. **"No se puede editar las propias secciones" estaba mal justificado.** Un admin
+   ve todo igual, así que no puede autobloquearse. **Regla eliminada** de la spec.
+
+Señalado como sobre-diseño: meter `permite_venta_sin_stock` en el mismo diálogo
+mezcla visibilidad con un permiso autoritativo. Se mantuvo en el mismo diálogo
+(es donde alguien lo va a buscar) pero **en un bloque aparte y con el texto que
+explica la diferencia**: "Éste no es de pantallas: cambia lo que el sistema lo
+deja hacer".
 
 ## 9. Review del código (Codex)
 
-_Pendiente._
+_Ver §10._
+
+## 10. Verificación
+
+**Unitarias** — 24 tests en `secciones.test.ts` (232 en total, `tsc` limpio).
+Incluye el contrato de compatibilidad: `SECCIONES_DEFAULT` se compara contra la
+lista literal del menú de hoy, así que agregar una sección sin decidir si un
+empleado la ve rompe el test antes de producción.
+
+**SQL** — `scripts/test-permisos-seccion.sh`, 17 verdes:
+- el CHECK rechaza mayúsculas, barras y NULLs adentro del array; acepta `NULL`,
+  `'{}'` y una lista normal
+- un empleado **no** puede auto-otorgarse secciones
+- un empleado **no** se las cambia a otro. Ojo: acá no salta el trigger sino que
+  la policy `user update own profile` hace que el UPDATE matchee **cero filas**.
+  El primer test asumió que iba a explotar y falló — el comportamiento estaba
+  bien y la aserción estaba mal. Ahora comprueba que el valor no cambió.
+- un admin sí, y el `service_role` (el backend) también
+- los cuatro guards viejos (sucursal, activo, username, venta sin stock) siguen
+  en pie, y un empleado sigue pudiendo editarse el nombre completo
+- **meta-test**: se verifica que el helper `rechaza` detecte un falso verde. La
+  primera versión restaba 1 al contador "para compensar" la falla esperada del
+  meta-test, y esa resta **tapó una falla real**. El helper ya corre en subshell,
+  así que la compensación sobraba.
+
+**Playwright**, de punta a punta:
+- Se le dejan al empleado sólo **Ventas** y **Stock** desde el diálogo nuevo; en
+  la base queda `{ventas,stock}`.
+- Entrando con ese usuario: el menú muestra exactamente esos dos, y **aterriza
+  solo en `/ventas`** porque no tiene dashboard.
+- `/compras/nueva` escrito a mano (ruta HIJA) muestra el panel de sin acceso y
+  **no renderiza el formulario**.
+- Con `secciones = '{}'`: menú vacío, cartel "no tenés ninguna sección
+  habilitada", y **sin loop de navegación**.
+- **Ataque real desde el navegador**: `PATCH /rest/v1/profiles` con el token del
+  propio empleado → `400 P0001 "Sólo un administrador puede cambiar las secciones
+  de un usuario"`, y el valor queda intacto en `{ventas,stock}`.
+
+**Catálogo vs router**: las 18 secciones cubren todas las rutas reales de
+`src/routes/_authenticated/`. La única que queda afuera es `/caja`, que sólo
+redirige a `/arqueo` y por eso no es una sección (con test).

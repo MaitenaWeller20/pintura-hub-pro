@@ -1277,6 +1277,7 @@ export type Database = {
           id: string
           nombre_completo: string | null
           permite_venta_sin_stock: boolean
+          secciones: string[] | null
           sucursal_id: string | null
           updated_at: string
           username: string
@@ -1287,6 +1288,7 @@ export type Database = {
           id: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
           username: string
@@ -1297,6 +1299,7 @@ export type Database = {
           id?: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
           username?: string

@@ -2,6 +2,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { normalizarSecciones } from "@/lib/secciones";
 
 export const crearUsuario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -13,6 +14,8 @@ export const crearUsuario = createServerFn({ method: "POST" })
     role: z.enum(["admin","empleado"]),
     sucursal_id: z.string().uuid().nullable(),
     permite_venta_sin_stock: z.boolean().default(false),
+    // null = "las de siempre". Ver normalizarSecciones / la spec de permisos.
+    secciones: z.array(z.string()).nullable().default(null),
   }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
@@ -29,6 +32,7 @@ export const crearUsuario = createServerFn({ method: "POST" })
     await supabaseAdmin.from("profiles").update({
       username: data.username, nombre_completo: data.nombre_completo, sucursal_id: data.sucursal_id,
       permite_venta_sin_stock: data.permite_venta_sin_stock,
+      secciones: normalizarSecciones(data.secciones),
     }).eq("id", created.user.id);
     await supabaseAdmin.from("user_roles").insert({ user_id: created.user.id, role: data.role });
     return { id: created.user.id };
@@ -58,6 +62,43 @@ export const setPermiteVentaSinStock = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error } = await supabaseAdmin.from("profiles")
       .update({ permite_venta_sin_stock: data.valor }).eq("id", data.user_id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+/**
+ * Server fn admin: qué secciones del menú ve un usuario.
+ *
+ * `null` = "las de siempre" (el menú de empleado por defecto). Array vacío =
+ * ninguna. Se normaliza contra el catálogo antes de guardar: una key inventada o
+ * una sección `soloAdmin` no llegan a la base, así que nadie tiene que
+ * preguntarse después de dónde salió.
+ *
+ * Va por server function con service_role, y NO por un update directo desde el
+ * cliente, porque `profiles` tiene policy de "editar mi propio perfil": el
+ * trigger `guard_profiles_columnas` es el que impide el auto-otorgamiento, y
+ * esto es el canal legítimo que lo saltea con el permiso ya verificado.
+ */
+export const setSeccionesUsuario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        user_id: z.string().uuid(),
+        secciones: z.array(z.string()).nullable(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
+    if (!isAdmin) throw new Error("Solo admin");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("profiles")
+      .update({ secciones: normalizarSecciones(data.secciones) })
+      .eq("id", data.user_id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

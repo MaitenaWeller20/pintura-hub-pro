@@ -11,6 +11,8 @@ export interface ProfileWithRole {
     nombre_completo: string | null;
     sucursal_id: string | null;
   };
+  /** Qué secciones del menú ve. `null` = las de siempre. Ver src/lib/secciones.ts. */
+  secciones: string[] | null;
   sucursal: { id: string; codigo: string; nombre: string; numero: string } | null;
   role: "admin" | "empleado" | null;
   isAdmin: boolean;
@@ -28,7 +30,7 @@ export function useCurrentUser() {
         return;
       }
       const [{ data: prof }, { data: roles }] = await Promise.all([
-        supabase.from("profiles").select("id, username, nombre_completo, sucursal_id").eq("id", user.id).maybeSingle(),
+        supabase.from("profiles").select("id, username, nombre_completo, sucursal_id, secciones").eq("id", user.id).maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", user.id),
       ]);
 
@@ -43,6 +45,7 @@ export function useCurrentUser() {
         setData({
           user,
           profile: prof ?? { id: user.id, username: user.email ?? "", nombre_completo: null, sucursal_id: null },
+          secciones: (prof as any)?.secciones ?? null,
           sucursal,
           role,
           isAdmin: role === "admin",

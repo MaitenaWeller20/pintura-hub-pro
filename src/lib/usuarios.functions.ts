@@ -31,19 +31,76 @@ export const crearUsuario = createServerFn({ method: "POST" })
     if (!isAdmin) throw new Error("Solo admin");
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
-      email: data.email, password: data.password, email_confirm: true,
-      user_metadata: { username: data.username, nombre_completo: data.nombre_completo },
-    });
-    if (error || !created.user) throw new Error(error?.message ?? "No se pudo crear");
+    const email = data.email.trim().toLowerCase();
+    const username = data.username.trim();
 
-    await supabaseAdmin.from("profiles").update({
-      username: data.username, nombre_completo: data.nombre_completo, sucursal_id: data.sucursal_id,
+    // ---- Los dos choques, ANTES de crear nada ---------------------------
+    // El 04/08/2026 alguien intentó dar de alta un email que ya tenía cuenta
+    // desde hacía tres semanas. Lo único que devolvía el sistema era el texto
+    // en inglés de Supabase, así que quedaba como "no me deja crear usuarios".
+    // listUsers pagina de a 50: buscar sólo en la primera página dejaría pasar
+    // el duplicado en cuanto haya más usuarios que eso, y el choque volvería
+    // —esta vez como el error en inglés— justo cuando ya nadie lo espera.
+    let existente: { id: string } | undefined;
+    for (let pagina = 1; pagina <= 40 && !existente; pagina++) {
+      const { data: lote, error: eLista } = await supabaseAdmin.auth.admin.listUsers({
+        page: pagina,
+        perPage: 200,
+      });
+      if (eLista) throw new Error(`No se pudo revisar los usuarios existentes: ${eLista.message}`);
+      const usuarios = lote?.users ?? [];
+      existente = usuarios.find((u) => (u.email ?? "").toLowerCase() === email);
+      if (usuarios.length < 200) break;
+    }
+    if (existente) {
+      const { data: perf } = await supabaseAdmin
+        .from("profiles").select("username, activo").eq("id", existente.id).maybeSingle();
+      const alias = perf?.username ? ` (entra como «${perf.username}»)` : "";
+      const baja = perf && perf.activo === false ? " Está desactivado: activalo con el botón de encendido." : "";
+      throw new Error(
+        `Ya hay un usuario con el email ${email}${alias}. ` +
+          `No hace falta crearlo de nuevo.${baja}` +
+          (baja ? "" : " Si se olvidó la contraseña, cambiásela con el ícono de la llave en la lista."),
+      );
+    }
+
+    // `profiles.username` es UNIQUE. Antes esto no se miraba: el alias repetido
+    // hacía fallar el UPDATE del perfil en silencio, la pantalla decía "Usuario
+    // creado" igual, y quedaba una cuenta a medio configurar.
+    const { data: yaAlias } = await supabaseAdmin
+      .from("profiles").select("id").eq("username", username).maybeSingle();
+    if (yaAlias) {
+      throw new Error(`Ya hay otro usuario con el alias «${username}». Elegí otro.`);
+    }
+
+    const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
+      email, password: data.password, email_confirm: true,
+      user_metadata: { username, nombre_completo: data.nombre_completo },
+    });
+    if (error || !created.user) throw new Error(error?.message ?? "No se pudo crear el usuario");
+    const nuevoId = created.user.id;
+
+    // ---- De acá en adelante, si algo falla se deshace ---------------------
+    // Sin esto, un fallo después del createUser deja la cuenta en auth pero sin
+    // perfil ni rol: no puede hacer nada, no se ve en la lista, y el segundo
+    // intento choca con "ya existe" por un usuario que en realidad nunca se creó.
+    const deshacer = async (motivo: string): Promise<never> => {
+      await supabaseAdmin.auth.admin.deleteUser(nuevoId).catch(() => {});
+      throw new Error(motivo);
+    };
+
+    const { error: ePerfil } = await supabaseAdmin.from("profiles").update({
+      username, nombre_completo: data.nombre_completo, sucursal_id: data.sucursal_id,
       permite_venta_sin_stock: data.permite_venta_sin_stock,
       secciones: normalizarSecciones(data.secciones),
-    }).eq("id", created.user.id);
-    await supabaseAdmin.from("user_roles").insert({ user_id: created.user.id, role: data.role });
-    return { id: created.user.id };
+    }).eq("id", nuevoId);
+    if (ePerfil) await deshacer(`No se pudo guardar el perfil: ${ePerfil.message}`);
+
+    const { error: eRol } = await supabaseAdmin
+      .from("user_roles").insert({ user_id: nuevoId, role: data.role });
+    if (eRol) await deshacer(`No se pudo asignar el rol: ${eRol.message}`);
+
+    return { id: nuevoId };
   });
 
 export const toggleUsuarioActivo = createServerFn({ method: "POST" })

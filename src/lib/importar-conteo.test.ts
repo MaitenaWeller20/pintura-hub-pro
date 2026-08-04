@@ -14,6 +14,7 @@ const cols = (p: Partial<Columnas> = {}): Columnas => ({
   cantidad: "existencia",
   deposito: null,
   fecha: null,
+  descripcion: null,
   ...p,
 });
 
@@ -57,6 +58,24 @@ describe("detectarColumnas", () => {
     expect(c.codigo).toBeNull();
     expect(c.cantidad).toBeNull();
   });
+
+  it("reconoce la descripción, que es lo que da el nombre al dar de alta", () => {
+    expect(
+      detectarColumnas(["deposito", "codigo", "descripcion", "existencia"]).descripcion,
+    ).toBe("descripcion");
+    expect(detectarColumnas(["Cód. Articulo", "Descripción", "Existencia"]).descripcion).toBe(
+      "Descripción",
+    );
+  });
+
+  // "Articulo" es sinónimo de CÓDIGO. Si además contara como descripción, un
+  // reporte con una sola columna así se quedaría sin código y no se podría
+  // cruzar nada: el conteo entero quedaría en "no encontrados".
+  it("una sola columna «Articulo» va al código, no a la descripción", () => {
+    const c = detectarColumnas(["Articulo", "Existencia"]);
+    expect(c.codigo).toBe("Articulo");
+    expect(c.descripcion).toBeNull();
+  });
 });
 
 describe("procesarConteo", () => {
@@ -98,13 +117,38 @@ describe("procesarConteo", () => {
     // stock al producto equivocado, que es un error que no se ve.
     const r = procesarConteo([{ codigo: "100100", existencia: "3" }], cols(), CAT, opciones());
     expect(r.aVolcar).toEqual([]);
-    expect(r.noEncontrados).toEqual([{ codigo: "100100", cantidad: "3" }]);
+    expect(r.noEncontrados).toEqual([{ codigo: "100100", cantidad: "3", descripcion: "" }]);
   });
 
   it("lo que no está en el catálogo se reporta, no se pierde", () => {
     const r = procesarConteo([{ codigo: "9999-9", existencia: "7" }], cols(), CAT, opciones());
-    expect(r.noEncontrados).toEqual([{ codigo: "9999-9", cantidad: "7" }]);
+    expect(r.noEncontrados).toEqual([{ codigo: "9999-9", cantidad: "7", descripcion: "" }]);
     expect(r.aVolcar).toEqual([]);
+  });
+
+  // Sin el nombre no se los puede dar de alta, y dar de alta los que faltan es
+  // la única forma de que su stock entre. El caso real: 647 códigos del
+  // depósito que no existían como producto, HIDROMEX entero entre ellos.
+  it("el no encontrado se lleva la descripción del archivo, para poder crearlo", () => {
+    const r = procesarConteo(
+      [{ codigo: "1001-00100", descripcion: "HIDROMEX x 1", existencia: "5" }],
+      cols({ descripcion: "descripcion" }),
+      [], // catálogo vacío: no existe todavía
+      opciones(),
+    );
+    expect(r.noEncontrados).toEqual([
+      { codigo: "1001-00100", cantidad: "5", descripcion: "HIDROMEX x 1" },
+    ]);
+  });
+
+  it("sin columna de descripción queda vacía y no se inventa un nombre", () => {
+    const r = procesarConteo(
+      [{ codigo: "1001-00100", descripcion: "HIDROMEX x 1", existencia: "5" }],
+      cols(), // descripcion: null
+      [],
+      opciones(),
+    );
+    expect(r.noEncontrados[0].descripcion).toBe("");
   });
 
   it("un código repetido NO se vuelca (ni suma ni pisa)", () => {
@@ -294,7 +338,7 @@ describe("procesarConteo", () => {
       opciones(),
     );
     expect(r.aVolcar).toEqual([{ producto_id: "x3", codigo: "ZZZ", cantidad: 2 }]);
-    expect(r.noEncontrados).toEqual([{ codigo: "abc", cantidad: "9" }]);
+    expect(r.noEncontrados).toEqual([{ codigo: "abc", cantidad: "9", descripcion: "" }]);
   });
 
   it("'inventario completo' no pisa lo que sí vino, ni siquiera si vino en 0", () => {
@@ -362,7 +406,7 @@ describe("procesarConteo", () => {
   it("sin columnas elegidas no rompe: todo queda sin código", () => {
     const r = procesarConteo(
       [{ a: "1", b: "2" }],
-      { codigo: null, cantidad: null, deposito: null, fecha: null },
+      { codigo: null, cantidad: null, deposito: null, fecha: null, descripcion: null },
       CAT,
       opciones(),
     );

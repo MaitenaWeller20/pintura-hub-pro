@@ -2858,6 +2858,14 @@ export type Database = {
           total: number
         }[]
       }
+      crear_productos_faltantes: {
+        Args: { p_items: Json }
+        Returns: {
+          creados: number
+          ya_estaban: number
+          rechazados: number
+        }[]
+      }
       crear_producto_desde_ingreso: {
         Args: {
           p_codigo: string

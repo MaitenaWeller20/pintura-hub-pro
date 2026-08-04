@@ -662,12 +662,15 @@ function ImportarConteoDialog({
     cantidad: null,
     deposito: null,
     fecha: null,
+    descripcion: null,
   });
   const [negativosComoCero, setNegativosComoCero] = useState(false);
   const [archivoCompleto, setArchivoCompleto] = useState(false);
   const [confirmaSucursal, setConfirmaSucursal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leyendo, setLeyendo] = useState(false);
+  const [confirmaAlta, setConfirmaAlta] = useState(false);
+  const qcImport = useQueryClient();
 
   const catalogoLigero = useMemo(
     () => catalogo.map((f) => ({ producto_id: f.producto_id, codigo: f.codigo })),
@@ -742,6 +745,39 @@ function ImportarConteoDialog({
   const pisados = res
     ? res.aVolcar.filter((i) => yaCargados.get(i.producto_id) != null).length
     : 0;
+
+  // Los que se podrían dar de alta: hace falta el nombre, y sin columna de
+  // descripción en el archivo no hay con qué llamarlos.
+  const altaPosible = useMemo(
+    () =>
+      (res?.noEncontrados ?? [])
+        .filter((x) => x.descripcion.trim() && /[A-Za-z0-9]/.test(x.codigo))
+        .map((x) => ({ codigo: x.codigo.trim(), nombre: x.descripcion.trim() })),
+    [res],
+  );
+
+  const crearFaltantes = useMutation({
+    mutationFn: async () => {
+      const { data, error: e } = await supabase.rpc("crear_productos_faltantes", {
+        p_items: altaPosible as any,
+      });
+      if (e) throw new Error(e.message);
+      return (Array.isArray(data) ? data[0] : data) as any;
+    },
+    onSuccess: (r: any) => {
+      toast.success(
+        `${r?.creados ?? 0} productos dados de alta, sin precio y sin habilitar para vender. ` +
+          `Ponéles precio en Productos antes de venderlos.`,
+        { duration: 9000 },
+      );
+      setConfirmaAlta(false);
+      // Refresca el catálogo: el cruce del archivo se recalcula solo y esos
+      // productos pasan de "no están" a "se van a cargar".
+      qcImport.invalidateQueries({ queryKey: ["inventario"] });
+      qcImport.invalidateQueries({ queryKey: ["productos"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
 
   const bajarCsv = (nombre: string, filas: Array<Record<string, string | number>>) => {
     const url = URL.createObjectURL(new Blob([aCsv(filas)], { type: "text/csv;charset=utf-8" }));
@@ -953,6 +989,63 @@ function ImportarConteoDialog({
                 <Linea n={res.faltantesDelCatalogo}>
                   productos del catálogo que no vinieron en el archivo
                 </Linea>
+                {res.noEncontrados.length > 0 && (
+                  <div className="mt-2 rounded-lg border border-warning/40 bg-warning/5 p-3 space-y-2">
+                    {altaPosible.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        Para poder darlos de alta el archivo tiene que traer una columna con el{" "}
+                        <strong>nombre</strong> del producto, además del código.
+                      </p>
+                    ) : !confirmaAlta ? (
+                      <>
+                        <p className="text-sm">
+                          Esos productos <strong>están en el depósito y no en el sistema</strong>. Si
+                          no los das de alta, su stock no se carga.
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setConfirmaAlta(true)}
+                          data-testid="crear-faltantes"
+                        >
+                          Dar de alta los {altaPosible.length} que faltan
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm">
+                          Se van a crear <strong>{altaPosible.length} productos</strong> con el
+                          código y el nombre que trae el archivo, <strong>sin precio</strong>.
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Quedan <strong>deshabilitados para vender</strong> hasta que alguien les
+                          ponga precio en Productos — así nadie los factura en $0 por distracción.
+                          Contarlos sí se puede desde ya.
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => crearFaltantes.mutate()}
+                            disabled={crearFaltantes.isPending}
+                          >
+                            {crearFaltantes.isPending && (
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                            )}
+                            Sí, darlos de alta
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setConfirmaAlta(false)}
+                            disabled={crearFaltantes.isPending}
+                          >
+                            Cancelar
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {pisados > 0 && (
                   <Linea n={pisados} tono="text-warning">
                     ya tenían un número cargado — se van a <strong>reemplazar</strong>

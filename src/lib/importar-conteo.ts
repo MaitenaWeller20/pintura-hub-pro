@@ -21,6 +21,11 @@ export type Columnas = {
   /** Opcionales: sólo vienen en los CSV que genera el conversor de PDF. */
   deposito: string | null;
   fecha: string | null;
+  /**
+   * El nombre del producto. No hace falta para contar —el catálogo ya lo tiene—
+   * pero SÍ para poder dar de alta los que el archivo trae y el sistema no.
+   */
+  descripcion: string | null;
 };
 
 const SINONIMOS_CONTEO: Record<keyof Columnas, string[]> = {
@@ -28,6 +33,10 @@ const SINONIMOS_CONTEO: Record<keyof Columnas, string[]> = {
   cantidad: ["existencia", "cantidad", "cant", "stock", "contado", "conteo", "existencias"],
   deposito: ["deposito", "sucursal", "almacen"],
   fecha: ["fechasnapshot", "fecha", "fechareporte", "alafecha"],
+  // A propósito SIN "articulo": ya es sinónimo de `codigo`, y en un reporte con
+  // una sola columna "Articulo" quedarse con la descripción en vez del código
+  // dejaría el conteo entero sin poder cruzarse.
+  descripcion: ["descripcion", "detalle", "nombre", "producto", "denominacion"],
 };
 
 /**
@@ -38,7 +47,13 @@ const SINONIMOS_CONTEO: Record<keyof Columnas, string[]> = {
  * son justamente los dos datos que no se pueden equivocar.
  */
 export function detectarColumnas(encabezados: string[]): Columnas {
-  const out: Columnas = { codigo: null, cantidad: null, deposito: null, fecha: null };
+  const out: Columnas = {
+    codigo: null,
+    cantidad: null,
+    deposito: null,
+    fecha: null,
+    descripcion: null,
+  };
   for (const campo of Object.keys(SINONIMOS_CONTEO) as Array<keyof Columnas>) {
     const sinonimos = SINONIMOS_CONTEO[campo];
     // Primero coincidencia exacta del encabezado normalizado; recién después
@@ -71,8 +86,14 @@ export type Opciones = {
 export type Resultado = {
   filasLeidas: number;
   aVolcar: ItemVolcado[];
-  /** Códigos del archivo que no existen en el catálogo de esta sucursal. */
-  noEncontrados: Array<{ codigo: string; cantidad: string }>;
+  /**
+   * Códigos del archivo que no existen en el catálogo de esta sucursal.
+   *
+   * Lleva la `descripcion` que trae el archivo porque estos son, además de un
+   * reporte, la materia prima para darlos de alta: sin nombre no hay producto.
+   * Vacía si el archivo no trae columna de descripción.
+   */
+  noEncontrados: Array<{ codigo: string; cantidad: string; descripcion: string }>;
   /** Códigos que aparecen más de una vez en el archivo. NUNCA se vuelcan. */
   repetidos: string[];
   /** La cantidad no es un número. */
@@ -194,7 +215,11 @@ export function procesarConteo(
       continue;
     }
     if (!prod) {
-      noEncontrados.push({ codigo: codBruto, cantidad: crudo });
+      noEncontrados.push({
+        codigo: codBruto,
+        cantidad: crudo,
+        descripcion: cols.descripcion ? texto(f[cols.descripcion]) : "",
+      });
       continue;
     }
     if (n < 0) {

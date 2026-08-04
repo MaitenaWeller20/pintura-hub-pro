@@ -1,7 +1,7 @@
 /** Cuenta Corriente: lista clientes habilitados, su deuda y permite cobrar. */
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useEffect, Fragment } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
@@ -19,7 +19,8 @@ import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
 import { toast } from "sonner";
-import { Wallet, Receipt, ChevronRight } from "lucide-react";
+import { Wallet, Receipt, ChevronRight, Loader2 } from "lucide-react";
+import { uuidv4 } from "@/lib/uuid";
 import { useServerFn } from "@tanstack/react-start";
 import { registrarCobranza } from "@/lib/cobranzas.functions";
 
@@ -74,6 +75,12 @@ function CtaCtePage() {
         <TabsList className="mb-4">
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
           <TabsTrigger value="proveedores">Proveedores</TabsTrigger>
+          {/* Tab aparte y no mezclado con el saldo de cuenta corriente, a
+              propósito: una cuenta corriente es una cuenta abierta con un
+              cliente habilitado; esto es UN comprobante que quedó a medias, y
+              puede ser de Consumidor Final. Sumarlos en la misma columna haría
+              que "Saldo" signifique dos cosas. */}
+          <TabsTrigger value="pendientes">Ventas a medio cobrar</TabsTrigger>
         </TabsList>
 
         <TabsContent value="clientes">
@@ -111,6 +118,10 @@ function CtaCtePage() {
         <TabsContent value="proveedores">
           <ProveedoresCtaCte />
         </TabsContent>
+
+        <TabsContent value="pendientes">
+          <VentasAMedioCobrar />
+        </TabsContent>
       </Tabs>
 
       {sel && (
@@ -122,6 +133,169 @@ function CtaCtePage() {
           onSaved={() => { qc.invalidateQueries({ queryKey: ["ctacte-saldos"] }); qc.invalidateQueries({ queryKey: ["ctacte-cliente", sel.id] }); qc.invalidateQueries({ queryKey: ["ctacte-resumen", sel.id] }); setOpenPago(false); }} />
       )}
     </div>
+  );
+}
+
+/**
+ * Ventas al contado que se cobraron a medias.
+ *
+ * Antes esta plata no se veía en ningún lado y —peor— no había forma de
+ * cobrarla: la venta quedaba en PARCIAL para siempre. Ver
+ * docs/superpowers/specs/2026-08-04-caja-negativa-y-saldos-de-venta-design.md
+ */
+function VentasAMedioCobrar() {
+  const qc = useQueryClient();
+  const [cobrando, setCobrando] = useState<any>(null);
+
+  const { data: filas = [], isLoading } = useQuery({
+    queryKey: ["ventas-saldo-pendiente"],
+    queryFn: async () =>
+      ((await supabase.from("ventas_saldo_pendiente").select("*").order("fecha", { ascending: false })).data ??
+        []) as any[],
+  });
+
+  const total = filas.reduce((a: number, f: any) => a + Number(f.saldo), 0);
+
+  return (
+    <>
+      <SectionCard>
+        <p className="text-sm text-muted-foreground">
+          Ventas al contado donde se cobró una parte y quedó un saldo. No son cuenta corriente: es{" "}
+          <strong>ese comprobante</strong> el que quedó a medias.
+        </p>
+      </SectionCard>
+
+      <DataTable
+        columns={["Comprobante", "Fecha", "Cliente", "Sucursal", "Total", "Cobrado", "Saldo", ""]}
+        loading={isLoading}
+        isEmpty={filas.length === 0}
+        empty={{ text: "No hay ninguna venta a medio cobrar." }}
+      >
+        {filas.map((f: any) => (
+          <TableRow key={f.venta_id}>
+            <TableCell className="font-mono text-xs">{f.numero_comprobante}</TableCell>
+            <TableCell className="text-muted-foreground text-xs">{fmtDate(f.fecha)}</TableCell>
+            <TableCell>{f.cliente}</TableCell>
+            <TableCell className="text-muted-foreground text-xs">{f.sucursal_nombre}</TableCell>
+            <TableCell className="text-right font-mono">{fmtMoney(f.total)}</TableCell>
+            <TableCell className="text-right font-mono text-success">{fmtMoney(f.cobrado)}</TableCell>
+            <TableCell className="text-right font-mono font-semibold text-destructive">
+              {fmtMoney(f.saldo)}
+            </TableCell>
+            <TableCell>
+              <Button size="sm" onClick={() => setCobrando(f)} data-testid={`cobrar-${f.numero_comprobante}`}>
+                Cobrar
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
+
+      {filas.length > 0 && (
+        <p className="mt-2 text-right text-sm">
+          Total sin cobrar: <strong className="font-mono">{fmtMoney(total)}</strong>
+        </p>
+      )}
+
+      {cobrando && (
+        <CobrarSaldoDialog
+          venta={cobrando}
+          onClose={() => setCobrando(null)}
+          onSaved={() => {
+            setCobrando(null);
+            qc.invalidateQueries({ queryKey: ["ventas-saldo-pendiente"] });
+            qc.invalidateQueries({ queryKey: ["ventas"] });
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function CobrarSaldoDialog({ venta, onClose, onSaved }: any) {
+  const [monto, setMonto] = useState<number | null>(Number(venta.saldo));
+  const [forma, setForma] = useState("EFECTIVO");
+  // Clave estable por intento: un doble click manda la misma y el backend
+  // colapsa los dos en un solo cobro.
+  const idem = useRef<string>(uuidv4());
+
+  const m = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.rpc("cobrar_saldo_venta", {
+        p_venta_id: venta.venta_id,
+        p_forma_pago: forma,
+        p_monto: Number(monto ?? 0),
+        p_detalle: {},
+        p_idempotency_key: idem.current,
+      });
+      if (error) throw error;
+      return Array.isArray(data) ? data[0] : data;
+    },
+    onSuccess: (r: any) => {
+      idem.current = uuidv4();
+      toast.success(
+        r?.estado === "PAGADO"
+          ? `${venta.numero_comprobante} quedó totalmente cobrada.`
+          : `Cobrado. Queda un saldo de ${fmtMoney(Number(r?.saldo ?? 0))}.`,
+      );
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const excede = Number(monto ?? 0) > Number(venta.saldo) + 0.01;
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cobrar {venta.numero_comprobante}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {venta.cliente} · total {fmtMoney(venta.total)} · ya cobrado {fmtMoney(venta.cobrado)}
+          </p>
+          <div>
+            <Label>Cuánto cobrás</Label>
+            <NumberInput value={monto} onValueChange={setMonto} data-testid="cobro-monto" />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Saldo: <strong>{fmtMoney(venta.saldo)}</strong>. No se puede cobrar de más: el vuelto se
+              da en el mostrador.
+            </p>
+            {excede && <p className="text-xs text-destructive">Es más que el saldo.</p>}
+          </div>
+          <div>
+            <Label>Forma de pago</Label>
+            <Select value={forma} onValueChange={setForma}>
+              <SelectTrigger data-testid="cobro-forma">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"].map(
+                  (k) => (
+                    <SelectItem key={k} value={k}>
+                      {formaPagoLabel[k] ?? k}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => m.mutate()}
+            disabled={!monto || monto <= 0 || excede || m.isPending}
+            data-testid="cobro-confirmar"
+          >
+            {m.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Cobrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

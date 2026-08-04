@@ -2278,6 +2278,8 @@ export type Database = {
       }
       venta_pagos: {
         Row: {
+          caja_sesion_id: string | null
+          cobro_idempotency_key: string | null
           created_at: string
           detalle: Json
           forma_pago: Database["public"]["Enums"]["forma_pago"]
@@ -2286,6 +2288,8 @@ export type Database = {
           venta_id: string
         }
         Insert: {
+          caja_sesion_id?: string | null
+          cobro_idempotency_key?: string | null
           created_at?: string
           detalle?: Json
           forma_pago: Database["public"]["Enums"]["forma_pago"]
@@ -2294,6 +2298,8 @@ export type Database = {
           venta_id: string
         }
         Update: {
+          caja_sesion_id?: string | null
+          cobro_idempotency_key?: string | null
           created_at?: string
           detalle?: Json
           forma_pago?: Database["public"]["Enums"]["forma_pago"]
@@ -2587,6 +2593,21 @@ export type Database = {
           },
         ]
       }
+      ventas_saldo_pendiente: {
+        Row: {
+          cliente: string | null
+          cliente_id: string | null
+          cobrado: number | null
+          fecha: string | null
+          numero_comprobante: string | null
+          saldo: number | null
+          sucursal_id: string | null
+          sucursal_nombre: string | null
+          total: number | null
+          venta_id: string | null
+        }
+        Relationships: []
+      }
       stock_inventario: {
         Row: {
           cantidad: number | null
@@ -2625,6 +2646,16 @@ export type Database = {
       }
     }
     Functions: {
+      cobrar_saldo_venta: {
+        Args: {
+          p_venta_id: string
+          p_forma_pago: string
+          p_monto: number
+          p_detalle?: Json
+          p_idempotency_key?: string | null
+        }
+        Returns: { pagado: number; saldo: number; estado: string }[]
+      }
       abrir_caja: {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string

@@ -237,6 +237,18 @@ function NuevaVenta() {
 
   // Una nota de crédito RESTA (es una devolución). Lo mostramos con el mismo signo
   // con el que se va a guardar, así el cajero ve lo que realmente va a pasar.
+  // El flag GLOBAL. La regla del servidor es
+  // `permitir_stock_negativo OR puede_vender_sin_stock(uid)`, y acá se espeja
+  // entera: si el espejo fuera más estricto que el servidor, se bloquearían
+  // ventas que en realidad se pueden hacer.
+  const { data: permiteStockNegativo = false } = useQuery({
+    queryKey: ["settings-stock-negativo"],
+    queryFn: async () =>
+      (await supabase.from("settings").select("permitir_stock_negativo").maybeSingle()).data
+        ?.permitir_stock_negativo === true,
+  });
+  const puedeSinStock = permiteStockNegativo || !!cu?.puedeVenderSinStock;
+
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
   const esNotaDebito = tipoComp === "NOTA_DEBITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
@@ -463,7 +475,32 @@ function NuevaVenta() {
     onError: (e: any) => toast.error(e.message),
   });
 
+  /**
+   * Las líneas que piden más de lo que hay.
+   *
+   * Una NOTA DE CRÉDITO devuelve stock y una de débito no toca la grilla, así
+   * que ninguna de las dos puede quedar frenada por esto — es justamente la
+   * operación que se usa para corregir.
+   */
+  const lineasSinStock = useMemo(
+    () =>
+      esNota
+        ? []
+        : items.filter(
+            (it) =>
+              (it.cantidad || 0) > 0 &&
+              it.stock_disponible !== undefined &&
+              (it.cantidad || 0) > it.stock_disponible,
+          ),
+    [items, esNota],
+  );
+  // `crear_venta` ya rechaza esto con "Stock insuficiente", pero lo hacía recién
+  // al apretar Guardar: la empleada cargaba cliente, productos y forma de pago
+  // de una venta de $201.205 para enterarse al final. Ahora se frena arriba.
+  const frenaPorStock = !puedeSinStock && lineasSinStock.length > 0;
+
   const canSave =
+    !frenaPorStock &&
     !!effSucursal &&
     !!clienteId &&
     // R5: la ND no usa la grilla; exige factura + un recargo > 0. El resto exige
@@ -485,6 +522,27 @@ function NuevaVenta() {
 
   return (
     <div className="space-y-4">
+      {/* El motivo, arriba de todo y en rojo. Un botón gris sin explicación
+          obliga a adivinar, y adivinar mal cuesta una venta cargada al pedo. */}
+      {frenaPorStock && (
+        <SectionCard>
+          <p className="text-sm text-destructive">
+            <strong>
+              No hay stock de{" "}
+              {lineasSinStock.length === 1 ? "un producto" : `${lineasSinStock.length} productos`}{" "}
+              en {sucs.find((s: any) => s.id === effSucursal)?.nombre ?? "esta sucursal"}.
+            </strong>{" "}
+            {lineasSinStock
+              .map((it) => `${it.descripcion} (hay ${it.stock_disponible}, pedís ${it.cantidad})`)
+              .join(" · ")}
+            .
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Sacá esos productos o bajá la cantidad. Si la mercadería está en el local y el sistema
+            no la tiene, hay que cargarla primero desde Ingresos de mercadería o el conteo de Stock.
+          </p>
+        </SectionCard>
+      )}
       <PageHeader
         title="Nuevo comprobante"
         actions={

@@ -32,6 +32,7 @@ import {
   detectarFilaEncabezados,
   normalizar,
   numOr,
+  seDestraba,
   sugeridoSinMapear,
 } from "@/lib/importar-productos";
 import { DESCUENTO_PROVEEDOR_DEFAULT, MARKUP_DEFAULT, descuentoEfectivo } from "@/lib/precios";
@@ -131,13 +132,15 @@ function ImportarProductos() {
         precio_sugerido_publico: number | null;
         markup_porcentaje: number | null;
         descuento_porcentaje: number | null;
+        precio_sin_iva: number | null;
+        activo: boolean | null;
         proveedor_id: string | null;
         proveedor: { descuento_porcentaje: number | null } | null;
       }>(async (desde, hasta) => {
         const { data, error, count } = await supabase
           .from("productos")
           .select(
-            "codigo, precio_sugerido_publico, markup_porcentaje, descuento_porcentaje, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
+            "codigo, precio_sugerido_publico, markup_porcentaje, descuento_porcentaje, precio_sin_iva, activo, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
             { count: "exact" },
           )
           .order("codigo")
@@ -159,11 +162,16 @@ function ImportarProductos() {
               proveedor_id: p.proveedor_id ?? null,
               // El propio del producto. Gana siempre, incluso si la pantalla
               // eligió proveedor para todo el archivo.
-              descuento_porcentaje: p.descuento_porcentaje == null ? null : Number(p.descuento_porcentaje),
+              descuento_porcentaje:
+                p.descuento_porcentaje == null ? null : Number(p.descuento_porcentaje),
               // El de su proveedor. Sólo cuenta si la pantalla NO eligió
               // proveedor para el archivo (ver calcularFila): si eligió, manda
               // el de la pantalla.
               descuento_proveedor_porcentaje: p.proveedor?.descuento_porcentaje ?? null,
+              // Para saber si esta lista destraba un producto que la importación
+              // de stock dio de alta sin precio y apagado (ver seDestraba).
+              precio_sin_iva: p.precio_sin_iva == null ? null : Number(p.precio_sin_iva),
+              activo: p.activo,
             },
           ]),
         ),
@@ -403,6 +411,10 @@ function ImportarProductos() {
           ...(f.precio_sugerido_publico != null
             ? { precio_sugerido_publico: f.precio_sugerido_publico }
             : {}),
+          // Un producto que estaba apagado SÓLO por no tener precio se prende
+          // ahora que lo tiene. Nunca al revés: acá no se apaga nada, y a un
+          // producto apagado a propósito (que sí tiene precio) no se lo toca.
+          ...(seDestraba(g, f.precio_sin_iva) ? { activo: true } : {}),
         };
         // Deliberadamente NO se escribe stock_sucursal acá: la lista de precios no
         // trae stock (ver el comentario del encabezado del archivo).

@@ -9,6 +9,7 @@ import {
   normalizar,
   numOr,
   parseNumAr,
+  seDestraba,
   sugeridoSinMapear,
 } from "./importar-productos";
 
@@ -348,5 +349,51 @@ describe("robustez del mapeo (review Codex)", () => {
         precio_sin_iva: " Sugerido al público C/IVA ",
       }),
     ).toBe(" Sugerido al público C/IVA ");
+  });
+});
+
+describe("seDestraba — prender lo que estaba apagado sólo por no tener precio", () => {
+  /** Un producto del catálogo. Sólo importan `activo` y `precio_sin_iva`. */
+  const guardado = (p: { activo?: boolean | null; precio_sin_iva?: number | null }) => ({
+    precio_sugerido_publico: null,
+    markup_porcentaje: null,
+    ...p,
+  });
+
+  // El escenario completo: la importación de STOCK da de alta los productos que
+  // están en el depósito y no en el sistema (647 en el caso real), sin precio y
+  // apagados. Cuando llega la lista con sus precios, esto los prende.
+  it("prende el que estaba apagado y sin precio, ahora que tiene precio", () => {
+    expect(seDestraba(guardado({ activo: false, precio_sin_iva: 0 }), 1500)).toBe(true);
+    expect(seDestraba(guardado({ activo: false, precio_sin_iva: null }), 1500)).toBe(true);
+  });
+
+  // LA PROTECCIÓN QUE IMPORTA. Un producto que alguien apagó A PROPÓSITO
+  // (descontinuado, en falta, lo que sea) tiene precio. Reimportar la lista no
+  // puede devolverlo a la venta a espaldas de quien lo apagó.
+  it("NO toca al que alguien apagó a propósito: ese tiene precio", () => {
+    expect(seDestraba(guardado({ activo: false, precio_sin_iva: 2500 }), 3000)).toBe(false);
+  });
+
+  it("no prende nada si la lista tampoco le da precio", () => {
+    expect(seDestraba(guardado({ activo: false, precio_sin_iva: 0 }), 0)).toBe(false);
+  });
+
+  it("sobre uno ya prendido no hace nada", () => {
+    expect(seDestraba(guardado({ activo: true, precio_sin_iva: 0 }), 1500)).toBe(false);
+    expect(seDestraba(guardado({ activo: true, precio_sin_iva: 900 }), 1500)).toBe(false);
+  });
+
+  // Un producto que no está en el catálogo lo CREA el upsert, y la tabla lo hace
+  // activo por default. Mandar `activo: true` sería redundante y ruidoso.
+  it("un producto nuevo no necesita destrabarse", () => {
+    expect(seDestraba(undefined, 1500)).toBe(false);
+  });
+
+  // `activo` puede venir null si la fila del catálogo no lo trajo. Ante la duda,
+  // no se prende: prender de más devuelve mercadería a la venta sin permiso.
+  it("ante un activo desconocido no prende", () => {
+    expect(seDestraba(guardado({ activo: null, precio_sin_iva: 0 }), 1500)).toBe(false);
+    expect(seDestraba(guardado({ precio_sin_iva: 0 }), 1500)).toBe(false);
   });
 });

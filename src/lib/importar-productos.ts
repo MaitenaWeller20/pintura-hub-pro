@@ -220,7 +220,33 @@ export type ProductoGuardado = {
    * de otro.
    */
   descuento_proveedor_porcentaje?: number | null;
+  /** El neto guardado hoy. 0 = nunca tuvo precio. */
+  precio_sin_iva?: number | null;
+  /** Si hoy se puede vender. */
+  activo?: boolean | null;
 };
+
+/**
+ * ¿Esta importación destraba un producto que estaba apagado por no tener precio?
+ *
+ * El caso: la importación de stock da de alta los productos que están en el
+ * depósito y no en el sistema, SIN precio y apagados para que nadie los facture
+ * en $0. Cuando después llega la lista con sus precios, sin esto quedarían con
+ * precio y apagados igual — y prenderlos sería entrar de a uno, 647 veces.
+ *
+ * Las tres condiciones son necesarias juntas:
+ *   estaba apagado  — no se prende nada que ya estuviera prendido (no hace nada)
+ *   NO tenía precio — un producto apagado A PROPÓSITO tiene precio, y ese no se toca
+ *   AHORA sí tiene  — no se prende algo que sigue sin precio
+ *
+ * Nunca al revés: esta función no apaga productos, sólo prende.
+ */
+export function seDestraba(guardado: ProductoGuardado | undefined, precioNuevo: number): boolean {
+  if (!guardado) return false; // producto nuevo: nace activo por default de la tabla
+  if (guardado.activo !== false) return false;
+  if (Number(guardado.precio_sin_iva ?? 0) > 0) return false;
+  return precioNuevo > 0;
+}
 
 /** Celda numérica opcional: vacía o no-numérica -> null (igual que tamano_envase). */
 export const numOrNull = (v: unknown): number | null => {

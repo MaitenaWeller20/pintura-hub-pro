@@ -112,6 +112,10 @@ function Productos() {
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
   const [openMarkup, setOpenMarkup] = useState(false);
   const [verArchivados, setVerArchivados] = useState(false);
+  // "Sin precio o apagados": los que la importación de stock dio de alta para que
+  // el inventario cuadre. Están mezclados entre ~1800 y la única señal era un
+  // cartelito gris en la fila, así que encontrarlos era imposible.
+  const [soloPendientes, setSoloPendientes] = useState(false);
   const [aEliminar, setAEliminar] = useState<any[] | null>(null); // productos a confirmar eliminación
   const eliminarFn = useServerFn(eliminarProductos);
   const restaurarFn = useServerFn(restaurarProductos);
@@ -171,6 +175,8 @@ function Productos() {
         // Los archivados se ocultan salvo que se active "ver archivados".
         if (!verArchivados && p.archivado) return false;
         if (verArchivados && !p.archivado) return false;
+        // Falta algo para poder venderlo: o no tiene precio, o está apagado.
+        if (soloPendientes && !(Number(p.precio_sin_iva ?? 0) <= 0 || !p.activo)) return false;
         if (catFilter !== "all" && p.categoria_id !== catFilter) return false;
         // "sin" encuentra los que quedaron sin etiquetar; si no, son invisibles.
         if (provFilter === "sin" && p.proveedor_id != null) return false;
@@ -185,7 +191,16 @@ function Productos() {
           return false;
         return true;
       }),
-    [productos, q, catFilter, provFilter, verArchivados],
+    [productos, q, catFilter, provFilter, verArchivados, soloPendientes],
+  );
+
+  /** Cuántos no se pueden vender todavía. Se muestra sólo si hay. */
+  const pendientes = useMemo(
+    () =>
+      productos.filter(
+        (p: any) => !p.archivado && (Number(p.precio_sin_iva ?? 0) <= 0 || !p.activo),
+      ).length,
+    [productos],
   );
 
   const toggleSel = (id: string) =>
@@ -422,6 +437,23 @@ function Productos() {
               ))}
             </SelectContent>
           </Select>
+          {/* Sólo si hay alguno: un filtro que siempre da 0 es ruido. */}
+          {pendientes > 0 && !verArchivados && (
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+              <Checkbox
+                checked={soloPendientes}
+                onCheckedChange={(v) => {
+                  setSoloPendientes(!!v);
+                  setSeleccion(new Set());
+                }}
+                data-testid="solo-pendientes"
+              />
+              Sin precio o apagados{" "}
+              <span className="rounded bg-warning/15 px-1.5 py-0.5 font-mono text-xs text-warning">
+                {pendientes}
+              </span>
+            </label>
+          )}
           {cu.isAdmin && (
             <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer ml-auto">
               <Checkbox
@@ -429,6 +461,7 @@ function Productos() {
                 onCheckedChange={(v) => {
                   setVerArchivados(!!v);
                   setSeleccion(new Set());
+                  setSoloPendientes(false);
                 }}
                 data-testid="ver-archivados"
               />
@@ -941,10 +974,7 @@ function ProductoDialog({
                   // se toca.
                   precio_fabrica:
                     Number(form.precio_lista || 0) > 0
-                      ? costoDeLista(
-                          form.precio_lista,
-                          v ?? descuentoHeredado,
-                        )
+                      ? costoDeLista(form.precio_lista, v ?? descuentoHeredado)
                       : form.precio_fabrica,
                 })
               }

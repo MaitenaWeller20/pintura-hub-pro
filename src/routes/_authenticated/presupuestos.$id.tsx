@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/table";
 import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Printer, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Printer, Loader2, AlertTriangle, Pencil } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -166,6 +166,16 @@ function DetallePresupuesto() {
             </Button>
             {p.estado === "ABIERTO" && (
               <>
+                {/* Sólo con el presupuesto ABIERTO: uno convertido ya es una
+                    venta y uno anulado está muerto. La RPC lo rechaza igual. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate({ to: "/presupuestos/editar/$id", params: { id: p.id } })}
+                  data-testid="editar-presupuesto"
+                >
+                  <Pencil className="h-4 w-4 mr-1" /> Editar
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"

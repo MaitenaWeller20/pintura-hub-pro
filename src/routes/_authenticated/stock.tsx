@@ -306,9 +306,18 @@ function Stock() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const abrirConteo = async () => {
+  /**
+   * `conImportacion` existe porque importar un archivo ES un conteo: el archivo
+   * dice cuánto hay de cada cosa. Pero desde /stock eso no se veía por ningún
+   * lado —el botón vivía adentro del modo conteo— y el reporte que llegó fue
+   * "no me deja importar el archivo". Ahora hay una puerta directa.
+   */
+  const abrirConteo = async (conImportacion = false) => {
     if (!sucId) {
-      toast.error("Elegí una sucursal para contar: contar «todas» a la vez no significa nada.");
+      toast.error(
+        `Elegí primero una sucursal en el filtro de abajo: ${conImportacion ? "importar" : "contar"} «todas» a la vez no significa nada.`,
+        { duration: 6000 },
+      );
       return;
     }
     // La hora la pone el SERVIDOR, no el reloj del navegador: de eso depende que
@@ -318,6 +327,7 @@ function Stock() {
     contadoDesde.current = error ? null : (data as unknown as string);
     setContado(new Map());
     setContando(true);
+    if (conImportacion) setImportarAbierto(true);
   };
 
   // Un solo setState para las ~1600 filas. Llamar al setter una vez por fila
@@ -386,9 +396,18 @@ function Stock() {
               <Printer className="h-4 w-4 mr-1" /> Imprimir PDF
             </Button>
             {cu?.isAdmin && !contando && (
-              <Button onClick={abrirConteo}>
-                <ClipboardList className="h-4 w-4 mr-1" /> Conteo físico
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => abrirConteo(true)}
+                  title={sucId ? "Cargar las cantidades desde un Excel o CSV" : "Elegí primero una sucursal"}
+                >
+                  <Upload className="h-4 w-4 mr-1" /> Importar conteo
+                </Button>
+                <Button onClick={() => abrirConteo(false)}>
+                  <ClipboardList className="h-4 w-4 mr-1" /> Conteo físico
+                </Button>
+              </>
             )}
           </div>
         }

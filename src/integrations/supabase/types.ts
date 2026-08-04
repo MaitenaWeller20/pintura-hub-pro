@@ -1178,6 +1178,7 @@ export type Database = {
           codigo_barras: string | null
           created_at: string
           descripcion: string | null
+          descuento_porcentaje: number | null
           id: string
           iva_porcentaje: number
           marca_id: string | null
@@ -1201,6 +1202,7 @@ export type Database = {
           codigo_barras?: string | null
           created_at?: string
           descripcion?: string | null
+          descuento_porcentaje?: number | null
           id?: string
           iva_porcentaje?: number
           marca_id?: string | null
@@ -1224,6 +1226,7 @@ export type Database = {
           codigo_barras?: string | null
           created_at?: string
           descripcion?: string | null
+          descuento_porcentaje?: number | null
           id?: string
           iva_porcentaje?: number
           marca_id?: string | null
@@ -2837,6 +2840,22 @@ export type Database = {
         Returns: {
           numero: string
           presupuesto_id: string
+        }[]
+      }
+      editar_presupuesto: {
+        Args: {
+          p_cliente_id?: string
+          p_items: Json
+          p_nombre_cliente?: string
+          p_observaciones?: string
+          p_presupuesto_id: string
+          p_repreciar?: boolean
+          p_validez_hasta?: string
+        }
+        Returns: {
+          numero: string
+          presupuesto_id: string
+          total: number
         }[]
       }
       crear_producto_desde_ingreso: {

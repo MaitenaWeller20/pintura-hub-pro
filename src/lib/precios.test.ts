@@ -38,30 +38,59 @@ describe("costoDeLista", () => {
 });
 
 describe("descuentoEfectivo", () => {
-  it("el del proveedor le gana al global", () => {
+  const GLOBAL = { descuento_proveedor_porcentaje: 42 };
+
+  // EL CASO QUE PIDIÓ LA CLIENTA: "no todos es el 42%". Quimex manda una lista
+  // sola y no descuenta igual todos los renglones.
+  it("el del producto le gana a todos", () => {
     expect(
-      descuentoEfectivo({ descuento_porcentaje: 35 }, { descuento_proveedor_porcentaje: 42 }),
+      descuentoEfectivo({ descuento_porcentaje: 28 }, { descuento_porcentaje: 35 }, GLOBAL),
+    ).toBe(28);
+  });
+
+  it("el del proveedor le gana al global", () => {
+    expect(descuentoEfectivo(null, { descuento_porcentaje: 35 }, GLOBAL)).toBe(35);
+    expect(
+      descuentoEfectivo({ descuento_porcentaje: null }, { descuento_porcentaje: 35 }, GLOBAL),
     ).toBe(35);
   });
 
   it("sin descuento propio hereda el global", () => {
-    expect(
-      descuentoEfectivo({ descuento_porcentaje: null }, { descuento_proveedor_porcentaje: 42 }),
-    ).toBe(42);
-    expect(descuentoEfectivo(null, { descuento_proveedor_porcentaje: 42 })).toBe(42);
+    expect(descuentoEfectivo(null, { descuento_porcentaje: null }, GLOBAL)).toBe(42);
+    expect(descuentoEfectivo(null, null, GLOBAL)).toBe(42);
   });
 
-  // Un proveedor al que se le compra a precio de lista, sin descuento. Si esto
-  // cayera al global, sus costos quedarían 42% más baratos de lo que son.
-  it("un descuento de 0 es válido y NO cae al global", () => {
-    expect(
-      descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_proveedor_porcentaje: 42 }),
-    ).toBe(0);
+  // Un producto (o un proveedor) al que se le compra a precio de lista, sin
+  // descuento. Si esto cayera al global, su costo quedaría 42% más barato.
+  it("un descuento de 0 es válido y NO cae al escalón de abajo", () => {
+    expect(descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_porcentaje: 35 }, GLOBAL)).toBe(0);
+    expect(descuentoEfectivo(null, { descuento_porcentaje: 0 }, GLOBAL)).toBe(0);
+    expect(descuentoEfectivo(null, null, { descuento_proveedor_porcentaje: 0 })).toBe(0);
   });
 
   it("sin nada cargado usa el del negocio", () => {
-    expect(descuentoEfectivo(null, null)).toBe(DESCUENTO_PROVEEDOR_DEFAULT);
+    expect(descuentoEfectivo(null, null, null)).toBe(DESCUENTO_PROVEEDOR_DEFAULT);
     expect(DESCUENTO_PROVEEDOR_DEFAULT).toBe(42);
+  });
+
+  // La escalera completa, escalón por escalón. Es el contrato que el COALESCE
+  // de `cambiar_precios_masivo` tiene que respetar clavado.
+  it.each([
+    [10, 20, 30, 10],
+    [null, 20, 30, 20],
+    [null, null, 30, 30],
+    [null, null, null, 42],
+    [0, 20, 30, 0],
+    [null, 0, 30, 0],
+    [null, null, 0, 0],
+  ])("producto=%s proveedor=%s settings=%s -> %s", (prod, prov, set, esperado) => {
+    expect(
+      descuentoEfectivo(
+        { descuento_porcentaje: prod },
+        { descuento_porcentaje: prov },
+        { descuento_proveedor_porcentaje: set },
+      ),
+    ).toBe(esperado);
   });
 
   it("se enchufa con costoDeLista", () => {

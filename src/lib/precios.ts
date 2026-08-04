@@ -58,18 +58,27 @@ const num = (v: unknown, def: number): number => {
 /**
  * El descuento comercial que corresponde aplicarle a un producto.
  *
- * Escalera: el del proveedor, si no el global de settings, si no el del negocio.
- * Es la misma forma que ya tiene el markup (`producto ?? settings ?? default`),
- * para no inventar un concepto nuevo.
+ * Escalera: **el del producto, si no el del proveedor, si no el global de
+ * settings, si no el del negocio.** Es la misma forma que ya tiene el markup
+ * (`producto ?? settings ?? default`), para no inventar un concepto nuevo.
+ *
+ * El escalón del PRODUCTO se agregó el 04/08/2026: la clienta avisó que "no
+ * todos es el 42%". Quimex publica una lista sola pero no descuenta igual todos
+ * los renglones, así que el descuento no es una propiedad del proveedor.
  *
  * Pregunta por `null`, NO por falsy: un descuento de **0 es válido** —comprarle a
  * un proveedor a precio de lista, sin descuento— y no puede caer al global. Es el
  * mismo error que antes convertía un markup de 0% en 30%.
+ *
+ * ESPEJO: la misma escalera está en SQL, en el COALESCE de
+ * `cambiar_precios_masivo`. Si divergen, manda el SQL y esto es un bug.
  */
 export function descuentoEfectivo(
+  producto?: { descuento_porcentaje?: number | null } | null,
   proveedor?: { descuento_porcentaje?: number | null } | null,
   settings?: { descuento_proveedor_porcentaje?: number | null } | null,
 ): number {
+  if (producto?.descuento_porcentaje != null) return Number(producto.descuento_porcentaje);
   if (proveedor?.descuento_porcentaje != null) return Number(proveedor.descuento_porcentaje);
   if (settings?.descuento_proveedor_porcentaje != null)
     return Number(settings.descuento_proveedor_porcentaje);
@@ -253,6 +262,8 @@ export const OPERACION_LABEL: Record<OperacionPrecio, string> = {
 export type ProductoOperable = EntradaPrecio & {
   precio_lista?: number | null;
   precio_sin_iva?: number | null;
+  /** El del producto. null = hereda el del proveedor. */
+  descuento_porcentaje?: number | null;
   proveedor?: { descuento_porcentaje?: number | null } | null;
 };
 
@@ -280,7 +291,7 @@ export function simularOperacion(
   const lista = num(p.precio_lista, 0);
   const costo = num(p.precio_fabrica, 0);
   const sugerido = num(p.precio_sugerido_publico, 0);
-  const descuento = descuentoEfectivo(p.proveedor, {
+  const descuento = descuentoEfectivo(p, p.proveedor, {
     descuento_proveedor_porcentaje: ctx.descuentoGlobal,
   });
   const markupViejo = markupEfectivo(p, { markupDefault: ctx.markupDefault });

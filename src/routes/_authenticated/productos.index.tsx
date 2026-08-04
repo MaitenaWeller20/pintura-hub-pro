@@ -691,6 +691,7 @@ function ProductoDialog({
         tamano_envase: null,
         precio_lista: 0,
         precio_fabrica: 0,
+        descuento_porcentaje: null,
         precio_sugerido_publico: null,
         markup_porcentaje: null,
         precio_sin_iva: 0,
@@ -704,10 +705,20 @@ function ProductoDialog({
   // Aplica el cambio y recalcula el precio de venta con la cadena completa.
   // NO se le pasa precio_sin_iva a calcularPrecios: ese campo es el override
   // manual y, si se pasara, ganaría siempre y nada se recalcularía nunca.
-  // El descuento que se usa para derivar el costo desde la lista es el del
-  // PROVEEDOR del producto, no el global. Sin esto, cargar a mano un producto de
-  // un proveedor con otro descuento le calculaba el costo con el de Quimex.
+  // El descuento que se usa para derivar el costo desde la lista sale de la
+  // escalera completa: el del PRODUCTO si lo tiene, si no el de su PROVEEDOR, si
+  // no el global. Sin el escalón del proveedor, cargar a mano un producto de un
+  // proveedor con otro descuento le calculaba el costo con el de Quimex; sin el
+  // del producto, no habría forma de que un renglón lleve un descuento distinto
+  // al del resto de la lista.
   const descuentoDelProducto = descuentoEfectivo(
+    form,
+    proveedores?.find((x: any) => x.id === form.proveedor_id) ?? null,
+    { descuento_proveedor_porcentaje: descuentoProveedor },
+  );
+  /** El que se aplicaría si el producto no tuviera el suyo. Es el placeholder. */
+  const descuentoHeredado = descuentoEfectivo(
+    null,
     proveedores?.find((x: any) => x.id === form.proveedor_id) ?? null,
     { descuento_proveedor_porcentaje: descuentoProveedor },
   );
@@ -748,6 +759,12 @@ function ProductoDialog({
             : Number(form.tamano_envase),
         precio_lista: Number(form.precio_lista || 0),
         precio_fabrica: Number(form.precio_fabrica || 0),
+        // Vacío = hereda. NO es lo mismo que 0, que significa "a esto no le
+        // hacen descuento" y es un valor válido.
+        descuento_porcentaje:
+          form.descuento_porcentaje === null || form.descuento_porcentaje === ""
+            ? null
+            : Number(form.descuento_porcentaje),
         precio_sugerido_publico:
           form.precio_sugerido_publico === null || form.precio_sugerido_publico === ""
             ? null
@@ -868,7 +885,9 @@ function ProductoDialog({
                 const id = v === "__none__" ? null : v;
                 // Cambiar de proveedor cambia el descuento, y con él el costo.
                 const prov = proveedores?.find((x: any) => x.id === id) ?? null;
-                const desc = descuentoEfectivo(prov, {
+                // El descuento propio del producto le gana igual al del
+                // proveedor nuevo: es una decisión sobre ESTE renglón.
+                const desc = descuentoEfectivo(form, prov, {
                   descuento_proveedor_porcentaje: descuentoProveedor,
                 });
                 recalcVenta({
@@ -904,6 +923,35 @@ function ProductoDialog({
                 })
               }
             />
+          </div>
+          <div>
+            <Label>
+              % Descuento sobre la lista{" "}
+              <span className="text-xs text-muted-foreground">
+                (vacío = usa {descuentoHeredado}%)
+              </span>
+            </Label>
+            <NumberInput
+              value={form.descuento_porcentaje}
+              onValueChange={(v) =>
+                recalcVenta({
+                  descuento_porcentaje: v,
+                  // Cambiar el descuento sólo tiene sentido si hay lista de la
+                  // cual descontar. Sin lista, el costo está cargado a mano y no
+                  // se toca.
+                  precio_fabrica:
+                    Number(form.precio_lista || 0) > 0
+                      ? costoDeLista(
+                          form.precio_lista,
+                          v ?? descuentoHeredado,
+                        )
+                      : form.precio_fabrica,
+                })
+              }
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              El de este producto. Vacío toma el del proveedor, y si no tiene, el general.
+            </p>
           </div>
           <div>
             <Label>

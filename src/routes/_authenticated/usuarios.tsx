@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearUsuario, toggleUsuarioActivo, resetearPassword, setPermiteVentaSinStock, setSeccionesUsuario } from "@/lib/usuarios.functions";
 import { GRUPOS, SECCIONES_DEFAULT, SECCIONES_OTORGABLES } from "@/lib/secciones";
+import { faltanteUsuario, generarPassword, PASSWORD_MINIMO } from "@/lib/alta-usuario";
 
 export const Route = createFileRoute("/_authenticated/usuarios")({
   ssr: false,
@@ -78,6 +79,7 @@ function UsuariosPage() {
 
   const [resetUser, setResetUser] = useState<any>(null);
   const [permisosUser, setPermisosUser] = useState<any>(null);
+  const faltante = faltanteUsuario(form);
 
   return (
     <div className="space-y-4">
@@ -124,7 +126,18 @@ function UsuariosPage() {
           <DialogHeader><DialogTitle>Nuevo usuario</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>Email *</Label><Input type="email" value={form.email} onChange={(e)=>set("email", e.target.value)}/></div>
-            <div><Label>Contraseña *</Label><Input value={form.password} onChange={(e)=>set("password", e.target.value)}/></div>
+            <div>
+              <Label>Contraseña *</Label>
+              <div className="flex gap-2">
+                <Input className="font-mono" value={form.password} onChange={(e)=>set("password", e.target.value)} autoComplete="new-password"/>
+                <Button variant="outline" size="icon" onClick={()=>set("password", generarPassword())} title="Generar una fuerte">
+                  <RefreshCw className="h-4 w-4"/>
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Mínimo {PASSWORD_MINIMO} caracteres. Copiala antes de crear: no se puede volver a ver.
+              </p>
+            </div>
             <div><Label>Usuario (alias) *</Label><Input value={form.username} onChange={(e)=>set("username", e.target.value)}/></div>
             <div><Label>Nombre completo</Label><Input value={form.nombre_completo} onChange={(e)=>set("nombre_completo", e.target.value)}/></div>
             <div><Label>Rol *</Label>
@@ -147,9 +160,14 @@ function UsuariosPage() {
               <span><strong>Puede vender sin stock</strong> — registra ventas de productos sin stock disponible. Los administradores siempre pueden.</span>
             </label>
           </div>
+          {/* El motivo por el que no se puede crear, SIEMPRE visible. Un botón
+              gris sin explicación fue exactamente el reporte que llegó. */}
+          {faltante && <p className="text-sm text-destructive">{faltante}</p>}
           <DialogFooter>
             <Button variant="outline" onClick={()=>setOpen(false)}>Cancelar</Button>
-            <Button onClick={()=>m.mutate()} disabled={!form.email || !form.username || form.password.length < 10 || m.isPending}>Crear</Button>
+            <Button onClick={()=>m.mutate()} disabled={!!faltante || m.isPending}>
+              {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1"/>} Crear
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -311,12 +329,6 @@ function ResetPasswordDialog({ usuario, onClose }: { usuario: any; onClose: () =
   const reset = useServerFn(resetearPassword);
   const [password, setPassword] = useState("");
 
-  const generar = () => {
-    const abc = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
-    const bytes = crypto.getRandomValues(new Uint32Array(16));
-    setPassword(Array.from(bytes, (b) => abc[b % abc.length]).join(""));
-  };
-
   const m = useMutation({
     mutationFn: async () => reset({ data: { user_id: usuario.id, password } }),
     onSuccess: () => {
@@ -340,18 +352,18 @@ function ResetPasswordDialog({ usuario, onClose }: { usuario: any; onClose: () =
                 className="font-mono"
                 autoComplete="new-password"
               />
-              <Button variant="outline" size="icon" onClick={generar} title="Generar una fuerte">
+              <Button variant="outline" size="icon" onClick={() => setPassword(generarPassword())} title="Generar una fuerte">
                 <RefreshCw className="h-4 w-4" />
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Mínimo 10 caracteres. Copiala antes de guardar: no se puede volver a ver.
+              Mínimo {PASSWORD_MINIMO} caracteres. Copiala antes de guardar: no se puede volver a ver.
             </p>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={password.length < 10 || m.isPending}>
+          <Button onClick={() => m.mutate()} disabled={password.length < PASSWORD_MINIMO || m.isPending}>
             {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Cambiar
           </Button>
         </DialogFooter>

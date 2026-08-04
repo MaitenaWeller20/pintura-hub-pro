@@ -130,13 +130,14 @@ function ImportarProductos() {
         codigo: string;
         precio_sugerido_publico: number | null;
         markup_porcentaje: number | null;
+        descuento_porcentaje: number | null;
         proveedor_id: string | null;
         proveedor: { descuento_porcentaje: number | null } | null;
       }>(async (desde, hasta) => {
         const { data, error, count } = await supabase
           .from("productos")
           .select(
-            "codigo, precio_sugerido_publico, markup_porcentaje, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
+            "codigo, precio_sugerido_publico, markup_porcentaje, descuento_porcentaje, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
             { count: "exact" },
           )
           .order("codigo")
@@ -156,9 +157,13 @@ function ImportarProductos() {
                 p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
               markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
               proveedor_id: p.proveedor_id ?? null,
-              // Sólo cuenta si la pantalla NO eligió proveedor para el archivo
-              // (ver calcularFila): si eligió, manda el de la pantalla.
-              descuento_porcentaje: p.proveedor?.descuento_porcentaje ?? null,
+              // El propio del producto. Gana siempre, incluso si la pantalla
+              // eligió proveedor para todo el archivo.
+              descuento_porcentaje: p.descuento_porcentaje == null ? null : Number(p.descuento_porcentaje),
+              // El de su proveedor. Sólo cuenta si la pantalla NO eligió
+              // proveedor para el archivo (ver calcularFila): si eligió, manda
+              // el de la pantalla.
+              descuento_proveedor_porcentaje: p.proveedor?.descuento_porcentaje ?? null,
             },
           ]),
         ),
@@ -318,7 +323,7 @@ function ImportarProductos() {
           r,
           mapping,
           { descuento: descuentoProveedor, markupDefault },
-          proveedorId && g ? { ...g, descuento_porcentaje: null } : g,
+          proveedorId && g ? { ...g, descuento_proveedor_porcentaje: null } : g,
         );
 
         // Un valor absurdo (típicamente el separador decimal mal interpretado: un
@@ -427,11 +432,12 @@ function ImportarProductos() {
   // La vista previa calcula lo mismo que la importación, con la misma función:
   // lo que se ve es lo que se guarda.
   // Con proveedor elegido para el archivo manda el descuento de la pantalla; sin
-  // proveedor elegido, cada producto usa el de SU proveedor.
+  // proveedor elegido, cada producto usa el de SU proveedor. El descuento PROPIO
+  // del producto le gana a los dos y por eso no se anula acá.
   const guardadoDe = (codigo: string) => {
     const g = guardados.get(codigo);
     if (!g) return undefined;
-    return proveedorId ? { ...g, descuento_porcentaje: null } : g;
+    return proveedorId ? { ...g, descuento_proveedor_porcentaje: null } : g;
   };
   const paramsPrecio = {
     descuento: Number(descuento) || 0,
@@ -572,7 +578,10 @@ function ImportarProductos() {
                     // descuento equivocado.
                     const prov = proveedores.find((x) => x.id === id);
                     setDescuento(
-                      descuentoEfectivo(prov ?? null, {
+                      // Sin producto: acá se resuelve el descuento POR DEFECTO
+                      // del archivo, que es el del proveedor elegido o el global.
+                      // El de cada producto se aplica después, fila por fila.
+                      descuentoEfectivo(null, prov ?? null, {
                         descuento_proveedor_porcentaje: descuentoGlobal,
                       }),
                     );

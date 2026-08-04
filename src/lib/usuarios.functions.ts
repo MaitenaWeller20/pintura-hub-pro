@@ -3,12 +3,15 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { normalizarSecciones } from "@/lib/secciones";
+import { PASSWORD_MINIMO } from "@/lib/alta-usuario";
 
 export const crearUsuario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({
     email: z.string().email(),
-    password: z.string().min(6),
+    // 10, igual que el reset y que la pantalla. Hasta el 04/08/2026 acá decía 6:
+    // el mínimo real dependía de por dónde entrara el pedido.
+    password: z.string().min(PASSWORD_MINIMO, `Mínimo ${PASSWORD_MINIMO} caracteres`),
     username: z.string().min(2),
     nombre_completo: z.string(),
     role: z.enum(["admin","empleado"]),
@@ -16,6 +19,11 @@ export const crearUsuario = createServerFn({ method: "POST" })
     permite_venta_sin_stock: z.boolean().default(false),
     // null = "las de siempre". Ver normalizarSecciones / la spec de permisos.
     secciones: z.array(z.string()).nullable().default(null),
+  }).refine((u) => u.role !== "empleado" || u.sucursal_id !== null, {
+    // La etiqueta del campo ya decía "*" para empleado, pero nada lo exigía, y
+    // un empleado sin sucursal no tiene caja ni puede vender.
+    path: ["sucursal_id"],
+    message: "Un empleado necesita una sucursal: de ahí salen su caja y sus ventas.",
   }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;

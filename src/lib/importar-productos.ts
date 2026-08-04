@@ -205,13 +205,21 @@ export type ProductoGuardado = {
   precio_sugerido_publico: number | null;
   markup_porcentaje: number | null;
   /**
-   * El descuento del proveedor QUE YA TIENE el producto. Se usa cuando la pantalla
+   * El descuento PROPIO del producto, si tiene uno cargado.
+   *
+   * Va separado del de su proveedor porque sobrevive a cosas distintas: elegir un
+   * proveedor para todo el archivo reemplaza el del proveedor, pero NO éste — es
+   * una decisión sobre ese renglón, no sobre de quién se le compra.
+   */
+  descuento_porcentaje?: number | null;
+  /**
+   * El descuento del PROVEEDOR que ya tiene el producto. Se usa cuando la pantalla
    * no eligió un proveedor para todo el archivo: sin esto, todas las filas se
    * derivaban con el mismo descuento de pantalla, así que reimportar una lista
    * mixta le calculaba a los productos de un proveedor el costo con el descuento
    * de otro.
    */
-  descuento_porcentaje?: number | null;
+  descuento_proveedor_porcentaje?: number | null;
 };
 
 /** Celda numérica opcional: vacía o no-numérica -> null (igual que tamano_envase). */
@@ -246,9 +254,10 @@ export function calcularFila(
   guardado?: ProductoGuardado,
 ) {
   const precio_lista = mapping.precio_lista ? numOr(r[mapping.precio_lista], 0) : 0;
-  // El descuento del proveedor del producto le gana al de la pantalla; el de la
-  // pantalla es el del proveedor elegido para el archivo, o el global.
-  const descuento = guardado?.descuento_porcentaje ?? p.descuento;
+  // La escalera completa: el del PRODUCTO, si no el de SU proveedor, si no el de
+  // la pantalla (que es el del proveedor elegido para el archivo, o el global).
+  const descuento =
+    guardado?.descuento_porcentaje ?? guardado?.descuento_proveedor_porcentaje ?? p.descuento;
   const precio_fabrica =
     mapping.precio_lista && precio_lista > 0
       ? costoDeLista(precio_lista, descuento)

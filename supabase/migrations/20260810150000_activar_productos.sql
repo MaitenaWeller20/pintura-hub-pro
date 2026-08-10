@@ -22,9 +22,13 @@
 -- Mismo patrón que eliminar_productos / restaurar_productos.
 -- ============================================================
 
+-- La etiqueta del cuerpo es $fn$ y no $$ a propósito: esta función se pega a mano
+-- en el SQL editor de Supabase, y un editor que separa sentencias contando `$$`
+-- parte el cuerpo al medio y devuelve "syntax error at or near DECLARE". Con una
+-- etiqueta propia no hay nada que contar mal.
 CREATE OR REPLACE FUNCTION public.activar_productos(p_ids uuid[])
 RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
 DECLARE
   v_uid uuid := auth.uid();
   v_ids uuid[] := COALESCE(p_ids, ARRAY[]::uuid[]);
@@ -107,16 +111,16 @@ BEGIN
     INTO v_res;
 
   RETURN v_res;
-END; $$;
+END; $fn$;
 
 COMMENT ON FUNCTION public.activar_productos(uuid[]) IS
   'Prende los productos apagados de p_ids que tengan precio y no estén archivados (admin). Devuelve {activados, sin_precio, archivados} contados en la misma sentencia que el UPDATE. Es la única forma de reactivar un producto: las altas automáticas lo dejan apagado sin precio y la importación de listas sólo lo destraba si el precio guardado es 0.';
 
--- Sin esto la función queda ejecutable por `public` (y el authenticated no la ve
--- si se revoca de más). Mismo bloque que 20260724130000_eliminar_productos.sql.
-DO $$
-BEGIN
-  REVOKE ALL ON FUNCTION public.activar_productos(uuid[]) FROM public;
-  GRANT EXECUTE ON FUNCTION public.activar_productos(uuid[]) TO authenticated;
-  GRANT EXECUTE ON FUNCTION public.activar_productos(uuid[]) TO service_role;
-END $$;
+-- Sin esto la función queda ejecutable por `public`, o sea también por `anon`.
+-- Los mismos permisos que 20260724130000_eliminar_productos.sql, pero sueltos y no
+-- dentro de un `DO $$`: ahí el bloque existe porque itera sobre varias funciones;
+-- para una sola es un segundo bloque con dólares que sólo agrega formas de que un
+-- copiar-y-pegar en el SQL editor se rompa.
+REVOKE ALL ON FUNCTION public.activar_productos(uuid[]) FROM public;
+GRANT EXECUTE ON FUNCTION public.activar_productos(uuid[]) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.activar_productos(uuid[]) TO service_role;

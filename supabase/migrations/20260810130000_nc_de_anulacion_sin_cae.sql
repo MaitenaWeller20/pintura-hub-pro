@@ -33,12 +33,17 @@
 -- las internas. La ausencia de asociado dice lo mismo sin tocar esa superficie.
 -- ============================================================
 
+-- El cuerpo va entre $$ y no entre $function$ (que es lo que emite
+-- pg_get_functiondef): el editor SQL de Supabase no reconoce los tags con
+-- nombre, y al no verlos como comilla de dólar parte la función en cada ';' y le
+-- manda fragmentos sueltos a Postgres. Con $$ lo entiende, y para Postgres es
+-- exactamente lo mismo. El cuerpo no contiene ningún $$ literal.
 CREATE OR REPLACE FUNCTION public.anular_venta(p_venta_id uuid)
  RETURNS TABLE(nc_id uuid, nc_numero text)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public'
-AS $function$
+AS $$
 DECLARE
   v_uid       uuid := auth.uid();
   v_v         public.ventas%ROWTYPE;
@@ -149,7 +154,7 @@ BEGIN
   END LOOP;
 
   RETURN QUERY SELECT v_nc_id, v_numero;
-END; $function$;
+END; $$;
 
 REVOKE ALL ON FUNCTION public.anular_venta(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.anular_venta(uuid) TO authenticated;

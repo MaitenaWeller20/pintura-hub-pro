@@ -127,6 +127,7 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
     domicilio_fiscal: cfg.domicilio_fiscal ?? "",
     condicion_iva: cfg.condicion_iva ?? "RESPONSABLE_INSCRIPTO",
     inicio_actividades: cfg.inicio_actividades ?? "",
+    ingresos_brutos: cfg.ingresos_brutos ?? "",
     habilitada: cfg.habilitada ?? false,
   });
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }));
@@ -139,6 +140,7 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
           inicio_actividades: form.inicio_actividades || null,
           nombre_fantasia: form.nombre_fantasia || null,
           domicilio_fiscal: form.domicilio_fiscal || null,
+          ingresos_brutos: form.ingresos_brutos || null,
         },
       }),
     onSuccess: () => { toast.success("Datos fiscales guardados"); onSaved(); },
@@ -185,6 +187,18 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
         <div className="col-span-2">
           <Label>Domicilio fiscal</Label>
           <Input value={form.domicilio_fiscal} onChange={(e) => set("domicilio_fiscal", e.target.value)} />
+        </div>
+        <div className="col-span-2">
+          <Label>Ingresos Brutos</Label>
+          <Input
+            value={form.ingresos_brutos}
+            onChange={(e) => set("ingresos_brutos", e.target.value)}
+            placeholder="901-123456-7, o Convenio Multilateral, o Exento"
+          />
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Va impreso en cada comprobante. Lo tiene que dar el contador — si el negocio está
+            exento, poné <strong>Exento</strong>.
+          </p>
         </div>
       </div>
 

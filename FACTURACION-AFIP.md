@@ -70,6 +70,9 @@ emitido):
 - **Razón social** — el nombre legal exacto, no el de fantasía
 - **Domicilio fiscal**
 - **Condición de IVA** — Responsable Inscripto / Monotributo / Exento
+- **Ingresos Brutos** — el número, o "Convenio Multilateral", o "Exento". Va
+  impreso en cada comprobante, así que sin esto la factura sale incompleta.
+- **Inicio de actividades** — la fecha. También va impresa.
 
 > Si no tienen los datos a mano, pueden bajar la **Constancia de Inscripción**
 > desde AFIP en 30 segundos, o mandarte una foto de una factura vieja.
@@ -144,6 +147,16 @@ manera incomprensible.
 2. Apagá el modo simulado: variable de entorno `INVOICING_MOCK_MODE=false`.
 3. Tocá el botón de **probar conexión** (el enchufe) al lado de un punto de venta.
 
+> Podés probar el botón de emitir en modo simulado todo lo que quieras: esos
+> comprobantes quedan marcados y **no cuentan para la numeración real**. Se
+> distinguen en el listado de Ventas (dicen "simulado — sin validez") y el sistema
+> los ignora al sincronizar la numeración con AFIP. Por eso se puede apagar el
+> mock y pasar a homologación, y después a producción, sin limpiar nada a mano.
+>
+> Tené presente que un CAE simulado no vale: esas ventas no se declararon. Al día
+> de hoy (10/08/2026) no hay ninguna en producción, así que la numeración real
+> arranca limpia desde el 1.
+
 | Respuesta | Qué significa |
 |---|---|
 | ✅ *"AFIP respondió. Último comprobante..."* | Todo bien. Seguí. |
@@ -177,6 +190,11 @@ que abrir la página de AFIP con los datos.
 **Emitir:** en **Ventas**, cada comprobante fiscal sin CAE tiene un botón de
 factura. Se toca y sale el CAE.
 
+⚠️ **Hay 5 días para emitir, y después no se puede más.** AFIP no autoriza un
+comprobante fechado a más de 5 días corridos. La columna AFIP del listado avisa:
+pasa a *"Quedan N días"* en amarillo cuando se acerca, y a *"Fuera de plazo"* en
+rojo cuando ya no hay nada que hacer. Lo más sano es facturar el mismo día.
+
 **Si AFIP no responde:** el comprobante queda en **PENDIENTE** y se puede
 reintentar. El sistema es cuidadoso acá: si la primera llamada se cortó por
 timeout, **antes de reintentar le pregunta a AFIP si igual la autorizó**, para no
@@ -187,6 +205,16 @@ reintenta.
 
 **Anular una factura:** desde el listado. El sistema genera la nota de crédito
 automáticamente, la asocia a la factura original y devuelve el stock.
+
+⚠️ **Anular una factura que ya tiene CAE son DOS pasos.** El primero (el botón de
+anular) revierte todo del lado nuestro: stock, caja y cuenta corriente. Pero para
+AFIP la factura sigue siendo válida hasta que se **emita la nota de crédito**, que
+queda en el listado como pendiente. El sistema avisa al anular. Vale el mismo
+plazo de 5 días.
+
+Si la factura **todavía no tenía CAE**, no hay nada que rectificar ante AFIP: la
+nota que se genera es puramente interna y el sistema no ofrece emitirla (aparece
+como "Interno").
 
 ---
 
@@ -216,6 +244,15 @@ Hola,
 Estamos poniendo en marcha el sistema de gestión de CasaForma (CUIT [CUIT]) y
 necesitamos tu ayuda con dos trámites en AFIP. Si ya hiciste esto para otros
 sistemas, te lleva 20 minutos.
+
+Aparte de los dos trámites, necesitamos que nos pases dos datos que van
+impresos en cada comprobante:
+  - N° de Ingresos Brutos (o si corresponde Convenio Multilateral, o Exento)
+  - Fecha de inicio de actividades
+
+Y una consulta: ¿a CasaForma le aplica el Régimen de Transparencia Fiscal al
+Consumidor (Ley 27.743)? El sistema ya imprime la leyenda y el IVA contenido en
+las facturas B y C a consumidor final; queremos confirmar que corresponda.
 
 ═══════════════════════════════════════════════════════════════
 TAREA 1 — Crear DOS puntos de venta (uno por sucursal)

@@ -630,6 +630,13 @@ export type Database = {
             referencedRelation: "ventas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: true
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
         ]
       }
       documento_secuencias: {
@@ -676,6 +683,7 @@ export type Database = {
           domicilio_fiscal: string | null
           habilitada: boolean
           id: boolean
+          ingresos_brutos: string | null
           inicio_actividades: string | null
           nombre_fantasia: string | null
           razon_social: string | null
@@ -691,6 +699,7 @@ export type Database = {
           domicilio_fiscal?: string | null
           habilitada?: boolean
           id?: boolean
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -706,6 +715,7 @@ export type Database = {
           domicilio_fiscal?: string | null
           habilitada?: boolean
           id?: boolean
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -1101,6 +1111,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ventas"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuestos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
           },
         ]
       }
@@ -2277,6 +2294,13 @@ export type Database = {
             referencedRelation: "ventas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "venta_items_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
         ]
       }
       venta_pagos: {
@@ -2312,11 +2336,25 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "venta_pagos_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "venta_pagos_venta_id_fkey"
             columns: ["venta_id"]
             isOneToOne: false
             referencedRelation: "ventas"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venta_pagos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
           },
         ]
       }
@@ -2332,6 +2370,8 @@ export type Database = {
           afip_modo: string | null
           afip_numero: number | null
           afip_punto_venta: number | null
+          afip_simulado: boolean
+          afip_snapshot: Json | null
           cae: string | null
           cae_vencimiento: string | null
           caja_sesion_id: string | null
@@ -2368,6 +2408,8 @@ export type Database = {
           afip_modo?: string | null
           afip_numero?: number | null
           afip_punto_venta?: number | null
+          afip_simulado?: boolean
+          afip_snapshot?: Json | null
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -2404,6 +2446,8 @@ export type Database = {
           afip_modo?: string | null
           afip_numero?: number | null
           afip_punto_venta?: number | null
+          afip_simulado?: boolean
+          afip_snapshot?: Json | null
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -2436,6 +2480,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ventas"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ventas_afip_cbte_asoc_id_fkey"
+            columns: ["afip_cbte_asoc_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
           },
           {
             foreignKeyName: "ventas_caja_sesion_id_fkey"
@@ -2479,6 +2530,13 @@ export type Database = {
             referencedRelation: "ventas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "ventas_venta_anulada_por_fkey"
+            columns: ["venta_anulada_por"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
         ]
       }
     }
@@ -2504,6 +2562,7 @@ export type Database = {
           cuit: string | null
           domicilio_fiscal: string | null
           habilitada: boolean | null
+          ingresos_brutos: string | null
           inicio_actividades: string | null
           nombre_fantasia: string | null
           razon_social: string | null
@@ -2517,6 +2576,7 @@ export type Database = {
           cuit?: string | null
           domicilio_fiscal?: string | null
           habilitada?: boolean | null
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -2530,6 +2590,7 @@ export type Database = {
           cuit?: string | null
           domicilio_fiscal?: string | null
           habilitada?: boolean | null
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -2596,21 +2657,6 @@ export type Database = {
           },
         ]
       }
-      ventas_saldo_pendiente: {
-        Row: {
-          cliente: string | null
-          cliente_id: string | null
-          cobrado: number | null
-          fecha: string | null
-          numero_comprobante: string | null
-          saldo: number | null
-          sucursal_id: string | null
-          sucursal_nombre: string | null
-          total: number | null
-          venta_id: string | null
-        }
-        Relationships: []
-      }
       stock_inventario: {
         Row: {
           cantidad: number | null
@@ -2647,18 +2693,52 @@ export type Database = {
           },
         ]
       }
+      ventas_saldo_pendiente: {
+        Row: {
+          cliente: string | null
+          cliente_id: string | null
+          cobrado: number | null
+          fecha: string | null
+          numero_comprobante: string | null
+          saldo: number | null
+          sucursal_id: string | null
+          sucursal_nombre: string | null
+          total: number | null
+          venta_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ventas_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ventas_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
+            foreignKeyName: "ventas_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "ventas_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
-      cobrar_saldo_venta: {
-        Args: {
-          p_venta_id: string
-          p_forma_pago: string
-          p_monto: number
-          p_detalle?: Json
-          p_idempotency_key?: string | null
-        }
-        Returns: { pagado: number; saldo: number; estado: string }[]
-      }
       abrir_caja: {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
@@ -2756,6 +2836,20 @@ export type Database = {
           total_esperado: number
         }[]
       }
+      cobrar_saldo_venta: {
+        Args: {
+          p_detalle?: Json
+          p_forma_pago: string
+          p_idempotency_key?: string
+          p_monto: number
+          p_venta_id: string
+        }
+        Returns: {
+          estado: string
+          pagado: number
+          saldo: number
+        }[]
+      }
       condicion_iva_emisor: { Args: never; Returns: string }
       confirmar_ingreso_mercaderia: {
         Args: {
@@ -2843,30 +2937,6 @@ export type Database = {
           presupuesto_id: string
         }[]
       }
-      editar_presupuesto: {
-        Args: {
-          p_cliente_id?: string
-          p_items: Json
-          p_nombre_cliente?: string
-          p_observaciones?: string
-          p_presupuesto_id: string
-          p_repreciar?: boolean
-          p_validez_hasta?: string
-        }
-        Returns: {
-          numero: string
-          presupuesto_id: string
-          total: number
-        }[]
-      }
-      crear_productos_faltantes: {
-        Args: { p_items: Json }
-        Returns: {
-          creados: number
-          ya_estaban: number
-          rechazados: number
-        }[]
-      }
       crear_producto_desde_ingreso: {
         Args: {
           p_codigo: string
@@ -2875,6 +2945,14 @@ export type Database = {
           p_precio_sin_iva?: number
         }
         Returns: string
+      }
+      crear_productos_faltantes: {
+        Args: { p_items: Json }
+        Returns: {
+          creados: number
+          rechazados: number
+          ya_estaban: number
+        }[]
       }
       crear_venta: {
         Args: {
@@ -2898,7 +2976,33 @@ export type Database = {
         }[]
       }
       current_sucursal_id: { Args: never; Returns: string }
+      editar_presupuesto: {
+        Args: {
+          p_cliente_id?: string
+          p_items: Json
+          p_nombre_cliente?: string
+          p_observaciones?: string
+          p_presupuesto_id: string
+          p_repreciar?: boolean
+          p_validez_hasta?: string
+        }
+        Returns: {
+          numero: string
+          presupuesto_id: string
+          total: number
+        }[]
+      }
+      efectivo_en_caja: { Args: { _sesion_id: string }; Returns: number }
       eliminar_productos: { Args: { p_ids: string[] }; Returns: Json }
+      exigir_efectivo: {
+        Args: {
+          _monto: number
+          _para_que: string
+          _sesion_id: string
+          _sucursal_id: string
+        }
+        Returns: undefined
+      }
       guardar_extraccion_ingreso: {
         Args: {
           p_archivo_path?: string
@@ -2934,6 +3038,10 @@ export type Database = {
         Returns: string
       }
       normalizar_codigo: { Args: { p_texto: string }; Returns: string }
+      producto_tiene_presupuesto: {
+        Args: { _producto_id: string }
+        Returns: boolean
+      }
       proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
       puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
       rechazar_remito: {

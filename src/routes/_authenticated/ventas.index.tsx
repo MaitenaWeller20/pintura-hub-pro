@@ -18,11 +18,15 @@ import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTri
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { anularVenta } from "@/lib/ventas.functions";
-import { emitirComprobante, datosFiscalesComprobante } from "@/lib/fiscal.functions";
-import { esComprobanteFiscal } from "@/lib/fiscal/codigos";
+import {
+  emitirComprobante,
+  datosFiscalesComprobante,
+  obtenerConfigFiscal,
+} from "@/lib/fiscal.functions";
+import { esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
+import { diasRestantesVentanaAfip, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "@/lib/fiscal/fecha";
+import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
 import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
   component: VentasList,
@@ -63,9 +67,31 @@ function VentasList() {
 
   const anular = useMutation({
     mutationFn: async (id: string) => anularFn({ data: { venta_id: id } }),
-    onSuccess: () => { toast.success("Venta anulada"); qc.invalidateQueries({ queryKey: ["ventas"] }); setAnularDlg(null); },
+    onSuccess: (_r, id) => {
+      // Si el comprobante estaba declarado, la anulación todavía no terminó: falta
+      // emitirle la NC a AFIP. Que el toast lo diga, no un "listo" que engañe.
+      const anulada = ventas.find((v: any) => v.id === id);
+      if (anulada?.cae && !anulada?.afip_simulado) {
+        toast.warning("Venta anulada. Falta emitir la nota de crédito en AFIP.", { duration: 10000 });
+      } else {
+        toast.success("Venta anulada");
+      }
+      qc.invalidateQueries({ queryKey: ["ventas"] });
+      setAnularDlg(null);
+    },
     onError: (e:any) => toast.error(e.message),
   });
+
+  // Sólo interesa el flag de modo simulado, para no avisar de un plazo que en
+  // mock no se aplica. Se cachea con la misma clave que usa la pantalla de
+  // Facturación, así que no agrega un ida y vuelta si ya se visitó.
+  const cargarCfg = useServerFn(obtenerConfigFiscal);
+  const { data: cfgFiscal } = useQuery({
+    queryKey: ["fiscal-config"],
+    queryFn: () => cargarCfg(),
+    staleTime: 5 * 60_000,
+  });
+  const mockMode = cfgFiscal?.mock_mode ?? true;
 
   const emitirFn = useServerFn(emitirComprobante);
   const emitir = useMutation({
@@ -159,12 +185,14 @@ function VentasList() {
                 </StatusPill>
               )}
             </TableCell>
-            <TableCell><EstadoAfip venta={v} /></TableCell>
+            <TableCell><EstadoAfip venta={v} mock={mockMode} /></TableCell>
             <TableCell>
               <Button size="sm" variant="ghost" onClick={()=>setVerVenta(v)}><Eye className="h-3.5 w-3.5"/></Button>
-              {/* Sólo se factura lo que es un comprobante fiscal. Los remitos y la
-                  factura interna son documentos internos: no van a AFIP. */}
-              {v.estado === "ACTIVA" && esComprobanteFiscal(v.tipo_comprobante) && !v.cae && (
+              {/* Sólo se factura lo que es un comprobante fiscal. Los remitos, la
+                  factura interna y las notas que revierten algo nunca declarado
+                  son documentos internos: no van a AFIP. */}
+              {v.estado === "ACTIVA" && esComprobanteFiscal(v.tipo_comprobante)
+                && !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) && !v.cae && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -192,6 +220,20 @@ function VentasList() {
         <DialogContent>
           <DialogHeader><DialogTitle>Anular venta</DialogTitle></DialogHeader>
           <p className="text-sm">¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se generará una nota de crédito y se devolverá el stock automáticamente.</p>
+          {/* Si el comprobante ya se declaró, anularlo acá NO lo anula ante AFIP:
+              eso lo hace la nota de crédito, que es un segundo paso y hay que
+              emitirla. Mientras tanto AFIP sigue teniendo la factura como válida. */}
+          {anularDlg?.cae && !anularDlg?.afip_simulado && (
+            <div className="flex items-start gap-2 p-3 rounded border border-warning/40 bg-warning/5 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+              <div>
+                Esta factura ya tiene CAE. Para AFIP sigue siendo válida hasta que{" "}
+                <strong>emitas la nota de crédito</strong>, que te va a quedar en el listado
+                como pendiente. Acordate de hacerlo: AFIP sólo la acepta dentro de los{" "}
+                {VENTANA_AFIP_DIAS} días.
+              </div>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={()=>setAnularDlg(null)}>Cancelar</Button>
             <Button variant="destructive" onClick={()=>anular.mutate(anularDlg.id)} disabled={anular.isPending}>Anular</Button>
@@ -203,8 +245,11 @@ function VentasList() {
 }
 
 /** Estado fiscal del comprobante: si tiene CAE, si falló, o si ni siquiera aplica. */
-function EstadoAfip({ venta }: { venta: any }) {
-  if (!esComprobanteFiscal(venta.tipo_comprobante)) {
+function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
+  if (
+    !esComprobanteFiscal(venta.tipo_comprobante) ||
+    esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)
+  ) {
     return (
       <span title="Documento interno: no se declara a AFIP">
         <StatusPill tone="info">Interno</StatusPill>
@@ -212,6 +257,17 @@ function EstadoAfip({ venta }: { venta: any }) {
     );
   }
   if (venta.cae) {
+    // Un CAE simulado se parece a uno real (14 dígitos) pero no vale nada. Que se
+    // note a simple vista: si no, en el listado conviven mezclados y no hay forma
+    // de saber cuáles se declararon de verdad.
+    if (venta.afip_simulado) {
+      return (
+        <div className="text-xs space-y-0.5" title="CAE generado en modo simulado: no se declaró a AFIP y no tiene validez legal.">
+          <StatusPill tone="warning"><span className="font-mono">{venta.cae}</span></StatusPill>
+          <div className="text-muted-foreground">simulado — sin validez</div>
+        </div>
+      );
+    }
     return (
       <div className="text-xs space-y-0.5">
         <StatusPill tone="success"><span className="font-mono">{venta.cae}</span></StatusPill>
@@ -231,23 +287,45 @@ function EstadoAfip({ venta }: { venta: any }) {
   if (venta.afip_estado === "PENDIENTE") {
     return <StatusPill tone="warning">PENDIENTE</StatusPill>;
   }
+
+  // Sin emitir. Lo que importa acá no es el estado, es el reloj: AFIP deja de
+  // aceptar la fecha del comprobante a los 5 días y después ya no hay forma de
+  // facturarlo. Se avisa antes de que sea tarde.
+  //
+  // En modo simulado no se avisa nada: ahí no hay AFIP que rechace, el servidor
+  // tampoco aplica la ventana, y un cartel de "fuera de plazo" sobre un botón que
+  // igual funciona confunde más de lo que ayuda.
+  if (mock) return <StatusPill tone="neutral">Sin emitir</StatusPill>;
+
+  const restantes = diasRestantesVentanaAfip(new Date(venta.fecha));
+  // Fuera de ventana por los DOS lados: una venta fechada a futuro más allá del
+  // límite también la rechaza AFIP, y ahí `restantes` da un número grande que
+  // haría parecer que sobra tiempo.
+  if (fueraDeVentanaAfip(new Date(venta.fecha))) {
+    const futura = restantes > VENTANA_AFIP_DIAS;
+    return (
+      <span
+        title={
+          futura
+            ? `La venta está fechada a futuro y AFIP sólo autoriza hasta ${VENTANA_AFIP_DIAS} días adelante. Revisá la fecha.`
+            : `AFIP no autoriza comprobantes fechados a más de ${VENTANA_AFIP_DIAS} días. Consultá con el contador cómo regularizarla.`
+        }
+      >
+        <StatusPill tone="danger" icon={<AlertTriangle className="h-2.5 w-2.5" />}>
+          {futura ? "Fecha futura" : "Fuera de plazo"}
+        </StatusPill>
+      </span>
+    );
+  }
+  if (restantes <= 2) {
+    return (
+      <span title={`AFIP deja de aceptar esta fecha en ${restantes} día(s). Emitila ya.`}>
+        <StatusPill tone="warning">{restantes === 0 ? "Último día" : `Quedan ${restantes} días`}</StatusPill>
+      </span>
+    );
+  }
   return <StatusPill tone="neutral">Sin emitir</StatusPill>;
 }
-
-const condIvaLabel: Record<string, string> = {
-  RESPONSABLE_INSCRIPTO: "Responsable Inscripto",
-  MONOTRIBUTO: "Monotributo",
-};
-// letra + código AFIP por CbteTipo (para el recuadro de la letra, estilo AFIP).
-const CBTE_INFO: Record<number, { letra: string; cod: string }> = {
-  1: { letra: "A", cod: "01" }, 2: { letra: "A", cod: "02" }, 3: { letra: "A", cod: "03" },
-  6: { letra: "B", cod: "06" }, 7: { letra: "B", cod: "07" }, 8: { letra: "B", cod: "08" },
-  11: { letra: "C", cod: "11" }, 12: { letra: "C", cod: "12" }, 13: { letra: "C", cod: "13" }, 15: { letra: "C", cod: "15" },
-};
-const tituloDeCbte = (c: number) =>
-  [3, 8, 13].includes(c) ? "NOTA DE CRÉDITO" : [2, 7, 12].includes(c) ? "NOTA DE DÉBITO" : "FACTURA";
-// cae_vencimiento viene 'YYYY-MM-DD': formateo manual para no correr un día por timezone.
-const fmtVencCae = (s?: string | null) => (s ? s.split("-").reverse().join("/") : "—");
 
 function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
   const { data: detail } = useQuery({
@@ -266,7 +344,9 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
   const imprimir = async () => {
     if (!venta) return;
 
-    // Datos fiscales (CAE, QR, emisor real) sólo si el comprobante ya está autorizado.
+    // Los datos fiscales (CAE, QR, y el emisor/receptor CONGELADOS al emitir) sólo
+    // existen si el comprobante está autorizado. Sin ellos se imprime la misma
+    // hoja pero marcada como documento interno.
     let fiscal: any = null;
     if (venta.cae && esComprobanteFiscal(venta.tipo_comprobante)) {
       try {
@@ -276,65 +356,8 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
       }
     }
 
-    const doc = new jsPDF();
-
-    // Encabezado: razón social real de fiscal_config (ya no "CasaForma" hardcodeado).
-    const emisorNombre = fiscal?.emisor?.razon_social ?? venta.sucursal?.nombre ?? "Comprobante";
-    doc.setFontSize(16); doc.text(emisorNombre, 14, 16);
-    doc.setFontSize(9);
-    let hy = 22;
-    if (fiscal?.emisor?.cuit) { doc.text(`CUIT: ${fiscal.emisor.cuit}`, 14, hy); hy += 5; }
-    if (fiscal?.emisor?.condicion_iva) {
-      doc.text(`Condición IVA: ${condIvaLabel[fiscal.emisor.condicion_iva] ?? fiscal.emisor.condicion_iva}`, 14, hy); hy += 5;
-    }
-    if (fiscal?.emisor?.domicilio_fiscal) { doc.text(String(fiscal.emisor.domicilio_fiscal), 14, hy); hy += 5; }
-
-    // Título + número: fiscal (PPPPP-NNNNNNNN + letra/COD) si hay CAE; si no, el interno.
-    const cbte = fiscal ? CBTE_INFO[fiscal.cbte_tipo] : null;
-    const numeroMostrar = fiscal
-      ? `${String(fiscal.punto_venta).padStart(5, "0")}-${String(fiscal.numero).padStart(8, "0")}`
-      : venta.numero_comprobante;
-    const titulo = cbte
-      ? `${tituloDeCbte(fiscal.cbte_tipo)} ${cbte.letra} (COD. ${cbte.cod})`
-      : tipoComprobanteLabel[venta.tipo_comprobante];
-
-    doc.setFontSize(11); doc.text(`${titulo}   ${numeroMostrar}`, 14, hy + 2);
-    doc.setFontSize(9);
-    doc.text(`Fecha: ${fmtDateTime(venta.fecha)}`, 14, hy + 8);
-    doc.text(`Cliente: ${venta.cliente?.razon_social ?? ""}${venta.cliente?.cuit_dni ? ` — ${venta.cliente.cuit_dni}` : ""}`, 14, hy + 14);
-
-    autoTable(doc, {
-      startY: hy + 20,
-      head: [["Código", "Descripción", "Cant.", "Precio s/IVA", "Desc.", "IVA", "Subtotal"]],
-      body: (detail?.items ?? []).map((i: any) => [
-        i.codigo, i.descripcion, i.cantidad, fmtMoney(i.precio_unitario_sin_iva),
-        `${i.descuento_porcentaje}%`, `${i.iva_porcentaje}%`, fmtMoney(i.subtotal_con_iva),
-      ]),
-      styles: { fontSize: 8 },
-    });
-
-    const y = (doc as any).lastAutoTable.finalY + 10;
-    doc.setFontSize(9);
-    doc.text(`Subtotal: ${fmtMoney(venta.subtotal_sin_iva)}`, 130, y);
-    doc.text(`IVA: ${fmtMoney(venta.iva_total)}`, 130, y + 6);
-    doc.text(`Percepciones: ${fmtMoney(venta.percepciones)}`, 130, y + 12);
-    doc.setFontSize(12); doc.text(`TOTAL: ${fmtMoney(venta.total)}`, 130, y + 20);
-
-    // Bloque CAE + QR de AFIP (sólo comprobantes autorizados que emitimos).
-    if (fiscal?.cae && fiscal.qr) {
-      const qy = y + 30;
-      doc.addImage(fiscal.qr, "PNG", 14, qy, 32, 32);
-      doc.setFontSize(9);
-      doc.text("Comprobante Autorizado", 50, qy + 6);
-      doc.text(`CAE N°: ${fiscal.cae}`, 50, qy + 12);
-      doc.text(`Vto. CAE: ${fmtVencCae(fiscal.cae_vencimiento)}`, 50, qy + 18);
-      if (fiscal.modo === "HOMOLOGACION") {
-        doc.setFontSize(8);
-        doc.text("Comprobante emitido en homologación — sin validez fiscal.", 50, qy + 24);
-      }
-    }
-
-    doc.save(`${numeroMostrar}.pdf`);
+    const { doc, nombre } = generarComprobantePdf(venta, detail?.items ?? [], fiscal);
+    doc.save(nombre);
   };
 
   return (

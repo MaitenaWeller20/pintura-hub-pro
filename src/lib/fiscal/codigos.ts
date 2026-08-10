@@ -37,6 +37,23 @@ export const TIPOS_INTERNOS: ReadonlySet<string> = new Set([
 
 export const esComprobanteFiscal = (tipo: string): boolean => !TIPOS_INTERNOS.has(tipo);
 
+/**
+ * Una nota de crédito/débito SIN comprobante asociado es la reversión interna de
+ * algo que nunca se declaró a AFIP: la que genera anular_venta cuando el original
+ * no tenía CAE (un remito, o una factura anulada antes de emitirla).
+ *
+ * No es un pendiente fiscal. No hay nada que rectificar ante AFIP, y encima no se
+ * PODRÍA emitir aunque se quisiera: el original quedó ANULADA y ya no puede
+ * obtener un CAE. Antes estas notas mostraban el botón de emitir y fallaban
+ * siempre, quedando como pendientes irresolubles.
+ */
+export function esNotaInterna(
+  tipo: string,
+  afipCbteAsocId: string | null | undefined,
+): boolean {
+  return (tipo === "NOTA_CREDITO" || tipo === "NOTA_DEBITO") && !afipCbteAsocId;
+}
+
 /** El cliente de quimex mapea su tipo impositivo al del emisor/receptor de AFIP. */
 export const CONDICION_IVA_CLIENTE: Record<string, CondicionIva> = {
   RESPONSABLE_INSCRIPTO: "RESPONSABLE_INSCRIPTO",
@@ -142,6 +159,54 @@ export function ivaIdAfip(porcentaje: number): number {
 
 /** Alícuotas que AFIP acepta. Tiene que quedar sincronizado con ivaIdAfip. */
 export const ALICUOTAS_SOPORTADAS = [0, 2.5, 5, 10.5, 21, 27] as const;
+
+/**
+ * El camino inverso de ivaIdAfip: del Id de AFIP al porcentaje. Hace falta para
+ * imprimir el IVA discriminado por alícuota ("IVA 21% s/ $1.000"), que es lo que
+ * se le declaró y lo que el comprobante tiene que mostrar.
+ */
+export function porcentajeDeIvaId(id: number): number {
+  const mapa: Record<number, number> = { 3: 0, 9: 2.5, 8: 5, 4: 10.5, 5: 21, 6: 27 };
+  const p = mapa[id];
+  if (p === undefined) throw new Error(`Id de alícuota de IVA desconocido: ${id}`);
+  return p;
+}
+
+/** Letra y código impreso de AFIP para el recuadro del comprobante. */
+export const CBTE_INFO: Record<number, { letra: Letra; cod: string }> = {
+  1: { letra: "A", cod: "01" }, 2: { letra: "A", cod: "02" }, 3: { letra: "A", cod: "03" },
+  6: { letra: "B", cod: "06" }, 7: { letra: "B", cod: "07" }, 8: { letra: "B", cod: "08" },
+  11: { letra: "C", cod: "11" }, 12: { letra: "C", cod: "12" }, 13: { letra: "C", cod: "13" },
+  15: { letra: "C", cod: "15" },
+};
+
+/** Título del comprobante según el CbteTipo de AFIP. */
+export function tituloDeCbteTipo(cbteTipo: number): string {
+  if ([3, 8, 13].includes(cbteTipo)) return "NOTA DE CRÉDITO";
+  if ([2, 7, 12].includes(cbteTipo)) return "NOTA DE DÉBITO";
+  return "FACTURA";
+}
+
+/** Etiqueta legible de una condición de IVA, para imprimir. */
+export const CONDICION_IVA_LABEL: Record<CondicionIva, string> = {
+  RESPONSABLE_INSCRIPTO: "Responsable Inscripto",
+  MONOTRIBUTO: "Monotributo",
+  EXENTO: "Exento",
+  CONSUMIDOR_FINAL: "Consumidor Final",
+};
+
+/**
+ * Régimen de Transparencia Fiscal al Consumidor (Ley 27.743, RG 5614): los
+ * comprobantes clase B y C emitidos a consumidor final tienen que mostrar el IVA
+ * contenido y la leyenda. En A no aplica (el IVA ya va discriminado por diseño).
+ */
+export function requiereLeyendaTransparencia(
+  cbteTipo: number,
+  condReceptor: CondicionIva | null | undefined,
+): boolean {
+  const letra = CBTE_INFO[cbteTipo]?.letra;
+  return (letra === "B" || letra === "C") && condReceptor === "CONSUMIDOR_FINAL";
+}
 
 /**
  * Valida una alícuota, con fallback.

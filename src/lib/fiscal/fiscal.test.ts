@@ -8,13 +8,21 @@ import {
   docNroAfip,
   condicionIvaReceptorId,
   esComprobanteFiscal,
+  esNotaInterna,
   letraDeFactura,
   letraDeCbteTipo,
   puedeForzarConsumidorFinal,
   TIPOS_C,
 } from "./codigos";
 import { calcularTotales, round2 } from "./iva";
-import { fmtFechaAfip, fmtFechaIsoAr, parseFechaAfip } from "./fecha";
+import {
+  fmtFechaAfip,
+  fmtFechaIsoAr,
+  parseFechaAfip,
+  diasDesdeHoyAr,
+  diasRestantesVentanaAfip,
+  fueraDeVentanaAfip,
+} from "./fecha";
 import { urlQrAfip } from "./qr";
 import { detalleRechazoAfip } from "./arca";
 
@@ -92,6 +100,26 @@ describe("documentos internos vs fiscales", () => {
     expect(esComprobanteFiscal("FACTURA_B")).toBe(true);
     expect(esComprobanteFiscal("NOTA_CREDITO")).toBe(true);
     expect(esComprobanteFiscal("NOTA_DEBITO")).toBe(true);
+  });
+});
+
+describe("notas internas (reversión de algo que nunca se declaró)", () => {
+  it("una nota SIN comprobante asociado es interna: no se emite", () => {
+    expect(esNotaInterna("NOTA_CREDITO", null)).toBe(true);
+    expect(esNotaInterna("NOTA_CREDITO", undefined)).toBe(true);
+    expect(esNotaInterna("NOTA_CREDITO", "")).toBe(true);
+    expect(esNotaInterna("NOTA_DEBITO", null)).toBe(true);
+  });
+
+  it("una nota CON comprobante asociado sí es fiscal", () => {
+    expect(esNotaInterna("NOTA_CREDITO", "b3f1c2d4-0000-4000-8000-000000000001")).toBe(false);
+  });
+
+  // Una factura nunca lleva asociado y no por eso deja de ser fiscal.
+  it("no aplica a las facturas", () => {
+    expect(esNotaInterna("FACTURA_A", null)).toBe(false);
+    expect(esNotaInterna("FACTURA_B", null)).toBe(false);
+    expect(esNotaInterna("FACTURA_C", null)).toBe(false);
   });
 });
 
@@ -270,6 +298,43 @@ describe("fechas fiscales en hora de Argentina", () => {
     expect(parseFechaAfip("2026-07-23")).toBeNull();
     expect(parseFechaAfip("")).toBeNull();
     expect(parseFechaAfip(null)).toBeNull();
+  });
+});
+
+describe("ventana de ±5 días de AFIP (Concepto=1, productos)", () => {
+  // 09:00 del 10/08 en hora de Argentina.
+  const hoy = new Date("2026-08-10T12:00:00Z");
+  const enAr = (iso: string) => new Date(iso);
+
+  it("una venta del día se puede emitir", () => {
+    expect(diasDesdeHoyAr(enAr("2026-08-10T13:00:00Z"), hoy)).toBe(0);
+    expect(fueraDeVentanaAfip(enAr("2026-08-10T13:00:00Z"), hoy)).toBe(false);
+  });
+
+  it("el día 5 todavía entra; el 6 ya no", () => {
+    expect(fueraDeVentanaAfip(enAr("2026-08-05T12:00:00Z"), hoy)).toBe(false);
+    expect(diasDesdeHoyAr(enAr("2026-08-05T12:00:00Z"), hoy)).toBe(5);
+    expect(fueraDeVentanaAfip(enAr("2026-08-04T12:00:00Z"), hoy)).toBe(true);
+    expect(diasDesdeHoyAr(enAr("2026-08-04T12:00:00Z"), hoy)).toBe(6);
+  });
+
+  it("una fecha a futuro también se sale de la ventana", () => {
+    expect(fueraDeVentanaAfip(enAr("2026-08-15T12:00:00Z"), hoy)).toBe(false);
+    expect(fueraDeVentanaAfip(enAr("2026-08-16T12:00:00Z"), hoy)).toBe(true);
+    expect(diasDesdeHoyAr(enAr("2026-08-16T12:00:00Z"), hoy)).toBe(-6);
+  });
+
+  // El mismo motivo por el que existe fecha.ts: contar en UTC corre el día.
+  it("cuenta días calendario de Argentina, no de UTC", () => {
+    // 23:00 del 09/08 en AR (que en UTC ya es el 10/08). Es de AYER, no de hoy.
+    const anocheEnAr = enAr("2026-08-10T02:00:00Z");
+    expect(diasDesdeHoyAr(anocheEnAr, hoy)).toBe(1);
+  });
+
+  it("los días restantes bajan hasta el último día y después se van a negativo", () => {
+    expect(diasRestantesVentanaAfip(enAr("2026-08-10T12:00:00Z"), hoy)).toBe(5);
+    expect(diasRestantesVentanaAfip(enAr("2026-08-05T12:00:00Z"), hoy)).toBe(0);
+    expect(diasRestantesVentanaAfip(enAr("2026-08-04T12:00:00Z"), hoy)).toBe(-1);
   });
 });
 

@@ -2663,6 +2663,7 @@ export type Database = {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
       }
+      activar_productos: { Args: { p_ids: string[] }; Returns: Json }
       actualizar_items_borrador: {
         Args: { p_ingreso_id: string; p_items: Json }
         Returns: undefined

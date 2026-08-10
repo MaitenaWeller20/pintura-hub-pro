@@ -32,6 +32,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { NumberInput } from "@/components/ui/number-input";
+import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
@@ -50,6 +51,7 @@ import {
   descuentoEfectivo,
   simularOperacion,
 } from "@/lib/precios";
+import { activables, motivoNoActivar, type ProductoActivable } from "@/lib/productos-activar";
 import { uuidv4 } from "@/lib/uuid";
 import { toast } from "sonner";
 import {
@@ -58,6 +60,7 @@ import {
   Pencil,
   Printer,
   Percent,
+  Power,
   Trash2,
   ArchiveRestore,
   History,
@@ -66,7 +69,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useServerFn } from "@tanstack/react-start";
-import { eliminarProductos, restaurarProductos } from "@/lib/productos.functions";
+import { activarProductos, eliminarProductos, restaurarProductos } from "@/lib/productos.functions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -119,6 +122,7 @@ function Productos() {
   const [aEliminar, setAEliminar] = useState<any[] | null>(null); // productos a confirmar eliminación
   const eliminarFn = useServerFn(eliminarProductos);
   const restaurarFn = useServerFn(restaurarProductos);
+  const activarFn = useServerFn(activarProductos);
 
   const { data: settings } = useQuery({
     queryKey: ["settings"],
@@ -203,6 +207,18 @@ function Productos() {
     [productos],
   );
 
+  /**
+   * Qué haría el botón "Activar" con lo tildado. Sale de `productos` y no de
+   * `filtered` —igual que "Eliminar seleccionados"— para que escribir algo en el
+   * buscador no saltee en silencio un producto que quedó tildado y fuera de vista.
+   * Estos números son para el botón; los que se le informan al final salen de la
+   * RPC, que es la que sabe cómo está la base en el momento del click.
+   */
+  const reparto = useMemo(
+    () => activables(productos.filter((p: ProductoActivable) => seleccion.has(p.id))),
+    [productos, seleccion],
+  );
+
   const toggleSel = (id: string) =>
     setSeleccion((s) => {
       const n = new Set(s);
@@ -247,6 +263,33 @@ function Productos() {
     mutationFn: async (ids: string[]) => await restaurarFn({ data: { ids } }),
     onSuccess: (r) => {
       toast.success(`${r.restaurados} restaurado${r.restaurados !== 1 ? "s" : ""}`);
+      refrescar();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const activarM = useMutation({
+    mutationFn: async (ids: string[]) => await activarFn({ data: { ids } }),
+    onSuccess: (r) => {
+      // Los saltados se dicen SIEMPRE. Prender 3 de 500 y mostrar sólo el 3 deja
+      // a la clienta creyendo que ya puede vender los otros 497.
+      const saltados = [];
+      if (r.sin_precio) saltados.push(`${r.sin_precio} sin precio (saltados)`);
+      if (r.archivados) saltados.push(`${r.archivados} archivados (restauralos primero)`);
+      // Que no se haya prendido ninguno no es un éxito: hay que decir qué falta.
+      if (r.activados === 0) {
+        toast.error(
+          saltados.length
+            ? `Ninguno se pudo prender · ${saltados.join(" · ")}`
+            : // Pasa sin que nadie se equivoque: otro usuario los prendió mientras
+              // esta lista estaba dibujada.
+              "Ninguno se pudo prender: ya estaban activos.",
+        );
+      } else {
+        toast.success(
+          [`${r.activados} activado${r.activados !== 1 ? "s" : ""}`, ...saltados].join(" · "),
+        );
+      }
       refrescar();
     },
     onError: (e: any) => toast.error(e.message),
@@ -363,6 +406,36 @@ function Productos() {
             </Button>
             {cu.isAdmin && (
               <>
+                {/* Sólo si hay algo apagado que prender: un botón que está
+                    siempre y casi nunca hace nada es ruido. */}
+                {reparto.apagados > 0 && !verArchivados && (
+                  <Button
+                    variant="outline"
+                    className="text-success"
+                    data-testid="activar-masivo"
+                    disabled={activarM.isPending}
+                    // El motivo se arma con lo que hay de verdad: decir "sin
+                    // precio" cuando en realidad están archivados manda a arreglar
+                    // lo que no es.
+                    title={
+                      reparto.prender.length
+                        ? "Pone en venta los productos apagados que ya tienen precio"
+                        : reparto.sinPrecio
+                          ? `Ninguno se puede prender: ${reparto.sinPrecio} de los seleccionados no tienen precio y se venderían a $0`
+                          : "Ninguno se puede prender: están archivados, hay que restaurarlos primero"
+                    }
+                    // Se le manda la selección COMPLETA, no `reparto.prender`. La
+                    // RPC es la que separa los que prende de los que salta, y es la
+                    // única que sabe cómo está la base ahora; mandándole sólo los
+                    // que se pueden prender, los saltados no existirían para ella y
+                    // el cartel diría "3 activados" sin mencionar los otros 497.
+                    // El botón no se muestra con la selección vacía, así que nunca
+                    // llega un array vacío (la server fn exige al menos un id).
+                    onClick={() => activarM.mutate(Array.from(seleccion))}
+                  >
+                    <Power className="h-4 w-4 mr-1" /> Activar ({reparto.prender.length})
+                  </Button>
+                )}
                 {seleccion.size > 0 && !verArchivados && (
                   <Button
                     variant="outline"
@@ -777,6 +850,19 @@ function ProductoDialog({
       return { ...next, precio_sin_iva: calc.precio_sin_iva };
     });
 
+  // El invariante, del lado del editor: un producto activo a $0 se vende gratis.
+  // Hasta el 10/08/2026 este diálogo lo permitía sin decir nada —un producto nuevo
+  // arranca con `activo: true` y el precio en 0— así que un switch a secas no
+  // alcanzaba. Es la misma cuenta que hace `crear_producto_desde_ingreso` en SQL
+  // (`v_activo := v_precio > 0`).
+  //
+  // El switch muestra ESTO y no `form.activo`, para que lo que se ve sea lo que
+  // queda guardado. Si no, un producto viejo activo a $0 mostraría el switch
+  // prendido y se guardaría apagado.
+  const activoGuardado = !!form.activo && Number(form.precio_sin_iva || 0) > 0;
+  /** Por qué no se puede PRENDER. Apagar se puede siempre. */
+  const motivoNo = motivoNoActivar(form);
+
   const m = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -809,7 +895,7 @@ function ProductoDialog({
         precio_sin_iva: Number(form.precio_sin_iva || 0),
         iva_porcentaje: Number(form.iva_porcentaje),
         stock_minimo: Number(form.stock_minimo || 0),
-        activo: form.activo,
+        activo: activoGuardado,
       };
       if (editing) {
         const { error } = await supabase.from("productos").update(payload).eq("id", editing.id);
@@ -847,7 +933,13 @@ function ProductoDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
+      {/* max-h + scroll: este diálogo mide ~900px y `DialogContent` no scrollea
+          (es `fixed` y centrado, así que la página tampoco lo alcanza). En una
+          notebook con menos de ~850px de alto útil el botón Guardar quedaba FUERA
+          de la pantalla, sin forma de apretarlo salvo achicando el zoom del
+          navegador. Medido con Playwright a 720/800/900/1000px de viewport: ya
+          pasaba antes del switch, y el switch lo empeoraba 53px. */}
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editing ? "Editar" : "Nuevo"} producto</DialogTitle>
         </DialogHeader>
@@ -1073,6 +1165,28 @@ function ProductoDialog({
               value={form.stock_minimo}
               onValueChange={(v) => set("stock_minimo", v ?? 0)}
             />
+          </div>
+          {/* El control que faltaba: la tabla mostraba "Inactivo" desde siempre y
+              no había ninguna forma de cambiarlo. Ver el spec del 10/08/2026. */}
+          <div className="col-span-2 rounded bg-muted/30 p-2">
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <Switch
+                checked={activoGuardado}
+                // Prender exige precio y no estar archivado; apagar nunca.
+                disabled={!activoGuardado && motivoNo !== null}
+                onCheckedChange={(v) => set("activo", v)}
+                data-testid="producto-activo"
+              />
+              <span>
+                <strong>Activo.</strong> Un producto apagado no aparece en ventas ni en
+                presupuestos, así que no se puede vender.
+              </span>
+            </label>
+            {!activoGuardado && motivoNo && (
+              <p className="mt-1 text-[11px] text-warning" data-testid="motivo-no-activar">
+                {motivoNo}
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>

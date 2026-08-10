@@ -77,6 +77,15 @@ function FacturacionPage() {
 function EstadoGeneral({ cfg, listo }: { cfg: any; listo: boolean }) {
   const porVencer = cfg.dias_para_vencer !== null && cfg.dias_para_vencer < 30;
 
+  // Datos que van IMPRESOS en el comprobante. No frenan nada — se pueden cargar
+  // cuando el contador los pase — pero si falta alguno el comprobante sale
+  // incompleto, y eso recién se nota cuando ya está emitido. Por eso el aviso.
+  const faltanImpresos = [
+    !cfg.domicilio_fiscal && "domicilio fiscal",
+    !cfg.ingresos_brutos && "Ingresos Brutos",
+    !cfg.inicio_actividades && "inicio de actividades",
+  ].filter(Boolean) as string[];
+
   return (
     <SectionCard className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -103,6 +112,16 @@ function EstadoGeneral({ cfg, listo }: { cfg: any; listo: boolean }) {
           <strong>Los comprobantes NO tienen validez legal.</strong> Se apaga con la variable{" "}
           <code className="text-xs">INVOICING_MOCK_MODE=false</code>.
         </p>
+      )}
+
+      {faltanImpresos.length > 0 && (
+        <div className="flex items-start gap-2 p-3 rounded border border-warning/40 bg-warning/5 text-sm">
+          <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+          <div>
+            Falta cargar <strong>{faltanImpresos.join(", ")}</strong>. Van impresos en cada
+            comprobante: pedíselos al contador junto con el resto del trámite.
+          </div>
+        </div>
       )}
 
       {porVencer && (

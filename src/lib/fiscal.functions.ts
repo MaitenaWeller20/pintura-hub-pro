@@ -127,24 +127,6 @@ export const guardarConfigFiscal = createServerFn({ method: "POST" })
 
     const cuit = validarCuitEmisor(data.cuit);
 
-    // Con la facturación prendida, los datos que van IMPRESOS en el comprobante
-    // dejan de ser opcionales: una factura sin Ingresos Brutos o sin domicilio
-    // fiscal está incompleta, y el problema recién se ve cuando el comprobante ya
-    // se emitió. Se pide acá, que es el único momento en que hay alguien mirando.
-    if (data.habilitada) {
-      const faltan = [
-        !data.domicilio_fiscal?.trim() && "el domicilio fiscal",
-        !data.ingresos_brutos?.trim() && "el número de Ingresos Brutos",
-        !data.inicio_actividades && "la fecha de inicio de actividades",
-      ].filter(Boolean) as string[];
-      if (faltan.length) {
-        throw new Error(
-          `Para habilitar la facturación falta ${faltan.join(", ")}. ` +
-            "Son datos que van impresos en cada comprobante; te los tiene que dar el contador.",
-        );
-      }
-    }
-
     const { error } = await sb
       .from("fiscal_config")
       .update({ ...data, cuit })

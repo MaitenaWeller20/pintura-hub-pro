@@ -47,13 +47,8 @@ import {
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  GRUPOS,
-  SECCIONES,
-  primeraSeccion,
-  seccionDeRuta,
-  seccionesDe,
-} from "@/lib/secciones";
+import { Cargando } from "@/components/app/cargando";
+import { GRUPOS, SECCIONES, primeraSeccion, seccionDeRuta, seccionesDe } from "@/lib/secciones";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
@@ -62,6 +57,7 @@ export const Route = createFileRoute("/_authenticated")({
     if (error || !data.user) throw redirect({ to: "/auth" });
   },
   component: AuthenticatedLayout,
+  pendingComponent: Cargando,
 });
 
 // La lista de secciones vive en src/lib/secciones.ts, compartida con el guard de
@@ -115,13 +111,7 @@ function AuthenticatedLayout() {
     if (path === "/" && sinAcceso && aterrizaje) navigate({ to: aterrizaje.ruta });
   }, [path, sinAcceso, aterrizaje, navigate]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Cargando…
-      </div>
-    );
-  }
+  if (loading) return <Cargando />;
   if (!cu) return null;
 
   const handleLogout = async () => {

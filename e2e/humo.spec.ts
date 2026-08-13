@@ -8,6 +8,29 @@ import { test, expect, ingresar, vigilarConsola, RUTAS } from "./apoyo";
  * problemas que reportó la clienta.
  */
 
+test.describe("arranque de la app", () => {
+  test("el login no tira errores de hidratación", async ({ page }) => {
+    // React descartaba el árbol entero y lo volvía a pintar (error #418) porque
+    // el servidor mandaba un Suspense vacío y el cliente el formulario. Se ve
+    // como un parpadeo al cargar y ensucia la consola.
+    const errores = vigilarConsola(page);
+    await page.goto("/auth");
+    await expect(page.getByRole("button", { name: /ingresar/i })).toBeVisible();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    expect(errores.filter((e) => /hydrat|#418|#425/i.test(e))).toEqual([]);
+    expect(errores).toEqual([]);
+  });
+
+  test("entrar y salir funciona", async ({ page }) => {
+    const errores = vigilarConsola(page);
+    await ingresar(page);
+    await expect(page).toHaveURL(/localhost:\d+\/$/);
+    // El menú lateral es la señal de que el layout autenticado montó bien.
+    await expect(page.locator("[data-sidebar], aside").first()).toBeVisible();
+    expect(errores.filter((e) => /hydrat|#418|#425/i.test(e))).toEqual([]);
+  });
+});
+
 test.describe("todas las pantallas abren", () => {
   test.beforeEach(async ({ page }) => {
     await ingresar(page);

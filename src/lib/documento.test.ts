@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { fmtDocumento, coincideDocumento, filtroIlikeOr } from "./documento";
+import {
+  fmtDocumento,
+  coincideDocumento,
+  filtroIlikeOr,
+  filtroNombreODocumento,
+} from "./documento";
 
 describe("fmtDocumento", () => {
   it("muestra el CUIT con guiones aunque esté guardado en dígitos", () => {
@@ -80,6 +85,31 @@ describe("coincideDocumento", () => {
     expect(coincideDocumento({ razon_social: "J.V.S. SRL", cuit_dni: null }, "J.V.S.")).toBe(true);
   });
 
+  // Lo encontró una prueba E2E: buscó su cliente "ZZ-E2E-508" y recibió DOS
+  // filas, la suya y un GONZALO FERREYRA cuyo CUIT (20250807113) contiene 508.
+  // Con un nombre que lleva números —"Pinturería 2000", "Casa 3 Hermanos"— la
+  // búsqueda se llenaba de fichas ajenas.
+  describe("un nombre con números no pesca CUITs ajenos", () => {
+    const gonzalo = { razon_social: "GONZALO FERREYRA", cuit_dni: "20250807113" };
+
+    it("no matchea por los dígitos sueltos de un nombre", () => {
+      expect(coincideDocumento(gonzalo, "ZZ-E2E-508")).toBe(false);
+      expect(coincideDocumento(gonzalo, "Pinturería 2000")).toBe(false);
+    });
+
+    it("pero el que se llama así sí aparece", () => {
+      expect(coincideDocumento({ razon_social: "ZZ-E2E-508", cuit_dni: null }, "ZZ-E2E-508")).toBe(
+        true,
+      );
+    });
+
+    it("y buscar sólo números sigue encontrando por documento", () => {
+      expect(coincideDocumento(gonzalo, "508")).toBe(true);
+      expect(coincideDocumento(gonzalo, "20250807113")).toBe(true);
+      expect(coincideDocumento(gonzalo, "20-25080711-3")).toBe(true);
+    });
+  });
+
   // El buscador viejo concatenaba "nombre documento" en un solo string. Eso se
   // conserva, si no se perderían las consultas que cruzan los dos campos cuando
   // el documento es alfanumérico y no aporta dígitos para comparar.
@@ -87,7 +117,10 @@ describe("coincideDocumento", () => {
     const alfa = { razon_social: "ACME", cuit_dni: "AAB123456" };
     expect(coincideDocumento(alfa, "ACME AAB")).toBe(true);
     expect(coincideDocumento(jvs, "JVS SRL 307")).toBe(true); // cruza los dos campos
-    expect(coincideDocumento(jvs, "SRL 307")).toBe(true); // por dígitos
+    // Éste matchea por el string concatenado ("jvs srl 30715826077" contiene
+    // "srl 307"), no por dígitos: tiene letras, así que la comparación por
+    // documento no se aplica.
+    expect(coincideDocumento(jvs, "SRL 307")).toBe(true);
     expect(coincideDocumento(alfa, "ACME 999")).toBe(false); // no cruza nada
   });
 });
@@ -153,5 +186,40 @@ describe("filtroIlikeOr", () => {
       ]),
     ).toBe('razon_social.ilike."%JVS%"');
     expect(filtroIlikeOr([{ campo: "razon_social", valor: "" }])).toBe("");
+  });
+});
+
+describe("filtroNombreODocumento", () => {
+  it("busca por nombre y por documento cuando lo escrito son números", () => {
+    expect(filtroNombreODocumento("30-71582607-7")).toBe(
+      'razon_social.ilike."%30-71582607-7%",cuit_dni.ilike."%30715826077%"',
+    );
+  });
+
+  // Con letras compara el documento por el texto CRUDO, no por sus dígitos.
+  // Sin esto, buscar el proveedor "Pinturería 2000" traía por CUIT a cualquiera
+  // que tuviera 2000 adentro.
+  it("con letras compara el documento crudo, no los dígitos sueltos", () => {
+    expect(filtroNombreODocumento("Pinturería 2000")).toBe(
+      'razon_social.ilike."%Pinturería 2000%",cuit_dni.ilike."%Pinturería 2000%"',
+    );
+  });
+
+  // Y por eso un pasaporte se sigue encontrando entero: es el caso que se
+  // perdería si con letras simplemente no se buscara por documento.
+  it("encuentra un documento alfanumérico completo", () => {
+    expect(filtroNombreODocumento("AAB123456")).toBe(
+      'razon_social.ilike."%AAB123456%",cuit_dni.ilike."%AAB123456%"',
+    );
+  });
+
+  it("respeta el campo de nombre que se le pase", () => {
+    expect(filtroNombreODocumento("ACME", "nombre")).toBe(
+      'nombre.ilike."%ACME%",cuit_dni.ilike."%ACME%"',
+    );
+  });
+
+  it("sin nada que buscar no filtra", () => {
+    expect(filtroNombreODocumento("   ")).toBeNull();
   });
 });

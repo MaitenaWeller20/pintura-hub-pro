@@ -131,7 +131,8 @@ SQL
 )
 if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un comprobante en cero"; fallos=$((fallos+1)); else echo "  ✓ el comprobante en cero no pide cobro"; fi
 
-# Una nota de crédito se acredita a la cuenta, no se paga en el momento.
+# Una nota de crédito a CUENTA CORRIENTE se acredita al saldo: no se paga en el
+# momento y no pide cobro.
 FAC=$($PSQL -tA <<SQL 2>&1 | tail -1
 $(auth admin@local.test)
 SELECT venta_id::text FROM public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA_B'::public.tipo_comprobante,
@@ -144,12 +145,30 @@ SQL
 out=$($PSQL <<SQL 2>&1 || true
 $(auth admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_comprobante,
+  'CTA_CTE'::public.condicion_venta,
+  jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
+  '[]'::jsonb, 0, 'TEST-CONTADO', NULL, NULL, '$FAC'::uuid, gen_random_uuid());
+SQL
+)
+if echo "$out" | grep -qi "ERROR"; then echo "  ✗ rechazó una nota de crédito a cuenta corriente"; fallos=$((fallos+1)); else echo "  ✓ la nota de crédito a cuenta corriente no pide cobro"; fi
+
+# Pero AL CONTADO sí: es el espejo de la regla de arriba (migración 20260813120000).
+# Sin ningún pago no le devuelve la plata al cliente ni le acredita saldo — repone
+# stock y baja el facturado, y la plata no queda en ningún lado.
+#
+# Ojo con cómo se chequea: antes esto buscaba sólo "aunque sea una parte" y, al
+# cambiar la regla, el mensaje nuevo no matcheaba y el test seguía en verde
+# afirmando lo contrario de lo que pasaba. Ahora se busca el mensaje que
+# corresponde.
+out=$($PSQL <<SQL 2>&1 || true
+$(auth admin@local.test)
+SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
   '[]'::jsonb, 0, 'TEST-CONTADO', NULL, NULL, '$FAC'::uuid, gen_random_uuid());
 SQL
 )
-if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó una nota de crédito"; fallos=$((fallos+1)); else echo "  ✓ la nota de crédito no pide cobro"; fi
+if echo "$out" | grep -qi "devuelve la plata al cliente"; then echo "  ✓ la nota de crédito al contado pide con qué devolver"; else echo "  ✗ dejó pasar una nota al contado sin devolver nada"; fallos=$((fallos+1)); fi
 
 echo "── 5. Limpieza ───────────────────────────────────────────"
 $PSQL <<'SQL' > /dev/null

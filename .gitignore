@@ -50,3 +50,8 @@ supabase/.temp/
 .playwright-mcp/
 .tmp_check.txt
 *.tmp
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/

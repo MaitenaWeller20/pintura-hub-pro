@@ -57,9 +57,19 @@ export function coincideDocumento(
   const crudo = `${ficha.razon_social ?? ""} ${ficha.cuit_dni ?? ""}`.toLowerCase();
   if (crudo.includes(q.toLowerCase())) return true;
 
-  // Sólo tiene sentido buscar por documento si lo escrito tiene dígitos. Sin
-  // esta guarda, un nombre como "J.V.S." normalizaría a "" y matchearía con
-  // cualquier ficha.
+  // La búsqueda por dígitos sueltos SÓLO se aplica si lo escrito es un
+  // documento, o sea si no tiene ninguna letra.
+  //
+  // Antes se aplicaba siempre, y como compara "contiene", cualquier número
+  // dentro de un nombre pescaba fichas ajenas: buscar "Pinturería 2000" traía
+  // a todo el que tuviera 2000 en el CUIT. Lo encontró una prueba E2E, que
+  // buscó "ZZ-E2E-508" y recibió dos filas — la suya y un GONZALO FERREYRA con
+  // CUIT 20250807113, que contiene "508".
+  //
+  // Se comparan los alfanuméricos y no el texto crudo para que "30-71582607-7"
+  // y "30.715.826/7" sigan contando como documento.
+  if (/[A-Za-z]/.test(q)) return false;
+
   const qd = soloDigitos(q);
   if (!qd) return false;
 
@@ -77,6 +87,15 @@ export { filtroIlikeOr };
 /**
  * Filtro para buscar una ficha por nombre o documento contra PostgREST.
  * Devuelve `null` si no hay nada que buscar (para no aplicar filtro).
+ *
+ * Lo que se compara contra `cuit_dni` depende de si lo escrito tiene letras:
+ *
+ *   · **Sin letras** ("30-71582607-7") es un documento: se comparan los DÍGITOS,
+ *     así da igual cómo lo escriba la usuaria y cómo haya quedado guardado.
+ *   · **Con letras** se compara el texto CRUDO. Así un documento alfanumérico
+ *     —un pasaporte "AAB123456"— se sigue encontrando entero, pero un nombre con
+ *     números —"Pinturería 2000"— ya no pesca por CUIT a cualquiera que tenga
+ *     esos dígitos adentro, que es lo que pasaba comparando siempre por dígitos.
  */
 export function filtroNombreODocumento(
   consulta: string,
@@ -86,7 +105,7 @@ export function filtroNombreODocumento(
   if (!q) return null;
   const filtro = filtroIlikeOr([
     { campo: campoNombre, valor: q },
-    { campo: "cuit_dni", valor: soloDigitos(q) },
+    { campo: "cuit_dni", valor: /[A-Za-z]/.test(q) ? q : soloDigitos(q) },
   ]);
   return filtro || null;
 }

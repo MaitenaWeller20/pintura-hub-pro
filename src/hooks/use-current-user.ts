@@ -14,6 +14,12 @@ export interface ProfileWithRole {
   /** Qué secciones del menú ve. `null` = las de siempre. Ver src/lib/secciones.ts. */
   secciones: string[] | null;
   sucursal: { id: string; codigo: string; nombre: string; numero: string } | null;
+  /**
+   * En qué sucursales PUEDE trabajar. `sucursal` de arriba es en cuál está
+   * trabajando ahora (la activa). Casi todos tienen una sola; quien tenga más
+   * ve el selector para cambiarse. Ver la migración 20260813120000.
+   */
+  sucursalesHabilitadas: Array<{ id: string; nombre: string }>;
   role: "admin" | "empleado" | null;
   isAdmin: boolean;
   /**
@@ -47,6 +53,17 @@ export function useCurrentUser() {
         supabase.from("user_roles").select("role").eq("user_id", user.id),
       ]);
 
+      // Las sucursales donde puede trabajar. Se trae siempre: es lo que decide
+      // si se le muestra el selector para cambiarse.
+      const { data: habilitadas } = await supabase
+        .from("profile_sucursales")
+        .select("sucursal:sucursales(id, nombre)")
+        .eq("profile_id", user.id);
+      const sucursalesHabilitadas = ((habilitadas ?? []) as any[])
+        .map((h) => h.sucursal)
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.nombre.localeCompare(b.nombre));
+
       let sucursal = null;
       if (prof?.sucursal_id) {
         const { data: s } = await supabase
@@ -68,6 +85,7 @@ export function useCurrentUser() {
           },
           secciones: (prof as any)?.secciones ?? null,
           sucursal,
+          sucursalesHabilitadas,
           role,
           isAdmin: role === "admin",
           puedeVenderSinStock: role === "admin" || (prof as any)?.permite_venta_sin_stock === true,

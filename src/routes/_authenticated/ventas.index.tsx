@@ -33,6 +33,42 @@ export const Route = createFileRoute("/_authenticated/ventas/")({
   component: VentasList,
 });
 
+/** Los comprobantes que `anular_venta` acepta. */
+const ANULABLES = [
+  "FACTURA_A",
+  "FACTURA_B",
+  "FACTURA_C",
+  "REMITO",
+  "REMITO_OBRA",
+  "FAC_INTERNA_CTA_CTE",
+];
+
+/**
+ * Las notas FISCALES no se anulan: se corrigen con otra nota.
+ *
+ * La excepción es la nota de crédito INTERNA cargada A MANO —sin CAE y sin
+ * factura asociada—, que nunca se declaró a AFIP: no hay nada que rectificar con
+ * un documento compensatorio, así que se revierte y listo. Sin esto, una nota
+ * cargada por error quedaba para siempre, con el stock ya repuesto y el crédito
+ * ya dado, y el único arreglo era SQL a mano contra producción.
+ *
+ * Quedan afuera las notas internas que generó una ANULACIÓN: esas no son un
+ * documento aparte sino la mitad de una anulación que ya devolvió el stock y ya
+ * resolvió la plata. Revertirlas descuadraría las dos cosas. Cuáles son las
+ * averigua `generadasPorAnulacion` (ver más abajo). El mismo criterio está en
+ * `anular_venta`, que es donde manda de verdad: esto sólo evita ofrecer un botón
+ * que va a fallar.
+ */
+function sePuedeAnular(v: any, generadasPorAnulacion: Set<string>): boolean {
+  if (ANULABLES.includes(v.tipo_comprobante)) return true;
+  return (
+    v.tipo_comprobante === "NOTA_CREDITO" &&
+    !v.cae &&
+    esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+    !generadasPorAnulacion.has(v.id)
+  );
+}
+
 function VentasList() {
   const { data: cu } = useCurrentUser();
   const qc = useQueryClient();
@@ -65,6 +101,44 @@ function VentasList() {
   const filtered = useMemo(() => ventas.filter((v:any) =>
     !q || `${v.numero_comprobante} ${v.cliente?.razon_social ?? ""}`.toLowerCase().includes(q.toLowerCase())
   ), [ventas, q]);
+
+  /**
+   * Cuáles de las notas internas en pantalla las generó una ANULACIÓN.
+   *
+   * Esas no se pueden anular (ver sePuedeAnular). Va en una consulta aparte y no
+   * en un embed de la principal porque PostgREST no resuelve la auto-referencia
+   * de `ventas.venta_anulada_por` por nombre de constraint: devuelve PGRST200 y
+   * se cae la pantalla entera. Acá se pregunta al revés y sólo por los ids
+   * candidatos, así que es una consulta chica y sólo cuando hace falta.
+   */
+  const idsNotasInternas = useMemo(
+    () =>
+      ventas
+        .filter(
+          (v: any) => v.tipo_comprobante === "NOTA_CREDITO" && !v.cae && !v.afip_cbte_asoc_id,
+        )
+        .map((v: any) => v.id as string),
+    [ventas],
+  );
+  const { data: generadasPorAnulacion = new Set<string>() } = useQuery({
+    queryKey: ["nc-de-anulacion", idsNotasInternas],
+    enabled: idsNotasInternas.length > 0,
+    queryFn: async () => {
+      // De a 50. Un `.in()` con los 200 ids de la página son ~7,4 KB sólo de
+      // UUIDs en la URL, y hay proxies que cortan la request line en 8 KB: el
+      // día que la lista se llene de notas internas volvería a romperse
+      // /ventas, que es justo lo que pasó con el embed que había acá antes.
+      const encontradas = new Set<string>();
+      for (let i = 0; i < idsNotasInternas.length; i += 50) {
+        const { data } = await supabase
+          .from("ventas")
+          .select("venta_anulada_por")
+          .in("venta_anulada_por", idsNotasInternas.slice(i, i + 50));
+        for (const r of data ?? []) encontradas.add((r as any).venta_anulada_por as string);
+      }
+      return encontradas;
+    },
+  });
 
   const anular = useMutation({
     mutationFn: async (id: string) => anularFn({ data: { venta_id: id } }),
@@ -206,8 +280,7 @@ function VentasList() {
                     : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
                 </Button>
               )}
-              {/* anular_venta sólo acepta facturas: las notas se corrigen con otra nota. */}
-              {v.estado === "ACTIVA" && ["FACTURA_A","FACTURA_B","FACTURA_C","REMITO","REMITO_OBRA","FAC_INTERNA_CTA_CTE"].includes(v.tipo_comprobante) && (
+              {v.estado === "ACTIVA" && sePuedeAnular(v, generadasPorAnulacion) && (
                 <Button size="sm" variant="ghost" onClick={()=>setAnularDlg(v)}><Ban className="h-3.5 w-3.5 text-destructive"/></Button>
               )}
             </TableCell>
@@ -219,8 +292,23 @@ function VentasList() {
 
       <Dialog open={!!anularDlg} onOpenChange={(v)=>!v && setAnularDlg(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Anular venta</DialogTitle></DialogHeader>
-          <p className="text-sm">¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se generará una nota de crédito y se devolverá el stock automáticamente.</p>
+          <DialogHeader>
+            <DialogTitle>
+              Anular {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? "nota de crédito" : "venta"}
+            </DialogTitle>
+          </DialogHeader>
+          {/* Anular una nota interna NO genera otra nota: la revierte. Decir lo
+              contrario haría buscar en el listado un comprobante que no existe. */}
+          {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? (
+            <p className="text-sm">
+              ¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se va a revertir
+              todo lo que hizo: sale de nuevo el stock que había devuelto, se le saca el crédito al
+              cliente y la plata devuelta vuelve a la caja de hoy. No se genera ningún comprobante
+              nuevo.
+            </p>
+          ) : (
+            <p className="text-sm">¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se generará una nota de crédito y se devolverá el stock automáticamente.</p>
+          )}
           {/* Si el comprobante ya se declaró, anularlo acá NO lo anula ante AFIP:
               eso lo hace la nota de crédito, que es un segundo paso y hay que
               emitirla. Mientras tanto AFIP sigue teniendo la factura como válida. */}

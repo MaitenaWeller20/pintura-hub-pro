@@ -27,7 +27,11 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
-import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
+import {
+  filtroProducto,
+  ordenarProductosPorRelevancia,
+  TOPE_BUSQUEDA_PRODUCTOS,
+} from "@/lib/postgrest";
 import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
@@ -80,7 +84,7 @@ function NuevoPresupuesto() {
     queryFn: async () => {
       const filtro = filtroProducto(busqueda);
       if (!filtro) return [] as any[];
-      return ((
+      const filas = ((
         await supabase
           .from("productos")
           .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
@@ -90,6 +94,9 @@ function NuevoPresupuesto() {
           .order("codigo")
           .limit(TOPE_BUSQUEDA_PRODUCTOS)
       ).data ?? []) as any[];
+      // Por código el que se busca queda sepultado: "blanco" matchea 161 en
+      // producción. Primero lo que arranca con lo tipeado.
+      return ordenarProductosPorRelevancia(filas, busqueda);
     },
   });
 
@@ -250,7 +257,11 @@ function NuevoPresupuesto() {
           {isFetching && <Loader2 className="h-4 w-4 animate-spin absolute right-2 top-3" />}
         </div>
         {busqueda.trim().length >= 2 && resultados.length > 0 && (
-          <div className="rounded-lg border border-border max-h-56 overflow-auto mt-2">
+          <div
+            /* Alto en vh: max-h-56 mostraba ~6 filas y con 161 resultados era
+               imposible recorrerlos. */
+            className="rounded-lg border border-border max-h-[min(50vh,24rem)] overflow-auto mt-2"
+          >
             {resultados.map((p: any) => (
               <button
                 key={p.id}
@@ -267,12 +278,19 @@ function NuevoPresupuesto() {
             ))}
           </div>
         )}
-        {/* Que la lista esté cortada tiene que verse. Antes se cortaba en 10 en
-            silencio y parecía que el producto no existía. */}
-        {resultados.length >= TOPE_BUSQUEDA_PRODUCTOS && (
+        {busqueda.trim().length >= 2 && resultados.length > 0 && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Se muestran los primeros {TOPE_BUSQUEDA_PRODUCTOS}. Escribí un poco más para afinar la
-            búsqueda.
+            {resultados.length === 1 ? "1 producto" : `${resultados.length} productos`}
+            {resultados.length > 6 && " · scrolleá la lista para verlos todos"}
+          </p>
+        )}
+        {/* Que la lista esté cortada tiene que verse. Antes se cortaba en 10 en
+            silencio y parecía que el producto no existía. Con el tope en 500
+            esto ya casi no aparece: la búsqueda más poblada del catálogo
+            devuelve 289. */}
+        {resultados.length >= TOPE_BUSQUEDA_PRODUCTOS && (
+          <p className="mt-2 text-xs text-warning">
+            Hay más de {TOPE_BUSQUEDA_PRODUCTOS}. Escribí un poco más para afinar la búsqueda.
           </p>
         )}
         {busqueda.trim().length >= 2 && !isFetching && resultados.length === 0 && (

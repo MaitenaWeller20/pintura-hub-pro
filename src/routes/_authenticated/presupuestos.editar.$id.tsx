@@ -20,7 +20,11 @@ import {
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
 import { conIva } from "@/lib/fiscal/iva";
-import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
+import {
+  filtroProducto,
+  ordenarProductosPorRelevancia,
+  TOPE_BUSQUEDA_PRODUCTOS,
+} from "@/lib/postgrest";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
 
@@ -134,7 +138,7 @@ function EditarPresupuesto() {
     queryFn: async () => {
       const filtro = filtroProducto(busqueda);
       if (!filtro) return [] as any[];
-      return ((
+      const filas = ((
         await supabase
           .from("productos")
           .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
@@ -144,6 +148,9 @@ function EditarPresupuesto() {
           .order("codigo")
           .limit(TOPE_BUSQUEDA_PRODUCTOS)
       ).data ?? []) as any[];
+      // Por código el que se busca queda sepultado: "blanco" matchea 161 en
+      // producción. Primero lo que arranca con lo tipeado.
+      return ordenarProductosPorRelevancia(filas, busqueda);
     },
   });
 
@@ -359,7 +366,11 @@ function EditarPresupuesto() {
           {isFetching && <Loader2 className="h-4 w-4 animate-spin absolute right-2 top-3" />}
         </div>
         {busqueda.trim().length >= 2 && resultados.length > 0 && (
-          <div className="rounded-lg border border-border max-h-56 overflow-auto mt-2">
+          <div
+            /* Alto en vh: max-h-56 mostraba ~6 filas y con 161 resultados era
+               imposible recorrerlos. */
+            className="rounded-lg border border-border max-h-[min(50vh,24rem)] overflow-auto mt-2"
+          >
             {resultados.map((r: any) => (
               <button
                 key={r.id}

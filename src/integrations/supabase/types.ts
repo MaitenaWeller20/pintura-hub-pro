@@ -207,6 +207,7 @@ export type Database = {
           direccion: string | null
           email: string | null
           es_generico: boolean
+          es_obra: boolean
           id: string
           limite_credito: number | null
           razon_social: string
@@ -223,6 +224,7 @@ export type Database = {
           direccion?: string | null
           email?: string | null
           es_generico?: boolean
+          es_obra?: boolean
           id?: string
           limite_credito?: number | null
           razon_social: string
@@ -239,6 +241,7 @@ export type Database = {
           direccion?: string | null
           email?: string | null
           es_generico?: boolean
+          es_obra?: boolean
           id?: string
           limite_credito?: number | null
           razon_social?: string
@@ -1290,6 +1293,46 @@ export type Database = {
           },
         ]
       }
+      profile_sucursales: {
+        Row: {
+          creado_en: string
+          profile_id: string
+          sucursal_id: string
+        }
+        Insert: {
+          creado_en?: string
+          profile_id: string
+          sucursal_id: string
+        }
+        Update: {
+          creado_en?: string
+          profile_id?: string
+          sucursal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_sucursales_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_sucursales_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "profile_sucursales_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           activo: boolean
@@ -2166,6 +2209,66 @@ export type Database = {
           },
         ]
       }
+      sucursal_activa_log: {
+        Row: {
+          cambiado_en: string
+          desde_sucursal_id: string | null
+          hacia_sucursal_id: string
+          id: string
+          profile_id: string
+        }
+        Insert: {
+          cambiado_en?: string
+          desde_sucursal_id?: string | null
+          hacia_sucursal_id: string
+          id?: string
+          profile_id: string
+        }
+        Update: {
+          cambiado_en?: string
+          desde_sucursal_id?: string | null
+          hacia_sucursal_id?: string
+          id?: string
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sucursal_activa_log_desde_sucursal_id_fkey"
+            columns: ["desde_sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "sucursal_activa_log_desde_sucursal_id_fkey"
+            columns: ["desde_sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sucursal_activa_log_hacia_sucursal_id_fkey"
+            columns: ["hacia_sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "sucursal_activa_log_hacia_sucursal_id_fkey"
+            columns: ["hacia_sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sucursal_activa_log_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sucursales: {
         Row: {
           activa: boolean
@@ -2810,6 +2913,10 @@ export type Database = {
         }
         Returns: Json
       }
+      cambiar_sucursal_activa: {
+        Args: { p_sucursal_id: string }
+        Returns: undefined
+      }
       cc_registrar_por_venta: {
         Args: { _venta_id: string }
         Returns: undefined
@@ -2836,6 +2943,7 @@ export type Database = {
           total_esperado: number
         }[]
       }
+      clave_nombre: { Args: { v: string }; Returns: string }
       cobrar_saldo_venta: {
         Args: {
           p_detalle?: Json
@@ -3038,6 +3146,7 @@ export type Database = {
         Returns: string
       }
       normalizar_codigo: { Args: { p_texto: string }; Returns: string }
+      normalizar_cuit_dni: { Args: { v: string }; Returns: string }
       producto_tiene_presupuesto: {
         Args: { _producto_id: string }
         Returns: boolean
@@ -3091,6 +3200,15 @@ export type Database = {
         }
         Returns: string
       }
+      resetear_transaccional_conservando: {
+        Args: {
+          p_confirmar?: boolean
+          p_dias: string[]
+          p_revertir_stock?: boolean
+        }
+        Returns: Json
+      }
+      resolver_cliente_obra: { Args: { p_nombre: string }; Returns: string }
       restaurar_productos: { Args: { p_ids: string[] }; Returns: number }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

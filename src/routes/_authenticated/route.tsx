@@ -44,16 +44,19 @@ import {
   FileText,
   Lock,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  GRUPOS,
-  SECCIONES,
-  primeraSeccion,
-  seccionDeRuta,
-  seccionesDe,
-} from "@/lib/secciones";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { toast } from "sonner";
+import { Cargando } from "@/components/app/cargando";
+import { GRUPOS, SECCIONES, primeraSeccion, seccionDeRuta, seccionesDe } from "@/lib/secciones";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
@@ -62,6 +65,7 @@ export const Route = createFileRoute("/_authenticated")({
     if (error || !data.user) throw redirect({ to: "/auth" });
   },
   component: AuthenticatedLayout,
+  pendingComponent: Cargando,
 });
 
 // La lista de secciones vive en src/lib/secciones.ts, compartida con el guard de
@@ -95,6 +99,52 @@ function isActive(to: string, path: string) {
   return to === "/" ? path === "/" : path === to || path.startsWith(to + "/");
 }
 
+/**
+ * Cambiar en qué sucursal está trabajando, para quien trabaja en más de una.
+ *
+ * Sólo aparece si tiene más de una habilitada. La barrera real está en la base
+ * (el trigger `guard_profiles_columnas`): esto es la comodidad, no la seguridad.
+ */
+function SelectorSucursal({ cu }: { cu: NonNullable<ReturnType<typeof useCurrentUser>["data"]> }) {
+  const [cambiando, setCambiando] = useState(false);
+
+  const cambiar = async (id: string) => {
+    if (id === cu.sucursal?.id) return;
+    setCambiando(true);
+    const { error } = await supabase.rpc("cambiar_sucursal_activa", { p_sucursal_id: id });
+    if (error) {
+      setCambiando(false);
+      toast.error(error.message);
+      return;
+    }
+    // Recarga entera, no invalidación selectiva: las queryKeys de ventas,
+    // presupuestos, remitos y compras no incluyen la sucursal, así que sin esto
+    // quedarían a la vista filas de la sucursal anterior. La RLS protege la
+    // próxima consulta, pero no borra lo que el navegador ya tiene.
+    window.location.reload();
+  };
+
+  return (
+    <div className="mt-2">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+        Trabajando en
+      </p>
+      <Select value={cu.sucursal?.id ?? ""} onValueChange={cambiar} disabled={cambiando}>
+        <SelectTrigger className="h-8 text-xs" data-testid="selector-sucursal">
+          <SelectValue placeholder="Elegí…" />
+        </SelectTrigger>
+        <SelectContent>
+          {cu.sucursalesHabilitadas.map((s) => (
+            <SelectItem key={s.id} value={s.id} className="text-xs">
+              {s.nombre}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function AuthenticatedLayout() {
   const { data: cu, loading } = useCurrentUser();
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -115,13 +165,7 @@ function AuthenticatedLayout() {
     if (path === "/" && sinAcceso && aterrizaje) navigate({ to: aterrizaje.ruta });
   }, [path, sinAcceso, aterrizaje, navigate]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Cargando…
-      </div>
-    );
-  }
+  if (loading) return <Cargando />;
   if (!cu) return null;
 
   const handleLogout = async () => {
@@ -188,12 +232,18 @@ function AuthenticatedLayout() {
                 >
                   {cu.isAdmin ? "ADMIN" : "EMPLEADO"}
                 </Badge>
-                {cu.sucursal && (
+                {cu.sucursal && cu.sucursalesHabilitadas.length <= 1 && (
                   <span className="text-muted-foreground flex items-center gap-1">
                     <Building2 className="h-3 w-3" /> {cu.sucursal.nombre}
                   </span>
                 )}
               </div>
+
+              {/* Quien trabaja en más de una sucursal la elige acá. La que está
+                  activa manda en todo: dónde se descuenta el stock, qué caja
+                  recibe la plata y qué numeración toma el comprobante. Por eso
+                  se muestra siempre, no escondida en un menú. */}
+              {cu.sucursalesHabilitadas.length > 1 && <SelectorSucursal cu={cu} />}
               <Button
                 variant="ghost"
                 size="sm"

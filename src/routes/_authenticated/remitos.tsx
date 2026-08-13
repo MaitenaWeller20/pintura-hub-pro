@@ -24,7 +24,6 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -33,7 +32,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Check, X, Printer, ArrowRight, Loader2 } from "lucide-react";
+import { Plus, Trash2, Check, X, Printer, ArrowRight, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
@@ -254,7 +253,6 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
     Array<{ producto_id: string; codigo: string; nombre: string; cantidad: number }>
   >([]);
   const [pq, setPq] = useState("");
-  const [showP, setShowP] = useState(false);
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -356,42 +354,62 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
         </div>
 
         <div>
-          <div className="flex justify-between mb-2">
-            <Label>Productos *</Label>
-            <Popover open={showP} onOpenChange={setShowP}>
-              <PopoverTrigger asChild>
-                <Button size="sm" variant="outline">
-                  <Plus className="h-3 w-3 mr-1" /> Agregar
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[92vw] sm:w-[400px] p-2">
-                <Input
-                  placeholder="Buscar…"
-                  value={pq}
-                  onChange={(e) => setPq(e.target.value)}
-                  autoFocus
-                />
-                <div className="max-h-60 overflow-auto mt-2">
-                  {prods.map((p: any) => (
-                    <button
-                      key={p.id}
-                      className="w-full text-left p-2 hover:bg-accent rounded text-sm"
-                      onClick={() => {
-                        setItems((i) => [
-                          ...i,
-                          { producto_id: p.id, codigo: p.codigo, nombre: p.nombre, cantidad: 1 },
-                        ]);
-                        setPq("");
-                        setShowP(false);
-                      }}
-                    >
-                      {p.codigo} — {p.nombre}
-                    </button>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
+          <Label>Productos *</Label>
+
+          {/* El buscador va ADENTRO del diálogo, no en un popover.
+              Estaba anclado al botón "Agregar", que es chico y está pegado al
+              borde: el panel abría hacia afuera, se salía del diálogo por la
+              derecha y por abajo, y tapaba la tabla que venía a llenar.
+              Es el mismo patrón que ya usa Presupuestos, que entra siempre. */}
+          <div className="relative mt-1">
+            <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="Buscar por código o nombre…"
+              value={pq}
+              onChange={(e) => setPq(e.target.value)}
+              data-testid="remito-buscar-producto"
+            />
           </div>
+
+          {pq.trim().length >= 2 && prods.length > 0 && (
+            <div className="mt-1 max-h-48 overflow-auto rounded-lg border border-border">
+              {prods.map((p: any) => {
+                const yaEsta = items.some((i) => i.producto_id === p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={yaEsta}
+                    className="flex w-full gap-3 p-2 text-left text-sm hover:bg-muted/50 disabled:opacity-50"
+                    onClick={() => {
+                      setItems((i) => [
+                        ...i,
+                        { producto_id: p.id, codigo: p.codigo, nombre: p.nombre, cantidad: 1 },
+                      ]);
+                      setPq("");
+                    }}
+                  >
+                    <span className="w-28 shrink-0 font-mono text-xs">{p.codigo}</span>
+                    <span className="truncate">{p.nombre}</span>
+                    {yaEsta && <span className="ml-auto shrink-0 text-xs">ya está</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* Que la lista esté cortada tiene que verse: si no, parece que el
+              producto no existe. */}
+          {prods.length >= TOPE_BUSQUEDA_PRODUCTOS && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Se muestran los primeros {TOPE_BUSQUEDA_PRODUCTOS}. Escribí un poco más para afinar.
+            </p>
+          )}
+          {pq.trim().length >= 2 && prods.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Ningún producto con ese código o nombre.
+            </p>
+          )}
           <Table>
             <TableHeader>
               <TableRow>

@@ -56,16 +56,35 @@ function UsuariosPage() {
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
 
-  const { data: usuarios = [], isLoading } = useQuery({
+  const {
+    data: usuarios = [],
+    isLoading,
+    error: errorUsuarios,
+  } = useQuery({
     queryKey: ["usuarios"],
     queryFn: async () => {
-      const { data: profiles = [] } = await supabase
+      // `sucursales!profiles_sucursal_id_fkey` y no `sucursales` a secas: desde
+      // que existe `profile_sucursales` hay DOS caminos entre profiles y
+      // sucursales, y PostgREST no adivina cuál se quiere — devuelve PGRST201 y
+      // falla la consulta ENTERA. Acá interesa la sucursal activa, la que cuelga
+      // de profiles.sucursal_id.
+      const { data: profiles, error } = await supabase
         .from("profiles")
-        .select("*, sucursal:sucursales(nombre)")
+        .select("*, sucursal:sucursales!profiles_sucursal_id_fkey(nombre)")
         .order("username");
+      // Se relanza en vez de devolver []. Cuando esto falló, la pantalla mostró
+      // "No hay usuarios" con la base llena y nadie se enteró de que había un
+      // error: un fallo tiene que verse.
+      if (error) throw new Error(`No se pudieron traer los usuarios: ${error.message}`);
+
       const ids = (profiles ?? []).map((p: any) => p.id);
       if (ids.length === 0) return [];
-      const { data: roles = [] } = await supabase.from("user_roles").select("*").in("user_id", ids);
+      const { data: roles, error: eRoles } = await supabase
+        .from("user_roles")
+        .select("*")
+        .in("user_id", ids);
+      if (eRoles) throw new Error(`No se pudieron traer los roles: ${eRoles.message}`);
+
       return (profiles ?? []).map((p: any) => ({
         ...p,
         role: (roles ?? []).find((r: any) => r.user_id === p.id)?.role ?? null,
@@ -135,7 +154,13 @@ function UsuariosPage() {
         columns={["Usuario", "Nombre", "Rol", "Sucursal", "Estado", ""]}
         loading={isLoading}
         isEmpty={usuarios.length === 0}
-        empty={{ text: "No hay usuarios." }}
+        empty={{
+          // Si la consulta falló, decirlo. "No hay usuarios" con la base llena
+          // manda a buscar el problema al lado equivocado.
+          text: errorUsuarios
+            ? `No se pudo cargar la lista: ${(errorUsuarios as Error).message}`
+            : "No hay usuarios.",
+        }}
       >
         {usuarios.map((u: any) => (
           <TableRow key={u.id}>

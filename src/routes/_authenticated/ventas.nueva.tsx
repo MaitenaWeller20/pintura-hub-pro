@@ -30,7 +30,8 @@ import { Badge } from "@/components/ui/badge";
 import { NumberInput } from "@/components/ui/number-input";
 import { fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { filtroNombreODocumento, fmtDocumento } from "@/lib/documento";
-import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2 } from "lucide-react";
+import { TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
+import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearVenta } from "@/lib/ventas.functions";
@@ -91,7 +92,6 @@ function NuevaVenta() {
   const [pagos, setPagos] = useState<PagoRow[]>([]);
   const [prodQuery, setProdQuery] = useState("");
   const [showCli, setShowCli] = useState(false);
-  const [showProd, setShowProd] = useState(false);
   // Una key estable por vida del formulario: reintentar el mismo submit no duplica
   // la venta. Si el submit falla por validación, la venta no se creó y el reintento
   // procede normal; sólo hace short-circuit cuando la venta realmente quedó guardada.
@@ -194,7 +194,6 @@ function NuevaVenta() {
       },
     ]);
     setProdQuery("");
-    setShowProd(false);
   };
 
   const updateItem = (i: number, k: keyof ItemRow, v: any) => {
@@ -828,55 +827,78 @@ function NuevaVenta() {
 
       {!esNotaDebito && (
         <SectionCard className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm">Productos</h3>
-            <Popover open={showProd} onOpenChange={setShowProd}>
-              <PopoverTrigger asChild>
-                <Button size="sm" disabled={!effSucursal}>
-                  <Plus className="h-4 w-4 mr-1" /> Agregar
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[92vw] sm:w-[450px] p-2">
-                <Input
-                  placeholder="Código o nombre…"
-                  value={prodQuery}
-                  onChange={(e) => setProdQuery(e.target.value)}
-                  autoFocus
-                />
-                <div className="max-h-72 overflow-auto mt-2">
-                  {productosBusqueda.map((p: any) => {
-                    const stock =
-                      (p.stock_sucursal as any[])?.find((s) => s.sucursal_id === effSucursal)
-                        ?.cantidad ?? 0;
-                    return (
-                      <button
-                        key={p.id}
-                        className="w-full text-left p-2 hover:bg-accent rounded text-sm"
-                        onClick={() => addProducto(p)}
-                      >
-                        <div className="flex justify-between">
-                          <span className="font-medium">
-                            {p.codigo} — {p.nombre}
-                          </span>
-                          <span className="text-xs">Stock: {stock}</span>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {fmtMoney(p.precio_sin_iva)} s/IVA · IVA {p.iva_porcentaje}%
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {productosBusqueda.length === 0 && (
-                    <p className="text-xs text-muted-foreground p-2">
-                      {productosCatalogo.length === 0
-                        ? "No hay productos activos."
-                        : "Ningún producto coincide con la búsqueda."}
-                    </p>
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
+          <h3 className="font-semibold text-sm">Productos</h3>
+
+          {/* El buscador va ADENTRO de la tarjeta, no en un popover colgado del
+              botón "Agregar". Ese botón está pegado al borde derecho, así que el
+              panel se salía de la tarjeta y tapaba media pantalla. Además ahora
+              se escribe directo, sin tener que apretar nada primero: es lo que
+              se hace todo el día en el mostrador. */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="Buscar producto por código o nombre…"
+              value={prodQuery}
+              onChange={(e) => setProdQuery(e.target.value)}
+              disabled={!effSucursal}
+              data-testid="venta-buscar-producto"
+            />
           </div>
+          {!effSucursal && (
+            <p className="text-xs text-muted-foreground">
+              Elegí la sucursal para ver el stock de cada producto.
+            </p>
+          )}
+
+          {!!effSucursal && prodQuery.trim().length > 0 && (
+            <div className="max-h-72 overflow-auto rounded-lg border border-border">
+              {productosBusqueda.slice(0, TOPE_BUSQUEDA_PRODUCTOS).map((p: any) => {
+                const stock =
+                  (p.stock_sucursal as any[])?.find((s) => s.sucursal_id === effSucursal)
+                    ?.cantidad ?? 0;
+                const yaEsta = items.some((it) => it.producto_id === p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="w-full p-2 text-left text-sm hover:bg-muted/50"
+                    onClick={() => {
+                      addProducto(p);
+                      setProdQuery("");
+                    }}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <span className="w-28 shrink-0 font-mono text-xs">{p.codigo}</span>
+                      <span className="truncate font-medium">{p.nombre}</span>
+                      <span
+                        className={`ml-auto shrink-0 text-xs ${stock <= 0 ? "text-destructive" : "text-muted-foreground"}`}
+                      >
+                        Stock: {stock}
+                      </span>
+                    </div>
+                    <div className="pl-30 text-xs text-muted-foreground">
+                      {fmtMoney(p.precio_sin_iva)} s/IVA · IVA {p.iva_porcentaje}%
+                      {yaEsta && " · ya está en el comprobante"}
+                    </div>
+                  </button>
+                );
+              })}
+              {productosBusqueda.length === 0 && (
+                <p className="p-2 text-xs text-muted-foreground">
+                  {productosCatalogo.length === 0
+                    ? "No hay productos activos."
+                    : "Ningún producto con ese código o nombre."}
+                </p>
+              )}
+              {productosBusqueda.length > TOPE_BUSQUEDA_PRODUCTOS && (
+                <p className="border-t border-border p-2 text-xs text-muted-foreground">
+                  Se muestran los primeros {TOPE_BUSQUEDA_PRODUCTOS} de {productosBusqueda.length}.
+                  Escribí un poco más para afinar.
+                </p>
+              )}
+            </div>
+          )}
           {items.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">Agregá productos.</p>
           ) : (

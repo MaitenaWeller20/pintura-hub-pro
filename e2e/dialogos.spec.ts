@@ -71,4 +71,33 @@ test.describe("diálogos en pantalla baja", () => {
     // Falta el destino: el diálogo lo tiene que DECIR, no sólo deshabilitar.
     await expect(dialogo).toContainText(/elegí la sucursal de destino/i);
   });
+
+  test("remitos: el buscador de productos no se sale del diálogo", async ({ page }) => {
+    // Estaba en un popover anclado al botón "Agregar": abría hacia afuera, se
+    // salía del diálogo por la derecha y por abajo, y tapaba la tabla.
+    await page.goto("/remitos");
+    await page.getByRole("button", { name: /^Nuevo remito$/ }).click();
+
+    const dialogo = page.getByRole("dialog");
+    await dialogo.getByTestId("remito-buscar-producto").fill("ar");
+    await page.waitForTimeout(1500);
+
+    const caja = (await dialogo.boundingBox())!;
+    const alto = page.viewportSize()!.height;
+    expect(caja.y, "el diálogo se sale por arriba").toBeGreaterThanOrEqual(-1);
+    expect(caja.y + caja.height, "el diálogo se sale por abajo").toBeLessThanOrEqual(alto + 1);
+
+    // Los resultados tienen que quedar DENTRO del ancho del diálogo.
+    const primerResultado = dialogo.locator("button", { hasText: /^\d{3}/ }).first();
+    await expect(primerResultado).toBeVisible();
+    const rb = (await primerResultado.boundingBox())!;
+    expect(rb.x, "el resultado arranca antes del diálogo").toBeGreaterThanOrEqual(caja.x - 1);
+    expect(rb.x + rb.width, "el resultado se pasa del diálogo").toBeLessThanOrEqual(
+      caja.x + caja.width + 1,
+    );
+
+    // Y elegirlo lo agrega a la tabla.
+    await primerResultado.click();
+    await expect(dialogo.locator("tbody tr")).toHaveCount(1);
+  });
 });

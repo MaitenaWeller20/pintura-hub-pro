@@ -52,6 +52,34 @@ se cargó en un ingreso.
 Clientes y proveedores de punta a punta. Crean fichas marcadas `ZZ-E2E-…` para
 que se distingan de datos reales de un vistazo.
 
+### `nota-credito.spec.ts` y `nota-credito-guardar.spec.ts`
+Que una nota de crédito se pueda hacer **sin factura asociada**, que la pantalla
+diga la verdad sobre lo que eso significa (queda como documento interno, no va a
+AFIP), que la nota de DÉBITO siga exigiendo la factura, y que una nota al contado
+sin ningún pago no se pueda guardar. El segundo archivo hace el recorrido
+completo y escribe en la base: es el que prueba el pedido tal como se hizo
+("que me deje guardar").
+
+### `responsive.spec.ts` + el proyecto `celular`
+La suite corre en dos proyectos: `escritorio` (1366×768, la máquina de la
+sucursal) y `celular` (un iPhone). El de celular corre sólo humo, diálogos y
+responsive: los ABMC y los flujos largos ya se cubren en escritorio y duplicarlos
+sería el doble de tiempo para probar la misma lógica.
+
+## Qué NO cubren las pruebas de base
+
+Las funciones de Postgres que mueven plata tienen su propio script, porque un
+test de UI no puede verificar un arqueo:
+
+- `scripts/test-venta-contado.sh` — la regla de que al contado se cobra algo.
+- `scripts/test-nota-credito-sin-factura.sh` — la nota sin factura, la anulación
+  de una nota interna, y que anular una nota pagada en una **caja ya cerrada** no
+  toque el arqueo de ese día.
+- `scripts/test-caja-y-saldos.sh`, `test-compras-plata.sh` y compañía.
+
+Corren contra la base local con `docker exec … psql` y siembran sus propios
+datos. Son los que hay que correr cuando se toca una RPC.
+
 ## Reglas al escribir una prueba nueva
 
 1. **Que falle antes de arreglar.** Una prueba que nunca vio el bug no prueba que
@@ -83,3 +111,15 @@ que se distingan de datos reales de un vistazo.
   — o sea, da falso verde. No sirve para un CI hasta que se limpie.
 - Las pruebas dependen de que la base local tenga datos (clientes, productos, un
   presupuesto). Con una base recién reseteada, algunas se saltean.
+- **La suite corre contra el dev server**, así que la consola trae advertencias
+  que React sólo emite en desarrollo. Con la suite entera corriendo seguida, el
+  server se satura y alguna aparece de a ratos, siempre en una pantalla distinta
+  y nunca al correr esa prueba sola. Las conocidas están en `RUIDO_ESPERADO`
+  (`e2e/apoyo.ts`) con el motivo escrito al lado. **No agregar nada ahí sin
+  antes intentar reproducirlo aislado**: si se reproduce, es un bug de verdad.
+  La cura de fondo sería correr la suite contra el build de producción, pero
+  `vite preview` no sirve para este proyecto (el build sale con nitro).
+- **Correr la suite con `caffeinate -dimsu`** (`caffeinate -dimsu npx playwright
+  test`). Si la laptop se suspende en el medio, los timeouts fallan en masa y
+  parece un desastre: una corrida dio 34 fallas en 5,4 horas y con `caffeinate`
+  dio 2 en 2,9 minutos.

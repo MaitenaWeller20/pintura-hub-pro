@@ -47,6 +47,14 @@ export default defineConfig({
         viewport: { width: 1366, height: 768 },
       },
     },
+    {
+      // Un celular de verdad. Corre sólo el humo y los diálogos: los ABMC y los
+      // flujos largos ya se cubren en escritorio y duplicarlos acá sería el
+      // doble de tiempo para probar la misma lógica.
+      name: "celular",
+      testMatch: /(humo|dialogos|responsive)\.spec\.ts/,
+      use: { ...devices["iPhone 14"] },
+    },
   ],
 
   webServer: {

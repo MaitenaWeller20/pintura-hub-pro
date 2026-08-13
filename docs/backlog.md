@@ -52,7 +52,73 @@ cuentas corrientes), el menú lateral, los formularios de dos columnas y los
 diálogos. Y agregar un proyecto de Playwright con viewport móvil para que quede
 cubierto.
 
-## 4. Accesibilidad: 146 labels sin asociar a su input
+## 4. Emitir a AFIP una nota sin factura puntual (período asociado)
+
+**Qué falta.** Hoy una nota de crédito sin comprobante asociado se puede guardar,
+pero queda como documento **interno**: no se manda a AFIP. Es lo que hace falta
+para la devolución cuya factura salió del sistema viejo, pero no rectifica nada
+ante AFIP.
+
+**Lo que dice la norma.** Según la **RG 4540/2019**, una NC/ND electrónica tiene
+que informar **o** el/los comprobante(s) asociado(s) (`CbtesAsoc`) **o** el
+período asociado (`PeriodoAsoc`, desde/hasta) — uno u otro, no los dos. O sea que
+la nota sin factura puntual **sí se puede emitir legalmente**, informando el
+período. Ese es el camino correcto para rectificar una factura de 3C.
+
+**Por qué no se hizo.** `arca.ts` no tiene el modelo: `DatosCae` sólo acepta
+`comprobantesAsociados` (`arca.ts:35-48`) y sólo serializa `CbtesAsoc`
+(`arca.ts:246-252`). Y la facturación está en `MOCK` porque el certificado no
+salió, así que un cambio de payload no se puede validar contra homologación.
+Mandar a producción un payload fiscal que nunca vio homologación es peor que no
+mandarlo.
+
+**Cuándo.** Cuando esté el certificado. Ahí también hay que revisar la nota de
+DÉBITO sin factura, que hoy se rechaza: una ND por intereses de un período es
+fiscalmente válida, pero la pantalla calcula el recargo como porcentaje del total
+de una factura concreta y habría que rediseñarla.
+
+## 5. Notas sin mercadería (bonificaciones, ajustes de saldo)
+
+**Qué falta.** El sistema no puede expresar una nota de crédito que no mueva
+stock: `crear_venta` exige al menos un ítem con cantidad > 0 y repone stock por
+cada ítem de una `NOTA_CREDITO`. Una bonificación comercial o un ajuste de saldo
+cargados como nota inflarían el inventario.
+
+**Por qué importa.** Un descuento de fin de mes o el arreglo de un saldo viejo hoy
+no tienen forma de cargarse. Se descubrió revisando la nota sin factura y no se
+resolvió ahí porque es otro pedido: necesita decidir si la nota lleva una línea de
+concepto libre (como ya hace la nota de débito con el recargo) y si eso debería
+tocar stock o no.
+
+## 6. La regla de "la nota al contado devuelve algo", también para `anular_venta`
+
+`crear_venta` ya rechaza una nota de crédito al contado sin ningún pago: no le
+devolvía la plata al cliente ni le acreditaba saldo, y la operación no quedaba en
+ningún lado. Las notas que genera `anular_venta` no pasan por ahí (se insertan
+directo) y hoy resuelven la plata de otra manera —anulando la deuda original o
+copiando los pagos negados—, así que no están rotas. Pero el criterio quedó en dos
+lugares distintos. Vale unificarlo cuando se toque esa función.
+
+## 7. Navegar apenas se entra puede tirar un error de router
+
+**Qué pasa.** Si se cambia de pantalla mientras el layout autenticado todavía se
+está hidratando, TanStack tira `Invariant failed: Could not find match for matchId
+"/_authenticated/"` y React avisa que tuvo que recuperarse hidratando del lado del
+cliente. La app **se recupera sola** y el usuario no ve nada roto, pero ensucia la
+consola y es la clase de carrera que un día se cae mal.
+
+**Cómo se encontró.** La suite E2E fallaba de a ratos en una pantalla distinta cada
+corrida y pasaba siempre al correr esa prueba sola: la firma de una carrera que se
+abre cuando el server está cargado. El helper `ingresar()` de `e2e/apoyo.ts` ahora
+espera a que la app asiente antes de devolver el control, así que la suite quedó
+estable, pero eso tapa el síntoma en las pruebas, no lo arregla en la app.
+
+**Por qué no se arregló acá.** No es alcanzable a mano fácilmente (hay que entrar y
+clickear en el mismo instante, con la máquina cargada), se recupera solo, y tocar el
+arranque del router es justo donde ya se rompieron dos intentos de arreglar la
+hidratación. Cuando se toque, reproducirlo primero con el CPU throttleado.
+
+## 8. Accesibilidad: 146 labels sin asociar a su input
 
 Los `<Label>` de los formularios no tienen `htmlFor` y los `<Input>` no tienen
 `id` (sólo 3 de 149 están bien, en `/auth`). Un lector de pantalla no anuncia el
@@ -64,7 +130,7 @@ inmediato. Cuando haya margen, con un componente `<Campo label=…>` que genere 
 id con `useId()`. Mientras tanto las pruebas usan el helper `campo()` de
 `e2e/apoyo.ts` en vez de `getByLabel`.
 
-## 5. `bun run lint` da falso verde
+## 9. `bun run lint` da falso verde
 
 Hay tantos errores preexistentes que el formatter de ESLint revienta con
 `RangeError: Invalid string length` **y sale con código 0**. O sea que "pasa"
@@ -72,7 +138,7 @@ sin haber revisado nada. No sirve para un CI hasta limpiarlo.
 
 Mientras tanto, para revisar archivos puntuales: `npx eslint <archivos>`.
 
-## 6. CUIL vs CUIT en la facturación
+## 10. CUIL vs CUIT en la facturación
 
 `docTipoAfip` etiqueta todo identificador de 11 dígitos como CUIT (tipo 80),
 aunque el PDF ya conoce el tipo 86 = CUIL (`comprobante-pdf.ts:128`). No se puede
@@ -82,7 +148,7 @@ la ficha del cliente. Es preexistente y es una decisión de negocio.
 Relacionado: `docNroAfip` hace `Number(...)`, que se come los ceros a la
 izquierda de un DNI.
 
-## 7. Reimpresión de comprobantes viejos
+## 11. Reimpresión de comprobantes viejos
 
 Las facturas emitidas antes del 11/08 a clientes cargados a mano tienen el CUIT
 congelado en dígitos; al reimprimirlas ahora salen con guiones, donde el papel
@@ -90,7 +156,7 @@ original salió sin. El dato declarado a AFIP (DocNro, CAE, totales) no cambia:
 es sólo cómo se renderiza. Se aceptó a cambio de que todas las pantallas muestren
 el documento igual.
 
-## 8. Rotar los secretos expuestos
+## 12. Rotar los secretos expuestos
 
 Contraseñas de usuarios reales quedaron escritas en el historial de chat, y hay
 claves de Supabase expuestas de antes. Pendiente de seguridad, no de producto.

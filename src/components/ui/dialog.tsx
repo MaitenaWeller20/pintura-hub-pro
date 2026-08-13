@@ -55,8 +55,12 @@ const DialogContent = React.forwardRef<
           bajar en un formulario largo. El padding queda afuera para que un
           diálogo que lo pise (className="p-0") siga funcionando igual.
           min-h-0 porque un hijo flex no encoge por debajo de su contenido sin eso,
-          y sin encoger no aparece el scroll. */}
-      <div className="grid min-h-0 gap-4 overflow-y-auto">{children}</div>
+          y sin encoger no aparece el scroll.
+          grid-cols-[minmax(0,1fr)] por lo mismo pero a lo ancho: una columna de
+          grid tiene min-width:auto, así que un hijo ancho (una tabla) estira el
+          diálogo en vez de encogerse. En el celular eso cortaba el título y los
+          nombres de los productos. */}
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto">{children}</div>
       <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background cursor-pointer transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
@@ -73,7 +77,16 @@ DialogHeader.displayName = "DialogHeader";
 
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
-    className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)}
+    className={cn(
+      // sticky: el footer vive DENTRO del envoltorio que scrollea, así que en una
+      // pantalla baja se iba abajo de todo y los botones quedaban cortados por el
+      // borde del diálogo — se veía un "Crear remito" partido al medio y había que
+      // adivinar que se llegaba scrolleando. Pegado al fondo está siempre a mano.
+      // El bg tapa el contenido que pasa por atrás; el pt-3 evita que el texto
+      // quede besando el borde del botón.
+      "sticky bottom-0 z-10 flex flex-col-reverse bg-background pt-3 sm:flex-row sm:justify-end sm:space-x-2",
+      className,
+    )}
     {...props}
   />
 );

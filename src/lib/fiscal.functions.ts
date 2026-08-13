@@ -15,6 +15,7 @@ import {
   facturaDeLetra,
   puedeForzarConsumidorFinal,
   esComprobanteFiscal,
+  esNotaInterna,
   docTipoAfip,
   docNroAfip,
   cuitValido,
@@ -31,7 +32,13 @@ import {
   esErrorTransitorio,
   MOCK,
 } from "./fiscal/arca";
-import { generarParYCsr, validarCuitEmisor, prepararSubject, verificarCertificado } from "./fiscal/cert";
+import { diasDesdeHoyAr, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "./fiscal/fecha";
+import {
+  generarParYCsr,
+  validarCuitEmisor,
+  prepararSubject,
+  verificarCertificado,
+} from "./fiscal/cert";
 import { encryptString, decryptString } from "./fiscal/crypto";
 import { qrAfipDataUrl } from "./fiscal/qr";
 
@@ -82,6 +89,7 @@ export const obtenerConfigFiscal = createServerFn({ method: "GET" })
       domicilio_fiscal: cfg?.domicilio_fiscal ?? null,
       condicion_iva: cfg?.condicion_iva ?? "RESPONSABLE_INSCRIPTO",
       inicio_actividades: cfg?.inicio_actividades ?? null,
+      ingresos_brutos: cfg?.ingresos_brutos ?? null,
       habilitada: cfg?.habilitada ?? false,
       tiene_clave: !!cfg?.arca_key_enc,
       tiene_certificado: !!cfg?.arca_cert_enc,
@@ -106,6 +114,9 @@ export const guardarConfigFiscal = createServerFn({ method: "POST" })
         // discriminado. (El EXENTO sí es válido como condición del RECEPTOR.)
         condicion_iva: z.enum(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"]),
         inicio_actividades: z.string().optional().nullable(),
+        // Va impreso en el encabezado del comprobante. Texto libre porque admite
+        // "Exento" o "Convenio Multilateral NNN-NNNNNN", no sólo un número.
+        ingresos_brutos: z.string().optional().nullable(),
         habilitada: z.boolean().default(false),
       })
       .parse(d),
@@ -115,6 +126,7 @@ export const guardarConfigFiscal = createServerFn({ method: "POST" })
     await requireAdmin(context.supabase, context.userId);
 
     const cuit = validarCuitEmisor(data.cuit);
+
     const { error } = await sb
       .from("fiscal_config")
       .update({ ...data, cuit })
@@ -138,9 +150,7 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
     const sb = await admin();
     await requireAdmin(context.supabase, context.userId);
 
-    const { error } = await sb
-      .from("puntos_venta")
-      .upsert(data, { onConflict: "sucursal_id" });
+    const { error } = await sb.from("puntos_venta").upsert(data, { onConflict: "sucursal_id" });
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -274,6 +284,17 @@ async function cargarEmisorYPv(sb: any, sucursalId: string) {
       arca_cert_enc: cfg.arca_cert_enc,
       condicion_iva: cfg.condicion_iva as CondicionIva,
     },
+    // Lo que se imprime en el encabezado del comprobante. Va aparte del `emisor`
+    // (que lleva los secretos) para no arrastrar el certificado a ningún lado.
+    emisorImpreso: {
+      razon_social: cfg.razon_social ?? null,
+      nombre_fantasia: cfg.nombre_fantasia ?? null,
+      cuit: cfg.cuit as string,
+      domicilio_fiscal: cfg.domicilio_fiscal ?? null,
+      condicion_iva: cfg.condicion_iva as CondicionIva,
+      ingresos_brutos: cfg.ingresos_brutos ?? null,
+      inicio_actividades: cfg.inicio_actividades ?? null,
+    },
     pv: { numero: pv.numero as number, modo: pv.modo as "HOMOLOGACION" | "PRODUCCION" },
   };
 }
@@ -302,7 +323,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     // (otra sucursal), no puede facturarla.
     const { data: venta, error: vErr } = await supabase
       .from("ventas")
-      .select("*, cliente:clientes(razon_social, cuit_dni, tipo)")
+      .select("*, cliente:clientes(razon_social, cuit_dni, tipo, direccion)")
       .eq("id", data.venta_id)
       .single();
     if (vErr || !venta) throw new Error("Venta no encontrada.");
@@ -313,10 +334,36 @@ export const emitirComprobante = createServerFn({ method: "POST" })
           "Sólo se facturan Factura A/B/C y notas de crédito/débito.",
       );
     }
+    if (esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)) {
+      throw new Error(
+        "Esta nota revierte un comprobante que nunca se declaró a AFIP, así que no hay nada que rectificar: " +
+          "no corresponde emitirla. Sirve sólo como documento interno (ya devolvió el stock y la plata).",
+      );
+    }
     if (venta.estado === "ANULADA") throw new Error("La venta está anulada.");
     if (venta.cae) throw new Error(`Este comprobante ya tiene CAE (${venta.cae}).`);
 
-    const { emisor, pv } = await cargarEmisorYPv(sb, venta.sucursal_id);
+    // --- Ventana de fechas de AFIP -----------------------------------------
+    // WSFEv1 rechaza un CbteFch a más de 5 días corridos de hoy (Concepto=1).
+    // Se corta ACÁ, antes de consultar el último autorizado y antes de reservar
+    // número: ir a AFIP para que lo rechace quema un viaje y deja la venta en
+    // ERROR sin que el motivo se entienda.
+    //
+    // NO se aplica en mock: ahí no hay AFIP que rechace nada, y el sistema se usa
+    // hoy para facturar ventas viejas mientras el trámite del certificado avanza.
+    // Imponerla en modo simulado sería romper el uso actual sin ganar nada.
+    const diasDeAtraso = diasDesdeHoyAr(new Date(venta.fecha));
+    if (!MOCK && fueraDeVentanaAfip(new Date(venta.fecha))) {
+      throw new Error(
+        diasDeAtraso > 0
+          ? `Esta venta es de hace ${diasDeAtraso} días y AFIP sólo autoriza comprobantes fechados hasta ${VENTANA_AFIP_DIAS} días atrás. ` +
+              "Ya no se puede emitir con su fecha original: consultá con el contador cómo regularizarla."
+          : `Esta venta está fechada ${Math.abs(diasDeAtraso)} días en el futuro y AFIP sólo autoriza hasta ${VENTANA_AFIP_DIAS} días adelante. ` +
+              "Revisá la fecha de la venta.",
+      );
+    }
+
+    const { emisor, emisorImpreso, pv } = await cargarEmisorYPv(sb, venta.sucursal_id);
 
     // --- Letra y tipo -------------------------------------------------------
     const condReceptor: CondicionIva | null = venta.cliente?.tipo
@@ -385,7 +432,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     // --- Totales, recalculados desde la base --------------------------------
     const { data: items } = await supabase
       .from("venta_items")
-      .select("cantidad, precio_unitario_sin_iva, descuento_porcentaje, iva_porcentaje")
+      .select(
+        "codigo, descripcion, cantidad, precio_unitario_sin_iva, descuento_porcentaje, iva_porcentaje, subtotal_con_iva",
+      )
       .eq("venta_id", venta.id);
 
     const totales = calcularTotales(
@@ -398,17 +447,66 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       Math.abs(Number(venta.percepciones ?? 0)),
     );
 
+    // --- Snapshot fiscal ----------------------------------------------------
+    // Congela lo que se le declara a AFIP. De acá en más el PDF y el QR se arman
+    // SIEMPRE con esta copia, nunca releyendo clientes/fiscal_config: si mañana se
+    // corrige el CUIT del cliente o el domicilio del emisor, el comprobante ya
+    // emitido tiene que seguir imprimiéndose igual que el que se entregó.
+    const snapshot = {
+      emisor: emisorImpreso,
+      receptor: {
+        razon_social: venta.cliente?.razon_social ?? null,
+        cuit_dni: cuitCliente,
+        doc_tipo: docTipoAfip(cuitCliente),
+        doc_nro: docNroAfip(cuitCliente),
+        // La condición REALMENTE declarada, que puede no ser la de la ficha:
+        // un RI al que se le emite B va como Consumidor Final.
+        condicion_iva: condReceptorEfectiva,
+        domicilio: venta.cliente?.direccion ?? null,
+      },
+      condicion_venta: venta.condicion_venta ?? null,
+      totales,
+      // La fecha que se le declara a AFIP. El QR se arma con ESTA, no con
+      // venta.fecha en vivo: si la fecha de la venta cambiara después, el QR
+      // dejaría de coincidir con lo que AFIP tiene registrado.
+      fecha: new Date(venta.fecha).toISOString(),
+      // Las líneas tal como se declararon. Sin esto una reimpresión sale del
+      // venta_items actual, que puede no ser el que se facturó.
+      lineas: (items ?? []).map((i: any) => ({
+        codigo: i.codigo,
+        descripcion: i.descripcion,
+        cantidad: Math.abs(Number(i.cantidad)),
+        precio_unitario_sin_iva: Math.abs(Number(i.precio_unitario_sin_iva)),
+        descuento_porcentaje: Number(i.descuento_porcentaje ?? 0),
+        iva_porcentaje: Number(i.iva_porcentaje),
+        subtotal_con_iva: Math.abs(Number(i.subtotal_con_iva ?? 0)),
+      })),
+      version: 1,
+    };
+
     // --- Recuperación de un intento anterior --------------------------------
-    // Sólo si el número reservado corresponde a ESTE punto de venta, tipo y modo.
-    // Si cualquiera de esos cambió entre el intento fallido y el reintento (por
-    // ejemplo se pasó de homologación a producción), el número viejo pertenece a
-    // otra numeración y consultarlo traería el CAE equivocado.
-    if (
-      venta.afip_numero &&
-      venta.afip_punto_venta === pv.numero &&
-      venta.afip_cbte_tipo === cbteTipo &&
-      venta.afip_modo === pv.modo
-    ) {
+    // Si hay un número reservado, la identidad de esa reserva (punto de venta,
+    // tipo y modo) manda: es lo que AFIP pudo haber autorizado.
+    if (venta.afip_numero) {
+      const mismaIdentidad =
+        venta.afip_punto_venta === pv.numero &&
+        venta.afip_cbte_tipo === cbteTipo &&
+        venta.afip_modo === pv.modo;
+
+      // La identidad cambió entre el intento fallido y este reintento: cambió la
+      // condición de IVA del cliente (y con ella la letra), o el punto de venta
+      // pasó de homologación a producción. Seguir de largo emitiría un comprobante
+      // NUEVO mientras el reservado puede estar autorizado en AFIP sin registro
+      // local: dos comprobantes fiscales por una sola venta. Se frena.
+      if (!mismaIdentidad) {
+        throw new Error(
+          `Este comprobante tiene reservado el número ${venta.afip_numero} (punto de venta ` +
+            `${venta.afip_punto_venta}, tipo ${venta.afip_cbte_tipo}, ${venta.afip_modo}), pero ahora ` +
+            "correspondería emitir uno distinto. Puede haber quedado un comprobante autorizado en AFIP " +
+            "sin registrar acá. No se emite para no duplicar: hay que reconciliar la numeración antes de seguir.",
+        );
+      }
+
       try {
         const recuperado = await consultarComprobante(emisor, pv, cbteTipo, venta.afip_numero, sb);
         if (recuperado) {
@@ -422,16 +520,30 @@ export const emitirComprobante = createServerFn({ method: "POST" })
               afip_estado: "APROBADO",
               afip_error: null,
               afip_emitido_at: new Date().toISOString(),
+              // OJO: acá NO se pisa el snapshot. El CAE que se está recuperando es
+              // de un intento ANTERIOR, así que lo que vale es lo que se declaró
+              // entonces (guardado al reservar), no lo que se recalculó recién.
+              // `snapshot` sólo entra si la reserva es vieja y no tiene ninguno.
+              ...(venta.afip_snapshot
+                ? {}
+                : { afip_snapshot: snapshot, afip_imp_total: totales.total }),
               // Si la letra emitida difiere del tipo tipeado, reescribe tipo/numero interno.
               ...(await camposReescrituraLetra(sb, venta, cbteTipo)),
             })
             .eq("id", venta.id);
-          return { cae: recuperado.cae, numero: venta.afip_numero, recuperado: true, modo: pv.modo };
+          return {
+            cae: recuperado.cae,
+            numero: venta.afip_numero,
+            recuperado: true,
+            modo: pv.modo,
+          };
         }
       } catch (e) {
         if (esErrorTransitorio(e)) {
           await marcarPendiente(sb, venta.id, (e as Error).message);
-          throw new Error("AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.");
+          throw new Error(
+            "AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.",
+          );
         }
         throw e;
       }
@@ -446,12 +558,19 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       // sobre números meramente reservados. Si contáramos las reservas, un rechazo
       // de AFIP dejaría un número reservado sin CAE que después no coincidiría con
       // el contador de AFIP y trabaría la numeración para siempre.
+      //
+      // Y se cuenta SÓLO dentro del mismo espacio de numeración: los CAE simulados
+      // (mock) y los reales son dos mundos separados. Sin el filtro por
+      // afip_simulado, apagar el mock con el punto de venta todavía en
+      // HOMOLOGACION traía los comprobantes de mentira al conteo, la guarda de
+      // abajo veía "AFIP: 0, acá: 20" y se negaba a emitir para siempre.
       const { data: ultimoLocalRow } = await sb
         .from("ventas")
         .select("afip_numero")
         .eq("afip_punto_venta", pv.numero)
         .eq("afip_cbte_tipo", cbteTipo)
         .eq("afip_modo", pv.modo)
+        .eq("afip_simulado", MOCK)
         .not("cae", "is", null)
         .order("afip_numero", { ascending: false })
         .limit(1)
@@ -463,10 +582,10 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         throw new Error(
           ultimoAfip > ultimoLocal
             ? `AFIP tiene autorizado el comprobante ${ultimoAfip} pero acá el último registrado es el ${ultimoLocal}. ` +
-              "Hay comprobantes autorizados en AFIP sin registro local: NO se emite para no duplicar la numeración fiscal. " +
-              "Hay que reconciliar primero."
+                "Hay comprobantes autorizados en AFIP sin registro local: NO se emite para no duplicar la numeración fiscal. " +
+                "Hay que reconciliar primero."
             : `Acá figura el comprobante ${ultimoLocal} pero AFIP sólo reconoce hasta el ${ultimoAfip}. ` +
-              "Suele ser un comprobante de prueba (homologación) mezclado con producción.",
+                "Suele ser un comprobante de prueba (homologación) mezclado con producción.",
         );
       }
 
@@ -479,7 +598,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     } catch (e) {
       if (esErrorTransitorio(e)) {
         await marcarPendiente(sb, venta.id, (e as Error).message);
-        throw new Error("AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.");
+        throw new Error(
+          "AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.",
+        );
       }
       throw e;
     }
@@ -509,6 +630,17 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         afip_modo: pv.modo,
         afip_estado: "PENDIENTE",
         afip_intentos: (venta.afip_intentos ?? 0) + 1,
+        // La marca va en la RESERVA, no al guardar el CAE: el índice único
+        // uq_ventas_afip_numeracion incluye afip_simulado, así que una reserva sin
+        // marcar vive en el espacio de numeración real aunque sea de mock, y puede
+        // chocar con un número real durante el corte de un modo al otro.
+        afip_simulado: MOCK,
+        // El snapshot se congela ACÁ, junto con el número, porque a partir de este
+        // momento el comprobante ya tiene identidad fiscal. Si la llamada se corta
+        // por timeout y el reintento recupera el CAE, lo que vale es lo que se
+        // declaró en ESTE intento, no lo que se recalcule después.
+        afip_snapshot: snapshot,
+        afip_imp_total: totales.total,
       })
       .eq("id", venta.id)
       .is("cae", null)
@@ -559,8 +691,8 @@ export const emitirComprobante = createServerFn({ method: "POST" })
           afip_estado: "APROBADO",
           afip_error: null,
           afip_emitido_at: new Date().toISOString(),
-          // El importe exacto que se le mandó a AFIP, para el QR.
-          afip_imp_total: totales.total,
+          // afip_simulado, afip_snapshot y afip_imp_total ya quedaron estampados en
+          // la reserva, con los datos de este mismo intento. No se reescriben.
           // Si la letra emitida difiere del tipo tipeado, reescribe tipo/numero interno.
           ...(await camposReescrituraLetra(sb, venta, cbteTipo)),
         })
@@ -582,7 +714,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         // Queda PENDIENTE con el número reservado. AFIP pudo haberlo autorizado
         // igual, así que el reintento primero consulta antes de re-emitir.
         await marcarPendiente(sb, venta.id, msg);
-        throw new Error("AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.");
+        throw new Error(
+          "AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.",
+        );
       }
 
       // Rechazo de negocio: AFIP NO autorizó el número, así que hay que LIBERARLO.
@@ -637,7 +771,7 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
     const sb = await admin();
     const { data: venta } = await context.supabase
       .from("ventas")
-      .select("*, cliente:clientes(razon_social, cuit_dni)")
+      .select("*, cliente:clientes(razon_social, cuit_dni, tipo, direccion)")
       .eq("id", data.venta_id)
       .single();
 
@@ -653,34 +787,69 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
       return null;
     }
 
-    const { data: cfg } = await sb
-      .from("fiscal_config")
-      .select("cuit, razon_social, domicilio_fiscal, condicion_iva")
-      .eq("id", true)
-      .maybeSingle();
+    // La fuente de verdad es el snapshot tomado al emitir. Los comprobantes
+    // anteriores a esa columna no lo tienen: para esos se reconstruye con los
+    // datos de hoy (lo mejor disponible) y se avisa con `sin_snapshot`, porque
+    // pueden haber cambiado desde que se emitieron.
+    const snap = venta.afip_snapshot as any | null;
+
+    let emisor = snap?.emisor ?? null;
+    if (!emisor) {
+      const { data: cfg } = await sb
+        .from("fiscal_config")
+        .select(
+          "cuit, razon_social, nombre_fantasia, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades",
+        )
+        .eq("id", true)
+        .maybeSingle();
+      emisor = cfg ?? null;
+    }
+
+    const receptor = snap?.receptor ?? {
+      razon_social: venta.cliente?.razon_social ?? null,
+      cuit_dni: venta.cliente?.cuit_dni ?? null,
+      doc_tipo: docTipoAfip(venta.cliente?.cuit_dni ?? null),
+      doc_nro: docNroAfip(venta.cliente?.cuit_dni ?? null),
+      condicion_iva: venta.cliente?.tipo
+        ? (CONDICION_IVA_CLIENTE[venta.cliente.tipo] ?? "CONSUMIDOR_FINAL")
+        : null,
+      domicilio: venta.cliente?.direccion ?? null,
+    };
+
+    const importe = Math.abs(Number(snap?.totales?.total ?? venta.afip_imp_total ?? venta.total));
 
     const qr = await qrAfipDataUrl({
-      fecha: new Date(venta.fecha),
-      cuit: Number(String(cfg?.cuit ?? "").replace(/\D/g, "")),
+      // La fecha CONGELADA, que es la que se le declaró. venta.fecha sólo entra
+      // en comprobantes viejos sin snapshot.
+      fecha: new Date(snap?.fecha ?? venta.fecha),
+      cuit: Number(String(emisor?.cuit ?? "").replace(/\D/g, "")),
       ptoVta: venta.afip_punto_venta,
       tipoCmp: venta.afip_cbte_tipo,
       nroCmp: venta.afip_numero,
-      // El importe que realmente se le declaró a AFIP (cae al total sólo si no
-      // se guardó el afip_imp_total, en comprobantes emitidos antes de esta versión).
-      importe: Math.abs(Number(venta.afip_imp_total ?? venta.total)),
-      tipoDocRec: docTipoAfip(venta.cliente?.cuit_dni ?? null),
-      nroDocRec: docNroAfip(venta.cliente?.cuit_dni ?? null),
+      importe,
+      // Del snapshot: el documento que se le declaró a AFIP, no el que tenga
+      // hoy la ficha del cliente (se puede haber corregido después).
+      tipoDocRec: receptor.doc_tipo,
+      nroDocRec: receptor.doc_nro,
       codAut: venta.cae,
     });
 
     return {
-      emisor: cfg,
+      emisor,
+      receptor,
+      condicion_venta: snap?.condicion_venta ?? venta.condicion_venta ?? null,
+      totales: snap?.totales ?? null,
+      // Las líneas tal como se declararon. El PDF las prefiere sobre venta_items.
+      lineas: snap?.lineas ?? null,
+      fecha: snap?.fecha ?? null,
       cae: venta.cae,
       cae_vencimiento: venta.cae_vencimiento,
       punto_venta: venta.afip_punto_venta,
       numero: venta.afip_numero,
       cbte_tipo: venta.afip_cbte_tipo,
       modo: venta.afip_modo,
+      simulado: !!venta.afip_simulado,
+      sin_snapshot: !snap,
       qr,
     };
   });

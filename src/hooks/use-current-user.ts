@@ -11,9 +11,17 @@ export interface ProfileWithRole {
     nombre_completo: string | null;
     sucursal_id: string | null;
   };
+  /** Qué secciones del menú ve. `null` = las de siempre. Ver src/lib/secciones.ts. */
+  secciones: string[] | null;
   sucursal: { id: string; codigo: string; nombre: string; numero: string } | null;
   role: "admin" | "empleado" | null;
   isAdmin: boolean;
+  /**
+   * Espejo de `puede_vender_sin_stock(uid)` en SQL: admin O el permiso del
+   * perfil. La guarda de verdad la hace `crear_venta`; esto existe para poder
+   * avisar ANTES de que alguien cargue una venta entera que va a ser rechazada.
+   */
+  puedeVenderSinStock: boolean;
 }
 
 export function useCurrentUser() {
@@ -24,28 +32,45 @@ export function useCurrentUser() {
     let mounted = true;
     const load = async (user: User | null) => {
       if (!user) {
-        if (mounted) { setData(null); setLoading(false); }
+        if (mounted) {
+          setData(null);
+          setLoading(false);
+        }
         return;
       }
       const [{ data: prof }, { data: roles }] = await Promise.all([
-        supabase.from("profiles").select("id, username, nombre_completo, sucursal_id").eq("id", user.id).maybeSingle(),
+        supabase
+          .from("profiles")
+          .select("id, username, nombre_completo, sucursal_id, secciones, permite_venta_sin_stock")
+          .eq("id", user.id)
+          .maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", user.id),
       ]);
 
       let sucursal = null;
       if (prof?.sucursal_id) {
         const { data: s } = await supabase
-          .from("sucursales").select("id, codigo, nombre, numero").eq("id", prof.sucursal_id).maybeSingle();
+          .from("sucursales")
+          .select("id, codigo, nombre, numero")
+          .eq("id", prof.sucursal_id)
+          .maybeSingle();
         sucursal = s ?? null;
       }
       const role = (roles?.[0]?.role ?? null) as "admin" | "empleado" | null;
       if (mounted) {
         setData({
           user,
-          profile: prof ?? { id: user.id, username: user.email ?? "", nombre_completo: null, sucursal_id: null },
+          profile: prof ?? {
+            id: user.id,
+            username: user.email ?? "",
+            nombre_completo: null,
+            sucursal_id: null,
+          },
+          secciones: (prof as any)?.secciones ?? null,
           sucursal,
           role,
           isAdmin: role === "admin",
+          puedeVenderSinStock: role === "admin" || (prof as any)?.permite_venta_sin_stock === true,
         });
         setLoading(false);
       }
@@ -57,7 +82,10 @@ export function useCurrentUser() {
         load(session?.user ?? null);
       }
     });
-    return () => { mounted = false; sub.subscription.unsubscribe(); };
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   return { data, loading };

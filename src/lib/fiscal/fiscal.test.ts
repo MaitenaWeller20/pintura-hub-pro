@@ -8,13 +8,21 @@ import {
   docNroAfip,
   condicionIvaReceptorId,
   esComprobanteFiscal,
+  esNotaInterna,
   letraDeFactura,
   letraDeCbteTipo,
   puedeForzarConsumidorFinal,
   TIPOS_C,
 } from "./codigos";
-import { calcularTotales, round2 } from "./iva";
-import { fmtFechaAfip, fmtFechaIsoAr, parseFechaAfip } from "./fecha";
+import { calcularTotales, conIva, round2 } from "./iva";
+import {
+  fmtFechaAfip,
+  fmtFechaIsoAr,
+  parseFechaAfip,
+  diasDesdeHoyAr,
+  diasRestantesVentanaAfip,
+  fueraDeVentanaAfip,
+} from "./fecha";
 import { urlQrAfip } from "./qr";
 import { detalleRechazoAfip } from "./arca";
 
@@ -92,6 +100,26 @@ describe("documentos internos vs fiscales", () => {
     expect(esComprobanteFiscal("FACTURA_B")).toBe(true);
     expect(esComprobanteFiscal("NOTA_CREDITO")).toBe(true);
     expect(esComprobanteFiscal("NOTA_DEBITO")).toBe(true);
+  });
+});
+
+describe("notas internas (reversión de algo que nunca se declaró)", () => {
+  it("una nota SIN comprobante asociado es interna: no se emite", () => {
+    expect(esNotaInterna("NOTA_CREDITO", null)).toBe(true);
+    expect(esNotaInterna("NOTA_CREDITO", undefined)).toBe(true);
+    expect(esNotaInterna("NOTA_CREDITO", "")).toBe(true);
+    expect(esNotaInterna("NOTA_DEBITO", null)).toBe(true);
+  });
+
+  it("una nota CON comprobante asociado sí es fiscal", () => {
+    expect(esNotaInterna("NOTA_CREDITO", "b3f1c2d4-0000-4000-8000-000000000001")).toBe(false);
+  });
+
+  // Una factura nunca lleva asociado y no por eso deja de ser fiscal.
+  it("no aplica a las facturas", () => {
+    expect(esNotaInterna("FACTURA_A", null)).toBe(false);
+    expect(esNotaInterna("FACTURA_B", null)).toBe(false);
+    expect(esNotaInterna("FACTURA_C", null)).toBe(false);
   });
 });
 
@@ -273,6 +301,43 @@ describe("fechas fiscales en hora de Argentina", () => {
   });
 });
 
+describe("ventana de ±5 días de AFIP (Concepto=1, productos)", () => {
+  // 09:00 del 10/08 en hora de Argentina.
+  const hoy = new Date("2026-08-10T12:00:00Z");
+  const enAr = (iso: string) => new Date(iso);
+
+  it("una venta del día se puede emitir", () => {
+    expect(diasDesdeHoyAr(enAr("2026-08-10T13:00:00Z"), hoy)).toBe(0);
+    expect(fueraDeVentanaAfip(enAr("2026-08-10T13:00:00Z"), hoy)).toBe(false);
+  });
+
+  it("el día 5 todavía entra; el 6 ya no", () => {
+    expect(fueraDeVentanaAfip(enAr("2026-08-05T12:00:00Z"), hoy)).toBe(false);
+    expect(diasDesdeHoyAr(enAr("2026-08-05T12:00:00Z"), hoy)).toBe(5);
+    expect(fueraDeVentanaAfip(enAr("2026-08-04T12:00:00Z"), hoy)).toBe(true);
+    expect(diasDesdeHoyAr(enAr("2026-08-04T12:00:00Z"), hoy)).toBe(6);
+  });
+
+  it("una fecha a futuro también se sale de la ventana", () => {
+    expect(fueraDeVentanaAfip(enAr("2026-08-15T12:00:00Z"), hoy)).toBe(false);
+    expect(fueraDeVentanaAfip(enAr("2026-08-16T12:00:00Z"), hoy)).toBe(true);
+    expect(diasDesdeHoyAr(enAr("2026-08-16T12:00:00Z"), hoy)).toBe(-6);
+  });
+
+  // El mismo motivo por el que existe fecha.ts: contar en UTC corre el día.
+  it("cuenta días calendario de Argentina, no de UTC", () => {
+    // 23:00 del 09/08 en AR (que en UTC ya es el 10/08). Es de AYER, no de hoy.
+    const anocheEnAr = enAr("2026-08-10T02:00:00Z");
+    expect(diasDesdeHoyAr(anocheEnAr, hoy)).toBe(1);
+  });
+
+  it("los días restantes bajan hasta el último día y después se van a negativo", () => {
+    expect(diasRestantesVentanaAfip(enAr("2026-08-10T12:00:00Z"), hoy)).toBe(5);
+    expect(diasRestantesVentanaAfip(enAr("2026-08-05T12:00:00Z"), hoy)).toBe(0);
+    expect(diasRestantesVentanaAfip(enAr("2026-08-04T12:00:00Z"), hoy)).toBe(-1);
+  });
+});
+
 describe("QR de AFIP (RG 4892)", () => {
   const base = {
     fecha: new Date("2026-07-13T15:00:00Z"),
@@ -316,8 +381,19 @@ describe("QR de AFIP (RG 4892)", () => {
     const p = url.split("?p=")[1];
     const json = Buffer.from(p, "base64").toString("utf8");
     expect(Object.keys(JSON.parse(json))).toEqual([
-      "ver", "fecha", "cuit", "ptoVta", "tipoCmp", "nroCmp", "importe",
-      "moneda", "ctz", "tipoDocRec", "nroDocRec", "tipoCodAut", "codAut",
+      "ver",
+      "fecha",
+      "cuit",
+      "ptoVta",
+      "tipoCmp",
+      "nroCmp",
+      "importe",
+      "moneda",
+      "ctz",
+      "tipoDocRec",
+      "nroDocRec",
+      "tipoCodAut",
+      "codAut",
     ]);
   });
 });
@@ -328,7 +404,13 @@ describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
     const response = {
       FeDetResp: {
         FECAEDetResponse: [
-          { Observaciones: { Obs: [{ Code: 10016, Msg: "El CondicionIVAReceptorId no se corresponde con el DocTipo" }] } },
+          {
+            Observaciones: {
+              Obs: [
+                { Code: 10016, Msg: "El CondicionIVAReceptorId no se corresponde con el DocTipo" },
+              ],
+            },
+          },
         ],
       },
     };
@@ -340,16 +422,22 @@ describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
   it("extrae los Errors de nivel request y junta varios motivos", () => {
     const response = {
       Errors: { Err: [{ Code: 10013, Msg: "DocTipo debe ser 80 (CUIT)" }] },
-      FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [{ Code: 15, Msg: "Campo X inválido" }] } }] },
+      FeDetResp: {
+        FECAEDetResponse: [{ Observaciones: { Obs: [{ Code: 15, Msg: "Campo X inválido" }] } }],
+      },
     };
-    expect(detalleRechazoAfip(response)).toBe("[10013] DocTipo debe ser 80 (CUIT) · [15] Campo X inválido");
+    expect(detalleRechazoAfip(response)).toBe(
+      "[10013] DocTipo debe ser 80 (CUIT) · [15] Campo X inválido",
+    );
   });
 
   it("no rompe con respuestas vacías, nulas o sin observaciones", () => {
     expect(detalleRechazoAfip(null)).toBe("");
     expect(detalleRechazoAfip(undefined)).toBe("");
     expect(detalleRechazoAfip({})).toBe("");
-    expect(detalleRechazoAfip({ FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [] } }] } })).toBe("");
+    expect(
+      detalleRechazoAfip({ FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [] } }] } }),
+    ).toBe("");
   });
 });
 
@@ -371,12 +459,42 @@ describe("selector Factura A/B (RI puede emitir B a un cliente RI)", () => {
 
   it("la letra de la NC sale del CbteTipo REALMENTE emitido, no del tipo tipeado", () => {
     // Una venta FACTURA_A emitida como B (forzado) tiene cbte 6 -> su NC es B.
-    expect(letraDeCbteTipo(6)).toBe("B");   // Factura B
-    expect(letraDeCbteTipo(1)).toBe("A");   // Factura A
-    expect(letraDeCbteTipo(11)).toBe("C");  // Factura C
-    expect(letraDeCbteTipo(8)).toBe("B");   // NC B
-    expect(letraDeCbteTipo(3)).toBe("A");   // NC A
-    expect(letraDeCbteTipo(13)).toBe("C");  // NC C
+    expect(letraDeCbteTipo(6)).toBe("B"); // Factura B
+    expect(letraDeCbteTipo(1)).toBe("A"); // Factura A
+    expect(letraDeCbteTipo(11)).toBe("C"); // Factura C
+    expect(letraDeCbteTipo(8)).toBe("B"); // NC B
+    expect(letraDeCbteTipo(3)).toBe("A"); // NC A
+    expect(letraDeCbteTipo(13)).toBe("C"); // NC C
     expect(letraDeCbteTipo(null)).toBe("A"); // sin dato: default A
+  });
+});
+
+describe("conIva (precio final para mostrar)", () => {
+  it("le suma el IVA a un neto", () => {
+    expect(conIva(100, 21)).toBe(121);
+    expect(conIva(14861.87, 21)).toBe(17982.86);
+  });
+
+  it("reproduce el caso que reportó la clienta", () => {
+    // La membrana: 173727.61 de lista, 25% de descuento, y se vende a 157.657,81.
+    const neto = +(173727.61 * 0.75).toFixed(2); // 130295.71
+    expect(neto).toBe(130295.71);
+    expect(conIva(neto, 21)).toBe(157657.81);
+  });
+
+  it("acepta alícuotas que no son 21", () => {
+    expect(conIva(1000, 10.5)).toBe(1105);
+    expect(conIva(1000, 0)).toBe(1000);
+  });
+
+  it("redondea a dos decimales, como el resto del cálculo fiscal", () => {
+    expect(conIva(0.01, 21)).toBe(0.01);
+    expect(conIva(33.33, 21)).toBe(40.33);
+  });
+
+  it("tolera null, undefined y strings, que es como vienen de la base", () => {
+    expect(conIva(null, 21)).toBe(0);
+    expect(conIva(undefined, undefined)).toBe(0);
+    expect(conIva("100", "21")).toBe(121);
   });
 });

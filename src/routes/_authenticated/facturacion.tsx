@@ -77,6 +77,15 @@ function FacturacionPage() {
 function EstadoGeneral({ cfg, listo }: { cfg: any; listo: boolean }) {
   const porVencer = cfg.dias_para_vencer !== null && cfg.dias_para_vencer < 30;
 
+  // Datos que van IMPRESOS en el comprobante. No frenan nada — se pueden cargar
+  // cuando el contador los pase — pero si falta alguno el comprobante sale
+  // incompleto, y eso recién se nota cuando ya está emitido. Por eso el aviso.
+  const faltanImpresos = [
+    !cfg.domicilio_fiscal && "domicilio fiscal",
+    !cfg.ingresos_brutos && "Ingresos Brutos",
+    !cfg.inicio_actividades && "inicio de actividades",
+  ].filter(Boolean) as string[];
+
   return (
     <SectionCard className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -105,6 +114,16 @@ function EstadoGeneral({ cfg, listo }: { cfg: any; listo: boolean }) {
         </p>
       )}
 
+      {faltanImpresos.length > 0 && (
+        <div className="flex items-start gap-2 p-3 rounded border border-warning/40 bg-warning/5 text-sm">
+          <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+          <div>
+            Falta cargar <strong>{faltanImpresos.join(", ")}</strong>. Van impresos en cada
+            comprobante: pedíselos al contador junto con el resto del trámite.
+          </div>
+        </div>
+      )}
+
       {porVencer && (
         <div className="flex items-start gap-2 p-3 rounded border border-destructive/40 bg-destructive/5 text-sm">
           <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
@@ -127,6 +146,7 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
     domicilio_fiscal: cfg.domicilio_fiscal ?? "",
     condicion_iva: cfg.condicion_iva ?? "RESPONSABLE_INSCRIPTO",
     inicio_actividades: cfg.inicio_actividades ?? "",
+    ingresos_brutos: cfg.ingresos_brutos ?? "",
     habilitada: cfg.habilitada ?? false,
   });
   const set = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }));
@@ -139,6 +159,7 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
           inicio_actividades: form.inicio_actividades || null,
           nombre_fantasia: form.nombre_fantasia || null,
           domicilio_fiscal: form.domicilio_fiscal || null,
+          ingresos_brutos: form.ingresos_brutos || null,
         },
       }),
     onSuccess: () => { toast.success("Datos fiscales guardados"); onSaved(); },
@@ -185,6 +206,18 @@ function DatosEmisor({ cfg, onSaved }: { cfg: any; onSaved: () => void }) {
         <div className="col-span-2">
           <Label>Domicilio fiscal</Label>
           <Input value={form.domicilio_fiscal} onChange={(e) => set("domicilio_fiscal", e.target.value)} />
+        </div>
+        <div className="col-span-2">
+          <Label>Ingresos Brutos</Label>
+          <Input
+            value={form.ingresos_brutos}
+            onChange={(e) => set("ingresos_brutos", e.target.value)}
+            placeholder="901-123456-7, o Convenio Multilateral, o Exento"
+          />
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Va impreso en cada comprobante. Lo tiene que dar el contador — si el negocio está
+            exento, poné <strong>Exento</strong>.
+          </p>
         </div>
       </div>
 

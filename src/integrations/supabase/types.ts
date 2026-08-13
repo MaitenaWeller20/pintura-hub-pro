@@ -168,6 +168,13 @@ export type Database = {
             foreignKeyName: "caja_sesiones_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "caja_sesiones_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -241,6 +248,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "clientes_sucursal_habitual_id_fkey"
+            columns: ["sucursal_habitual_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
           {
             foreignKeyName: "clientes_sucursal_habitual_id_fkey"
             columns: ["sucursal_habitual_id"]
@@ -319,6 +333,13 @@ export type Database = {
             foreignKeyName: "cobranzas_cta_cte_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "cobranzas_cta_cte_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -378,6 +399,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compra_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
           },
         ]
       }
@@ -468,6 +496,13 @@ export type Database = {
             foreignKeyName: "compras_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "compras_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -493,6 +528,13 @@ export type Database = {
           ultimo_numero?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "comprobante_secuencias_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
           {
             foreignKeyName: "comprobante_secuencias_sucursal_id_fkey"
             columns: ["sucursal_id"]
@@ -571,6 +613,13 @@ export type Database = {
             foreignKeyName: "cuenta_corriente_movimientos_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -579,6 +628,46 @@ export type Database = {
             columns: ["venta_id"]
             isOneToOne: true
             referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuenta_corriente_movimientos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: true
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
+        ]
+      }
+      documento_secuencias: {
+        Row: {
+          sucursal_id: string
+          tipo: string
+          ultimo_numero: number
+        }
+        Insert: {
+          sucursal_id: string
+          tipo: string
+          ultimo_numero?: number
+        }
+        Update: {
+          sucursal_id?: string
+          tipo?: string
+          ultimo_numero?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "documento_secuencias_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "documento_secuencias_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
         ]
@@ -594,6 +683,7 @@ export type Database = {
           domicilio_fiscal: string | null
           habilitada: boolean
           id: boolean
+          ingresos_brutos: string | null
           inicio_actividades: string | null
           nombre_fantasia: string | null
           razon_social: string | null
@@ -609,6 +699,7 @@ export type Database = {
           domicilio_fiscal?: string | null
           habilitada?: boolean
           id?: boolean
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -624,12 +715,196 @@ export type Database = {
           domicilio_fiscal?: string | null
           habilitada?: boolean
           id?: boolean
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
           updated_at?: string
         }
         Relationships: []
+      }
+      ingreso_mercaderia_items: {
+        Row: {
+          advertencia: string | null
+          aprender: boolean
+          cantidad: number | null
+          cantidad_raw: string | null
+          codigo: string | null
+          codigo_proveedor: string | null
+          confianza: string | null
+          descripcion: string | null
+          descripcion_proveedor: string | null
+          descripcion_raw: string | null
+          id: string
+          ingreso_id: string
+          linea: number
+          origen_match: string
+          pagina: number | null
+          pisar_equivalencia: boolean
+          producto_id: string | null
+        }
+        Insert: {
+          advertencia?: string | null
+          aprender?: boolean
+          cantidad?: number | null
+          cantidad_raw?: string | null
+          codigo?: string | null
+          codigo_proveedor?: string | null
+          confianza?: string | null
+          descripcion?: string | null
+          descripcion_proveedor?: string | null
+          descripcion_raw?: string | null
+          id?: string
+          ingreso_id: string
+          linea: number
+          origen_match?: string
+          pagina?: number | null
+          pisar_equivalencia?: boolean
+          producto_id?: string | null
+        }
+        Update: {
+          advertencia?: string | null
+          aprender?: boolean
+          cantidad?: number | null
+          cantidad_raw?: string | null
+          codigo?: string | null
+          codigo_proveedor?: string | null
+          confianza?: string | null
+          descripcion?: string | null
+          descripcion_proveedor?: string | null
+          descripcion_raw?: string | null
+          id?: string
+          ingreso_id?: string
+          linea?: number
+          origen_match?: string
+          pagina?: number | null
+          pisar_equivalencia?: boolean
+          producto_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingreso_mercaderia_items_ingreso_id_fkey"
+            columns: ["ingreso_id"]
+            isOneToOne: false
+            referencedRelation: "ingresos_mercaderia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+        ]
+      }
+      ingresos_mercaderia: {
+        Row: {
+          archivo_path: string | null
+          bloqueo_confirmacion: string | null
+          created_at: string
+          estado: string
+          extraccion: Json | null
+          extraccion_error: string | null
+          extraccion_estado: string
+          fecha_carga: string
+          fecha_confirmacion: string | null
+          fecha_remito: string | null
+          id: string
+          idempotency_key: string | null
+          motivo_anulacion: string | null
+          numero_normalizado: string | null
+          numero_remito_proveedor: string | null
+          observaciones: string | null
+          proveedor_id: string
+          sucursal_id: string
+          updated_at: string
+          uso_tokens: Json | null
+          usuario_id: string
+        }
+        Insert: {
+          archivo_path?: string | null
+          bloqueo_confirmacion?: string | null
+          created_at?: string
+          estado?: string
+          extraccion?: Json | null
+          extraccion_error?: string | null
+          extraccion_estado?: string
+          fecha_carga?: string
+          fecha_confirmacion?: string | null
+          fecha_remito?: string | null
+          id?: string
+          idempotency_key?: string | null
+          motivo_anulacion?: string | null
+          numero_normalizado?: string | null
+          numero_remito_proveedor?: string | null
+          observaciones?: string | null
+          proveedor_id: string
+          sucursal_id: string
+          updated_at?: string
+          uso_tokens?: Json | null
+          usuario_id: string
+        }
+        Update: {
+          archivo_path?: string | null
+          bloqueo_confirmacion?: string | null
+          created_at?: string
+          estado?: string
+          extraccion?: Json | null
+          extraccion_error?: string | null
+          extraccion_estado?: string
+          fecha_carga?: string
+          fecha_confirmacion?: string | null
+          fecha_remito?: string | null
+          id?: string
+          idempotency_key?: string | null
+          motivo_anulacion?: string | null
+          numero_normalizado?: string | null
+          numero_remito_proveedor?: string | null
+          observaciones?: string | null
+          proveedor_id?: string
+          sucursal_id?: string
+          updated_at?: string
+          uso_tokens?: Json | null
+          usuario_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingresos_mercaderia_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "ingresos_mercaderia_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingresos_mercaderia_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "ingresos_mercaderia_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       marcas: {
         Row: {
@@ -649,14 +924,278 @@ export type Database = {
         }
         Relationships: []
       }
+      precio_operaciones: {
+        Row: {
+          created_at: string
+          idempotency_key: string
+          operacion: string
+          porcentaje: number
+          productos: number
+          usuario_id: string
+        }
+        Insert: {
+          created_at?: string
+          idempotency_key: string
+          operacion: string
+          porcentaje: number
+          productos: number
+          usuario_id: string
+        }
+        Update: {
+          created_at?: string
+          idempotency_key?: string
+          operacion?: string
+          porcentaje?: number
+          productos?: number
+          usuario_id?: string
+        }
+        Relationships: []
+      }
+      presupuesto_items: {
+        Row: {
+          cantidad: number
+          codigo: string
+          descripcion: string
+          descuento_porcentaje: number
+          id: string
+          iva_monto: number
+          iva_porcentaje: number
+          precio_lista_sin_iva: number
+          precio_sin_iva: number
+          presupuesto_id: string
+          producto_id: string
+          subtotal_con_iva: number
+          subtotal_sin_iva: number
+        }
+        Insert: {
+          cantidad: number
+          codigo: string
+          descripcion: string
+          descuento_porcentaje?: number
+          id?: string
+          iva_monto: number
+          iva_porcentaje: number
+          precio_lista_sin_iva: number
+          precio_sin_iva: number
+          presupuesto_id: string
+          producto_id: string
+          subtotal_con_iva: number
+          subtotal_sin_iva: number
+        }
+        Update: {
+          cantidad?: number
+          codigo?: string
+          descripcion?: string
+          descuento_porcentaje?: number
+          id?: string
+          iva_monto?: number
+          iva_porcentaje?: number
+          precio_lista_sin_iva?: number
+          precio_sin_iva?: number
+          presupuesto_id?: string
+          producto_id?: string
+          subtotal_con_iva?: number
+          subtotal_sin_iva?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "presupuesto_items_presupuesto_id_fkey"
+            columns: ["presupuesto_id"]
+            isOneToOne: false
+            referencedRelation: "presupuestos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuesto_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuesto_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+        ]
+      }
+      presupuestos: {
+        Row: {
+          cliente_id: string | null
+          created_at: string
+          estado: string
+          fecha: string
+          id: string
+          iva_total: number
+          nombre_cliente: string | null
+          numero: string
+          observaciones: string | null
+          subtotal_sin_iva: number
+          sucursal_id: string
+          total: number
+          updated_at: string
+          usuario_id: string
+          validez_hasta: string | null
+          venta_id: string | null
+        }
+        Insert: {
+          cliente_id?: string | null
+          created_at?: string
+          estado?: string
+          fecha?: string
+          id?: string
+          iva_total?: number
+          nombre_cliente?: string | null
+          numero: string
+          observaciones?: string | null
+          subtotal_sin_iva?: number
+          sucursal_id: string
+          total?: number
+          updated_at?: string
+          usuario_id: string
+          validez_hasta?: string | null
+          venta_id?: string | null
+        }
+        Update: {
+          cliente_id?: string | null
+          created_at?: string
+          estado?: string
+          fecha?: string
+          id?: string
+          iva_total?: number
+          nombre_cliente?: string | null
+          numero?: string
+          observaciones?: string | null
+          subtotal_sin_iva?: number
+          sucursal_id?: string
+          total?: number
+          updated_at?: string
+          usuario_id?: string
+          validez_hasta?: string | null
+          venta_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "presupuestos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuestos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
+            foreignKeyName: "presupuestos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "presupuestos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuestos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presupuestos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
+        ]
+      }
+      producto_codigos_proveedor: {
+        Row: {
+          codigo_proveedor: string
+          codigo_proveedor_norm: string | null
+          created_at: string
+          descripcion_proveedor: string | null
+          id: string
+          producto_id: string
+          proveedor_id: string
+          updated_at: string
+          usuario_id: string | null
+        }
+        Insert: {
+          codigo_proveedor: string
+          codigo_proveedor_norm?: string | null
+          created_at?: string
+          descripcion_proveedor?: string | null
+          id?: string
+          producto_id: string
+          proveedor_id: string
+          updated_at?: string
+          usuario_id?: string | null
+        }
+        Update: {
+          codigo_proveedor?: string
+          codigo_proveedor_norm?: string | null
+          created_at?: string
+          descripcion_proveedor?: string | null
+          id?: string
+          producto_id?: string
+          proveedor_id?: string
+          updated_at?: string
+          usuario_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "producto_codigos_proveedor_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "producto_codigos_proveedor_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "producto_codigos_proveedor_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "producto_codigos_proveedor_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       productos: {
         Row: {
           activo: boolean
+          archivado: boolean
           categoria_id: string | null
           codigo: string
           codigo_barras: string | null
           created_at: string
           descripcion: string | null
+          descuento_porcentaje: number | null
           id: string
           iva_porcentaje: number
           marca_id: string | null
@@ -665,6 +1204,8 @@ export type Database = {
           precio_fabrica: number
           precio_lista: number
           precio_sin_iva: number
+          precio_sugerido_publico: number | null
+          proveedor_id: string | null
           stock_minimo: number
           tamano_envase: number | null
           unidad_medida: string
@@ -672,11 +1213,13 @@ export type Database = {
         }
         Insert: {
           activo?: boolean
+          archivado?: boolean
           categoria_id?: string | null
           codigo: string
           codigo_barras?: string | null
           created_at?: string
           descripcion?: string | null
+          descuento_porcentaje?: number | null
           id?: string
           iva_porcentaje?: number
           marca_id?: string | null
@@ -685,6 +1228,8 @@ export type Database = {
           precio_fabrica?: number
           precio_lista?: number
           precio_sin_iva?: number
+          precio_sugerido_publico?: number | null
+          proveedor_id?: string | null
           stock_minimo?: number
           tamano_envase?: number | null
           unidad_medida?: string
@@ -692,11 +1237,13 @@ export type Database = {
         }
         Update: {
           activo?: boolean
+          archivado?: boolean
           categoria_id?: string | null
           codigo?: string
           codigo_barras?: string | null
           created_at?: string
           descripcion?: string | null
+          descuento_porcentaje?: number | null
           id?: string
           iva_porcentaje?: number
           marca_id?: string | null
@@ -705,6 +1252,8 @@ export type Database = {
           precio_fabrica?: number
           precio_lista?: number
           precio_sin_iva?: number
+          precio_sugerido_publico?: number | null
+          proveedor_id?: string | null
           stock_minimo?: number
           tamano_envase?: number | null
           unidad_medida?: string
@@ -725,6 +1274,20 @@ export type Database = {
             referencedRelation: "marcas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "productos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedor_cc_saldos"
+            referencedColumns: ["proveedor_id"]
+          },
+          {
+            foreignKeyName: "productos_proveedor_id_fkey"
+            columns: ["proveedor_id"]
+            isOneToOne: false
+            referencedRelation: "proveedores"
+            referencedColumns: ["id"]
+          },
         ]
       }
       profiles: {
@@ -734,6 +1297,7 @@ export type Database = {
           id: string
           nombre_completo: string | null
           permite_venta_sin_stock: boolean
+          secciones: string[] | null
           sucursal_id: string | null
           updated_at: string
           username: string
@@ -744,6 +1308,7 @@ export type Database = {
           id: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
           username: string
@@ -754,11 +1319,19 @@ export type Database = {
           id?: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
           username?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "profiles_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
           {
             foreignKeyName: "profiles_sucursal_id_fkey"
             columns: ["sucursal_id"]
@@ -844,6 +1417,13 @@ export type Database = {
             foreignKeyName: "proveedor_cc_movimientos_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "proveedor_cc_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -860,7 +1440,9 @@ export type Database = {
           forma_pago: string
           id: string
           monto: number
+          numero: string | null
           proveedor_id: string
+          saldo_posterior: number | null
           sucursal_id: string
           usuario_id: string
         }
@@ -874,7 +1456,9 @@ export type Database = {
           forma_pago: string
           id?: string
           monto: number
+          numero?: string | null
           proveedor_id: string
+          saldo_posterior?: number | null
           sucursal_id: string
           usuario_id: string
         }
@@ -888,7 +1472,9 @@ export type Database = {
           forma_pago?: string
           id?: string
           monto?: number
+          numero?: string | null
           proveedor_id?: string
+          saldo_posterior?: number | null
           sucursal_id?: string
           usuario_id?: string
         }
@@ -925,6 +1511,13 @@ export type Database = {
             foreignKeyName: "proveedor_pagos_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "proveedor_pagos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -933,10 +1526,12 @@ export type Database = {
       proveedores: {
         Row: {
           activo: boolean
+          codigos_coinciden_con_los_propios: boolean
           condicion_cta_cte: boolean
           condicion_iva: Database["public"]["Enums"]["tipo_cliente"]
           created_at: string
           cuit_dni: string | null
+          descuento_porcentaje: number | null
           direccion: string | null
           email: string | null
           id: string
@@ -946,10 +1541,12 @@ export type Database = {
         }
         Insert: {
           activo?: boolean
+          codigos_coinciden_con_los_propios?: boolean
           condicion_cta_cte?: boolean
           condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
           created_at?: string
           cuit_dni?: string | null
+          descuento_porcentaje?: number | null
           direccion?: string | null
           email?: string | null
           id?: string
@@ -959,10 +1556,12 @@ export type Database = {
         }
         Update: {
           activo?: boolean
+          codigos_coinciden_con_los_propios?: boolean
           condicion_cta_cte?: boolean
           condicion_iva?: Database["public"]["Enums"]["tipo_cliente"]
           created_at?: string
           cuit_dni?: string | null
+          descuento_porcentaje?: number | null
           direccion?: string | null
           email?: string | null
           id?: string
@@ -1005,6 +1604,13 @@ export type Database = {
             foreignKeyName: "puntos_venta_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: true
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "puntos_venta_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: true
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1039,6 +1645,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "remito_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
           },
           {
             foreignKeyName: "remito_items_remito_id_fkey"
@@ -1097,8 +1710,22 @@ export type Database = {
             foreignKeyName: "remitos_sucursal_destino_id_fkey"
             columns: ["sucursal_destino_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "remitos_sucursal_destino_id_fkey"
+            columns: ["sucursal_destino_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "remitos_sucursal_origen_id_fkey"
+            columns: ["sucursal_origen_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
           },
           {
             foreignKeyName: "remitos_sucursal_origen_id_fkey"
@@ -1181,6 +1808,13 @@ export type Database = {
             foreignKeyName: "rendiciones_caja_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "rendiciones_caja_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1209,6 +1843,204 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      stock_conteo_items: {
+        Row: {
+          cantidad_anterior: number
+          cantidad_contada: number
+          cantidad_final: number
+          conteo_id: string
+          id: string
+          movimientos_posteriores: number
+          producto_codigo: string
+          producto_id: string | null
+          producto_nombre: string
+        }
+        Insert: {
+          cantidad_anterior: number
+          cantidad_contada: number
+          cantidad_final: number
+          conteo_id: string
+          id?: string
+          movimientos_posteriores?: number
+          producto_codigo: string
+          producto_id?: string | null
+          producto_nombre: string
+        }
+        Update: {
+          cantidad_anterior?: number
+          cantidad_contada?: number
+          cantidad_final?: number
+          conteo_id?: string
+          id?: string
+          movimientos_posteriores?: number
+          producto_codigo?: string
+          producto_id?: string | null
+          producto_nombre?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_conteo_items_conteo_id_fkey"
+            columns: ["conteo_id"]
+            isOneToOne: false
+            referencedRelation: "stock_conteos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_conteo_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_conteo_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+        ]
+      }
+      stock_conteos: {
+        Row: {
+          contado_desde: string | null
+          created_at: string
+          id: string
+          idempotency_key: string | null
+          items_ajustados: number
+          items_con_movimientos: number
+          items_conflicto: number
+          items_sin_cambio: number
+          motivo: string
+          sucursal_id: string
+          usuario_id: string | null
+        }
+        Insert: {
+          contado_desde?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          items_ajustados?: number
+          items_con_movimientos?: number
+          items_conflicto?: number
+          items_sin_cambio?: number
+          motivo: string
+          sucursal_id: string
+          usuario_id?: string | null
+        }
+        Update: {
+          contado_desde?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          items_ajustados?: number
+          items_con_movimientos?: number
+          items_conflicto?: number
+          items_sin_cambio?: number
+          motivo?: string
+          sucursal_id?: string
+          usuario_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_conteos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "stock_conteos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stock_correccion_envase: {
+        Row: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+          created_at: string
+          id: string
+          motivo: string
+          movimientos_count: number
+          producto_codigo: string
+          producto_id: string | null
+          producto_nombre: string
+          revertido_at: string | null
+          stock_updated_at: string | null
+          sucursal_codigo: string | null
+          sucursal_id: string | null
+          tamano_envase: number | null
+          ultimo_movimiento_at: string | null
+        }
+        Insert: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+          created_at?: string
+          id?: string
+          motivo: string
+          movimientos_count?: number
+          producto_codigo: string
+          producto_id?: string | null
+          producto_nombre: string
+          revertido_at?: string | null
+          stock_updated_at?: string | null
+          sucursal_codigo?: string | null
+          sucursal_id?: string | null
+          tamano_envase?: number | null
+          ultimo_movimiento_at?: string | null
+        }
+        Update: {
+          cantidad_anterior?: number
+          cantidad_nueva?: number
+          created_at?: string
+          id?: string
+          motivo?: string
+          movimientos_count?: number
+          producto_codigo?: string
+          producto_id?: string | null
+          producto_nombre?: string
+          revertido_at?: string | null
+          stock_updated_at?: string | null
+          sucursal_codigo?: string | null
+          sucursal_id?: string | null
+          tamano_envase?: number | null
+          ultimo_movimiento_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_correccion_envase_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_correccion_envase_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_correccion_envase_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "stock_correccion_envase_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       stock_movimientos: {
         Row: {
@@ -1259,6 +2091,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "stock_movimientos_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
             foreignKeyName: "stock_movimientos_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
@@ -1296,6 +2142,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "productos"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_sucursal_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_sucursal_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
           },
           {
             foreignKeyName: "stock_sucursal_sucursal_id_fkey"
@@ -1391,7 +2251,7 @@ export type Database = {
           iva_porcentaje: number
           precio_lista_sin_iva?: number | null
           precio_unitario_sin_iva: number
-          producto_id: string | null
+          producto_id?: string | null
           subtotal_con_iva: number
           subtotal_sin_iva: number
           venta_id: string
@@ -1421,16 +2281,32 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "venta_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
             foreignKeyName: "venta_items_venta_id_fkey"
             columns: ["venta_id"]
             isOneToOne: false
             referencedRelation: "ventas"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "venta_items_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
         ]
       }
       venta_pagos: {
         Row: {
+          caja_sesion_id: string | null
+          cobro_idempotency_key: string | null
           created_at: string
           detalle: Json
           forma_pago: Database["public"]["Enums"]["forma_pago"]
@@ -1439,6 +2315,8 @@ export type Database = {
           venta_id: string
         }
         Insert: {
+          caja_sesion_id?: string | null
+          cobro_idempotency_key?: string | null
           created_at?: string
           detalle?: Json
           forma_pago: Database["public"]["Enums"]["forma_pago"]
@@ -1447,6 +2325,8 @@ export type Database = {
           venta_id: string
         }
         Update: {
+          caja_sesion_id?: string | null
+          cobro_idempotency_key?: string | null
           created_at?: string
           detalle?: Json
           forma_pago?: Database["public"]["Enums"]["forma_pago"]
@@ -1456,11 +2336,25 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "venta_pagos_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "venta_pagos_venta_id_fkey"
             columns: ["venta_id"]
             isOneToOne: false
             referencedRelation: "ventas"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venta_pagos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
           },
         ]
       }
@@ -1476,6 +2370,8 @@ export type Database = {
           afip_modo: string | null
           afip_numero: number | null
           afip_punto_venta: number | null
+          afip_simulado: boolean
+          afip_snapshot: Json | null
           cae: string | null
           cae_vencimiento: string | null
           caja_sesion_id: string | null
@@ -1512,6 +2408,8 @@ export type Database = {
           afip_modo?: string | null
           afip_numero?: number | null
           afip_punto_venta?: number | null
+          afip_simulado?: boolean
+          afip_snapshot?: Json | null
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -1548,6 +2446,8 @@ export type Database = {
           afip_modo?: string | null
           afip_numero?: number | null
           afip_punto_venta?: number | null
+          afip_simulado?: boolean
+          afip_snapshot?: Json | null
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -1582,6 +2482,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "ventas_afip_cbte_asoc_id_fkey"
+            columns: ["afip_cbte_asoc_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
+          {
             foreignKeyName: "ventas_caja_sesion_id_fkey"
             columns: ["caja_sesion_id"]
             isOneToOne: false
@@ -1606,6 +2513,13 @@ export type Database = {
             foreignKeyName: "ventas_sucursal_id_fkey"
             columns: ["sucursal_id"]
             isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "ventas_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
             referencedRelation: "sucursales"
             referencedColumns: ["id"]
           },
@@ -1615,6 +2529,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ventas"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ventas_venta_anulada_por_fkey"
+            columns: ["venta_anulada_por"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
           },
         ]
       }
@@ -1641,6 +2562,7 @@ export type Database = {
           cuit: string | null
           domicilio_fiscal: string | null
           habilitada: boolean | null
+          ingresos_brutos: string | null
           inicio_actividades: string | null
           nombre_fantasia: string | null
           razon_social: string | null
@@ -1654,6 +2576,7 @@ export type Database = {
           cuit?: string | null
           domicilio_fiscal?: string | null
           habilitada?: boolean | null
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -1667,6 +2590,7 @@ export type Database = {
           cuit?: string | null
           domicilio_fiscal?: string | null
           habilitada?: boolean | null
+          ingresos_brutos?: string | null
           inicio_actividades?: string | null
           nombre_fantasia?: string | null
           razon_social?: string | null
@@ -1686,11 +2610,143 @@ export type Database = {
         }
         Relationships: []
       }
+      seguimiento_producto: {
+        Row: {
+          cantidad: number | null
+          cantidad_anterior: number | null
+          cantidad_nueva: number | null
+          comprobante: string | null
+          con_quien: string | null
+          condicion_venta: string | null
+          created_at: string | null
+          id: string | null
+          motivo: string | null
+          producto_id: string | null
+          sucursal_id: string | null
+          tipo: Database["public"]["Enums"]["tipo_movimiento_stock"] | null
+          usuario_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_movimientos_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "stock_movimientos_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stock_inventario: {
+        Row: {
+          cantidad: number | null
+          cargado: boolean | null
+          categoria_id: string | null
+          codigo: string | null
+          fue_contado: boolean | null
+          marca_id: string | null
+          nombre: string | null
+          producto_id: string | null
+          stock_minimo: number | null
+          sucursal_codigo: string | null
+          sucursal_id: string | null
+          sucursal_nombre: string | null
+          tamano_envase: number | null
+          tiene_fila: boolean | null
+          tiene_movimientos: boolean | null
+          unidad_medida: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "productos_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "productos_marca_id_fkey"
+            columns: ["marca_id"]
+            isOneToOne: false
+            referencedRelation: "marcas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ventas_saldo_pendiente: {
+        Row: {
+          cliente: string | null
+          cliente_id: string | null
+          cobrado: number | null
+          fecha: string | null
+          numero_comprobante: string | null
+          saldo: number | null
+          sucursal_id: string | null
+          sucursal_nombre: string | null
+          total: number | null
+          venta_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ventas_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ventas_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
+            foreignKeyName: "ventas_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "ventas_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       abrir_caja: {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
+      }
+      activar_productos: { Args: { p_ids: string[] }; Returns: Json }
+      actualizar_items_borrador: {
+        Args: { p_ingreso_id: string; p_items: Json }
+        Returns: undefined
       }
       ajustar_stock: {
         Args: {
@@ -1704,8 +2760,26 @@ export type Database = {
           cantidad_nueva: number
         }[]
       }
+      ajustar_stock_masivo: {
+        Args: {
+          p_contado_desde?: string
+          p_idempotency_key?: string
+          p_items: Json
+          p_motivo: string
+          p_sucursal_id: string
+        }
+        Returns: Json
+      }
       anular_compra: { Args: { p_compra_id: string }; Returns: undefined }
+      anular_ingreso_mercaderia: {
+        Args: { p_ingreso_id: string; p_motivo?: string }
+        Returns: undefined
+      }
       anular_pago_proveedor: { Args: { p_pago_id: string }; Returns: undefined }
+      anular_presupuesto: {
+        Args: { p_presupuesto_id: string }
+        Returns: undefined
+      }
       anular_venta: {
         Args: { p_venta_id: string }
         Returns: {
@@ -1714,8 +2788,28 @@ export type Database = {
         }[]
       }
       aprobar_remito: { Args: { p_remito_id: string }; Returns: undefined }
+      buscar_productos_similares: {
+        Args: { p_codigo?: string; p_limite?: number; p_texto: string }
+        Returns: {
+          activo: boolean
+          codigo: string
+          id: string
+          iva_porcentaje: number
+          nombre: string
+          score: number
+        }[]
+      }
       caja_esperado: { Args: { _sesion_id: string }; Returns: Json }
       caja_sesion_actual: { Args: { p_sucursal_id: string }; Returns: string }
+      cambiar_precios_masivo: {
+        Args: {
+          p_idempotency_key: string
+          p_operacion: string
+          p_porcentaje: number
+          p_producto_ids: string[]
+        }
+        Returns: Json
+      }
       cc_registrar_por_venta: {
         Args: { _venta_id: string }
         Returns: undefined
@@ -1742,22 +2836,122 @@ export type Database = {
           total_esperado: number
         }[]
       }
-      crear_compra: {
+      cobrar_saldo_venta: {
         Args: {
-          p_condicion?: string
-          p_fecha_comprobante: string
-          p_fecha_vencimiento: string
-          p_items: Json
-          p_numero: string
-          p_observaciones?: string
-          p_pagos: Json
-          p_percepciones?: number
-          p_proveedor_id: string
-          p_sucursal_id: string
-          p_tipo_comprobante: string
+          p_detalle?: Json
+          p_forma_pago: string
+          p_idempotency_key?: string
+          p_monto: number
+          p_venta_id: string
         }
         Returns: {
-          compra_id: string
+          estado: string
+          pagado: number
+          saldo: number
+        }[]
+      }
+      condicion_iva_emisor: { Args: never; Returns: string }
+      confirmar_ingreso_mercaderia: {
+        Args: {
+          p_fecha?: string
+          p_idempotency_key?: string
+          p_ingreso_id: string
+          p_items?: Json
+          p_numero?: string
+          p_observaciones?: string
+        }
+        Returns: string
+      }
+      convertir_presupuesto_en_venta: {
+        Args: {
+          p_cliente_id: string
+          p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
+          p_idempotency_key?: string
+          p_pagos?: Json
+          p_presupuesto_id: string
+          p_tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
+      crear_borrador_ingreso: {
+        Args: {
+          p_archivo_path?: string
+          p_proveedor_id: string
+          p_sucursal_id: string
+        }
+        Returns: string
+      }
+      crear_compra:
+        | {
+            Args: {
+              p_condicion?: string
+              p_fecha_comprobante: string
+              p_fecha_vencimiento: string
+              p_items: Json
+              p_numero: string
+              p_observaciones?: string
+              p_pagos: Json
+              p_percepciones?: number
+              p_proveedor_id: string
+              p_sucursal_id: string
+              p_tipo_comprobante: string
+            }
+            Returns: {
+              compra_id: string
+            }[]
+          }
+        | {
+            Args: {
+              p_condicion?: string
+              p_fecha_comprobante: string
+              p_fecha_vencimiento: string
+              p_iva_total: number
+              p_numero: string
+              p_observaciones?: string
+              p_pagos: Json
+              p_percepciones: number
+              p_proveedor_id: string
+              p_subtotal_sin_iva: number
+              p_sucursal_id: string
+              p_tipo_comprobante: string
+            }
+            Returns: {
+              compra_id: string
+            }[]
+          }
+      crear_presupuesto: {
+        Args: {
+          p_cliente_id?: string
+          p_items: Json
+          p_nombre_cliente?: string
+          p_observaciones?: string
+          p_sucursal_id: string
+          p_validez_hasta?: string
+        }
+        Returns: {
+          numero: string
+          presupuesto_id: string
+        }[]
+      }
+      crear_producto_desde_ingreso: {
+        Args: {
+          p_codigo: string
+          p_iva?: number
+          p_nombre: string
+          p_precio_sin_iva?: number
+        }
+        Returns: string
+      }
+      crear_productos_faltantes: {
+        Args: { p_items: Json }
+        Returns: {
+          creados: number
+          rechazados: number
+          ya_estaban: number
         }[]
       }
       crear_venta: {
@@ -1781,9 +2975,48 @@ export type Database = {
           venta_id: string
         }[]
       }
-      condicion_iva_emisor: { Args: never; Returns: string }
       current_sucursal_id: { Args: never; Returns: string }
-      puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
+      editar_presupuesto: {
+        Args: {
+          p_cliente_id?: string
+          p_items: Json
+          p_nombre_cliente?: string
+          p_observaciones?: string
+          p_presupuesto_id: string
+          p_repreciar?: boolean
+          p_validez_hasta?: string
+        }
+        Returns: {
+          numero: string
+          presupuesto_id: string
+          total: number
+        }[]
+      }
+      efectivo_en_caja: { Args: { _sesion_id: string }; Returns: number }
+      eliminar_productos: { Args: { p_ids: string[] }; Returns: Json }
+      exigir_efectivo: {
+        Args: {
+          _monto: number
+          _para_que: string
+          _sesion_id: string
+          _sucursal_id: string
+        }
+        Returns: undefined
+      }
+      guardar_extraccion_ingreso: {
+        Args: {
+          p_archivo_path?: string
+          p_bloqueo?: string
+          p_error?: string
+          p_extraccion?: Json
+          p_fecha?: string
+          p_ingreso_id: string
+          p_items?: Json
+          p_numero?: string
+          p_uso_tokens?: Json
+        }
+        Returns: undefined
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1791,6 +3024,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      iniciar_conteo_stock: { Args: never; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       next_comprobante_numero: {
         Args: {
@@ -1799,7 +3033,21 @@ export type Database = {
         }
         Returns: string
       }
+      next_documento_numero: {
+        Args: { _prefijo: string; _sucursal_id: string; _tipo: string }
+        Returns: string
+      }
+      normalizar_codigo: { Args: { p_texto: string }; Returns: string }
+      producto_tiene_presupuesto: {
+        Args: { _producto_id: string }
+        Returns: boolean
+      }
       proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
+      puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
+      rechazar_remito: {
+        Args: { p_motivo?: string; p_remito_id: string }
+        Returns: undefined
+      }
       registrar_cobranza: {
         Args: {
           p_cliente_id: string
@@ -1843,7 +3091,9 @@ export type Database = {
         }
         Returns: string
       }
-      rechazar_remito: { Args: { p_motivo?: string; p_remito_id: string }; Returns: undefined }
+      restaurar_productos: { Args: { p_ids: string[] }; Returns: number }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       app_role: "admin" | "empleado"
@@ -1889,6 +3139,8 @@ export type Database = {
         | "COMPRA"
         | "ANULACION_COMPRA"
         | "DEVOLUCION"
+        | "INGRESO_MERCADERIA"
+        | "ANULACION_INGRESO_MERCADERIA"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2065,6 +3317,8 @@ export const Constants = {
         "COMPRA",
         "ANULACION_COMPRA",
         "DEVOLUCION",
+        "INGRESO_MERCADERIA",
+        "ANULACION_INGRESO_MERCADERIA",
       ],
     },
   },

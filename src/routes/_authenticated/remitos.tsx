@@ -32,12 +32,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Check, X, Printer, ArrowRight, Loader2, Search } from "lucide-react";
+import { Plus, Trash2, Check, X, Printer, ArrowRight, Loader2, Search, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
 import { fmtDateTime } from "@/lib/format";
-import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
+import {
+  filtroProducto,
+  ordenarProductosPorRelevancia,
+  TOPE_BUSQUEDA_PRODUCTOS,
+} from "@/lib/postgrest";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -50,6 +54,7 @@ function RemitosPage() {
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [rechazar, setRechazar] = useState<any>(null);
+  const [verRemito, setVerRemito] = useState<any>(null);
   const aprobarFn = useServerFn(aprobarRemito);
   const rechazarFn = useServerFn(rechazarRemito);
 
@@ -157,7 +162,19 @@ function RemitosPage() {
                   </Badge>
                 </TableCell>
                 <TableCell className="flex gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => imprimir(r)}>
+                  {/* Pedido de Agustina: poder ver QUÉ trae el remito antes de
+                      aceptarlo. La columna decía "4 ítems" y nada más, así que
+                      la única forma de saberlo era aprobarlo y mirar el stock
+                      después. Mismo ojito que en Ingresos de mercadería. */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Ver qué trae"
+                    onClick={() => setVerRemito(r)}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button size="sm" variant="ghost" title="Imprimir" onClick={() => imprimir(r)}>
                     <Printer className="h-3.5 w-3.5" />
                   </Button>
                   {/* R7: aprueba/rechaza sólo la sucursal DESTINO (o un admin). */}
@@ -188,6 +205,27 @@ function RemitosPage() {
           </TableBody>
         </Table>
       </Card>
+
+      {verRemito && (
+        <DetalleRemito
+          remito={verRemito}
+          puedeDecidir={
+            !!(cu?.isAdmin || cu?.sucursal?.id === verRemito.sucursal_destino_id) &&
+            verRemito.estado === "PENDIENTE"
+          }
+          trabajando={aprobar.isPending || rech.isPending}
+          onAprobar={() => {
+            aprobar.mutate(verRemito.id);
+            setVerRemito(null);
+          }}
+          onRechazar={() => {
+            const r = verRemito;
+            setVerRemito(null);
+            setRechazar(r);
+          }}
+          onClose={() => setVerRemito(null)}
+        />
+      )}
 
       {/* Montado sólo cuando se abre: así el formulario arranca limpio en cada
           apertura y no queda con lo tipeado la vez anterior. La precarga del
@@ -232,6 +270,120 @@ function RemitosPage() {
   );
 }
 
+/**
+ * Qué trae el remito, antes de aceptarlo.
+ *
+ * Pedido de Agustina: el listado sólo decía "4 ítems", así que para saber qué
+ * venía había que aprobarlo y mirar el stock después — o sea, aceptar a ciegas
+ * una transferencia que mueve mercadería entre sucursales.
+ *
+ * Los ítems ya vienen en la consulta del listado (`items:remito_items(...)`),
+ * así que abrir esto no pega a la base: es instantáneo.
+ *
+ * Aprobar y rechazar están también ACÁ adentro a propósito. El recorrido natural
+ * es mirar y decidir; obligar a cerrar el detalle para apretar el tilde de la
+ * fila invita a apretarlo sin mirar, que es justo lo que se quería evitar.
+ */
+function DetalleRemito({
+  remito,
+  puedeDecidir,
+  trabajando,
+  onAprobar,
+  onRechazar,
+  onClose,
+}: {
+  remito: any;
+  puedeDecidir: boolean;
+  trabajando: boolean;
+  onAprobar: () => void;
+  onRechazar: () => void;
+  onClose: () => void;
+}) {
+  const items = (remito.items ?? []) as any[];
+  const total = items.reduce((a, i) => a + Number(i.cantidad || 0), 0);
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Remito {remito.numero}</DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-muted-foreground">Viene de</p>
+            <p>{remito.origen?.nombre ?? "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Va a</p>
+            <p>{remito.destino?.nombre ?? "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Fecha</p>
+            <p>{fmtDateTime(remito.created_at)}</p>
+          </div>
+        </div>
+
+        {remito.observaciones && (
+          <p className="rounded border border-border bg-muted/30 p-2 text-sm">
+            {remito.observaciones}
+          </p>
+        )}
+
+        <div className="max-h-[45vh] overflow-auto rounded-lg border border-border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Código</TableHead>
+                <TableHead>Producto</TableHead>
+                <TableHead className="text-right">Cantidad</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((i: any, idx: number) => (
+                <TableRow key={idx}>
+                  <TableCell className="font-mono text-xs">{i.producto?.codigo ?? "—"}</TableCell>
+                  <TableCell className="text-sm">{i.producto?.nombre ?? "—"}</TableCell>
+                  <TableCell className="text-right font-mono text-sm">{i.cantidad}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {items.length === 0 && (
+            <p className="p-3 text-sm text-muted-foreground">Este remito no tiene productos.</p>
+          )}
+        </div>
+
+        <p className="text-sm text-muted-foreground">
+          {items.length === 1 ? "1 producto" : `${items.length} productos`} ·{" "}
+          {total === 1 ? "1 unidad" : `${total} unidades`} en total
+        </p>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cerrar
+          </Button>
+          {puedeDecidir && (
+            <>
+              <Button variant="destructive" disabled={trabajando} onClick={onRechazar}>
+                <X className="h-4 w-4 mr-1" /> Rechazar
+              </Button>
+              <Button disabled={trabajando} onClick={onAprobar}>
+                {trabajando ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4 mr-1" />
+                )}
+                Aprobar y recibir
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
   const { data: cu } = useCurrentUser();
   const crear = useServerFn(crearRemito);
@@ -267,7 +419,7 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
     queryFn: async () => {
       const filtro = filtroProducto(pq);
       if (!filtro) return [] as any[];
-      return ((
+      const filas = ((
         await supabase
           .from("productos")
           .select("id,codigo,nombre")
@@ -276,6 +428,9 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
           .order("codigo")
           .limit(TOPE_BUSQUEDA_PRODUCTOS)
       ).data ?? []) as any[];
+      // Por código el que se busca queda sepultado: "blanco" matchea 161 en
+      // producción. Primero lo que arranca con lo tipeado.
+      return ordenarProductosPorRelevancia(filas, pq);
     },
   });
 
@@ -373,7 +528,17 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
           </div>
 
           {pq.trim().length >= 2 && prods.length > 0 && (
-            <div className="mt-1 max-h-48 overflow-auto rounded-lg border border-border">
+            <p className="mt-1 text-xs text-muted-foreground">
+              {prods.length === 1 ? "1 producto" : `${prods.length} productos`}
+              {prods.length > 8 && " · scrolleá la lista para verlos todos"}
+            </p>
+          )}
+          {pq.trim().length >= 2 && prods.length > 0 && (
+            /* max-h-48 mostraba cinco filas y con 161 resultados era imposible
+               recorrerlos. Alto en vh para que en una pantalla baja el diálogo
+               siga entrando (el footer es sticky, pero el resto tiene que
+               caber). */
+            <div className="mt-1 max-h-[min(45vh,20rem)] overflow-auto rounded-lg border border-border">
               {prods.map((p: any) => {
                 const yaEsta = items.some((i) => i.producto_id === p.id);
                 return (
@@ -399,10 +564,12 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
             </div>
           )}
           {/* Que la lista esté cortada tiene que verse: si no, parece que el
-              producto no existe. */}
+              producto no existe. Con el tope en 500 esto ya casi no aparece —
+              la búsqueda más poblada del catálogo devuelve 289— pero un "a"
+              suelto lo sigue disparando. */}
           {prods.length >= TOPE_BUSQUEDA_PRODUCTOS && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Se muestran los primeros {TOPE_BUSQUEDA_PRODUCTOS}. Escribí un poco más para afinar.
+            <p className="mt-1 text-xs text-warning">
+              Hay más de {TOPE_BUSQUEDA_PRODUCTOS}. Escribí un poco más para afinar.
             </p>
           )}
           {pq.trim().length >= 2 && prods.length === 0 && (

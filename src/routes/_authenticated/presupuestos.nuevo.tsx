@@ -27,6 +27,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
+import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
 
@@ -70,16 +71,25 @@ function NuevoPresupuesto() {
   const { data: resultados = [], isFetching } = useQuery({
     queryKey: ["buscar-prod-presupuesto", busqueda],
     enabled: busqueda.trim().length >= 2,
-    queryFn: async () =>
-      ((
+    // Traía 10 SIN `order`: Postgres devolvía diez cualesquiera de los que
+    // matcheaban y el producto buscado podía no estar, sin ninguna señal. Por
+    // eso había productos que "en venta salen y en presupuesto no". Ahora el
+    // orden es determinista, el tope es más alto y abajo se avisa cuando la
+    // lista quedó cortada.
+    queryFn: async () => {
+      const filtro = filtroProducto(busqueda);
+      if (!filtro) return [] as any[];
+      return ((
         await supabase
           .from("productos")
           .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
-          .or(`codigo.ilike.%${busqueda.trim()}%,nombre.ilike.%${busqueda.trim()}%`)
+          .or(filtro)
           .eq("activo", true)
           .eq("archivado", false)
-          .limit(10)
-      ).data ?? []) as any[],
+          .order("codigo")
+          .limit(TOPE_BUSQUEDA_PRODUCTOS)
+      ).data ?? []) as any[];
+    },
   });
 
   const agregar = (p: any) => {
@@ -253,6 +263,19 @@ function NuevoPresupuesto() {
               </button>
             ))}
           </div>
+        )}
+        {/* Que la lista esté cortada tiene que verse. Antes se cortaba en 10 en
+            silencio y parecía que el producto no existía. */}
+        {resultados.length >= TOPE_BUSQUEDA_PRODUCTOS && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Se muestran los primeros {TOPE_BUSQUEDA_PRODUCTOS}. Escribí un poco más para afinar la
+            búsqueda.
+          </p>
+        )}
+        {busqueda.trim().length >= 2 && !isFetching && resultados.length === 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Ningún producto con ese código o nombre.
+          </p>
         )}
       </SectionCard>
 

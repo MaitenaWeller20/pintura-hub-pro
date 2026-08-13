@@ -19,6 +19,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
+import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
 
@@ -127,16 +128,22 @@ function EditarPresupuesto() {
   const { data: resultados = [], isFetching } = useQuery({
     queryKey: ["buscar-prod-presupuesto", busqueda],
     enabled: busqueda.trim().length >= 2,
-    queryFn: async () =>
-      ((
+    // Mismo arreglo que en presupuestos.nuevo: el tope de 10 sin `order` dejaba
+    // productos afuera sin avisar.
+    queryFn: async () => {
+      const filtro = filtroProducto(busqueda);
+      if (!filtro) return [] as any[];
+      return ((
         await supabase
           .from("productos")
           .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
-          .or(`codigo.ilike.%${busqueda.trim()}%,nombre.ilike.%${busqueda.trim()}%`)
+          .or(filtro)
           .eq("activo", true)
           .eq("archivado", false)
-          .limit(10)
-      ).data ?? []) as any[],
+          .order("codigo")
+          .limit(TOPE_BUSQUEDA_PRODUCTOS)
+      ).data ?? []) as any[];
+    },
   });
 
   const agregar = (p: any) => {

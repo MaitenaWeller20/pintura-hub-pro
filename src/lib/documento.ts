@@ -16,6 +16,8 @@
  * Ver docs/superpowers/specs/2026-08-11-cuit-canonico-design.md
  */
 
+import { filtroIlikeOr } from "./postgrest";
+
 /** Sólo los dígitos de un valor. Espeja `regexp_replace(v,'\D','','g')` en SQL. */
 export const soloDigitos = (v: unknown) => String(v ?? "").replace(/\D/g, "");
 
@@ -66,30 +68,11 @@ export function coincideDocumento(
 }
 
 /**
- * Expresión `or=` de PostgREST para buscar un término en varios campos.
- *
- * El valor va **entre comillas dobles**, que es como PostgREST admite
- * caracteres reservados (`,` `.` `(` `)` `:`) dentro de un filtro; adentro se
- * escapan `"` y `\`. Interpolar el texto crudo —lo que se hacía antes— hace que
- * un cliente llamado "SANCHEZ, JUAN" parta la expresión y rompa la búsqueda.
- *
- * Hay DOS escapados encadenados y el orden importa:
- *
- *   1. El del patrón LIKE. `\` `%` y `_` son comodines de SQL; para buscarlos
- *      literalmente hay que anteponerles `\` (el ESCAPE por defecto de Postgres).
- *      Verificado contra PostgREST: sin esto, buscar "A_B" devuelve también
- *      "A\B" y "AXB", y buscar "A\BARRA" no devuelve nada.
- *   2. El de la gramática de PostgREST, ya sobre el patrón armado.
+ * Se re-exporta para no romper lo que ya lo importaba desde acá. Vive en
+ * `./postgrest` porque no tiene nada que ver con documentos: lo usan también
+ * los buscadores de productos.
  */
-const escaparLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
-const escaparPostgrest = (v: string) => v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-
-export function filtroIlikeOr(pares: Array<{ campo: string; valor: string }>): string {
-  return pares
-    .filter((p) => p.valor !== "")
-    .map(({ campo, valor }) => `${campo}.ilike."${escaparPostgrest(`%${escaparLike(valor)}%`)}"`)
-    .join(",");
-}
+export { filtroIlikeOr };
 
 /**
  * Filtro para buscar una ficha por nombre o documento contra PostgREST.

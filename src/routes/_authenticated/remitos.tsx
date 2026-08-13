@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
 import { fmtDateTime } from "@/lib/format";
+import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -262,15 +263,22 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
   const { data: prods = [] } = useQuery({
     queryKey: ["prods-rem", pq],
     enabled: pq.length >= 2,
-    queryFn: async () =>
-      ((
+    // Mismo arreglo que en presupuestos: 10 sin `order` dejaba productos afuera
+    // en silencio. No se filtra por `activo` a propósito: un producto dado de
+    // baja puede tener stock que igual haya que mover entre sucursales.
+    queryFn: async () => {
+      const filtro = filtroProducto(pq);
+      if (!filtro) return [] as any[];
+      return ((
         await supabase
           .from("productos")
           .select("id,codigo,nombre")
           .eq("archivado", false)
-          .or(`codigo.ilike.%${pq}%,nombre.ilike.%${pq}%`)
-          .limit(10)
-      ).data ?? []) as any[],
+          .or(filtro)
+          .order("codigo")
+          .limit(TOPE_BUSQUEDA_PRODUCTOS)
+      ).data ?? []) as any[];
+    },
   });
 
   const m = useMutation({

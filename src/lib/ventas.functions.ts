@@ -70,8 +70,11 @@ const ventaSchema = z.object({
   percepciones: z.number().nonnegative().default(0),
   observaciones: z.string().optional().nullable(),
   nombre_obra: z.string().optional().nullable(),
-  // El comprobante que rectifica una nota de crédito/débito. AFIP lo exige
-  // (CbtesAsoc): una nota sin comprobante asociado no se puede emitir.
+  // El comprobante que rectifica una nota de crédito/débito. Opcional acá y la
+  // regla la pone crear_venta, que es la que puede consultar la base: la nota de
+  // DÉBITO lo exige (es un recargo calculado sobre el total de esa factura), la
+  // de CRÉDITO puede ir sin ninguno y entonces queda como documento interno que
+  // no se manda a AFIP (ver esNotaInterna en fiscal/codigos.ts).
   cbte_asoc_id: z.string().uuid().optional().nullable(),
   // Clave de idempotencia generada al montar el formulario. Un doble-submit con la
   // misma key devuelve la venta ya creada en vez de duplicarla (defensa server-side).

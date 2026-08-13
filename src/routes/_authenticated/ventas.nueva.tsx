@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { traerTodo } from "@/lib/supabase-paginado";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -30,7 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { NumberInput } from "@/components/ui/number-input";
 import { fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { filtroNombreODocumento, fmtDocumento } from "@/lib/documento";
-import { TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
+import { ordenarProductosPorRelevancia, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
@@ -171,9 +171,12 @@ function NuevaVenta() {
   const productosBusqueda = useMemo(() => {
     const q = prodQuery.trim().toLowerCase();
     if (!q) return productosCatalogo;
-    return productosCatalogo.filter(
+    const coinciden = productosCatalogo.filter(
       (p: any) => p.codigo?.toLowerCase().includes(q) || p.nombre?.toLowerCase().includes(q),
     );
+    // Con 1572 productos, "blanco" matchea 161: por código el que se busca
+    // queda sepultado. Primero lo que arranca con lo tipeado.
+    return ordenarProductosPorRelevancia(coinciden, prodQuery);
   }, [productosCatalogo, prodQuery]);
 
   const addProducto = (p: any) => {
@@ -205,8 +208,23 @@ function NuevaVenta() {
   // la grilla (editables y borrables: se devuelve/re-cobra sólo lo que corresponda).
   // El precio se toma histórico de la factura (desde_factura fuerza su envío).
   const seleccionarFacturaRectifica = async (facturaId: string) => {
+    // Cada llamada se lleva un número, y sólo la ÚLTIMA puede tocar la grilla.
+    // Sin esto: elegís la factura A, te arrepentís y pasás a "sin factura" antes
+    // de que responda, y la respuesta tardía te repuebla la grilla con los
+    // productos de A — con su precio histórico y sin ninguna asociación. Lo
+    // mismo al cambiar de cliente o de tipo de comprobante, que también limpian.
+    const pedido = ++pedidoFacturaRef.current;
     setCbteAsocId(facturaId);
-    if (!facturaId) return;
+    if (!facturaId) {
+      // Al soltar la factura hay que soltar SUS productos. Si no, quedan en la
+      // grilla con el precio histórico pegado (desde_factura los fuerza) pero
+      // sin ninguna factura detrás: lo peor de los dos mundos. Los que el
+      // usuario agregó a mano se quedan.
+      setItems((prev) =>
+        prev.some((it) => it.desde_factura) ? prev.filter((it) => !it.desde_factura) : prev,
+      );
+      return;
+    }
     // La Nota de Débito NO trae productos: usa el recargo (R5). Sólo la NC precarga.
     if (tipoComp !== "NOTA_CREDITO") return;
     const { data, error } = await supabase
@@ -215,6 +233,7 @@ function NuevaVenta() {
         "producto_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,iva_porcentaje,descuento_porcentaje",
       )
       .eq("venta_id", facturaId);
+    if (pedido !== pedidoFacturaRef.current) return;
     if (error) {
       toast.error("No se pudieron cargar los productos de la factura");
       return;
@@ -260,9 +279,16 @@ function NuevaVenta() {
     tipoComp === "FACTURA_A" && !!clienteSel && clienteSel.tipo !== "RESPONSABLE_INSCRIPTO";
   const signo = esNotaCredito ? -1 : 1;
 
-  // Una nota de crédito/débito rectifica una factura concreta. AFIP lo exige
-  // (CbtesAsoc) y sin eso la nota no se puede emitir.
+  // La factura que rectifica la nota. La de DÉBITO la exige (es un recargo
+  // calculado sobre su total: sin factura no hay base). La de CRÉDITO puede ir
+  // sola: es el caso de la devolución cuya factura se emitió en el sistema
+  // viejo. Sin factura queda como documento interno y no se manda a AFIP.
   const [cbteAsocId, setCbteAsocId] = useState<string>("");
+  // Radix no acepta un SelectItem con value="", así que la opción "sin factura"
+  // viaja con un centinela que se traduce a "" al elegirla.
+  const SIN_FACTURA = "__sin_factura__";
+  // Ver seleccionarFacturaRectifica: descarta las respuestas que quedaron viejas.
+  const pedidoFacturaRef = useRef(0);
   const { data: facturasDelCliente = [] } = useQuery({
     queryKey: ["facturas-cliente", clienteId],
     enabled: esNota && !!clienteId,
@@ -327,6 +353,7 @@ function NuevaVenta() {
   // factura que rectifica una nota (no puede pertenecer a otro cliente) y el
   // nombre de obra tipeado para el borrador previo. Evita asociaciones cruzadas.
   useEffect(() => {
+    pedidoFacturaRef.current++; // que una carga en vuelo no repueble la grilla
     setCbteAsocId("");
     setNombreObra("");
     // R4/R5: los productos precargados de una factura son de este cliente; al
@@ -341,6 +368,7 @@ function NuevaVenta() {
   // HISTÓRICO pegado y se emitiría una factura cobrando un precio viejo sin aviso.
   useEffect(() => {
     if (!esNota) {
+      pedidoFacturaRef.current++; // ídem: descarta la carga que venga en camino
       setCbteAsocId("");
       setItems((prev) =>
         prev.some((it) => it.desde_factura) ? prev.filter((it) => !it.desde_factura) : prev,
@@ -355,7 +383,10 @@ function NuevaVenta() {
   useEffect(() => {
     if (!esNota || !cbteAsocId) return;
     if (tipoComp === "NOTA_CREDITO") seleccionarFacturaRectifica(cbteAsocId);
-    else setItems((prev) => prev.filter((it) => !it.desde_factura)); // ND: grilla limpia
+    else {
+      pedidoFacturaRef.current++; // ND: nada de lo que venga en camino aplica
+      setItems((prev) => prev.filter((it) => !it.desde_factura)); // grilla limpia
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoComp]);
 
@@ -501,6 +532,23 @@ function NuevaVenta() {
   // de una venta de $201.205 para enterarse al final. Ahora se frena arriba.
   const frenaPorStock = !puedeSinStock && lineasSinStock.length > 0;
 
+  /**
+   * Una nota de crédito al contado tiene que devolver algo.
+   *
+   * Sin ningún pago no le devuelve la plata al cliente (no hay pago que salga de
+   * la caja) ni le acredita saldo (eso pasa sólo por cuenta corriente): repone
+   * el stock, baja el facturado del reporte y la plata no queda en ningún lado.
+   * Es el mismo agujero que ya se cerró para las ventas.
+   *
+   * `crear_venta` también lo rechaza; acá se frena antes para no hacerlo cargar
+   * todo el comprobante para enterarse al apretar Guardar.
+   */
+  const frenaNotaSinCobro =
+    esNotaCredito &&
+    !esCtaCte &&
+    Math.abs(totales.total) >= 0.01 &&
+    Math.abs(totales.pagado) < 0.01;
+
   const canSave =
     !frenaPorStock &&
     !!effSucursal &&
@@ -517,13 +565,17 @@ function NuevaVenta() {
     // (1) no permitir Factura A a un cliente que no es Responsable Inscripto
     !comboInvalido &&
     (!esRemitoObra || nombreObra.trim().length > 0) &&
-    // Una nota sin factura asociada no se puede emitir en AFIP.
-    (!esNota || !!cbteAsocId) &&
+    // La factura que rectifica ya la exige la ND unas líneas más arriba. La NC
+    // puede ir sin ninguna: queda como documento interno (ver el aviso abajo).
+    //
     // Al contado se cobra algo: el parcial se permite (queda PARCIAL y el saldo
     // se ve arriba), pero la mercadería no sale sin cobrar un peso — para eso
-    // está la cuenta corriente. Las notas quedan afuera: se acreditan o se
-    // cargan a la cuenta, no se pagan en el momento. Mismo criterio que crear_venta.
-    (esCtaCte || esNota || Math.abs(totales.total) < 0.01 || Math.abs(totales.pagado) >= 0.01);
+    // está la cuenta corriente. La nota de DÉBITO queda afuera: se carga a la
+    // cuenta, no se cobra en el momento. Mismo criterio que crear_venta.
+    (esCtaCte ||
+      esNotaDebito ||
+      Math.abs(totales.total) < 0.01 ||
+      Math.abs(totales.pagado) >= 0.01);
 
   return (
     <div className="space-y-4">
@@ -545,6 +597,18 @@ function NuevaVenta() {
           <p className="mt-1 text-xs text-muted-foreground">
             Sacá esos productos o bajá la cantidad. Si la mercadería está en el local y el sistema
             no la tiene, hay que cargarla primero desde Ingresos de mercadería o el conteo de Stock.
+          </p>
+        </SectionCard>
+      )}
+      {frenaNotaSinCobro && (
+        <SectionCard>
+          <p className="text-sm text-destructive">
+            <strong>Falta decir cómo se le devuelve la plata al cliente.</strong> Una nota de
+            crédito al contado devuelve plata: cargá abajo con qué (efectivo, transferencia…).
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Si en vez de devolverle la plata le queda como saldo a favor para su próxima compra,
+            cambiá la condición a <strong>Cuenta corriente</strong>.
           </p>
         </SectionCard>
       )}
@@ -704,10 +768,10 @@ function NuevaVenta() {
             )}
             {esNota && (
               <div className="col-span-2">
-                <Label>Factura que rectifica *</Label>
+                <Label>Factura que rectifica {esNotaDebito && "*"}</Label>
                 <Select
-                  value={cbteAsocId}
-                  onValueChange={seleccionarFacturaRectifica}
+                  value={cbteAsocId || (esNotaCredito ? SIN_FACTURA : "")}
+                  onValueChange={(v) => seleccionarFacturaRectifica(v === SIN_FACTURA ? "" : v)}
                   disabled={!clienteId}
                 >
                   <SelectTrigger>
@@ -716,6 +780,12 @@ function NuevaVenta() {
                     />
                   </SelectTrigger>
                   <SelectContent>
+                    {/* La salida para la devolución cuya factura no está en el
+                        sistema. Sólo para la NC: la ND necesita una factura
+                        sobre la cual calcular el recargo. */}
+                    {esNotaCredito && (
+                      <SelectItem value={SIN_FACTURA}>Sin factura — documento interno</SelectItem>
+                    )}
                     {facturasDelCliente.map((f: any) => (
                       <SelectItem key={f.id} value={f.id}>
                         {f.numero_comprobante} · {fmtMoney(f.total)}
@@ -725,12 +795,27 @@ function NuevaVenta() {
                 </Select>
                 {clienteId && facturasDelCliente.length === 0 && (
                   <p className="text-[11px] text-warning mt-1">
-                    Este cliente no tiene facturas activas. Una nota siempre rectifica una factura.
+                    {esNotaCredito
+                      ? "Este cliente no tiene facturas cargadas. Podés hacerla igual, sin factura."
+                      : "Este cliente no tiene facturas activas, y una nota de débito recarga una factura. Cargá la factura primero."}
                   </p>
                 )}
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  AFIP exige que toda nota indique el comprobante que corrige.
-                </p>
+                {/* Antes decía "AFIP exige que toda nota indique el comprobante
+                    que corrige". No es exacto: la RG 4540/19 pide el comprobante
+                    asociado O el período, y este sistema todavía no manda el
+                    período. Lo que importa que el usuario sepa no es la norma
+                    sino qué le va a pasar al comprobante que está por guardar. */}
+                {esNotaCredito && !cbteAsocId ? (
+                  <p className="text-[11px] text-warning mt-1">
+                    Sin factura queda como <strong>documento interno</strong>: devuelve el stock y
+                    la plata (o el saldo), pero no se manda a AFIP y no lleva CAE. Usalo cuando la
+                    factura original no esté en el sistema.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    La nota hereda la letra de la factura que rectifica y la referencia ante AFIP.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -851,8 +936,18 @@ function NuevaVenta() {
             </p>
           )}
 
+          {!!effSucursal && prodQuery.trim().length > 0 && productosBusqueda.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {productosBusqueda.length === 1
+                ? "1 producto"
+                : `${productosBusqueda.length} productos`}
+              {productosBusqueda.length > 10 && " · scrolleá la lista para verlos todos"}
+            </p>
+          )}
           {!!effSucursal && prodQuery.trim().length > 0 && (
-            <div className="max-h-72 overflow-auto rounded-lg border border-border">
+            /* La lista es alta a propósito: acá no hay diálogo que la limite y
+               con 161 resultados hay que poder recorrerlos. */
+            <div className="max-h-[min(60vh,32rem)] overflow-auto rounded-lg border border-border">
               {productosBusqueda.slice(0, TOPE_BUSQUEDA_PRODUCTOS).map((p: any) => {
                 const stock =
                   (p.stock_sucursal as any[])?.find((s) => s.sucursal_id === effSucursal)

@@ -99,7 +99,9 @@ describe("procesarClientes", () => {
     expect(r.aCrear).toEqual([
       {
         razon_social: "HOTEL SAVOY",
-        cuit_dni: "30-68754273-4",
+        // Se guarda normalizado aunque el archivo lo traiga con guiones: la
+        // columna es canónica (sólo dígitos) y los guiones son de la vista.
+        cuit_dni: "30687542734",
         condicion_cta_cte: true,
         // Los dobles espacios del PDF se colapsan.
         direccion: "JERONIMO LUIS DE CABRERA 201 Barrio",
@@ -380,11 +382,14 @@ describe("el resumen siempre cierra", () => {
     const heads = lineas[0].split(",");
     const filas2 = lineas.slice(1).map((l) => {
       const p: string[] = [];
-      let a = "", q = false;
+      let a = "",
+        q = false;
       for (const ch of l) {
         if (ch === '"') q = !q;
-        else if (ch === "," && !q) { p.push(a); a = ""; }
-        else a += ch;
+        else if (ch === "," && !q) {
+          p.push(a);
+          a = "";
+        } else a += ch;
       }
       p.push(a);
       return Object.fromEntries(heads.map((h, i) => [h, p[i] ?? ""]));

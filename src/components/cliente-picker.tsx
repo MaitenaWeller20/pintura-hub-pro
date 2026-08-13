@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
+import { filtroNombreODocumento, fmtDocumento } from "@/lib/documento";
 
 /**
  * Buscador de clientes contra el servidor.
@@ -37,7 +38,10 @@ export function ClientePicker({
         .eq("activo", true)
         .order("razon_social")
         .limit(15);
-      if (q) sel = sel.or(`razon_social.ilike.%${q}%,cuit_dni.ilike.%${q}%`);
+      // El CUIT se busca por sus dígitos (así entra escrito con o sin guiones) y
+      // el nombre va entrecomillado, para que una coma no parta el filtro.
+      const filtro = filtroNombreODocumento(q);
+      if (filtro) sel = sel.or(filtro);
       return ((await sel).data ?? []) as any[];
     },
   });
@@ -102,7 +106,9 @@ export function ClientePicker({
               }}
             >
               <div className="font-medium">{c.razon_social}</div>
-              {c.cuit_dni && <div className="text-xs text-muted-foreground">{c.cuit_dni}</div>}
+              {c.cuit_dni && (
+                <div className="text-xs text-muted-foreground">{fmtDocumento(c.cuit_dni)}</div>
+              )}
             </button>
           ))}
           {clientes.length === 0 && (

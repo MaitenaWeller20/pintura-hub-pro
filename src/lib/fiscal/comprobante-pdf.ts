@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { fmtMoney, fmtNum, fmtDateTime, tipoComprobanteLabel } from "@/lib/format";
+import { fmtDocumento } from "@/lib/documento";
 import {
   CBTE_INFO,
   CONDICION_IVA_LABEL,
@@ -271,7 +272,8 @@ export function generarComprobantePdf(
   doc.setFont("helvetica", "bold");
   doc.text(nombreRec, MARGEN + 3, yr, { maxWidth: 110 });
   doc.setFont("helvetica", "normal");
-  if (docRec && etiqueta) doc.text(`${etiqueta}: ${docRec}`, X_DERECHA, yr);
+  // El documento se guarda en dígitos; en el comprobante se imprime con guiones.
+  if (docRec && etiqueta) doc.text(`${etiqueta}: ${fmtDocumento(docRec)}`, X_DERECHA, yr);
   yr += 4.5;
   // RG 5616: la condición frente al IVA del receptor es obligatoria en el
   // comprobante. Es de las cosas que el contador mira primero.

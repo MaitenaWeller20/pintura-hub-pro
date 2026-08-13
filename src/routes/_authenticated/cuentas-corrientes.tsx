@@ -18,6 +18,7 @@ import { DataTable } from "@/components/app/data-table";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
+import { coincideDocumento, fmtDocumento } from "@/lib/documento";
 import { toast } from "sonner";
 import { Wallet, Receipt, ChevronRight, Loader2 } from "lucide-react";
 import { uuidv4 } from "@/lib/uuid";
@@ -48,7 +49,7 @@ function CtaCtePage() {
   });
 
   const filtered = useMemo(() => saldos.filter((c: any) =>
-    !q || `${c.razon_social} ${c.cuit_dni ?? ""}`.toLowerCase().includes(q.toLowerCase())
+    coincideDocumento(c, q)
   ), [saldos, q]);
 
   // Si venimos de Clientes con ?cliente=<id>, abrimos su detalle automáticamente.
@@ -98,7 +99,7 @@ function CtaCtePage() {
               return (
                 <TableRow key={c.cliente_id}>
                   <TableCell className="font-medium">{c.razon_social}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{fmtDocumento(c.cuit_dni)}</TableCell>
                   <TableCell className="text-right font-mono">{fmtMoney(c.total_debe)}</TableCell>
                   <TableCell className="text-right font-mono text-success">{fmtMoney(c.total_pagado)}</TableCell>
                   <TableCell className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : "text-muted-foreground"}`}>
@@ -318,7 +319,7 @@ function ProveedoresCtaCte() {
   });
 
   const filtered = useMemo(() => saldos.filter((p: any) =>
-    !q || `${p.razon_social} ${p.cuit_dni ?? ""}`.toLowerCase().includes(q.toLowerCase())
+    coincideDocumento(p, q)
   ), [saldos, q]);
 
   return (
@@ -336,7 +337,7 @@ function ProveedoresCtaCte() {
           return (
             <TableRow key={p.proveedor_id}>
               <TableCell className="font-medium">{p.razon_social}</TableCell>
-              <TableCell className="font-mono text-xs">{p.cuit_dni ?? "—"}</TableCell>
+              <TableCell className="font-mono text-xs">{fmtDocumento(p.cuit_dni)}</TableCell>
               <TableCell className="text-right font-mono">{fmtMoney(p.debe)}</TableCell>
               <TableCell className="text-right font-mono text-success">{fmtMoney(p.pagado)}</TableCell>
               <TableCell className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : "text-muted-foreground"}`}>

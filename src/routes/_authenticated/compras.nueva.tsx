@@ -28,6 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge";
 import { NumberInput } from "@/components/ui/number-input";
 import { fmtMoney, formaPagoLabel } from "@/lib/format";
+import { filtroNombreODocumento, fmtDocumento } from "@/lib/documento";
 import { Trash2, Plus, ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { uuidv4 } from "@/lib/uuid";
@@ -107,7 +108,8 @@ function NuevaCompra() {
         .select("id,razon_social,cuit_dni,condicion_cta_cte")
         .eq("activo", true)
         .limit(15);
-      if (provQuery) q = q.or(`razon_social.ilike.%${provQuery}%,cuit_dni.ilike.%${provQuery}%`);
+      const filtro = filtroNombreODocumento(provQuery);
+      if (filtro) q = q.or(filtro);
       return ((await q).data ?? []) as any[];
     },
   });
@@ -338,7 +340,9 @@ function NuevaCompra() {
                             </Badge>
                           )}
                         </div>
-                        <div className="text-xs text-muted-foreground">{p.cuit_dni ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {fmtDocumento(p.cuit_dni)}
+                        </div>
                       </button>
                     ))}
                   </div>

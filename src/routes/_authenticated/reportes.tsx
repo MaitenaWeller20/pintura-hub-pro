@@ -11,6 +11,7 @@ import { ChartCard } from "@/components/app/chart-card";
 import { PeriodFilters } from "@/components/app/period-filters";
 import { DataTable } from "@/components/app/data-table";
 import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { fmtDocumento } from "@/lib/documento";
 import { rangeToUtc, todayLocalISO } from "@/lib/dates";
 import { FileSpreadsheet, FileText, TrendingUp, Wallet, Receipt, CircleDollarSign, Hash, Undo2 } from "lucide-react";
 import {
@@ -231,7 +232,7 @@ function ReportesPage() {
               return (
                 <TableRow key={c.cliente_id}>
                   <TableCell>{c.razon_social}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{fmtDocumento(c.cuit_dni)}</TableCell>
                   <TableCell className="text-right font-mono">{fmtMoney(c.total_debe)}</TableCell>
                   <TableCell className="text-right font-mono text-success">{fmtMoney(c.total_pagado)}</TableCell>
                   <TableCell className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : "text-success"}`}>

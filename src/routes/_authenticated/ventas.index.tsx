@@ -14,6 +14,7 @@ import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
 import { SectionCard } from "@/components/app/section-card";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
+import { fmtDocumento } from "@/lib/documento";
 import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
@@ -375,7 +376,7 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
               <div><strong>Fecha:</strong> {fmtDateTime(venta.fecha)}</div>
               <div><strong>Sucursal:</strong> {venta.sucursal?.nombre}</div>
               <div><strong>Cliente:</strong> {venta.cliente?.razon_social}</div>
-              <div><strong>CUIT/DNI:</strong> {venta.cliente?.cuit_dni ?? "—"}</div>
+              <div><strong>CUIT/DNI:</strong> {fmtDocumento(venta.cliente?.cuit_dni)}</div>
             </div>
             <div className="mt-2">
               <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>

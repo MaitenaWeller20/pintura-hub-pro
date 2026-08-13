@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { TableRow, TableCell } from "@/components/ui/table";
 import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { fmtDocumento } from "@/lib/documento";
 import { montoEnLetras } from "@/lib/letras";
 import { toast } from "sonner";
 import { Download, Plus, Loader2 } from "lucide-react";
@@ -150,7 +151,7 @@ function PagosProveedores() {
     doc.text(`Proveedor: ${p.proveedor?.razon_social ?? "—"}`, 14, y);
     y += 6;
     if (p.proveedor?.cuit_dni) {
-      doc.text(`CUIT: ${p.proveedor.cuit_dni}`, 14, y);
+      doc.text(`CUIT: ${fmtDocumento(p.proveedor.cuit_dni)}`, 14, y);
       y += 6;
     }
     doc.text(`Forma de pago: ${formaPagoLabel[p.forma_pago] ?? p.forma_pago}`, 14, y);

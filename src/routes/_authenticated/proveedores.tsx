@@ -27,6 +27,8 @@ import { StatusPill } from "@/components/app/status-pill";
 import { toast } from "sonner";
 import { Plus, Pencil } from "lucide-react";
 import { tipoClienteLabel } from "@/lib/format";
+import { coincideDocumento, fmtDocumento, soloDigitos } from "@/lib/documento";
+import { errorDocumentoLegible } from "@/lib/duplicado-documento";
 import { validarCuitDni } from "@/lib/fiscal/codigos";
 import { useCurrentUser } from "@/hooks/use-current-user";
 
@@ -47,11 +49,7 @@ function ProveedoresPage() {
   });
 
   const filtered = useMemo(
-    () =>
-      proveedores.filter(
-        (p: any) =>
-          !q || `${p.razon_social} ${p.cuit_dni ?? ""}`.toLowerCase().includes(q.toLowerCase()),
-      ),
+    () => proveedores.filter((p: any) => coincideDocumento(p, q)),
     [proveedores, q],
   );
 
@@ -97,7 +95,7 @@ function ProveedoresPage() {
                 </span>
               )}
             </TableCell>
-            <TableCell className="font-mono text-xs">{p.cuit_dni ?? "—"}</TableCell>
+            <TableCell className="font-mono text-xs">{fmtDocumento(p.cuit_dni)}</TableCell>
             <TableCell className="text-muted-foreground text-xs">
               {tipoClienteLabel[p.condicion_iva]}
             </TableCell>
@@ -170,28 +168,20 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
     mutationFn: async () => {
       const errCuit = validarCuitDni(form.cuit_dni);
       if (errCuit) throw new Error(errCuit);
-      const cuitNorm = (form.cuit_dni ?? "").replace(/\D/g, "");
+      const cuitNorm = soloDigitos(form.cuit_dni);
       const payload = { ...form, cuit_dni: cuitNorm || null };
       delete payload.created_at;
       delete payload.updated_at;
-      if (editing) {
-        const { error } = await supabase.from("proveedores").update(payload).eq("id", editing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("proveedores").insert(payload);
-        if (error) throw error;
-      }
+      const { error } = editing
+        ? await supabase.from("proveedores").update(payload).eq("id", editing.id)
+        : await supabase.from("proveedores").insert(payload);
+      if (error) throw new Error(await errorDocumentoLegible("proveedores", error, cuitNorm));
     },
     onSuccess: () => {
       toast.success("Proveedor guardado");
       onSaved();
     },
-    onError: (e: any) =>
-      toast.error(
-        e?.code === "23505" || /duplicate key|uq_proveedores_cuit/.test(e?.message ?? "")
-          ? "Ya existe un proveedor con ese CUIT."
-          : e.message,
-      ),
+    onError: (e: any) => toast.error(e.message),
   });
 
   return (

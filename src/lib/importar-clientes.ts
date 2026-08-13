@@ -18,6 +18,7 @@
 // porque cambia qué comprobante se les emite.
 
 import { normalizar } from "./importar-productos";
+import { soloDigitos } from "./documento";
 import { validarCuitDni } from "./fiscal/codigos";
 
 export type ColumnasCliente = {
@@ -82,14 +83,15 @@ export type ResultadoClientes = {
 };
 
 /**
- * CUIT comparable: sólo los dígitos.
+ * CUIT comparable: sólo los dígitos. Vive en `./documento`, se re-exporta acá
+ * porque era de este módulo y varios lo importan desde acá.
  *
  * Es la MISMA normalización que usa el índice único de la base
  * (`regexp_replace(cuit_dni, '\D', '', 'g')` en `uq_clientes_cuit_dni_activo`).
  * Si acá se comparara el texto tal cual, "30-12345678-9" y "30123456789" pasarían
  * como distintos y el INSERT reventaría contra el índice a mitad del lote.
  */
-export const soloDigitos = (s: unknown) => String(s ?? "").replace(/\D/g, "");
+export { soloDigitos };
 
 /** Nombre comparable: sin acentos, sin dobles espacios, sin mayúsculas. */
 export const claveNombre = (s: unknown) =>
@@ -200,7 +202,12 @@ export function procesarClientes(
 
     aCrear.push({
       razon_social: razon,
-      cuit_dni: oNull(cuitBruto),
+      // Normalizado, igual que el alta a mano. Guardar el texto crudo del
+      // archivo ("30-71582607-7") fue el origen del bug: el índice único
+      // comparaba la forma normalizada y los buscadores el texto, así que un
+      // CUIT ya cargado rebotaba al darlo de alta y no se podía encontrar.
+      // El trigger `normalizar_cuit_dni` lo garantiza igual del lado de la base.
+      cuit_dni: oNull(cuit),
       condicion_cta_cte: cc === "S" || cc === "SI" || cc === "SÍ" || cc === "TRUE",
       direccion: oNull(texto(cols.domicilio ? f[cols.domicilio] : "").replace(/\s{2,}/g, " ")),
       telefono: oNull(texto(cols.telefono ? f[cols.telefono] : "")),

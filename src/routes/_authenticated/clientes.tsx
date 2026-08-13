@@ -24,6 +24,8 @@ import {
   type ColumnasCliente,
 } from "@/lib/importar-clientes";
 import { tipoClienteLabel } from "@/lib/format";
+import { coincideDocumento, fmtDocumento, soloDigitos } from "@/lib/documento";
+import { errorDocumentoLegible } from "@/lib/duplicado-documento";
 import { validarCuitDni } from "@/lib/fiscal/codigos";
 import { useCurrentUser } from "@/hooks/use-current-user";
 
@@ -65,9 +67,9 @@ function ClientesPage() {
     queryFn: async () => ((await supabase.from("sucursales").select("*").order("numero")).data ?? []) as any[],
   });
 
-  const filtered = useMemo(() => clientes.filter((c:any) =>
-    !q || `${c.razon_social} ${c.cuit_dni ?? ""}`.toLowerCase().includes(q.toLowerCase())
-  ), [clientes, q]);
+  // El documento se compara por sus dígitos, así que da igual si la usuaria
+  // escribe "30715826077" o "30-71582607-7".
+  const filtered = useMemo(() => clientes.filter((c:any) => coincideDocumento(c, q)), [clientes, q]);
 
   return (
     <div className="space-y-4">
@@ -105,7 +107,7 @@ function ClientesPage() {
               {c.razon_social}
               {c.es_generico && <span className="ml-2 align-middle"><StatusPill tone="neutral">Genérico</StatusPill></span>}
             </TableCell>
-            <TableCell className="font-mono text-xs">{c.cuit_dni ?? "—"}</TableCell>
+            <TableCell className="font-mono text-xs">{fmtDocumento(c.cuit_dni)}</TableCell>
             <TableCell className="text-muted-foreground text-xs">{tipoClienteLabel[c.tipo]}</TableCell>
             <TableCell>{c.condicion_cta_cte ? <StatusPill tone="success">Sí</StatusPill> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
             <TableCell>{c.telefono ?? "—"}</TableCell>
@@ -155,25 +157,20 @@ function ClienteDialog({ open, onClose, editing, sucs, onSaved }: any) {
       const errCuit = validarCuitDni(form.cuit_dni);
       if (errCuit) throw new Error(errCuit);
       // Se guarda normalizado (sólo dígitos); vacío -> null para que el índice
-      // único parcial lo ignore (consumidor final sin identificar).
-      const cuitNorm = (form.cuit_dni ?? "").replace(/\D/g, "");
+      // único parcial lo ignore (consumidor final sin identificar). El trigger
+      // `normalizar_cuit_dni` lo garantiza igual del lado de la base.
+      const cuitNorm = soloDigitos(form.cuit_dni);
       const payload = { ...form, cuit_dni: cuitNorm || null, sucursal_habitual_id: form.sucursal_habitual_id || null };
       delete payload.sucursal; delete payload.created_at; delete payload.updated_at; delete payload.es_generico; delete payload.activo;
-      if (editing) {
-        const { error } = await supabase.from("clientes").update(payload).eq("id", editing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("clientes").insert(payload);
-        if (error) throw error;
-      }
+      const { error } = editing
+        ? await supabase.from("clientes").update(payload).eq("id", editing.id)
+        : await supabase.from("clientes").insert(payload);
+      // El mensaje dice de quién es el CUIT: sin el nombre, un duplicado deja
+      // trabado a quien lo carga.
+      if (error) throw new Error(await errorDocumentoLegible("clientes", error, cuitNorm));
     },
     onSuccess: () => { toast.success("Cliente guardado"); onSaved(); },
-    onError: (e:any) => toast.error(
-      // El índice único de CUIT choca con código 23505; mensaje legible.
-      e?.code === "23505" || /duplicate key|uq_clientes_cuit/.test(e?.message ?? "")
-        ? "Ya existe un cliente con ese CUIT/DNI."
-        : e.message,
-    ),
+    onError: (e:any) => toast.error(e.message),
   });
 
   return (

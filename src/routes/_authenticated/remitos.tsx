@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
@@ -33,7 +33,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Check, X, Printer, ArrowRight } from "lucide-react";
+import { Plus, Trash2, Check, X, Printer, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
@@ -189,14 +189,19 @@ function RemitosPage() {
         </Table>
       </Card>
 
-      <NuevoRemitoDialog
-        open={showNew}
-        onClose={() => setShowNew(false)}
-        onSaved={() => {
-          qc.invalidateQueries({ queryKey: ["remitos"] });
-          setShowNew(false);
-        }}
-      />
+      {/* Montado sólo cuando se abre: así el formulario arranca limpio en cada
+          apertura y no queda con lo tipeado la vez anterior. La precarga del
+          origen la resuelve un efecto adentro del diálogo (ver ahí el porqué). */}
+      {showNew && (
+        <NuevoRemitoDialog
+          open
+          onClose={() => setShowNew(false)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["remitos"] });
+            setShowNew(false);
+          }}
+        />
+      )}
 
       <Dialog open={!!rechazar} onOpenChange={(v) => !v && setRechazar(null)}>
         <DialogContent>
@@ -231,6 +236,17 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
   const { data: cu } = useCurrentUser();
   const crear = useServerFn(crearRemito);
   const [origen, setOrigen] = useState<string>(cu?.sucursal?.id ?? "");
+
+  // `useCurrentUser` resuelve el perfil en un efecto propio, así que en el
+  // primer render SIEMPRE es null y el useState de arriba se inicializaba en
+  // "" para todo el mundo — nunca precargaba nada. Como el botón se
+  // deshabilitaba con `!origen`, quedaba gris sin explicación: eso era "no me
+  // deja hacer remitos". Se sincroniza cuando llega el perfil, sin pisar lo que
+  // el usuario ya haya elegido a mano.
+  useEffect(() => {
+    const mia = cu?.sucursal?.id;
+    if (mia) setOrigen((actual) => actual || mia);
+  }, [cu?.sucursal?.id]);
   const [destino, setDestino] = useState<string>("");
   const [obs, setObs] = useState("");
   const [items, setItems] = useState<
@@ -273,6 +289,22 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
     },
     onError: (e: any) => toast.error(e.message),
   });
+
+  // El remito lo crea la sucursal que SACA la mercadería: el servidor rechaza
+  // un origen que no sea la propia (salvo admin). Se avisa acá para que el
+  // motivo se lea antes de apretar, y no como error después.
+  const origenAjeno = !cu?.isAdmin && !!cu?.sucursal?.id && !!origen && origen !== cu.sucursal.id;
+  const noPuede = !origen
+    ? "Elegí la sucursal de origen."
+    : origenAjeno
+      ? "Sólo podés crear remitos que salgan de tu sucursal."
+      : !destino
+        ? "Elegí la sucursal de destino."
+        : origen === destino
+          ? "El origen y el destino tienen que ser distintos."
+          : items.length === 0
+            ? "Agregá al menos un producto."
+            : null;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -396,16 +428,15 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
           <Label>Observaciones</Label>
           <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} />
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+          {/* Un botón gris sin explicación deja al usuario adivinando: eso fue
+              exactamente lo que pasó con los remitos entre sucursales. */}
+          {noPuede && <span className="text-xs text-muted-foreground sm:mr-auto">{noPuede}</span>}
+          <Button variant="outline" onClick={onClose} disabled={m.isPending}>
             Cancelar
           </Button>
-          <Button
-            onClick={() => m.mutate()}
-            disabled={
-              !origen || !destino || origen === destino || items.length === 0 || m.isPending
-            }
-          >
+          <Button onClick={() => m.mutate()} disabled={!!noPuede || m.isPending}>
+            {m.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
             Crear remito
           </Button>
         </DialogFooter>

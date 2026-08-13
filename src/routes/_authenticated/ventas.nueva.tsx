@@ -414,7 +414,9 @@ function NuevaVenta() {
       crear({
         data: {
           sucursal_id: effSucursal,
-          cliente_id: clienteId,
+          // En un remito de obra va nulo a propósito: la ficha la resuelve
+          // `crear_venta` desde el nombre de la obra.
+          cliente_id: clienteId || null,
           tipo_comprobante: tipoComp as any,
           condicion_venta: esCtaCte ? "CTA_CTE" : condVenta,
           percepciones: Number(percepciones || 0),
@@ -503,7 +505,10 @@ function NuevaVenta() {
   const canSave =
     !frenaPorStock &&
     !!effSucursal &&
-    !!clienteId &&
+    // En un remito de obra no se elige cliente: las obras no se cargan como
+    // clientes. Alcanza con el nombre de la obra (que se exige más abajo) —
+    // `crear_venta` le arma la ficha para que la deuda tenga dueño.
+    (esRemitoObra || !!clienteId) &&
     // R5: la ND no usa la grilla; exige factura + un recargo > 0. El resto exige
     // al menos un ítem con cantidad > 0.
     (esNotaDebito
@@ -637,7 +642,17 @@ function NuevaVenta() {
               )}
             </div>
             <div>
-              <Label>Cliente *</Label>
+              {/* En un remito de obra el cliente es opcional: la obra hace de
+                  cliente. Que el asterisco desaparezca evita que alguien lo
+                  busque creyendo que falta algo. */}
+              <Label>
+                Cliente{" "}
+                {esRemitoObra ? (
+                  <span className="font-normal text-muted-foreground">(opcional)</span>
+                ) : (
+                  "*"
+                )}
+              </Label>
               <Popover open={showCli} onOpenChange={setShowCli}>
                 <PopoverTrigger asChild>
                   <Button variant="outline" className="w-full justify-start truncate">

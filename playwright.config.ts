@@ -14,10 +14,16 @@ import { defineConfig, devices } from "@playwright/test";
  * NUNCA corren contra producción: `baseURL` apunta al dev server local y varias
  * pruebas escriben datos.
  */
-const PUERTO = 8080;
+// El 8080 es un puerto muy popular y a veces lo ocupa otra cosa. Se puede mover
+// sin tocar el archivo:  E2E_PUERTO=8123 npx playwright test
+const PUERTO = Number(process.env.E2E_PUERTO ?? 8080);
 
 export default defineConfig({
   testDir: "./e2e",
+  // Chequea que en el puerto esté la app y no otra cosa. Ver el archivo: sin
+  // esto, cualquier servidor ajeno que quede en el 8080 hace fallar las 100
+  // pruebas en el login sin explicar por qué.
+  globalSetup: "./e2e/verificar-servidor.ts",
   // Los ABMC escriben en la misma base: en paralelo se pisan entre sí.
   workers: 1,
   fullyParallel: false,
@@ -58,7 +64,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "bun run dev",
+    command: `bun run dev --port ${PUERTO}`,
     url: `http://localhost:${PUERTO}`,
     reuseExistingServer: true,
     timeout: 120_000,

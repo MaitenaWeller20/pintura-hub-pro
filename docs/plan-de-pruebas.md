@@ -119,6 +119,12 @@ datos. Son los que hay que correr cuando se toca una RPC.
   antes intentar reproducirlo aislado**: si se reproduce, es un bug de verdad.
   La cura de fondo sería correr la suite contra el build de producción, pero
   `vite preview` no sirve para este proyecto (el build sale con nitro).
+- **Si algo ajeno ocupa el puerto 8080**, la suite lo tomaba por el dev server
+  (`reuseExistingServer: true`) y las 100 pruebas fallaban en el login con un
+  timeout que no decía nada. Pasó con un `python -m http.server` de otro
+  proyecto. Ahora `e2e/verificar-servidor.ts` corre antes que todo y corta con un
+  mensaje que dice qué pasa y cómo mirarlo. Para correr en otro puerto sin tocar
+  nada: `E2E_PUERTO=8123 npx playwright test`.
 - **Correr la suite con `caffeinate -dimsu`** (`caffeinate -dimsu npx playwright
   test`). Si la laptop se suspende en el medio, los timeouts fallan en masa y
   parece un desastre: una corrida dio 34 fallas en 5,4 horas y con `caffeinate`

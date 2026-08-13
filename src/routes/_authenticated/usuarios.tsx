@@ -5,16 +5,34 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TableRow, TableCell } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
 import { Plus, Power, KeyRound, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { crearUsuario, toggleUsuarioActivo, resetearPassword, setPermiteVentaSinStock, setSeccionesUsuario } from "@/lib/usuarios.functions";
+import {
+  crearUsuario,
+  toggleUsuarioActivo,
+  resetearPassword,
+  setPermiteVentaSinStock,
+  setSeccionesUsuario,
+} from "@/lib/usuarios.functions";
 import { GRUPOS, SECCIONES_DEFAULT, SECCIONES_OTORGABLES } from "@/lib/secciones";
 import { faltanteUsuario, generarPassword, PASSWORD_MINIMO } from "@/lib/alta-usuario";
 
@@ -23,7 +41,10 @@ export const Route = createFileRoute("/_authenticated/usuarios")({
   beforeLoad: async () => {
     const { data } = await supabase.auth.getUser();
     if (!data.user) throw redirect({ to: "/auth" });
-    const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user.id);
+    const { data: roles } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.user.id);
     if (!roles?.some((r) => r.role === "admin")) throw redirect({ to: "/" });
   },
   component: UsuariosPage,
@@ -38,35 +59,53 @@ function UsuariosPage() {
   const { data: usuarios = [], isLoading } = useQuery({
     queryKey: ["usuarios"],
     queryFn: async () => {
-      const { data: profiles = [] } = await supabase.from("profiles")
-        .select("*, sucursal:sucursales(nombre)").order("username");
-      const ids = (profiles ?? []).map((p:any) => p.id);
+      const { data: profiles = [] } = await supabase
+        .from("profiles")
+        .select("*, sucursal:sucursales(nombre)")
+        .order("username");
+      const ids = (profiles ?? []).map((p: any) => p.id);
       if (ids.length === 0) return [];
       const { data: roles = [] } = await supabase.from("user_roles").select("*").in("user_id", ids);
-      return (profiles ?? []).map((p:any) => ({
-        ...p, role: (roles ?? []).find((r:any) => r.user_id === p.id)?.role ?? null,
+      return (profiles ?? []).map((p: any) => ({
+        ...p,
+        role: (roles ?? []).find((r: any) => r.user_id === p.id)?.role ?? null,
       }));
     },
   });
 
-  const { data: sucs = [] } = useQuery({ queryKey:["sucs"], queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[] });
+  const { data: sucs = [] } = useQuery({
+    queryKey: ["sucs"],
+    queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[],
+  });
 
   const togg = useMutation({
     mutationFn: async (d: any) => toggle({ data: d }),
-    onSuccess: () => { toast.success("Estado actualizado"); qc.invalidateQueries({ queryKey:["usuarios"] }); },
-    onError: (e:any) => toast.error(e.message),
+    onSuccess: () => {
+      toast.success("Estado actualizado");
+      qc.invalidateQueries({ queryKey: ["usuarios"] });
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   // Antes esto venía precargado con "emp1234" — la misma contraseña débil que
   // estuvo publicada en la pantalla de login. Cada usuario nuevo nacía quemado.
-  const formVacio = { email:"", password:"", username:"", nombre_completo:"", role:"empleado", sucursal_id: null, permite_venta_sin_stock: false };
+  const formVacio = {
+    email: "",
+    password: "",
+    username: "",
+    nombre_completo: "",
+    role: "empleado",
+    sucursal_id: null,
+    sucursales_habilitadas: [] as string[],
+    permite_venta_sin_stock: false,
+  };
   const [form, setForm] = useState<any>(formVacio);
-  const set = (k:string,v:any) => setForm((f:any)=>({ ...f, [k]: v }));
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   const m = useMutation({
     mutationFn: async () => crear({ data: form }),
     onSuccess: (r: any) => {
       toast.success("Usuario creado");
-      qc.invalidateQueries({ queryKey:["usuarios"] });
+      qc.invalidateQueries({ queryKey: ["usuarios"] });
       setOpen(false);
       const creado = { ...form, id: r?.id, secciones: null };
       setForm(formVacio);
@@ -74,7 +113,7 @@ function UsuariosPage() {
       // son un mismo momento, y si no se ofrece nadie va a ir a buscarlo.
       if (r?.id && form.role !== "admin") setPermisosUser(creado);
     },
-    onError: (e:any) => toast.error(e.message),
+    onError: (e: any) => toast.error(e.message),
   });
 
   const [resetUser, setResetUser] = useState<any>(null);
@@ -85,7 +124,11 @@ function UsuariosPage() {
     <div className="space-y-4">
       <PageHeader
         title="Usuarios"
-        actions={<Button onClick={()=>setOpen(true)}><Plus className="h-4 w-4 mr-1"/> Nuevo</Button>}
+        actions={
+          <Button onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Nuevo
+          </Button>
+        }
       />
 
       <DataTable
@@ -94,27 +137,54 @@ function UsuariosPage() {
         isEmpty={usuarios.length === 0}
         empty={{ text: "No hay usuarios." }}
       >
-        {usuarios.map((u:any)=>(
+        {usuarios.map((u: any) => (
           <TableRow key={u.id}>
             <TableCell className="font-mono text-xs">{u.username}</TableCell>
             <TableCell>{u.nombre_completo ?? "—"}</TableCell>
             <TableCell>
-              <StatusPill tone={u.role === "admin" ? "info" : "neutral"}>{u.role ?? "—"}</StatusPill>
+              <StatusPill tone={u.role === "admin" ? "info" : "neutral"}>
+                {u.role ?? "—"}
+              </StatusPill>
             </TableCell>
-            <TableCell className="text-muted-foreground text-sm">{u.sucursal?.nombre ?? "—"}</TableCell>
-            <TableCell>{u.activo ? <StatusPill tone="success">Activo</StatusPill> : <StatusPill tone="neutral">Inactivo</StatusPill>}</TableCell>
+            <TableCell className="text-muted-foreground text-sm">
+              {u.sucursal?.nombre ?? "—"}
+            </TableCell>
+            <TableCell>
+              {u.activo ? (
+                <StatusPill tone="success">Activo</StatusPill>
+              ) : (
+                <StatusPill tone="neutral">Inactivo</StatusPill>
+              )}
+            </TableCell>
             <TableCell className="flex gap-1">
               {/* El permiso de venta sin stock vivía acá como un ícono cuyo
                   único indicio era el title. Se mudó adentro del diálogo de
                   permisos, que es donde alguien lo va a buscar. */}
-              <Button size="sm" variant="ghost" title="Permisos y secciones" onClick={()=>setPermisosUser(u)}>
-                <ShieldCheck className={`h-3.5 w-3.5 ${u.secciones ? "text-primary" : "text-muted-foreground/60"}`}/>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Permisos y secciones"
+                onClick={() => setPermisosUser(u)}
+              >
+                <ShieldCheck
+                  className={`h-3.5 w-3.5 ${u.secciones ? "text-primary" : "text-muted-foreground/60"}`}
+                />
               </Button>
-              <Button size="sm" variant="ghost" title="Cambiar contraseña" onClick={()=>setResetUser(u)}>
-                <KeyRound className="h-3.5 w-3.5"/>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Cambiar contraseña"
+                onClick={() => setResetUser(u)}
+              >
+                <KeyRound className="h-3.5 w-3.5" />
               </Button>
-              <Button size="sm" variant="ghost" title={u.activo ? "Desactivar" : "Activar"} onClick={()=>togg.mutate({ user_id: u.id, activo: !u.activo })}>
-                <Power className="h-3.5 w-3.5"/>
+              <Button
+                size="sm"
+                variant="ghost"
+                title={u.activo ? "Desactivar" : "Activar"}
+                onClick={() => togg.mutate({ user_id: u.id, activo: !u.activo })}
+              >
+                <Power className="h-3.5 w-3.5" />
               </Button>
             </TableCell>
           </TableRow>
@@ -123,61 +193,137 @@ function UsuariosPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Nuevo usuario</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Nuevo usuario</DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
-            <div><Label>Email *</Label><Input type="email" value={form.email} onChange={(e)=>set("email", e.target.value)}/></div>
+            <div>
+              <Label>Email *</Label>
+              <Input
+                type="email"
+                value={form.email}
+                onChange={(e) => set("email", e.target.value)}
+              />
+            </div>
             <div>
               <Label>Contraseña *</Label>
               <div className="flex gap-2">
-                <Input className="font-mono" value={form.password} onChange={(e)=>set("password", e.target.value)} autoComplete="new-password"/>
-                <Button variant="outline" size="icon" onClick={()=>set("password", generarPassword())} title="Generar una fuerte">
-                  <RefreshCw className="h-4 w-4"/>
+                <Input
+                  className="font-mono"
+                  value={form.password}
+                  onChange={(e) => set("password", e.target.value)}
+                  autoComplete="new-password"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => set("password", generarPassword())}
+                  title="Generar una fuerte"
+                >
+                  <RefreshCw className="h-4 w-4" />
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                Mínimo {PASSWORD_MINIMO} caracteres. Copiala antes de crear: no se puede volver a ver.
+                Mínimo {PASSWORD_MINIMO} caracteres. Copiala antes de crear: no se puede volver a
+                ver.
               </p>
             </div>
-            <div><Label>Usuario (alias) *</Label><Input value={form.username} onChange={(e)=>set("username", e.target.value)}/></div>
-            <div><Label>Nombre completo</Label><Input value={form.nombre_completo} onChange={(e)=>set("nombre_completo", e.target.value)}/></div>
-            <div><Label>Rol *</Label>
-              <Select value={form.role} onValueChange={(v)=>set("role", v)}>
-                <SelectTrigger><SelectValue/></SelectTrigger>
-                <SelectContent><SelectItem value="empleado">Empleado</SelectItem><SelectItem value="admin">Administrador</SelectItem></SelectContent>
-              </Select>
+            <div>
+              <Label>Usuario (alias) *</Label>
+              <Input value={form.username} onChange={(e) => set("username", e.target.value)} />
             </div>
-            <div><Label>Sucursal {form.role==="empleado"?"*":"(opcional)"}</Label>
-              <Select value={form.sucursal_id ?? "__none__"} onValueChange={(v)=>set("sucursal_id", v==="__none__"?null:v)}>
-                <SelectTrigger><SelectValue/></SelectTrigger>
+            <div>
+              <Label>Nombre completo</Label>
+              <Input
+                value={form.nombre_completo}
+                onChange={(e) => set("nombre_completo", e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Rol *</Label>
+              <Select value={form.role} onValueChange={(v) => set("role", v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">— (ambas)</SelectItem>
-                  {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
+                  <SelectItem value="empleado">Empleado</SelectItem>
+                  <SelectItem value="admin">Administrador</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {/* Puede trabajar en varias. La primera tildada es en la que
+                arranca; después él mismo se cambia desde el menú. Antes esto era
+                un solo select con una opción "— (ambas)" que en realidad lo
+                dejaba SIN ninguna: un empleado así no puede vender ni tener caja. */}
+            <div className="sm:col-span-2">
+              <Label>
+                Sucursales donde trabaja {form.role === "empleado" ? "*" : "(opcional)"}
+              </Label>
+              <div className="mt-1 flex flex-wrap gap-3 rounded border border-border p-2">
+                {sucs.map((s: any) => {
+                  const elegidas: string[] = form.sucursales_habilitadas ?? [];
+                  const tildada = elegidas.includes(s.id);
+                  return (
+                    <label key={s.id} className="flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={tildada}
+                        onChange={(e) => {
+                          const nuevas = e.target.checked
+                            ? [...elegidas, s.id]
+                            : elegidas.filter((x) => x !== s.id);
+                          set("sucursales_habilitadas", nuevas);
+                          // La activa es la primera tildada. Si se destildó la
+                          // que estaba activa, pasa a la siguiente que quede.
+                          if (!nuevas.includes(form.sucursal_id)) {
+                            set("sucursal_id", nuevas[0] ?? null);
+                          }
+                        }}
+                      />
+                      {s.nombre}
+                    </label>
+                  );
+                })}
+              </div>
+              {(form.sucursales_habilitadas ?? []).length > 1 && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Arranca en{" "}
+                  <strong>{sucs.find((s: any) => s.id === form.sucursal_id)?.nombre}</strong> y
+                  puede cambiarse desde el menú. Lo que vende, la caja y la numeración salen de la
+                  que tenga activa en ese momento.
+                </p>
+              )}
+            </div>
             <label className="flex items-center gap-2 text-sm border border-border rounded p-2 bg-muted/30">
-              <input type="checkbox" checked={!!form.permite_venta_sin_stock} onChange={(e)=>set("permite_venta_sin_stock", e.target.checked)} />
-              <span><strong>Puede vender sin stock</strong> — registra ventas de productos sin stock disponible. Los administradores siempre pueden.</span>
+              <input
+                type="checkbox"
+                checked={!!form.permite_venta_sin_stock}
+                onChange={(e) => set("permite_venta_sin_stock", e.target.checked)}
+              />
+              <span>
+                <strong>Puede vender sin stock</strong> — registra ventas de productos sin stock
+                disponible. Los administradores siempre pueden.
+              </span>
             </label>
           </div>
           {/* El motivo por el que no se puede crear, SIEMPRE visible. Un botón
               gris sin explicación fue exactamente el reporte que llegó. */}
           {faltante && <p className="text-sm text-destructive">{faltante}</p>}
           <DialogFooter>
-            <Button variant="outline" onClick={()=>setOpen(false)}>Cancelar</Button>
-            <Button onClick={()=>m.mutate()} disabled={!!faltante || m.isPending}>
-              {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1"/>} Crear
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => m.mutate()} disabled={!!faltante || m.isPending}>
+              {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Crear
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {resetUser && (
-        <ResetPasswordDialog usuario={resetUser} onClose={()=>setResetUser(null)} />
-      )}
+      {resetUser && <ResetPasswordDialog usuario={resetUser} onClose={() => setResetUser(null)} />}
 
       {permisosUser && (
-        <PermisosDialog usuario={permisosUser} onClose={()=>setPermisosUser(null)} />
+        <PermisosDialog usuario={permisosUser} onClose={() => setPermisosUser(null)} />
       )}
     </div>
   );
@@ -236,11 +382,13 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Permisos de {usuario.username}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Permisos de {usuario.username}</DialogTitle>
+        </DialogHeader>
 
         <p className="text-xs text-muted-foreground">
-          Esto ordena <strong>qué pantallas ve</strong>. Los permisos de fondo —quién puede
-          borrar, quién ve la plata— los sigue mandando el rol.
+          Esto ordena <strong>qué pantallas ve</strong>. Los permisos de fondo —quién puede borrar,
+          quién ve la plata— los sigue mandando el rol.
         </p>
 
         {esAdmin ? (
@@ -252,7 +400,12 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
           <div className="space-y-3">
             <div className="space-y-1.5">
               <label className="flex items-start gap-2 text-sm cursor-pointer">
-                <input type="radio" checked={!aMano} onChange={() => setAMano(false)} className="mt-1" />
+                <input
+                  type="radio"
+                  checked={!aMano}
+                  onChange={() => setAMano(false)}
+                  className="mt-1"
+                />
                 <span>
                   <strong>Las de siempre</strong>
                   <span className="block text-xs text-muted-foreground">
@@ -262,8 +415,15 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
                 </span>
               </label>
               <label className="flex items-start gap-2 text-sm cursor-pointer">
-                <input type="radio" checked={aMano} onChange={() => setAMano(true)} className="mt-1" />
-                <span><strong>Elegir a mano</strong></span>
+                <input
+                  type="radio"
+                  checked={aMano}
+                  onChange={() => setAMano(true)}
+                  className="mt-1"
+                />
+                <span>
+                  <strong>Elegir a mano</strong>
+                </span>
               </label>
             </div>
 
@@ -278,7 +438,10 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
                     </div>
                     <div className="grid grid-cols-2 gap-1">
                       {items.map((s) => (
-                        <label key={s.key} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <label
+                          key={s.key}
+                          className="flex items-center gap-2 text-sm cursor-pointer"
+                        >
                           <input
                             type="checkbox"
                             checked={elegidas.includes(s.key)}
@@ -314,7 +477,9 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
           <Button onClick={() => m.mutate()} disabled={esAdmin || m.isPending}>
             {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Guardar
           </Button>
@@ -332,7 +497,9 @@ function ResetPasswordDialog({ usuario, onClose }: { usuario: any; onClose: () =
   const m = useMutation({
     mutationFn: async () => reset({ data: { user_id: usuario.id, password } }),
     onSuccess: () => {
-      toast.success(`Contraseña de ${usuario.username} cambiada. Pasásela por un canal privado.`, { duration: 8000 });
+      toast.success(`Contraseña de ${usuario.username} cambiada. Pasásela por un canal privado.`, {
+        duration: 8000,
+      });
       onClose();
     },
     onError: (e: any) => toast.error(e.message),
@@ -341,7 +508,9 @@ function ResetPasswordDialog({ usuario, onClose }: { usuario: any; onClose: () =
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Contraseña de {usuario.username}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Contraseña de {usuario.username}</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div>
             <Label>Nueva contraseña *</Label>
@@ -352,18 +521,29 @@ function ResetPasswordDialog({ usuario, onClose }: { usuario: any; onClose: () =
                 className="font-mono"
                 autoComplete="new-password"
               />
-              <Button variant="outline" size="icon" onClick={() => setPassword(generarPassword())} title="Generar una fuerte">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setPassword(generarPassword())}
+                title="Generar una fuerte"
+              >
                 <RefreshCw className="h-4 w-4" />
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Mínimo {PASSWORD_MINIMO} caracteres. Copiala antes de guardar: no se puede volver a ver.
+              Mínimo {PASSWORD_MINIMO} caracteres. Copiala antes de guardar: no se puede volver a
+              ver.
             </p>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={password.length < PASSWORD_MINIMO || m.isPending}>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => m.mutate()}
+            disabled={password.length < PASSWORD_MINIMO || m.isPending}
+          >
             {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Cambiar
           </Button>
         </DialogFooter>

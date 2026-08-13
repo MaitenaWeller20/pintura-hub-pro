@@ -19,6 +19,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
+import { conIva } from "@/lib/fiscal/iva";
 import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
@@ -368,7 +369,9 @@ function EditarPresupuesto() {
               >
                 <span className="font-mono text-xs w-32 shrink-0">{r.codigo}</span>
                 <span className="truncate flex-1">{r.nombre}</span>
-                <span className="font-mono text-xs">{fmtMoney(r.precio_sin_iva)}</span>
+                <span className="font-mono text-xs">
+                  {fmtMoney(conIva(r.precio_sin_iva, r.iva_porcentaje))}
+                </span>
               </button>
             ))}
           </div>
@@ -403,6 +406,10 @@ function EditarPresupuesto() {
                   // Sólo si el precio que se está mostrando NO es el de hoy.
                   // Repreciando serían el mismo número dos veces.
                   const seMovio = !repreciar && f.precio_snapshot !== null && base !== f.precio_hoy;
+                  // Se muestra con IVA, igual que en el presupuesto que ve el
+                  // cliente. Lo que se guarda sigue siendo el neto.
+                  const iva = ivaDe(f, repreciar);
+                  const precioFinal = conIva(precio, iva);
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
@@ -413,15 +420,15 @@ function EditarPresupuesto() {
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs">
-                        {fmtMoney(precio)}
+                        {fmtMoney(precioFinal)}
                         {Number(f.descuento || 0) > 0 && (
                           <span className="block text-[10px] text-muted-foreground line-through">
-                            {fmtMoney(base)}
+                            {fmtMoney(conIva(base, iva))}
                           </span>
                         )}
                         {seMovio && (
                           <span className="block text-[10px] text-muted-foreground">
-                            hoy vale {fmtMoney(f.precio_hoy)}
+                            hoy vale {fmtMoney(conIva(f.precio_hoy, f.iva_hoy))}
                           </span>
                         )}
                       </TableCell>
@@ -442,7 +449,7 @@ function EditarPresupuesto() {
                         />
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(precio * Number(f.cantidad || 0))}
+                        {fmtMoney(precioFinal * Number(f.cantidad || 0))}
                       </TableCell>
                       <TableCell>
                         <Button
@@ -471,20 +478,15 @@ function EditarPresupuesto() {
             placeholder="Lo que quieras que salga en el presupuesto…"
           />
         </SectionCard>
+        {/* Sin desglose de IVA, igual que en la grilla: los precios de arriba
+            ya son finales y repetir neto + IVA acá no cerraría. */}
         <SectionCard title="Total">
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span>Subtotal:</span>
-              <span className="font-mono">{fmtMoney(totales.sub)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>IVA:</span>
-              <span className="font-mono">{fmtMoney(totales.iva)}</span>
-            </div>
-            <div className="flex justify-between text-lg font-bold border-t border-border pt-2 mt-2">
+            <div className="flex items-baseline justify-between text-lg font-bold">
               <span>TOTAL:</span>
               <span className="font-mono">{fmtMoney(totales.total)}</span>
             </div>
+            <p className="text-right text-[11px] font-normal text-muted-foreground">IVA incluido</p>
             {p.total != null && Number(p.total) !== totales.total && (
               <p className="text-xs text-muted-foreground pt-1">
                 Antes era {fmtMoney(Number(p.total))}.

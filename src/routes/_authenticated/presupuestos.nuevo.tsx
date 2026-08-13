@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
 import { filtroProducto, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
+import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
 
@@ -259,7 +260,9 @@ function NuevoPresupuesto() {
               >
                 <span className="font-mono text-xs w-32 shrink-0">{p.codigo}</span>
                 <span className="truncate flex-1">{p.nombre}</span>
-                <span className="font-mono text-xs">{fmtMoney(p.precio_sin_iva)}</span>
+                <span className="font-mono text-xs">
+                  {fmtMoney(conIva(p.precio_sin_iva, p.iva_porcentaje))}
+                </span>
               </button>
             ))}
           </div>
@@ -305,15 +308,18 @@ function NuevoPresupuesto() {
                   const precio = +(f.precio_lista * (1 - Number(f.descuento || 0) / 100)).toFixed(
                     2,
                   );
+                  // Se muestra con IVA: el presupuesto se cotiza con el precio
+                  // final. Lo que se manda a guardar sigue siendo el neto.
+                  const precioFinal = conIva(precio, f.iva);
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
                       <TableCell>{f.nombre}</TableCell>
                       <TableCell className="text-right font-mono text-xs">
-                        {fmtMoney(precio)}
+                        {fmtMoney(precioFinal)}
                         {Number(f.descuento || 0) > 0 && (
                           <span className="block text-[10px] text-muted-foreground line-through">
-                            {fmtMoney(f.precio_lista)}
+                            {fmtMoney(conIva(f.precio_lista, f.iva))}
                           </span>
                         )}
                       </TableCell>
@@ -334,7 +340,7 @@ function NuevoPresupuesto() {
                         />
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(precio * Number(f.cantidad || 0))}
+                        {fmtMoney(precioFinal * Number(f.cantidad || 0))}
                       </TableCell>
                       <TableCell>
                         <Button
@@ -363,19 +369,16 @@ function NuevoPresupuesto() {
             placeholder="Lo que quieras que salga en el presupuesto…"
           />
         </SectionCard>
+        {/* Sin desglose de IVA: los precios de arriba ya son finales, así que
+            repetir neto + IVA acá daría números que no cierran con la grilla.
+            El presupuesto no es un comprobante fiscal; la venta que salga de él
+            sí discrimina, que es donde importa. */}
         <SectionCard title="Total">
-          <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span>Subtotal:</span>
-              <span className="font-mono">{fmtMoney(totales.sub)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>IVA:</span>
-              <span className="font-mono">{fmtMoney(totales.iva)}</span>
-            </div>
-            <div className="flex justify-between text-lg font-bold border-t border-border pt-2 mt-2">
-              <span>TOTAL:</span>
-              <span className="font-mono">{fmtMoney(totales.total)}</span>
+          <div className="flex items-baseline justify-between">
+            <span className="text-sm">TOTAL:</span>
+            <div className="text-right">
+              <p className="font-mono text-lg font-bold">{fmtMoney(totales.total)}</p>
+              <p className="text-[11px] text-muted-foreground">IVA incluido</p>
             </div>
           </div>
         </SectionCard>

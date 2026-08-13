@@ -14,7 +14,7 @@ import {
   puedeForzarConsumidorFinal,
   TIPOS_C,
 } from "./codigos";
-import { calcularTotales, round2 } from "./iva";
+import { calcularTotales, conIva, round2 } from "./iva";
 import {
   fmtFechaAfip,
   fmtFechaIsoAr,
@@ -381,8 +381,19 @@ describe("QR de AFIP (RG 4892)", () => {
     const p = url.split("?p=")[1];
     const json = Buffer.from(p, "base64").toString("utf8");
     expect(Object.keys(JSON.parse(json))).toEqual([
-      "ver", "fecha", "cuit", "ptoVta", "tipoCmp", "nroCmp", "importe",
-      "moneda", "ctz", "tipoDocRec", "nroDocRec", "tipoCodAut", "codAut",
+      "ver",
+      "fecha",
+      "cuit",
+      "ptoVta",
+      "tipoCmp",
+      "nroCmp",
+      "importe",
+      "moneda",
+      "ctz",
+      "tipoDocRec",
+      "nroDocRec",
+      "tipoCodAut",
+      "codAut",
     ]);
   });
 });
@@ -393,7 +404,13 @@ describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
     const response = {
       FeDetResp: {
         FECAEDetResponse: [
-          { Observaciones: { Obs: [{ Code: 10016, Msg: "El CondicionIVAReceptorId no se corresponde con el DocTipo" }] } },
+          {
+            Observaciones: {
+              Obs: [
+                { Code: 10016, Msg: "El CondicionIVAReceptorId no se corresponde con el DocTipo" },
+              ],
+            },
+          },
         ],
       },
     };
@@ -405,16 +422,22 @@ describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
   it("extrae los Errors de nivel request y junta varios motivos", () => {
     const response = {
       Errors: { Err: [{ Code: 10013, Msg: "DocTipo debe ser 80 (CUIT)" }] },
-      FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [{ Code: 15, Msg: "Campo X inválido" }] } }] },
+      FeDetResp: {
+        FECAEDetResponse: [{ Observaciones: { Obs: [{ Code: 15, Msg: "Campo X inválido" }] } }],
+      },
     };
-    expect(detalleRechazoAfip(response)).toBe("[10013] DocTipo debe ser 80 (CUIT) · [15] Campo X inválido");
+    expect(detalleRechazoAfip(response)).toBe(
+      "[10013] DocTipo debe ser 80 (CUIT) · [15] Campo X inválido",
+    );
   });
 
   it("no rompe con respuestas vacías, nulas o sin observaciones", () => {
     expect(detalleRechazoAfip(null)).toBe("");
     expect(detalleRechazoAfip(undefined)).toBe("");
     expect(detalleRechazoAfip({})).toBe("");
-    expect(detalleRechazoAfip({ FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [] } }] } })).toBe("");
+    expect(
+      detalleRechazoAfip({ FeDetResp: { FECAEDetResponse: [{ Observaciones: { Obs: [] } }] } }),
+    ).toBe("");
   });
 });
 
@@ -436,12 +459,42 @@ describe("selector Factura A/B (RI puede emitir B a un cliente RI)", () => {
 
   it("la letra de la NC sale del CbteTipo REALMENTE emitido, no del tipo tipeado", () => {
     // Una venta FACTURA_A emitida como B (forzado) tiene cbte 6 -> su NC es B.
-    expect(letraDeCbteTipo(6)).toBe("B");   // Factura B
-    expect(letraDeCbteTipo(1)).toBe("A");   // Factura A
-    expect(letraDeCbteTipo(11)).toBe("C");  // Factura C
-    expect(letraDeCbteTipo(8)).toBe("B");   // NC B
-    expect(letraDeCbteTipo(3)).toBe("A");   // NC A
-    expect(letraDeCbteTipo(13)).toBe("C");  // NC C
+    expect(letraDeCbteTipo(6)).toBe("B"); // Factura B
+    expect(letraDeCbteTipo(1)).toBe("A"); // Factura A
+    expect(letraDeCbteTipo(11)).toBe("C"); // Factura C
+    expect(letraDeCbteTipo(8)).toBe("B"); // NC B
+    expect(letraDeCbteTipo(3)).toBe("A"); // NC A
+    expect(letraDeCbteTipo(13)).toBe("C"); // NC C
     expect(letraDeCbteTipo(null)).toBe("A"); // sin dato: default A
+  });
+});
+
+describe("conIva (precio final para mostrar)", () => {
+  it("le suma el IVA a un neto", () => {
+    expect(conIva(100, 21)).toBe(121);
+    expect(conIva(14861.87, 21)).toBe(17982.86);
+  });
+
+  it("reproduce el caso que reportó la clienta", () => {
+    // La membrana: 173727.61 de lista, 25% de descuento, y se vende a 157.657,81.
+    const neto = +(173727.61 * 0.75).toFixed(2); // 130295.71
+    expect(neto).toBe(130295.71);
+    expect(conIva(neto, 21)).toBe(157657.81);
+  });
+
+  it("acepta alícuotas que no son 21", () => {
+    expect(conIva(1000, 10.5)).toBe(1105);
+    expect(conIva(1000, 0)).toBe(1000);
+  });
+
+  it("redondea a dos decimales, como el resto del cálculo fiscal", () => {
+    expect(conIva(0.01, 21)).toBe(0.01);
+    expect(conIva(33.33, 21)).toBe(40.33);
+  });
+
+  it("tolera null, undefined y strings, que es como vienen de la base", () => {
+    expect(conIva(null, 21)).toBe(0);
+    expect(conIva(undefined, undefined)).toBe(0);
+    expect(conIva("100", "21")).toBe(121);
   });
 });

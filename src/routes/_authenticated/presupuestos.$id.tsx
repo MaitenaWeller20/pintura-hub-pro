@@ -32,6 +32,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
+import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Printer, Loader2, AlertTriangle, Pencil } from "lucide-react";
 import jsPDF from "jspdf";
@@ -107,12 +108,13 @@ function DetallePresupuesto() {
 
     autoTable(doc, {
       startY: y + 28,
+      // Precios finales, con IVA: es lo que se le cotiza al cliente.
       head: [["Código", "Producto", "Cant.", "Precio", "Desc.", "Subtotal"]],
       body: items.map((i: any) => [
         i.codigo,
         i.descripcion,
         String(Number(i.cantidad)),
-        fmtMoney(i.precio_sin_iva),
+        fmtMoney(conIva(i.precio_sin_iva, i.iva_porcentaje)),
         Number(i.descuento_porcentaje) > 0 ? `${Number(i.descuento_porcentaje)}%` : "—",
         fmtMoney(i.subtotal_con_iva),
       ]),
@@ -230,6 +232,10 @@ function DetallePresupuesto() {
                 <TableHead className="text-right">Precio de lista</TableHead>
                 <TableHead className="text-right">Desc.</TableHead>
                 <TableHead className="text-right">Precio</TableHead>
+                {/* Los precios van CON IVA: es el número que se le dice al
+                    cliente. Mostrar el neto y el IVA por separado confundía, y
+                    hay clientes a los que no se les quiere mostrar el desglose.
+                    Lo guardado sigue siendo neto, que es lo que factura. */}
                 <TableHead className="text-right">Subtotal</TableHead>
               </TableRow>
             </TableHeader>
@@ -240,7 +246,7 @@ function DetallePresupuesto() {
                   <TableCell>{i.descripcion}</TableCell>
                   <TableCell className="text-right">{Number(i.cantidad)}</TableCell>
                   <TableCell className="text-right font-mono text-muted-foreground">
-                    {fmtMoney(i.precio_lista_sin_iva)}
+                    {fmtMoney(conIva(i.precio_lista_sin_iva, i.iva_porcentaje))}
                   </TableCell>
                   <TableCell className="text-right">
                     {Number(i.descuento_porcentaje) > 0
@@ -248,7 +254,7 @@ function DetallePresupuesto() {
                       : "—"}
                   </TableCell>
                   <TableCell className="text-right font-mono">
-                    {fmtMoney(i.precio_sin_iva)}
+                    {fmtMoney(conIva(i.precio_sin_iva, i.iva_porcentaje))}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
                     {fmtMoney(i.subtotal_con_iva)}
@@ -273,7 +279,10 @@ function DetallePresupuesto() {
               </>
             )}
           </div>
-          <p className="text-xl font-bold font-mono">{fmtMoney(p.total)}</p>
+          <div className="text-right">
+            <p className="text-xl font-bold font-mono">{fmtMoney(p.total)}</p>
+            <p className="text-[11px] text-muted-foreground">IVA incluido</p>
+          </div>
         </div>
       </SectionCard>
 

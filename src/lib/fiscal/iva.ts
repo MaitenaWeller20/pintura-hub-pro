@@ -18,6 +18,23 @@ import { alicuotaValida, ivaIdAfip } from "./codigos";
 
 export const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 
+/**
+ * Un precio neto, con su IVA sumado. Para MOSTRAR, no para declarar.
+ *
+ * Los presupuestos se muestran con el precio final, que es el número que la
+ * clienta le dice al cliente por teléfono ("la membrana sale 157"). Mostrar el
+ * neto y el IVA aparte confundía y, en algunos clientes, no querían ni que se
+ * viera el desglose.
+ *
+ * Se calcula desde el NETO, nunca despejando desde el subtotal: con cantidades
+ * y descuentos de por medio, dividir el subtotal daría un unitario con deriva.
+ * Lo que se guarda en la base sigue siendo neto, que es lo que después factura.
+ */
+export const conIva = (
+  neto: number | string | null | undefined,
+  ivaPorcentaje: number | string | null | undefined,
+): number => round2(Number(neto ?? 0) * (1 + Number(ivaPorcentaje ?? 0) / 100));
+
 export interface ItemFiscal {
   cantidad: number;
   precio_unitario_sin_iva: number;

@@ -98,7 +98,7 @@ export interface VentaImpresa {
   percepciones?: number | string | null;
   total: number | string;
   cliente?: { razon_social?: string | null; cuit_dni?: string | null } | null;
-  sucursal?: { nombre?: string | null } | null;
+  sucursal?: { nombre?: string | null; telefono?: string | null } | null;
 }
 
 const MARGEN = 14;
@@ -221,6 +221,15 @@ export function generarComprobantePdf(
       : null,
     em?.ingresos_brutos ? `Ingresos Brutos: ${em.ingresos_brutos}` : null,
     em?.inicio_actividades ? `Inicio de actividades: ${fmtFechaSola(em.inicio_actividades)}` : null,
+    // El contacto del local, SÓLO en documentos que no tienen CAE.
+    //
+    // Un comprobante autorizado se reimprime exactamente como salió, y eso sale
+    // del snapshot: meterle un teléfono leído en vivo lo haría cambiar si mañana
+    // cambia el número. Cuando el snapshot lleve el teléfono del emisor (está en
+    // el backlog), sale de ahí y vale también para los que tienen CAE.
+    !fiscal && venta.sucursal?.telefono
+      ? `Sucursal ${venta.sucursal?.nombre ?? ""}: Cel ${venta.sucursal.telefono}`.trim()
+      : null,
   ].filter(Boolean) as string[];
   for (const l of lineasEmisor) {
     doc.text(l, MARGEN + 3, y, { maxWidth: MEDIO - MARGEN - 14 });

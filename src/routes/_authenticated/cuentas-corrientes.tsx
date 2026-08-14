@@ -48,9 +48,40 @@ function CtaCtePage() {
       .select("*").order("razon_social")).data ?? []) as any[],
   });
 
-  const filtered = useMemo(() => saldos.filter((c: any) =>
-    coincideDocumento(c, q)
-  ), [saldos, q]);
+  /**
+   * Filtro por saldo, para llegar a "a quién hay que cobrarle" sin leer la lista
+   * entera. Pedido de Leo.
+   *
+   * El default es TODOS y no "con deuda": esta pantalla es la cuenta corriente
+   * general, no una de cobranzas, y esconder por omisión a los que están en cero
+   * hace que parezca que el cliente desapareció.
+   *
+   * El corte va en 0 y no en 0,01. Los movimientos son numeric(14,2), así que no
+   * hay fracciones de centavo que amortiguar; con 0,01 un saldo de exactamente
+   * un centavo se mostraría como $0,01 y no entraría en ninguno de los dos
+   * filtros. Se redondea antes de comparar por las dudas.
+   */
+  const [saldoFiltro, setSaldoFiltro] = useState<"todos" | "deuda" | "favor">("todos");
+
+  const filtered = useMemo(
+    () =>
+      saldos.filter((c: any) => {
+        if (!coincideDocumento(c, q)) return false;
+        const saldo = Math.round(Number(c.saldo) * 100) / 100;
+        if (saldoFiltro === "deuda") return saldo > 0;
+        if (saldoFiltro === "favor") return saldo < 0;
+        return true;
+      }),
+    [saldos, q, saldoFiltro],
+  );
+
+  // Lo que suma lo que quedó a la vista: es el número que se busca al entrar a
+  // cobrar. En "a favor" se muestra en positivo, que un total negativo ahí no
+  // dice nada.
+  const totalFiltrado = useMemo(
+    () => filtered.reduce((a: number, c: any) => a + Number(c.saldo), 0),
+    [filtered],
+  );
 
   // Si venimos de Clientes con ?cliente=<id>, abrimos su detalle automáticamente.
   // Si el cliente todavía no tiene movimientos (no está en la vista de saldos),
@@ -86,13 +117,45 @@ function CtaCtePage() {
 
         <TabsContent value="clientes">
           <Card className="p-3 mb-4">
-            <Input placeholder="Buscar cliente…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
+            <div className="flex flex-wrap items-center gap-3">
+              <Input placeholder="Buscar cliente…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
+              <Select value={saldoFiltro} onValueChange={(v) => setSaldoFiltro(v as typeof saldoFiltro)}>
+                <SelectTrigger className="w-44" data-testid="filtro-saldo">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="deuda">Con deuda</SelectItem>
+                  <SelectItem value="favor">Con saldo a favor</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* El total de lo que quedó a la vista: es el número que se busca
+                  al entrar a cobrar. En "a favor" va en positivo. */}
+              <p className="text-sm text-muted-foreground" data-testid="total-filtrado">
+                {filtered.length} de {saldos.length}
+                {saldoFiltro === "deuda" && ` · total a cobrar ${fmtMoney(totalFiltrado)}`}
+                {saldoFiltro === "favor" && ` · total a favor ${fmtMoney(Math.abs(totalFiltrado))}`}
+              </p>
+            </div>
           </Card>
 
           <DataTable
             columns={["Cliente", "CUIT/DNI", "Debe", "Pagado", "Saldo", ""]}
             isEmpty={filtered.length === 0}
-            empty={{ text: "No hay clientes con cuenta corriente.", icon: <Wallet className="h-7 w-7" /> }}
+            /* Que el vacío diga POR QUÉ está vacío: si lo vació el filtro, decir
+               "no hay clientes con cuenta corriente" hace pensar que se
+               perdieron los datos. */
+            empty={{
+              text:
+                saldos.length === 0
+                  ? "No hay clientes con cuenta corriente."
+                  : saldoFiltro === "deuda"
+                    ? "Ningún cliente debe plata." + (q ? " (con esa búsqueda)" : "")
+                    : saldoFiltro === "favor"
+                      ? "Ningún cliente tiene saldo a favor." + (q ? " (con esa búsqueda)" : "")
+                      : "Ningún cliente coincide con la búsqueda.",
+              icon: <Wallet className="h-7 w-7" />,
+            }}
           >
             {filtered.map((c: any) => {
               const saldo = Number(c.saldo);

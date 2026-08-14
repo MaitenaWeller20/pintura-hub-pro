@@ -43,6 +43,7 @@ import {
   TOPE_BUSQUEDA_PRODUCTOS,
 } from "@/lib/postgrest";
 import jsPDF from "jspdf";
+import { dibujarEncabezado, traerLogo, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
 import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/remitos")({
@@ -66,7 +67,8 @@ function RemitosPage() {
           .from("remitos")
           .select(
             `
-      *, origen:sucursales!sucursal_origen_id(nombre), destino:sucursales!sucursal_destino_id(nombre),
+      *, origen:sucursales!sucursal_origen_id(${SELECT_SUCURSAL_IMPRESA}),
+      destino:sucursales!sucursal_destino_id(nombre, direccion, telefono),
       items:remito_items(cantidad, producto:productos(codigo,nombre))
     `,
           )
@@ -92,15 +94,33 @@ function RemitosPage() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const imprimir = (r: any) => {
+  const imprimir = async (r: any) => {
+    // Ídem presupuesto: el logo recién acá. En el LISTADO de remitos esto era
+    // peor todavía, porque se repetía por cada fila.
+    const logo = await traerLogo(supabase, r.origen?.emisor?.id);
+    const origen = { ...r.origen, emisor: { ...r.origen?.emisor, logo } };
     const doc = new jsPDF();
-    doc.setFontSize(14);
-    doc.text(`CasaForma — Remito interno ${r.numero}`, 14, 16);
+    // El emisor del remito es la sucursal de ORIGEN: es la que remite. El
+    // destino va abajo, con sus datos, como en cualquier remito.
+    let y = dibujarEncabezado(doc, origen, { y: 16 });
+    y += 4;
+    doc.setFontSize(13);
+    doc.text(`Remito interno ${r.numero}`, 14, y);
+    y += 6;
     doc.setFontSize(10);
-    doc.text(`Origen: ${r.origen?.nombre}   Destino: ${r.destino?.nombre}`, 14, 24);
-    doc.text(`Estado: ${r.estado}   Fecha: ${fmtDateTime(r.created_at)}`, 14, 30);
+    doc.text(`Destino: ${r.destino?.nombre ?? "—"}`, 14, y);
+    y += 5;
+    if (r.destino?.direccion) {
+      // Partida: una dirección larga se salía de la hoja o pisaba la tabla.
+      for (const linea of doc.splitTextToSize(String(r.destino.direccion), 120)) {
+        doc.text(linea, 14, y);
+        y += 5;
+      }
+    }
+    doc.text(`Estado: ${r.estado}   Fecha: ${fmtDateTime(r.created_at)}`, 14, y);
+    y += 4;
     autoTable(doc, {
-      startY: 36,
+      startY: y + 2,
       head: [["Código", "Producto", "Cantidad"]],
       body: (r.items ?? []).map((i: any) => [i.producto?.codigo, i.producto?.nombre, i.cantidad]),
       styles: { fontSize: 9 },

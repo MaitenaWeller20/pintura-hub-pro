@@ -36,6 +36,7 @@ import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Printer, Loader2, AlertTriangle, Pencil } from "lucide-react";
 import jsPDF from "jspdf";
+import { dibujarEncabezado, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
 import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/$id")({
@@ -55,7 +56,7 @@ function DetallePresupuesto() {
       (
         await supabase
           .from("presupuestos")
-          .select("*, cliente:clientes(razon_social, cuit_dni), sucursal:sucursales(nombre)")
+          .select(`*, cliente:clientes(razon_social, cuit_dni), sucursal:sucursales(${SELECT_SUCURSAL_IMPRESA})`)
           .eq("id", id)
           .maybeSingle()
       ).data,
@@ -80,22 +81,11 @@ function DetallePresupuesto() {
   const imprimir = () => {
     if (!p) return;
     const doc = new jsPDF();
-    doc.setFontSize(16);
-    doc.text(fiscal?.razon_social ?? "Presupuesto", 14, 16);
-    doc.setFontSize(9);
-    let y = 22;
-    if (fiscal?.cuit) {
-      doc.text(`CUIT: ${fiscal.cuit}`, 14, y);
-      y += 5;
-    }
-    if (fiscal?.domicilio_fiscal) {
-      doc.text(String(fiscal.domicilio_fiscal), 14, y);
-      y += 5;
-    }
-    if (p.sucursal?.nombre) {
-      doc.text(`Sucursal: ${p.sucursal.nombre}`, 14, y);
-      y += 5;
-    }
+    // El encabezado sale del emisor de la SUCURSAL, no de `fiscal_config`: son
+    // dos razones sociales distintas y la config global está vacía, por eso el
+    // presupuesto salía pelado. Devuelve la Y donde termina para que lo de abajo
+    // no se le monte encima con un logo o una razón social larga.
+    const y = dibujarEncabezado(doc, p.sucursal, { y: 16 });
 
     doc.setFontSize(18);
     doc.text("PRESUPUESTO", 14, y + 8);

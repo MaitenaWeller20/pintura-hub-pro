@@ -98,7 +98,7 @@ export interface VentaImpresa {
   percepciones?: number | string | null;
   total: number | string;
   cliente?: { razon_social?: string | null; cuit_dni?: string | null } | null;
-  sucursal?: { nombre?: string | null } | null;
+  sucursal?: { nombre?: string | null; telefono?: string | null } | null;
 }
 
 const MARGEN = 14;
@@ -221,6 +221,15 @@ export function generarComprobantePdf(
       : null,
     em?.ingresos_brutos ? `Ingresos Brutos: ${em.ingresos_brutos}` : null,
     em?.inicio_actividades ? `Inicio de actividades: ${fmtFechaSola(em.inicio_actividades)}` : null,
+    // El contacto del local, etiquetado. Va SEPARADO de los datos fiscales de
+    // arriba y con la palabra "Sucursal" adelante a propósito: los de arriba son
+    // los del CUIT que emitió —salen del snapshot de AFIP— y estos son los del
+    // lugar donde se imprimió. Sin la etiqueta, un teléfono suelto debajo de una
+    // razón social se lee como si fuera de ella, y pueden no ser la misma
+    // persona jurídica.
+    venta.sucursal?.telefono
+      ? `Sucursal ${venta.sucursal?.nombre ?? ""}: Cel ${venta.sucursal.telefono}`.trim()
+      : null,
   ].filter(Boolean) as string[];
   for (const l of lineasEmisor) {
     doc.text(l, MARGEN + 3, y, { maxWidth: MEDIO - MARGEN - 14 });

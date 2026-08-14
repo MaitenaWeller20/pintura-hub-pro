@@ -89,7 +89,7 @@ function VentasList() {
     enabled: !!cu,
     queryFn: async () => {
       let q = supabase.from("ventas").select(`
-        *, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo),
+        *, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
         pagos:venta_pagos(forma_pago,monto)
       `).order("fecha", { ascending: false }).limit(200);
       if (sucFilter) q = q.eq("sucursal_id", sucFilter);

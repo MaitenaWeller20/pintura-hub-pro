@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -674,6 +679,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      emisores: {
+        Row: {
+          activo: boolean
+          condicion_iva: string | null
+          created_at: string
+          cuit: string | null
+          domicilio_fiscal: string | null
+          id: string
+          ingresos_brutos: string | null
+          inicio_actividades: string | null
+          logo: string | null
+          razon_social: string
+          updated_at: string
+        }
+        Insert: {
+          activo?: boolean
+          condicion_iva?: string | null
+          created_at?: string
+          cuit?: string | null
+          domicilio_fiscal?: string | null
+          id?: string
+          ingresos_brutos?: string | null
+          inicio_actividades?: string | null
+          logo?: string | null
+          razon_social: string
+          updated_at?: string
+        }
+        Update: {
+          activo?: boolean
+          condicion_iva?: string | null
+          created_at?: string
+          cuit?: string | null
+          domicilio_fiscal?: string | null
+          id?: string
+          ingresos_brutos?: string | null
+          inicio_actividades?: string | null
+          logo?: string | null
+          razon_social?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       fiscal_config: {
         Row: {
@@ -2275,6 +2322,7 @@ export type Database = {
           codigo: Database["public"]["Enums"]["sucursal_codigo"]
           created_at: string
           direccion: string | null
+          emisor_id: string | null
           id: string
           nombre: string
           numero: string
@@ -2286,6 +2334,7 @@ export type Database = {
           codigo: Database["public"]["Enums"]["sucursal_codigo"]
           created_at?: string
           direccion?: string | null
+          emisor_id?: string | null
           id?: string
           nombre: string
           numero: string
@@ -2297,13 +2346,22 @@ export type Database = {
           codigo?: Database["public"]["Enums"]["sucursal_codigo"]
           created_at?: string
           direccion?: string | null
+          emisor_id?: string | null
           id?: string
           nombre?: string
           numero?: string
           telefono?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "sucursales_emisor_id_fkey"
+            columns: ["emisor_id"]
+            isOneToOne: false
+            referencedRelation: "emisores"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
@@ -3441,4 +3499,3 @@ export const Constants = {
     },
   },
 } as const
-

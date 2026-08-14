@@ -43,7 +43,7 @@ import {
   TOPE_BUSQUEDA_PRODUCTOS,
 } from "@/lib/postgrest";
 import jsPDF from "jspdf";
-import { dibujarEncabezado, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
+import { dibujarEncabezado, traerLogo, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
 import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/remitos")({
@@ -94,11 +94,15 @@ function RemitosPage() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const imprimir = (r: any) => {
+  const imprimir = async (r: any) => {
+    // Ídem presupuesto: el logo recién acá. En el LISTADO de remitos esto era
+    // peor todavía, porque se repetía por cada fila.
+    const logo = await traerLogo(supabase, r.origen?.emisor?.id);
+    const origen = { ...r.origen, emisor: { ...r.origen?.emisor, logo } };
     const doc = new jsPDF();
     // El emisor del remito es la sucursal de ORIGEN: es la que remite. El
     // destino va abajo, con sus datos, como en cualquier remito.
-    let y = dibujarEncabezado(doc, r.origen, { y: 16 });
+    let y = dibujarEncabezado(doc, origen, { y: 16 });
     y += 4;
     doc.setFontSize(13);
     doc.text(`Remito interno ${r.numero}`, 14, y);
@@ -107,8 +111,11 @@ function RemitosPage() {
     doc.text(`Destino: ${r.destino?.nombre ?? "—"}`, 14, y);
     y += 5;
     if (r.destino?.direccion) {
-      doc.text(String(r.destino.direccion), 14, y);
-      y += 5;
+      // Partida: una dirección larga se salía de la hoja o pisaba la tabla.
+      for (const linea of doc.splitTextToSize(String(r.destino.direccion), 120)) {
+        doc.text(linea, 14, y);
+        y += 5;
+      }
     }
     doc.text(`Estado: ${r.estado}   Fecha: ${fmtDateTime(r.created_at)}`, 14, y);
     y += 4;

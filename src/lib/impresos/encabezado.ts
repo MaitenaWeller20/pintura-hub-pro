@@ -124,6 +124,33 @@ export function dibujarEncabezado(
   return y;
 }
 
-/** Lo que hay que pedirle a PostgREST para armar el encabezado. */
+/**
+ * Lo que hay que pedirle a PostgREST para armar el encabezado.
+ *
+ * SIN el logo a propósito. El logo es una data URL de hasta 100 KB, y esto se usa
+ * en consultas de LISTADO —el listado de remitos trae todos los remitos con su
+ * sucursal de origen— así que incluirlo repetía 100 KB por fila y los dejaba en
+ * la caché de react-query. Se pide aparte, sólo al momento de imprimir, con
+ * `traerLogo`.
+ */
 export const SELECT_SUCURSAL_IMPRESA =
-  "nombre, direccion, telefono, emisor:emisores(razon_social, cuit, domicilio_fiscal, logo)";
+  "nombre, direccion, telefono, emisor:emisores(id, razon_social, cuit, domicilio_fiscal)";
+
+/**
+ * El logo del emisor, pedido en el momento de imprimir y no antes.
+ *
+ * Devuelve null ante cualquier problema: que no haya logo, o que falle la
+ * consulta, no puede impedir que salga el comprobante.
+ */
+export async function traerLogo(
+  supabase: { from: (t: string) => any },
+  emisorId: string | null | undefined,
+): Promise<string | null> {
+  if (!emisorId) return null;
+  try {
+    const { data } = await supabase.from("emisores").select("logo").eq("id", emisorId).maybeSingle();
+    return (data?.logo as string | null) ?? null;
+  } catch {
+    return null;
+  }
+}

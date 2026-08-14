@@ -36,7 +36,7 @@ import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Printer, Loader2, AlertTriangle, Pencil } from "lucide-react";
 import jsPDF from "jspdf";
-import { dibujarEncabezado, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
+import { dibujarEncabezado, traerLogo, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
 import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/$id")({
@@ -78,14 +78,18 @@ function DetallePresupuesto() {
     p?.validez_hasta &&
     new Date(p.validez_hasta) < new Date(new Date().toDateString());
 
-  const imprimir = () => {
+  const imprimir = async () => {
     if (!p) return;
+    // El logo se pide ACÁ y no con el resto: son hasta 100 KB de data URL y no
+    // tienen por qué viajar cada vez que se abre un presupuesto.
+    const logo = await traerLogo(supabase, p.sucursal?.emisor?.id);
+    const sucursal = { ...p.sucursal, emisor: { ...p.sucursal?.emisor, logo } };
     const doc = new jsPDF();
     // El encabezado sale del emisor de la SUCURSAL, no de `fiscal_config`: son
     // dos razones sociales distintas y la config global está vacía, por eso el
     // presupuesto salía pelado. Devuelve la Y donde termina para que lo de abajo
     // no se le monte encima con un logo o una razón social larga.
-    const y = dibujarEncabezado(doc, p.sucursal, { y: 16 });
+    const y = dibujarEncabezado(doc, sucursal, { y: 16 });
 
     doc.setFontSize(18);
     doc.text("PRESUPUESTO", 14, y + 8);

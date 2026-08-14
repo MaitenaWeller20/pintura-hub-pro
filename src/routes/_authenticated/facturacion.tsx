@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/app/page-header";
+import { EmisoresConfig } from "@/components/app/emisores-config";
 import { SectionCard } from "@/components/app/section-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +67,11 @@ function FacturacionPage() {
       />
 
       <EstadoGeneral cfg={cfg} listo={listo} />
+
+      {/* Arriba de la configuración de AFIP a propósito: esto es lo que ya sale
+          impreso HOY en presupuestos y remitos, y se puede tocar sin tener el
+          certificado. Lo de abajo está bloqueado hasta que salga el trámite. */}
+      <EmisoresConfig />
 
       <DatosEmisor cfg={cfg} onSaved={invalidar} />
       <PuntosVenta cfg={cfg} onSaved={invalidar} />

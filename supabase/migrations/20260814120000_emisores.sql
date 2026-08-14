@@ -79,16 +79,29 @@ CREATE INDEX IF NOT EXISTS idx_sucursales_emisor ON public.sucursales (emisor_id
 CREATE UNIQUE INDEX IF NOT EXISTS uq_emisores_razon_social
   ON public.emisores (razon_social);
 
+-- Los datos SIEMBRAN, no pisan. Si alguien ya corrigió una dirección o un
+-- teléfono desde la pantalla de Facturación, volver a correr la migración no
+-- puede deshacerle el trabajo. Por eso:
+--
+--   · el INSERT sólo completa el domicilio si está vacío (COALESCE), y
+--   · el UPDATE de sucursales sólo pisa lo que sigue teniendo el valor de
+--     relleno original ('O''Higgins' / 'General Paz') o está en NULL.
+--
+-- `emisor_id` sí se asigna siempre que esté en NULL: eso no es un dato editable,
+-- es el vínculo del modelo.
 INSERT INTO public.emisores (razon_social, domicilio_fiscal) VALUES
   ('Aplicaciones y Servicios SRL', 'Sarmiento 1398 - B° Gral Paz - Córdoba'),
   ('Grupo Casa Forma SAS',         'O''Higgins 5450 - Córdoba')
 ON CONFLICT (razon_social) DO UPDATE
-  SET domicilio_fiscal = EXCLUDED.domicilio_fiscal;
+  SET domicilio_fiscal = COALESCE(public.emisores.domicilio_fiscal, EXCLUDED.domicilio_fiscal);
 
 UPDATE public.sucursales s SET
-  emisor_id = e.id,
-  direccion = e.domicilio_fiscal,
-  telefono  = t.tel
+  emisor_id = COALESCE(s.emisor_id, e.id),
+  direccion = CASE
+    WHEN s.direccion IS NULL OR s.direccion IN ('O''Higgins', 'General Paz')
+      THEN e.domicilio_fiscal ELSE s.direccion
+  END,
+  telefono  = COALESCE(s.telefono, t.tel)
 FROM public.emisores e
 JOIN (VALUES
   ('Aplicaciones y Servicios SRL', 'GENERALPAZ', '3513229459'),

@@ -221,13 +221,13 @@ export function generarComprobantePdf(
       : null,
     em?.ingresos_brutos ? `Ingresos Brutos: ${em.ingresos_brutos}` : null,
     em?.inicio_actividades ? `Inicio de actividades: ${fmtFechaSola(em.inicio_actividades)}` : null,
-    // El contacto del local, etiquetado. Va SEPARADO de los datos fiscales de
-    // arriba y con la palabra "Sucursal" adelante a propósito: los de arriba son
-    // los del CUIT que emitió —salen del snapshot de AFIP— y estos son los del
-    // lugar donde se imprimió. Sin la etiqueta, un teléfono suelto debajo de una
-    // razón social se lee como si fuera de ella, y pueden no ser la misma
-    // persona jurídica.
-    venta.sucursal?.telefono
+    // El contacto del local, SÓLO en documentos que no tienen CAE.
+    //
+    // Un comprobante autorizado se reimprime exactamente como salió, y eso sale
+    // del snapshot: meterle un teléfono leído en vivo lo haría cambiar si mañana
+    // cambia el número. Cuando el snapshot lleve el teléfono del emisor (está en
+    // el backlog), sale de ahí y vale también para los que tienen CAE.
+    !fiscal && venta.sucursal?.telefono
       ? `Sucursal ${venta.sucursal?.nombre ?? ""}: Cel ${venta.sucursal.telefono}`.trim()
       : null,
   ].filter(Boolean) as string[];

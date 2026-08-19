@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect, ingresar, campo } from "./apoyo";
 
 /**
@@ -100,6 +101,30 @@ test("presupuestos: los precios se muestran con IVA incluido", async ({ page }) 
   await expect(page.locator("body")).toContainText(/iva incluido/i);
 });
 
+test("presupuestos: el PDF muestra precio de lista y precio final", async ({ page }, testInfo) => {
+  await page.goto("/presupuestos");
+  const hay = await page
+    .locator("tbody tr")
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  test.skip(!hay, "no hay presupuestos cargados para descargar");
+
+  await page.locator('tbody tr a[href*="/presupuestos/"]').first().click();
+  const descarga = page.waitForEvent("download");
+  await page.getByRole("button", { name: /imprimir pdf/i }).click();
+  const archivo = await descarga;
+  const ruta = testInfo.outputPath("presupuesto.pdf");
+  await archivo.saveAs(ruta);
+
+  const texto = (await readFile(ruta, "latin1")).replace(/\\(\d{3})/g, (_m, octal) =>
+    String.fromCharCode(parseInt(octal, 8)),
+  );
+  expect(texto).toContain("Precio de lista");
+  expect(texto).toContain("Precio final");
+});
+
 test("ventas: un remito de obra se guarda sin elegir cliente", async ({ page }) => {
   await page.goto("/ventas/nueva");
 
@@ -126,10 +151,13 @@ test("ingresos: se puede ver qué se cargó en un ingreso", async ({ page }) => 
     .catch(() => false);
   test.skip(!hay, "no hay ingresos cargados");
 
+  await expect(page.locator("thead")).toContainText(/sucursal/i);
+
   await page.locator('button[title="Ver qué se cargó"]').first().click();
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText(/ingreso de/i);
+  await expect(dialogo).toContainText(/sucursal/i);
   // La grilla de productos con sus cantidades.
   await expect(dialogo.locator("thead")).toContainText(/cantidad/i);
 });

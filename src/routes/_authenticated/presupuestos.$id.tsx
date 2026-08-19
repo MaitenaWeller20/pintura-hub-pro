@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
 import { conIva } from "@/lib/fiscal/iva";
+import { tablaDeItemsPresupuesto } from "@/lib/presupuesto-pdf";
 import { toast } from "sonner";
 import { ArrowLeft, Printer, Loader2, AlertTriangle, Pencil } from "lucide-react";
 import jsPDF from "jspdf";
@@ -56,7 +57,9 @@ function DetallePresupuesto() {
       (
         await supabase
           .from("presupuestos")
-          .select(`*, cliente:clientes(razon_social, cuit_dni), sucursal:sucursales(${SELECT_SUCURSAL_IMPRESA})`)
+          .select(
+            `*, cliente:clientes(razon_social, cuit_dni), sucursal:sucursales(${SELECT_SUCURSAL_IMPRESA})`,
+          )
           .eq("id", id)
           .maybeSingle()
       ).data,
@@ -100,18 +103,11 @@ function DetallePresupuesto() {
 
     doc.text(`Cliente: ${p.cliente?.razon_social ?? p.nombre_cliente ?? "—"}`, 14, y + 22);
 
+    const tablaItems = tablaDeItemsPresupuesto(items);
     autoTable(doc, {
       startY: y + 28,
-      // Precios finales, con IVA: es lo que se le cotiza al cliente.
-      head: [["Código", "Producto", "Cant.", "Precio", "Desc.", "Subtotal"]],
-      body: items.map((i: any) => [
-        i.codigo,
-        i.descripcion,
-        String(Number(i.cantidad)),
-        fmtMoney(conIva(i.precio_sin_iva, i.iva_porcentaje)),
-        Number(i.descuento_porcentaje) > 0 ? `${Number(i.descuento_porcentaje)}%` : "—",
-        fmtMoney(i.subtotal_con_iva),
-      ]),
+      head: tablaItems.head,
+      body: tablaItems.body,
       styles: { fontSize: 8 },
     });
 

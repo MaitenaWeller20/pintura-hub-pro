@@ -79,7 +79,7 @@ function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => voi
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-5">
           <div>
             <p className="text-xs text-muted-foreground">Estado</p>
             <StatusPill tone={ESTADO_TONE[ingreso.estado as keyof typeof ESTADO_TONE] ?? "neutral"}>
@@ -89,6 +89,10 @@ function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => voi
           <div>
             <p className="text-xs text-muted-foreground">Cargado</p>
             <p>{fmtDate(ingreso.fecha_carga)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Sucursal</p>
+            <p>{ingreso.sucursal?.nombre ?? "—"}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Fecha del remito</p>
@@ -195,7 +199,7 @@ function IngresosPage() {
       ((
         await supabase
           .from("ingresos_mercaderia")
-          .select("*, proveedor:proveedores(razon_social)")
+          .select("*, proveedor:proveedores(razon_social), sucursal:sucursales(nombre)")
           .order("fecha_carga", { ascending: false })
           .limit(200)
       ).data ?? []) as any[],
@@ -239,7 +243,7 @@ function IngresosPage() {
       />
 
       <DataTable
-        columns={["Fecha", "Proveedor", "Remito", "Estado", ""]}
+        columns={["Fecha", "Proveedor", "Sucursal", "Remito", "Estado", ""]}
         loading={isLoading}
         isEmpty={ingresos.length === 0}
         empty={{
@@ -250,6 +254,7 @@ function IngresosPage() {
           <TableRow key={i.id} className={i.estado === "ANULADO" ? "opacity-50" : ""}>
             <TableCell className="text-xs">{fmtDate(i.fecha_carga)}</TableCell>
             <TableCell>{i.proveedor?.razon_social ?? "—"}</TableCell>
+            <TableCell>{i.sucursal?.nombre ?? "—"}</TableCell>
             <TableCell className="font-mono text-xs">{i.numero_remito_proveedor ?? "—"}</TableCell>
 
             <TableCell>

@@ -41,6 +41,8 @@ import {
 } from "./fiscal/cert";
 import { encryptString, decryptString } from "./fiscal/crypto";
 import { qrAfipDataUrl } from "./fiscal/qr";
+import { cargarContextoFiscal } from "./fiscal/contexto.server";
+import { crearSnapshotFiscal, identidadReservaCoincide } from "./fiscal/snapshot";
 
 // Ventana de gracia del claim anti doble-submit: si una emisión de la MISMA venta
 // se reservó hace menos que esto, un segundo request no puede re-reservar (se
@@ -363,7 +365,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       );
     }
 
-    const { emisor, emisorImpreso, pv } = await cargarEmisorYPv(sb, venta.sucursal_id);
+    const { emisor, emisorImpreso, pv } = await cargarContextoFiscal(sb, venta.sucursal_id);
 
     // --- Letra y tipo -------------------------------------------------------
     const condReceptor: CondicionIva | null = venta.cliente?.tipo
@@ -378,7 +380,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       // referenciarlo (CbtesAsoc) o AFIP la rechaza.
       const { data: orig } = await supabase
         .from("ventas")
-        .select("tipo_comprobante, afip_cbte_tipo, afip_punto_venta, afip_numero, cae")
+        .select(
+          "tipo_comprobante, afip_emisor_cuit, afip_cbte_tipo, afip_punto_venta, afip_numero, cae",
+        )
         .eq("id", venta.afip_cbte_asoc_id ?? "")
         .maybeSingle();
 
@@ -386,6 +390,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         throw new Error(
           "La nota de crédito/débito tiene que estar asociada a un comprobante que ya tenga CAE.",
         );
+      }
+      if (orig.afip_emisor_cuit !== emisor.cuit) {
+        throw new Error("La nota no puede asociarse a un comprobante emitido por otro CUIT.");
       }
       // La letra de la NC sale del comprobante REALMENTE emitido (afip_cbte_tipo),
       // no del tipo_comprobante tipeado: una venta FACTURA_A emitida como B (por
@@ -452,7 +459,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     // SIEMPRE con esta copia, nunca releyendo clientes/fiscal_config: si mañana se
     // corrige el CUIT del cliente o el domicilio del emisor, el comprobante ya
     // emitido tiene que seguir imprimiéndose igual que el que se entregó.
-    const snapshot = {
+    const snapshot = crearSnapshotFiscal({
       emisor: emisorImpreso,
       receptor: {
         razon_social: venta.cliente?.razon_social ?? null,
@@ -481,17 +488,26 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         iva_porcentaje: Number(i.iva_porcentaje),
         subtotal_con_iva: Math.abs(Number(i.subtotal_con_iva ?? 0)),
       })),
-      version: 1,
-    };
+    });
 
     // --- Recuperación de un intento anterior --------------------------------
     // Si hay un número reservado, la identidad de esa reserva (punto de venta,
     // tipo y modo) manda: es lo que AFIP pudo haber autorizado.
     if (venta.afip_numero) {
-      const mismaIdentidad =
-        venta.afip_punto_venta === pv.numero &&
-        venta.afip_cbte_tipo === cbteTipo &&
-        venta.afip_modo === pv.modo;
+      const mismaIdentidad = identidadReservaCoincide(
+        {
+          cuit: venta.afip_emisor_cuit,
+          punto_venta: venta.afip_punto_venta,
+          cbte_tipo: venta.afip_cbte_tipo,
+          ambiente: venta.afip_modo,
+        },
+        {
+          cuit: emisor.cuit,
+          punto_venta: pv.numero,
+          cbte_tipo: cbteTipo,
+          ambiente: pv.modo,
+        },
+      );
 
       // La identidad cambió entre el intento fallido y este reintento: cambió la
       // condición de IVA del cliente (y con ella la letra), o el punto de venta
@@ -501,7 +517,8 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       if (!mismaIdentidad) {
         throw new Error(
           `Este comprobante tiene reservado el número ${venta.afip_numero} (punto de venta ` +
-            `${venta.afip_punto_venta}, tipo ${venta.afip_cbte_tipo}, ${venta.afip_modo}), pero ahora ` +
+            `${venta.afip_punto_venta}, tipo ${venta.afip_cbte_tipo}, ${venta.afip_modo}, CUIT ` +
+            `${venta.afip_emisor_cuit ?? "sin registrar"}), pero ahora ` +
             "correspondería emitir uno distinto. Puede haber quedado un comprobante autorizado en AFIP " +
             "sin registrar acá. No se emite para no duplicar: hay que reconciliar la numeración antes de seguir.",
         );
@@ -567,6 +584,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       const { data: ultimoLocalRow } = await sb
         .from("ventas")
         .select("afip_numero")
+        .eq("afip_emisor_cuit", emisor.cuit)
         .eq("afip_punto_venta", pv.numero)
         .eq("afip_cbte_tipo", cbteTipo)
         .eq("afip_modo", pv.modo)
@@ -624,6 +642,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     const { data: reservada, error: reservaErr } = await sb
       .from("ventas")
       .update({
+        afip_emisor_cuit: emisor.cuit,
         afip_cbte_tipo: cbteTipo,
         afip_punto_venta: pv.numero,
         afip_numero: numero,
@@ -724,7 +743,12 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       // AFIP y traba la numeración para siempre.
       await sb
         .from("ventas")
-        .update({ afip_estado: "ERROR", afip_error: msg, afip_numero: null })
+        .update({
+          afip_estado: "ERROR",
+          afip_error: msg,
+          afip_numero: null,
+          afip_emisor_cuit: null,
+        })
         .eq("id", venta.id);
       throw e;
     }
@@ -795,14 +819,20 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
 
     let emisor = snap?.emisor ?? null;
     if (!emisor) {
-      const { data: cfg } = await sb
-        .from("fiscal_config")
+      const { data: sucursal } = await sb
+        .from("sucursales")
         .select(
-          "cuit, razon_social, nombre_fantasia, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades",
+          "telefono, emisor:emisores(cuit, razon_social, nombre_fantasia, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades)",
         )
-        .eq("id", true)
+        .eq("id", venta.sucursal_id)
         .maybeSingle();
-      emisor = cfg ?? null;
+      emisor = sucursal?.emisor
+        ? {
+            ...sucursal.emisor,
+            cuit: venta.afip_emisor_cuit ?? sucursal.emisor.cuit,
+            telefono: sucursal.telefono ?? null,
+          }
+        : null;
     }
 
     const receptor = snap?.receptor ?? {

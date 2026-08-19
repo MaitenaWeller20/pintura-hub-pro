@@ -2,8 +2,8 @@
  * Facturación electrónica: emisión, configuración y certificado.
  *
  * Todo corre en el servidor. El certificado y la clave privada no se exponen
- * jamás al navegador, y la tabla fiscal_config no tiene policies de RLS para
- * `authenticated` — se lee sólo con la service_role key desde acá.
+ * jamás al navegador, y `credenciales_arca` no tiene policies ni grants para
+ * `authenticated`: sólo se lee con la service role desde el backend.
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -213,7 +213,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
 
     // --- Snapshot fiscal ----------------------------------------------------
     // Congela lo que se le declara a AFIP. De acá en más el PDF y el QR se arman
-    // SIEMPRE con esta copia, nunca releyendo clientes/fiscal_config: si mañana se
+    // SIEMPRE con esta copia, nunca releyendo clientes/emisores: si mañana se
     // corrige el CUIT del cliente o el domicilio del emisor, el comprobante ya
     // emitido tiene que seguir imprimiéndose igual que el que se entregó.
     const snapshot = crearSnapshotFiscal({

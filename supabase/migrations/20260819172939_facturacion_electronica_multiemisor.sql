@@ -50,6 +50,8 @@ CREATE TABLE public.credenciales_arca (
   arca_cert_enc text,
   cert_vence_at timestamptz,
   cert_alias text,
+  -- Se completa sólo después de una llamada real exitosa a WSFE. En mock no.
+  probada_at timestamptz,
   habilitada boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),

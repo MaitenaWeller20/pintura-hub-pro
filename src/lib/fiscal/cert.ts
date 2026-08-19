@@ -21,7 +21,7 @@ import { cuitValido } from "./codigos";
 const CUIT_PROVISORIO = "20111111112";
 
 /** X.509 limita los campos del DN a 64 chars y AFIP rechaza caracteres raros. */
-const limpio = (s: string) => s.replace(/[^a-zA-Z0-9 .\-]/g, "").slice(0, 64);
+const limpio = (s: string) => s.replace(/[^a-zA-Z0-9 .-]/g, "").slice(0, 64);
 
 export interface ParYCsr {
   csr: string;
@@ -129,7 +129,9 @@ export function verificarCertificado(pem: string, keyPem: string): { vence: Date
   try {
     cert = forge.pki.certificateFromPem(pem);
   } catch {
-    throw new Error("No se pudo leer el certificado. Tiene que ser el .crt de AFIP, en formato PEM.");
+    throw new Error(
+      "No se pudo leer el certificado. Tiene que ser el .crt de AFIP, en formato PEM.",
+    );
   }
 
   let priv: forge.pki.rsa.PrivateKey;
@@ -149,6 +151,14 @@ export function verificarCertificado(pem: string, keyPem: string): { vence: Date
     throw new Error(
       "El certificado no corresponde a la clave que generamos. ¿Subiste el .crt que te dio AFIP para ESTE CSR?",
     );
+  }
+
+  const ahora = new Date();
+  if (cert.validity.notBefore > ahora) {
+    throw new Error("El certificado todavía no está vigente.");
+  }
+  if (cert.validity.notAfter <= ahora) {
+    throw new Error("El certificado está vencido. Pedí uno vigente antes de cargarlo.");
   }
 
   return { vence: cert.validity.notAfter };

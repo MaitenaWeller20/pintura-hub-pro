@@ -24,6 +24,8 @@ check "O'Higgins queda inactiva" "false" \
   "$(q "select p.activo::text from public.puntos_venta p join public.sucursales s on s.id=p.sucursal_id where s.codigo::text='OHIGGINS'")"
 check "credenciales con RLS" "true" \
   "$(q "select relrowsecurity::text from pg_class where oid='public.credenciales_arca'::regclass")"
+check "se registra la prueba real antes de habilitar" "probada_at" \
+  "$(q "select column_name from information_schema.columns where table_schema='public' and table_name='credenciales_arca' and column_name='probada_at'")"
 check "credenciales sin policies de navegador" "0" \
   "$(q "select count(*) from pg_policies where schemaname='public' and tablename='credenciales_arca'")"
 check "authenticated no puede leer credenciales" "false" \

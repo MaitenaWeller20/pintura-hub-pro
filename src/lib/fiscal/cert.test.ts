@@ -114,6 +114,18 @@ describe("CSR para AFIP", () => {
 
     // Contra la clave de A: tiene que fallar CERRADO.
     expect(() => verificarCertificado(pemB, a.keyPem)).toThrow(/no corresponde a la clave/i);
+
+    const vencido = forge.pki.createCertificate();
+    vencido.publicKey = csrB.publicKey!;
+    vencido.serialNumber = "02";
+    vencido.validity.notBefore = new Date("2020-01-01T00:00:00.000Z");
+    vencido.validity.notAfter = new Date("2021-01-01T00:00:00.000Z");
+    vencido.setSubject(csrB.subject.attributes);
+    vencido.setIssuer(csrB.subject.attributes);
+    vencido.sign(keysB, forge.md.sha256.create());
+    expect(() => verificarCertificado(forge.pki.certificateToPem(vencido), b.keyPem)).toThrow(
+      /vencido/i,
+    );
   }, 60_000);
 });
 
@@ -125,9 +137,17 @@ describe("modo simulado (sin certificado de AFIP)", () => {
     const emisor = { cuit: "30712345678", arca_key_enc: null, arca_cert_enc: null };
     const pv = { numero: 1, modo: "HOMOLOGACION" as const };
     const datos = {
-      cbteTipo: 6, numero: 1, fecha: new Date("2026-07-13T15:00:00Z"),
-      docTipo: 99, docNro: 0, neto: 1000, iva: 210, tributos: 0, total: 1210,
-      condicionIvaReceptorId: 5, alicuotas: [{ Id: 5, BaseImp: 1000, Importe: 210 }],
+      cbteTipo: 6,
+      numero: 1,
+      fecha: new Date("2026-07-13T15:00:00Z"),
+      docTipo: 99,
+      docNro: 0,
+      neto: 1000,
+      iva: 210,
+      tributos: 0,
+      total: 1210,
+      condicionIvaReceptorId: 5,
+      alicuotas: [{ Id: 5, BaseImp: 1000, Importe: 210 }],
     };
 
     const r1 = await solicitarCae(emisor, pv, datos, null);

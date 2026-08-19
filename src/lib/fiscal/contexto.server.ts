@@ -6,11 +6,29 @@ import {
   type PuntoVentaFiscalRow,
   type SucursalFiscalRow,
 } from "./contexto";
-
-type SucursalConEmisor = SucursalFiscalRow & { emisor: EmisorFiscalRow | null };
+import type { CondicionIva } from "./codigos";
+import type { Database } from "@/integrations/supabase/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 function errorConsulta(entidad: string, error: { message?: string } | null | undefined): never {
   throw new Error(`No se pudo cargar ${entidad}: ${error?.message || "error desconocido"}.`);
+}
+
+function condicionIva(valor: string | null): CondicionIva | null {
+  if (
+    valor === "RESPONSABLE_INSCRIPTO" ||
+    valor === "MONOTRIBUTO" ||
+    valor === "EXENTO" ||
+    valor === "CONSUMIDOR_FINAL"
+  ) {
+    return valor;
+  }
+  return null;
+}
+
+function ambienteArca(valor: string): "HOMOLOGACION" | "PRODUCCION" {
+  if (valor === "HOMOLOGACION" || valor === "PRODUCCION") return valor;
+  throw new Error(`El ambiente ARCA guardado no es válido: ${valor}.`);
 }
 
 /**
@@ -19,7 +37,7 @@ function errorConsulta(entidad: string, error: { message?: string } | null | und
  * se filtran PV y credencial con ese mismo id.
  */
 export async function cargarContextoFiscal(
-  sb: any,
+  sb: SupabaseClient<Database>,
   sucursalId: string,
   opciones: { exigirHabilitada: boolean } = { exigirHabilitada: true },
 ): Promise<ContextoFiscal> {
@@ -32,16 +50,27 @@ export async function cargarContextoFiscal(
     .maybeSingle();
   if (sucursalError) errorConsulta("la sucursal y su emisor", sucursalError);
 
-  const sucursalConEmisor = (sucursalData ?? null) as SucursalConEmisor | null;
-  const sucursal = sucursalConEmisor
+  const sucursal: SucursalFiscalRow | null = sucursalData
     ? {
-        id: sucursalConEmisor.id,
-        nombre: sucursalConEmisor.nombre,
-        telefono: sucursalConEmisor.telefono,
-        emisor_id: sucursalConEmisor.emisor_id,
+        id: sucursalData.id,
+        nombre: sucursalData.nombre,
+        telefono: sucursalData.telefono,
+        emisor_id: sucursalData.emisor_id,
       }
     : null;
-  const emisor = sucursalConEmisor?.emisor ?? null;
+  const emisorData = sucursalData?.emisor ?? null;
+  const emisor: EmisorFiscalRow | null = emisorData
+    ? {
+        id: emisorData.id,
+        razon_social: emisorData.razon_social,
+        nombre_fantasia: emisorData.nombre_fantasia,
+        cuit: emisorData.cuit,
+        domicilio_fiscal: emisorData.domicilio_fiscal,
+        condicion_iva: condicionIva(emisorData.condicion_iva),
+        ingresos_brutos: emisorData.ingresos_brutos,
+        inicio_actividades: emisorData.inicio_actividades,
+      }
+    : null;
 
   const { data: pvData, error: pvError } = await sb
     .from("puntos_venta")
@@ -49,7 +78,15 @@ export async function cargarContextoFiscal(
     .eq("sucursal_id", sucursalId)
     .maybeSingle();
   if (pvError) errorConsulta("el punto de venta", pvError);
-  const pv = (pvData ?? null) as PuntoVentaFiscalRow | null;
+  const pv: PuntoVentaFiscalRow | null = pvData
+    ? {
+        sucursal_id: pvData.sucursal_id,
+        emisor_id: pvData.emisor_id,
+        numero: pvData.numero,
+        modo: ambienteArca(pvData.modo),
+        activo: pvData.activo,
+      }
+    : null;
 
   let credencial: CredencialFiscalRow | null = null;
   if (emisor && pv) {
@@ -60,7 +97,15 @@ export async function cargarContextoFiscal(
       .eq("ambiente", pv.modo)
       .maybeSingle();
     if (credencialError) errorConsulta("la credencial ARCA", credencialError);
-    credencial = (credencialData ?? null) as CredencialFiscalRow | null;
+    credencial = credencialData
+      ? {
+          emisor_id: credencialData.emisor_id,
+          ambiente: ambienteArca(credencialData.ambiente),
+          arca_key_enc: credencialData.arca_key_enc,
+          arca_cert_enc: credencialData.arca_cert_enc,
+          habilitada: credencialData.habilitada,
+        }
+      : null;
   }
 
   return construirContextoFiscal({ sucursal, emisor, pv, credencial }, opciones);

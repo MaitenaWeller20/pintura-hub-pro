@@ -28,6 +28,25 @@ export interface ParYCsr {
   keyPem: string;
 }
 
+function crearCsr(
+  publicKey: forge.pki.rsa.PublicKey,
+  privateKey: forge.pki.rsa.PrivateKey,
+  razonSocial: string,
+  alias: string,
+  cuit: string,
+): string {
+  const csr = forge.pki.createCertificationRequest();
+  csr.publicKey = publicKey;
+  csr.setSubject([
+    { shortName: "C", value: "AR" },
+    { shortName: "O", value: razonSocial },
+    { shortName: "CN", value: alias },
+    { type: "2.5.4.5", value: `CUIT ${cuit}` },
+  ]);
+  csr.sign(privateKey, forge.md.sha256.create());
+  return forge.pki.certificationRequestToPem(csr);
+}
+
 /**
  * Genera clave privada RSA 2048 + CSR firmado con SHA-256.
  *
@@ -43,17 +62,8 @@ export function generarParYCsr(razonSocial: string, alias: string, cuit: string)
     forge.pki.rsa.generateKeyPair({ bits: 2048 }, (err, keys) => {
       if (err || !keys) return reject(err ?? new Error("No se pudo generar la clave."));
       try {
-        const csr = forge.pki.createCertificationRequest();
-        csr.publicKey = keys.publicKey;
-        csr.setSubject([
-          { shortName: "C", value: "AR" },
-          { shortName: "O", value: razonSocial },
-          { shortName: "CN", value: alias },
-          { type: "2.5.4.5", value: `CUIT ${cuit}` },
-        ]);
-        csr.sign(keys.privateKey, forge.md.sha256.create());
         resolve({
-          csr: forge.pki.certificationRequestToPem(csr),
+          csr: crearCsr(keys.publicKey, keys.privateKey, razonSocial, alias, cuit),
           keyPem: forge.pki.privateKeyToPem(keys.privateKey),
         });
       } catch (e) {
@@ -61,6 +71,22 @@ export function generarParYCsr(razonSocial: string, alias: string, cuit: string)
       }
     });
   });
+}
+
+/**
+ * Vuelve a producir el CSR público a partir de la clave ya guardada.
+ * No crea ni rota material criptográfico: el certificado que devuelva ARCA
+ * seguirá correspondiendo a la misma clave privada.
+ */
+export function generarCsrDesdeClave(
+  razonSocial: string,
+  alias: string,
+  cuit: string,
+  keyPem: string,
+): string {
+  const privateKey = forge.pki.privateKeyFromPem(keyPem) as forge.pki.rsa.PrivateKey;
+  const publicKey = forge.pki.rsa.setPublicKey(privateKey.n, privateKey.e);
+  return crearCsr(publicKey, privateKey, razonSocial, alias, cuit);
 }
 
 export function validarCuitEmisor(cuit: string | null | undefined): string {

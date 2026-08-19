@@ -6,7 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SectionCard } from "@/components/app/section-card";
-import { Loader2, Upload, Trash2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { AlertTriangle, Loader2, Upload, Trash2 } from "lucide-react";
 import { listarEmisores, guardarEmisor, guardarContactoSucursal } from "@/lib/emisores.functions";
 
 /**
@@ -97,6 +104,7 @@ export function EmisoresConfig() {
 
   const refrescar = () => {
     qc.invalidateQueries({ queryKey: ["emisores"] });
+    qc.invalidateQueries({ queryKey: ["fiscal-config-multiemisor"] });
     toast.success("Guardado");
   };
 
@@ -127,10 +135,10 @@ export function EmisoresConfig() {
   if (isLoading) return <p className="text-sm text-muted-foreground">Cargando…</p>;
 
   return (
-    <SectionCard title="Datos que salen en los impresos">
+    <SectionCard title="Identidad fiscal e impresos">
       <p className="mb-4 text-sm text-muted-foreground">
-        Lo que aparece en el encabezado de los presupuestos y los remitos. La factura no usa esto:
-        una factura ya emitida se reimprime con los datos que se le declararon a AFIP.
+        Estos datos identifican a cada empresa en presupuestos, remitos y facturas nuevas. Al emitir
+        una factura se congelan: una reimpresión posterior no cambia aunque edites esta ficha.
       </p>
 
       <div className="space-y-6">
@@ -203,8 +211,12 @@ export function EmisoresConfig() {
 /** Sólo los campos que acepta guardarEmisor: el resto lo rechaza el validador. */
 const soloCampos = (e: any) => ({
   razon_social: e?.razon_social ?? "",
+  nombre_fantasia: e?.nombre_fantasia ?? null,
   cuit: e?.cuit ?? null,
   domicilio_fiscal: e?.domicilio_fiscal ?? null,
+  condicion_iva: e?.condicion_iva ?? "RESPONSABLE_INSCRIPTO",
+  ingresos_brutos: e?.ingresos_brutos ?? null,
+  inicio_actividades: e?.inicio_actividades ?? null,
 });
 
 function FormEmisor({
@@ -219,31 +231,95 @@ function FormEmisor({
   const [f, setF] = useState(soloCampos(emisor));
   const set = (k: string, v: string) => setF((p) => ({ ...p, [k]: v }));
 
+  const guardar = () =>
+    onGuardar({
+      ...f,
+      id: emisor.id,
+      nombre_fantasia: f.nombre_fantasia || null,
+      cuit: f.cuit || null,
+      domicilio_fiscal: f.domicilio_fiscal || null,
+      ingresos_brutos: f.ingresos_brutos || null,
+      inicio_actividades: f.inicio_actividades || null,
+    });
+
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2">
       <div className="sm:col-span-2">
-        <Label>Razón social *</Label>
-        <Input value={f.razon_social} onChange={(e) => set("razon_social", e.target.value)} />
-      </div>
-      <div>
-        <Label>CUIT</Label>
+        <Label htmlFor={`razon-${emisor.id}`}>Razón social *</Label>
         <Input
-          value={f.cuit ?? ""}
-          onChange={(e) => set("cuit", e.target.value)}
-          placeholder="todavía sin cargar"
+          id={`razon-${emisor.id}`}
+          value={f.razon_social}
+          onChange={(e) => set("razon_social", e.target.value)}
         />
       </div>
-      <div className="sm:col-span-3">
-        <Label>Domicilio fiscal</Label>
-        <div className="flex gap-2">
-          <Input
-            value={f.domicilio_fiscal ?? ""}
-            onChange={(e) => set("domicilio_fiscal", e.target.value)}
-          />
-          <Button disabled={guardando} onClick={() => onGuardar({ ...f, id: emisor.id })}>
-            {guardando && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Guardar
-          </Button>
-        </div>
+      <div>
+        <Label htmlFor={`fantasia-${emisor.id}`}>Nombre de fantasía</Label>
+        <Input
+          id={`fantasia-${emisor.id}`}
+          value={f.nombre_fantasia ?? ""}
+          onChange={(e) => set("nombre_fantasia", e.target.value)}
+          placeholder="CasaForma"
+        />
+      </div>
+      <div>
+        <Label htmlFor={`cuit-${emisor.id}`}>CUIT</Label>
+        <Input
+          id={`cuit-${emisor.id}`}
+          value={f.cuit ?? ""}
+          onChange={(e) => set("cuit", e.target.value)}
+          placeholder="30-00000000-0"
+        />
+      </div>
+      <div>
+        <Label htmlFor={`iva-${emisor.id}`}>Condición de IVA</Label>
+        <Select
+          value={f.condicion_iva ?? "RESPONSABLE_INSCRIPTO"}
+          onValueChange={(v) => set("condicion_iva", v)}
+        >
+          <SelectTrigger id={`iva-${emisor.id}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="RESPONSABLE_INSCRIPTO">Responsable Inscripto</SelectItem>
+            <SelectItem value="MONOTRIBUTO">Monotributo</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label htmlFor={`inicio-${emisor.id}`}>Inicio de actividades</Label>
+        <Input
+          id={`inicio-${emisor.id}`}
+          type="date"
+          value={f.inicio_actividades ?? ""}
+          onChange={(e) => set("inicio_actividades", e.target.value)}
+        />
+        {!f.inicio_actividades && (
+          <p className="mt-1 flex items-center gap-1 text-xs text-warning">
+            <AlertTriangle className="h-3 w-3" /> Confirmar con la contadora; no se completa por
+            aproximación.
+          </p>
+        )}
+      </div>
+      <div className="sm:col-span-2">
+        <Label htmlFor={`domicilio-${emisor.id}`}>Domicilio fiscal</Label>
+        <Input
+          id={`domicilio-${emisor.id}`}
+          value={f.domicilio_fiscal ?? ""}
+          onChange={(e) => set("domicilio_fiscal", e.target.value)}
+        />
+      </div>
+      <div className="sm:col-span-2">
+        <Label htmlFor={`iibb-${emisor.id}`}>Ingresos Brutos</Label>
+        <Input
+          id={`iibb-${emisor.id}`}
+          value={f.ingresos_brutos ?? ""}
+          onChange={(e) => set("ingresos_brutos", e.target.value)}
+        />
+      </div>
+      <div className="sm:col-span-2 flex justify-end">
+        <Button disabled={guardando} onClick={guardar}>
+          {guardando && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Guardar empresa
+        </Button>
       </div>
     </div>
   );

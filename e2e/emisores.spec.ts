@@ -12,7 +12,7 @@ import { test, expect, ingresar, campo } from "./apoyo";
 test.beforeEach(async ({ page }) => {
   await ingresar(page);
   await page.goto("/facturacion");
-  await page.getByText(/datos que salen en los impresos/i).waitFor({ timeout: 20_000 });
+  await page.getByText(/identidad fiscal e impresos/i).waitFor({ timeout: 20_000 });
 });
 
 test("se ven los dos emisores, cada uno con su local", async ({ page }) => {
@@ -22,17 +22,15 @@ test("se ven los dos emisores, cada uno con su local", async ({ page }) => {
     .locator("input")
     .evaluateAll((els) => (els as HTMLInputElement[]).map((e) => e.value));
   const todo = valores.join(" | ");
-  expect(todo, "falta un emisor").toContain("Aplicaciones y Servicios SRL");
-  expect(todo, "falta el otro emisor").toContain("Grupo Casa Forma SAS");
+  expect(todo, "falta un emisor").toContain("APLICACIONES Y SERVICIOS S.R.L.");
+  expect(todo, "falta el otro emisor").toContain("GRUPO CASA FORMA S.A.S.");
   // Y los datos que pidió Leo, cada uno con el suyo.
   expect(todo).toContain("3513229459");
   expect(todo).toContain("3512146766");
 });
 
-test("la pantalla aclara que la factura no usa estos datos", async ({ page }) => {
-  // Importa que se entienda: una factura ya emitida se reimprime con lo que se
-  // le declaró a AFIP, no con lo que diga esta pantalla hoy.
-  await expect(page.locator("body")).toContainText(/la factura no usa esto/i);
+test("la pantalla aclara que una factura emitida no cambia", async ({ page }) => {
+  await expect(page.locator("body")).toContainText(/al emitir una factura se congelan/i);
 });
 
 test("cambiar el celular de una sucursal se guarda de verdad", async ({ page }) => {
@@ -52,7 +50,7 @@ test("cambiar el celular de una sucursal se guarda de verdad", async ({ page }) 
   // Recargar es la parte que importa: que haya viajado a la base, no que el
   // formulario se acuerde de lo que uno tipeó.
   await page.reload();
-  await page.getByText(/datos que salen en los impresos/i).waitFor({ timeout: 20_000 });
+  await page.getByText(/identidad fiscal e impresos/i).waitFor({ timeout: 20_000 });
   await expect
     .poll(async () =>
       (

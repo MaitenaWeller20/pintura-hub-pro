@@ -114,6 +114,15 @@ ALTER TABLE public.puntos_venta
   ADD CONSTRAINT uq_puntos_venta_emisor_numero_modo
   UNIQUE (emisor_id,numero,modo);
 
+-- Reemplaza únicamente el seed original (PV 2 de homologación) por el dato
+-- productivo ya confirmado para General Paz. Cualquier otro valor se respeta.
+UPDATE public.puntos_venta p SET numero=5, modo='PRODUCCION'
+FROM public.sucursales s
+WHERE s.id=p.sucursal_id
+  AND s.codigo::text='GENERALPAZ'
+  AND p.numero=2
+  AND p.modo='HOMOLOGACION';
+
 -- No se habilita O'Higgins con datos supuestos. Su CSR, certificado y PV
 -- productivo deben tramitarse para el CUIT de Grupo Casa Forma.
 UPDATE public.puntos_venta p SET activo=false, modo='HOMOLOGACION'

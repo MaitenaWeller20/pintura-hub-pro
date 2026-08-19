@@ -52,25 +52,16 @@ cuentas corrientes), el menú lateral, los formularios de dos columnas y los
 diálogos. Y agregar un proyecto de Playwright con viewport móvil para que quede
 cubierto.
 
-## 4. Un CUIT por sucursal, cuando salga el certificado
+## 4. ✅ Resuelto: un CUIT y una credencial por empresa
 
-**Qué falta.** `emisores` ya existe y cada sucursal apunta a la suya
-(migración 20260814120000), pero las credenciales de AFIP siguen en
-`fiscal_config`, que es una tabla de UNA fila: un solo certificado y una sola
-clave para las dos sociedades.
+Resuelto el 19/08/2026. Cada sucursal toma su emisor, PV, ambiente, clave y
+certificado de forma autoritativa. La numeración y la recuperación de CAE también
+incluyen el CUIT, y el snapshot fiscal congela el teléfono de la sucursal.
 
-**Por qué importa.** Son dos personas jurídicas —Aplicaciones y Servicios SRL y
-Grupo Casa Forma SAS—, o sea dos CUIT, y cada uno necesita su certificado y su
-numeración. Además `puntos_venta` tiene `UNIQUE(numero, modo)` atado sólo a
-sucursal (`20260713122000_facturacion_electronica.sql:85-97`), lo que le
-impediría a dos CUIT usar el mismo número de punto de venta — cosa
-perfectamente posible.
-
-**Y de paso**, meter el teléfono del emisor en el `afip_snapshot` al emitir: hoy
-la factura con CAE no lo imprime, porque leerlo en vivo rompería la
-inmutabilidad del comprobante (una reimpresión cambiaría si cambia el número).
-
-**Cuándo.** Junto con el punto 5, cuando esté el certificado.
+O'Higgins queda bloqueada e inactiva hasta recibir su propio PV/certificado;
+General Paz conserva el PV 00005 de producción. La migración y el flujo operativo
+están en `20260819172939_facturacion_electronica_multiemisor.sql` y
+`facturacion-afip-paso-a-paso.md`.
 
 ## 5. Emitir a AFIP una nota sin factura puntual (período asociado)
 

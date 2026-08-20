@@ -3158,6 +3158,15 @@ export type Database = {
           total: number
         }[]
       }
+      editar_remito: {
+        Args: {
+          p_items: Json
+          p_observaciones: string | null
+          p_remito_id: string
+          p_sucursal_destino_id: string
+        }
+        Returns: undefined
+      }
       efectivo_en_caja: { Args: { _sesion_id: string }; Returns: number }
       eliminar_productos: { Args: { p_ids: string[] }; Returns: Json }
       exigir_efectivo: {

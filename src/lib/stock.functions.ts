@@ -1,4 +1,4 @@
-/** Server fns para remitos: aprobar / rechazar (mueve stock). */
+/** Server fns para crear, editar, aprobar y rechazar remitos internos. */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
@@ -30,6 +30,55 @@ export const rechazarRemito = createServerFn({ method: "POST" })
     const { error } = await supabase.rpc("rechazar_remito", {
       p_remito_id: data.remito_id,
       p_motivo: data.motivo,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const editarRemito = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        remito_id: z.string().uuid(),
+        sucursal_destino_id: z.string().uuid(),
+        observaciones: z.string().max(2000).optional().nullable(),
+        items: z
+          .array(
+            z.object({
+              producto_id: z.string().uuid(),
+              cantidad: z.number().positive().finite(),
+            }),
+          )
+          .min(1)
+          .max(500),
+      })
+      .superRefine((data, ctx) => {
+        const vistos = new Set<string>();
+        for (const item of data.items) {
+          if (vistos.has(item.producto_id)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["items"],
+              message: "Un producto no puede repetirse en el mismo remito",
+            });
+            return;
+          }
+          vistos.add(item.producto_id);
+        }
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    // La RPC bloquea el encabezado, vuelve a comprobar PENDIENTE + sucursal de
+    // origen y reemplaza encabezado e ítems en la misma transacción. Así una
+    // aprobación concurrente no puede usar un detalle guardado a medias.
+    const { error } = await supabase.rpc("editar_remito", {
+      p_remito_id: data.remito_id,
+      p_sucursal_destino_id: data.sucursal_destino_id,
+      p_observaciones: data.observaciones?.trim() || null,
+      p_items: data.items,
     });
     if (error) throw new Error(error.message);
     return { ok: true };

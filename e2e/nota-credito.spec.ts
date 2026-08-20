@@ -127,3 +127,47 @@ test("remitos: se puede ver qué trae un remito antes de aceptarlo", async ({ pa
   await expect(dialogo).toContainText(/viene de/i);
   await expect(dialogo).toContainText(/va a/i);
 });
+
+test("remitos: el origen puede corregir los productos mientras está pendiente", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.goto("/remitos");
+
+  await page.getByRole("button", { name: /^Nuevo remito$/ }).click();
+  const alta = page.getByRole("dialog");
+  const destino = alta.locator('label:has-text("Destino") + button[role=combobox]');
+  await destino.click();
+  await page.getByRole("option").first().click();
+
+  await page.getByTestId("remito-buscar-producto").fill("bl");
+  const primerProducto = alta.locator("div.overflow-auto > button").first();
+  await primerProducto.waitFor({ state: "visible", timeout: 15_000 });
+  await primerProducto.click();
+  await alta.getByRole("button", { name: /crear remito/i }).click();
+  await expect(alta).not.toBeVisible({ timeout: 20_000 });
+
+  const primeraFila = page.locator("tbody tr").first();
+  await primeraFila.waitFor({ state: "visible", timeout: 20_000 });
+  await primeraFila.getByRole("button", { name: /editar remito/i }).click();
+
+  const edicion = page.getByRole("dialog");
+  await expect(edicion.getByRole("heading", { name: /editar remito/i })).toBeVisible();
+  await expect(edicion.getByText(/el origen no se puede cambiar/i)).toBeVisible();
+
+  await edicion.getByRole("button", { name: /quitar producto/i }).click();
+  await edicion.getByTestId("remito-buscar-producto").fill("bl");
+  const reemplazo = edicion.locator("div.overflow-auto > button").nth(1);
+  await reemplazo.waitFor({ state: "visible", timeout: 15_000 });
+  const codigoReemplazo = (await reemplazo.locator("span").first().innerText()).trim();
+  await reemplazo.click();
+
+  await edicion.getByLabel("Observaciones").fill("Producto corregido");
+  await edicion.getByRole("button", { name: /guardar cambios/i }).click();
+  await expect(edicion).not.toBeVisible({ timeout: 20_000 });
+
+  await primeraFila.getByRole("button", { name: /ver qué trae/i }).click();
+  const detalle = page.getByRole("dialog");
+  await expect(detalle).toContainText(codigoReemplazo);
+  await expect(detalle).toContainText("Producto corregido");
+});

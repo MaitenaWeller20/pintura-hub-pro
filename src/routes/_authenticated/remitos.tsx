@@ -32,10 +32,21 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Check, X, Printer, ArrowRight, Loader2, Search, Eye } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Check,
+  X,
+  Printer,
+  ArrowRight,
+  Loader2,
+  Search,
+  Eye,
+  Pencil,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { crearRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
+import { crearRemito, editarRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
 import { fmtDateTime } from "@/lib/format";
 import {
   filtroProducto,
@@ -54,6 +65,7 @@ function RemitosPage() {
   const { data: cu } = useCurrentUser();
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
+  const [editando, setEditando] = useState<any>(null);
   const [rechazar, setRechazar] = useState<any>(null);
   const [verRemito, setVerRemito] = useState<any>(null);
   const aprobarFn = useServerFn(aprobarRemito);
@@ -69,7 +81,7 @@ function RemitosPage() {
             `
       *, origen:sucursales!sucursal_origen_id(${SELECT_SUCURSAL_IMPRESA}),
       destino:sucursales!sucursal_destino_id(nombre, direccion, telefono),
-      items:remito_items(cantidad, producto:productos(codigo,nombre))
+      items:remito_items(producto_id,cantidad, producto:productos(codigo,nombre))
     `,
           )
           .order("created_at", { ascending: false })
@@ -194,6 +206,17 @@ function RemitosPage() {
                   >
                     <Eye className="h-3.5 w-3.5" />
                   </Button>
+                  {(cu?.isAdmin || cu?.sucursal?.id === r.sucursal_origen_id) &&
+                    r.estado === "PENDIENTE" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Editar remito"
+                        onClick={() => setEditando(r)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   <Button size="sm" variant="ghost" title="Imprimir" onClick={() => imprimir(r)}>
                     <Printer className="h-3.5 w-3.5" />
                   </Button>
@@ -251,12 +274,24 @@ function RemitosPage() {
           apertura y no queda con lo tipeado la vez anterior. La precarga del
           origen la resuelve un efecto adentro del diálogo (ver ahí el porqué). */}
       {showNew && (
-        <NuevoRemitoDialog
+        <RemitoDialog
           open
           onClose={() => setShowNew(false)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ["remitos"] });
             setShowNew(false);
+          }}
+        />
+      )}
+
+      {editando && (
+        <RemitoDialog
+          open
+          remito={editando}
+          onClose={() => setEditando(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["remitos"] });
+            setEditando(null);
           }}
         />
       )}
@@ -404,10 +439,14 @@ function DetalleRemito({
   );
 }
 
-function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
+function RemitoDialog({ open, remito = null, onClose, onSaved }: any) {
   const { data: cu } = useCurrentUser();
   const crear = useServerFn(crearRemito);
-  const [origen, setOrigen] = useState<string>(cu?.sucursal?.id ?? "");
+  const editar = useServerFn(editarRemito);
+  const esEdicion = !!remito;
+  const [origen, setOrigen] = useState<string>(
+    remito?.sucursal_origen_id ?? cu?.sucursal?.id ?? "",
+  );
 
   // `useCurrentUser` resuelve el perfil en un efecto propio, así que en el
   // primer render SIEMPRE es null y el useState de arriba se inicializaba en
@@ -416,14 +455,22 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
   // deja hacer remitos". Se sincroniza cuando llega el perfil, sin pisar lo que
   // el usuario ya haya elegido a mano.
   useEffect(() => {
+    if (esEdicion) return;
     const mia = cu?.sucursal?.id;
     if (mia) setOrigen((actual) => actual || mia);
-  }, [cu?.sucursal?.id]);
-  const [destino, setDestino] = useState<string>("");
-  const [obs, setObs] = useState("");
+  }, [cu?.sucursal?.id, esEdicion]);
+  const [destino, setDestino] = useState<string>(remito?.sucursal_destino_id ?? "");
+  const [obs, setObs] = useState(remito?.observaciones ?? "");
   const [items, setItems] = useState<
     Array<{ producto_id: string; codigo: string; nombre: string; cantidad: number }>
-  >([]);
+  >(() =>
+    (remito?.items ?? []).map((item: any) => ({
+      producto_id: item.producto_id,
+      codigo: item.producto?.codigo ?? "",
+      nombre: item.producto?.nombre ?? "",
+      cantidad: Number(item.cantidad),
+    })),
+  );
   const [pq, setPq] = useState("");
 
   const { data: sucs = [] } = useQuery({
@@ -455,17 +502,36 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
   });
 
   const m = useMutation({
-    mutationFn: async () =>
-      crear({
+    mutationFn: async () => {
+      const detalle = items.map((i) => ({
+        producto_id: i.producto_id,
+        cantidad: Number(i.cantidad),
+      }));
+      if (esEdicion) {
+        return editar({
+          data: {
+            remito_id: remito.id,
+            sucursal_destino_id: destino,
+            observaciones: obs,
+            items: detalle,
+          },
+        });
+      }
+      return crear({
         data: {
           sucursal_origen_id: origen,
           sucursal_destino_id: destino,
           observaciones: obs,
-          items: items.map((i) => ({ producto_id: i.producto_id, cantidad: Number(i.cantidad) })),
+          items: detalle,
         },
-      }),
+      });
+    },
     onSuccess: (r: any) => {
-      toast.success(`Remito ${r.numero} creado (pendiente de aprobación)`);
+      toast.success(
+        esEdicion
+          ? `Remito ${remito.numero} actualizado`
+          : `Remito ${r.numero} creado (pendiente de aprobación)`,
+      );
       onSaved();
     },
     onError: (e: any) => toast.error(e.message),
@@ -491,23 +557,34 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Nuevo remito de transferencia</DialogTitle>
+          <DialogTitle>
+            {esEdicion ? `Editar remito ${remito.numero}` : "Nuevo remito de transferencia"}
+          </DialogTitle>
         </DialogHeader>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label>Origen *</Label>
-            <Select value={origen} onValueChange={setOrigen}>
-              <SelectTrigger>
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent>
-                {sucs.map((s: any) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.nombre}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor={esEdicion ? "remito-origen" : undefined}>Origen *</Label>
+            {esEdicion ? (
+              <>
+                <Input id="remito-origen" value={remito.origen?.nombre ?? "—"} disabled />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  El origen no se puede cambiar porque define el número del remito.
+                </p>
+              </>
+            ) : (
+              <Select value={origen} onValueChange={setOrigen}>
+                <SelectTrigger>
+                  <SelectValue placeholder="—" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sucs.map((s: any) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           <div>
             <Label>Destino *</Label>
@@ -626,6 +703,8 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
                     <Button
                       size="sm"
                       variant="ghost"
+                      aria-label="Quitar producto"
+                      title="Quitar producto"
                       onClick={() => setItems((is) => is.filter((_, idx) => idx !== i))}
                     >
                       <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -638,8 +717,13 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
         </div>
 
         <div>
-          <Label>Observaciones</Label>
-          <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} />
+          <Label htmlFor="remito-observaciones">Observaciones</Label>
+          <Textarea
+            id="remito-observaciones"
+            value={obs}
+            onChange={(e) => setObs(e.target.value)}
+            rows={2}
+          />
         </div>
         <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
           {/* Un botón gris sin explicación deja al usuario adivinando: eso fue
@@ -650,7 +734,7 @@ function NuevoRemitoDialog({ open, onClose, onSaved }: any) {
           </Button>
           <Button onClick={() => m.mutate()} disabled={!!noPuede || m.isPending}>
             {m.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-            Crear remito
+            {esEdicion ? "Guardar cambios" : "Crear remito"}
           </Button>
         </DialogFooter>
       </DialogContent>

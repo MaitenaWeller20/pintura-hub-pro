@@ -117,6 +117,10 @@ async function buildArca(emisor: EmisorFiscal, pv: PuntoVenta, supabaseAdmin: an
     cert,
     key,
     production,
+    // Nitro empaqueta el SDK CommonJS como ESM. Su valor por defecto intenta
+    // resolver `__dirname` (inexistente en ESM) incluso con storage propio.
+    // Esta ruta corta esa rama; no se usa porque ticketStorage está definido.
+    ticketPath: "/tmp/quimex-arca-tickets",
     // Sin esto el SDK escribe el ticket en el bundle read-only de Vercel y se
     // cae la facturación entera. Ver ticket-storage.ts.
     ticketStorage: new SupabaseTicketStorage(supabaseAdmin, cuit, production) as any,

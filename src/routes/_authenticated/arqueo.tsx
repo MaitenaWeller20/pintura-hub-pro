@@ -25,11 +25,10 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
+import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { calcularEfectivoCierre, generarCierreCajaPdf } from "@/lib/cierre-caja";
 import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
 import { toast } from "sonner";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/arqueo")({
   component: ArqueoPage,
@@ -41,65 +40,28 @@ type CajaForma = { entra: number; sale: number; neto: number };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
 const TIPO_MOV_LABEL: Record<string, string> = { INGRESO: "Ingreso", GASTO: "Gasto", RETIRO: "Retiro", INICIAL: "Fondo inicial" };
 
-// PDF del cierre de una sesión: esperado/contado/diferencia por forma + efectivo
-// dejado + el detalle de todas las ventas del turno con su forma de pago (R12.a).
+// PDF del cierre de una sesión: arqueo, ventas y cobranzas de cuenta corriente.
 async function pdfCierre(s: any, sucNombre: string) {
-  const doc = new jsPDF();
-  const W = doc.internal.pageSize.getWidth();
-  doc.setFontSize(14); doc.text("CASAFORMA", 14, 16);
-  doc.setFontSize(11); doc.text("Cierre de caja", W / 2, 16, { align: "center" });
-  doc.setFontSize(9);
-  doc.text(`Sucursal: ${sucNombre}`, 14, 24);
-  doc.text(`Abierta: ${fmtDateTime(s.abierta_en)}`, 14, 29);
-  doc.text(`Cerrada: ${fmtDateTime(s.cerrada_en)}`, 14, 34);
-  doc.text(`Fondo inicial: ${fmtMoney(s.fondo_inicial)}`, 14, 39);
-
-  const esperado = s.esperado ?? {}, contado = s.contado ?? {}, diferencia = s.diferencia ?? {};
-  const formas = Array.from(new Set([...Object.keys(esperado), ...Object.keys(contado)]));
-  autoTable(doc, {
-    startY: 44,
-    head: [["Forma", "Esperado", "Contado", "Diferencia"]],
-    body: formas.map((f) => [
-      formaPagoLabel[f] ?? f,
-      fmtMoney(Number(esperado[f]?.neto ?? 0)),
-      fmtMoney(Number(contado[f] ?? 0)),
-      fmtMoney(Number(diferencia[f] ?? 0)),
-    ]),
-    foot: [["TOTAL", fmtMoney(s.total_esperado), fmtMoney(s.total_contado), fmtMoney(s.total_diferencia)]],
-    styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
-  });
-  let y = (doc as any).lastAutoTable.finalY + 8;
-  doc.setFontSize(10);
-  doc.text(`Efectivo dejado para mañana: ${fmtMoney(s.efectivo_dejado ?? 0)}`, 14, y);
-  if (s.notas) { doc.setFontSize(9); doc.text(`Observaciones: ${s.notas}`, 14, y + 6); y += 6; }
-
-  // R12.a: detalle de las ventas del turno con su forma de pago. Best-effort: si
-  // la consulta falla, el PDF igual se genera con las tablas de arriba.
-  try {
-    const { data: ventasSesion } = await supabase.from("ventas")
+  const [ventasResultado, cobranzasResultado] = await Promise.all([
+    supabase.from("ventas")
       .select("numero_comprobante,tipo_comprobante,total,condicion_venta,cliente:clientes(razon_social),pagos:venta_pagos(forma_pago,monto)")
       .eq("caja_sesion_id", s.id)
-      .order("fecha", { ascending: true });
-    if (ventasSesion && ventasSesion.length) {
-      const startY = y + 10;
-      doc.setFontSize(10); doc.text("Ventas del turno", 14, startY);
-      autoTable(doc, {
-        startY: startY + 3,
-        head: [["Comprobante", "Tipo", "Cliente", "Total", "Forma de pago"]],
-        body: ventasSesion.map((v: any) => [
-          v.numero_comprobante,
-          tipoComprobanteLabel[v.tipo_comprobante] ?? v.tipo_comprobante,
-          v.cliente?.razon_social ?? "—",
-          fmtMoney(v.total),
-          v.pagos?.length
-            ? v.pagos.map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago).join(", ")
-            : (v.condicion_venta === "CTA_CTE" ? "Cuenta Corriente" : "—"),
-        ]),
-        styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
-      });
-    }
-  } catch { /* PDF sin el detalle si la consulta falla */ }
+      .order("fecha", { ascending: true }),
+    supabase.from("cobranzas_cta_cte")
+      .select("fecha,monto,forma_pago,detalle,observaciones,cliente:clientes(razon_social)")
+      .eq("caja_sesion_id", s.id)
+      .order("fecha", { ascending: true }),
+  ]);
 
+  if (ventasResultado.error) throw ventasResultado.error;
+  if (cobranzasResultado.error) throw cobranzasResultado.error;
+
+  const doc = generarCierreCajaPdf({
+    sesion: s,
+    sucursalNombre: sucNombre,
+    ventas: ventasResultado.data ?? [],
+    cobranzas: cobranzasResultado.data ?? [],
+  });
   doc.save(`cierre-caja-${fmtDate(s.cerrada_en)}.pdf`);
 }
 
@@ -334,17 +296,35 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
   const [contado, setContado] = useState<Record<string, number | null>>({});
   const [notas, setNotas] = useState("");
   const [efectivoDejado, setEfectivoDejado] = useState<number | null>(null);
+  const resumenEfectivo = contado.EFECTIVO == null || efectivoDejado == null
+    ? null
+    : calcularEfectivoCierre(
+        neto(esperado.EFECTIVO),
+        Number(contado.EFECTIVO),
+        Number(efectivoDejado),
+      );
 
   const cerrar = useMutation({
     mutationFn: async () => {
+      if (contado.EFECTIVO == null || efectivoDejado == null) {
+        throw new Error("Completá el efectivo contado y el que dejás para mañana.");
+      }
+      const efectivo = calcularEfectivoCierre(
+        neto(esperado.EFECTIVO),
+        Number(contado.EFECTIVO),
+        Number(efectivoDejado),
+      );
+      if (!efectivo.dejadoValido) {
+        throw new Error("El efectivo dejado no puede superar al contado ni contener valores negativos.");
+      }
       // R11: mandamos SÓLO el efectivo (lo único que se cuenta a mano). El resto de
       // las formas las completa cerrar_caja con el esperado que recalcula en la
       // misma transacción, así no hay diferencia fantasma por una carrera con un
       // esperado cacheado (ver migración 20260721160000).
-      const payload: Record<string, number> = { EFECTIVO: Number(contado.EFECTIVO ?? 0) };
+      const payload: Record<string, number> = { EFECTIVO: Number(contado.EFECTIVO) };
       const { error } = await supabase.rpc("cerrar_caja", {
         p_sesion_id: sesion.id, p_contado: payload, p_notas: notas || undefined,
-        p_efectivo_dejado: Number(efectivoDejado || 0),
+        p_efectivo_dejado: Number(efectivoDejado),
       });
       if (error) throw error;
     },
@@ -363,7 +343,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           <DialogTitle>Cerrar caja — conteo</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Contá el <strong>efectivo</strong> que hay físicamente en la caja. El resto de las formas ya viene con el monto
+          Contá <strong>todo el efectivo antes de separar lo que vas a retirar</strong>. El resto de las formas ya viene con el monto
           esperado por el sistema (lo que entró menos lo que salió: compras, pagos a proveedor, gastos), no se cuenta a mano.
         </p>
         <div className="space-y-2 mt-1">
@@ -405,6 +385,17 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
               Será el fondo inicial del próximo turno. El resto del efectivo se retira. Si no dejás nada, poné 0.
             </p>
           </div>
+          {resumenEfectivo && (
+            <div className={`mt-2 text-sm ${resumenEfectivo.dejadoValido ? "text-foreground" : "text-destructive"}`}>
+              <span>Efectivo retirado al cierre: </span>
+              <strong className="tabular-nums">{fmtMoney(resumenEfectivo.retirado)}</strong>
+              {!resumenEfectivo.dejadoValido && (
+                <p className="mt-1 text-xs">
+                  El efectivo dejado no puede superar al contado ni contener valores negativos.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="mt-2">
           <Label>Observaciones</Label>
@@ -413,7 +404,12 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending || contado.EFECTIVO == null}>
+          <Button onClick={() => cerrar.mutate()} disabled={
+            cerrar.isPending ||
+            contado.EFECTIVO == null ||
+            efectivoDejado == null ||
+            !resumenEfectivo?.dejadoValido
+          }>
             <Lock className="h-4 w-4 mr-1" /> Confirmar cierre
           </Button>
         </DialogFooter>

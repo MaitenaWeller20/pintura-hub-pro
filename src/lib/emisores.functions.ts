@@ -12,15 +12,18 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { bytesDeDataUrl, medirImagen } from "@/lib/impresos/imagen";
+import { validarCuitEmisor } from "@/lib/fiscal/cert";
+import type { Database } from "@/integrations/supabase/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Los mismos dos helpers que usa fiscal.functions: el cliente de servicio para
 // escribir, y el chequeo de admin por la RPC `is_admin`, que es la que manda.
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  return supabaseAdmin as any;
+  return supabaseAdmin;
 }
 
-async function exigirAdmin(supabase: any, userId: string) {
+async function exigirAdmin(supabase: SupabaseClient<Database>, userId: string) {
   const { data: esAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
   if (!esAdmin) throw new Error("Sólo un administrador puede cambiar estos datos.");
 }
@@ -32,7 +35,7 @@ export const listarEmisores = createServerFn({ method: "GET" })
     const { data, error } = await context.supabase
       .from("emisores")
       .select(
-        "id, razon_social, cuit, domicilio_fiscal, logo, sucursales(id, nombre, direccion, telefono)",
+        "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, sucursales(id, nombre, direccion, telefono)",
       )
       .order("razon_social");
     if (error) throw new Error(`No se pudieron traer los emisores: ${error.message}`);
@@ -83,10 +86,18 @@ export const guardarEmisor = createServerFn({ method: "POST" })
           .string()
           .min(1, "La razón social no puede quedar vacía.")
           .max(120, "La razón social no puede pasar de 120 caracteres."),
+        nombre_fantasia: z.string().max(120).optional().nullable(),
         cuit: z.string().max(20).optional().nullable(),
         domicilio_fiscal: z
           .string()
           .max(200, "El domicilio no puede pasar de 200 caracteres.")
+          .optional()
+          .nullable(),
+        condicion_iva: z.enum(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"]).optional().nullable(),
+        ingresos_brutos: z.string().max(80).optional().nullable(),
+        inicio_actividades: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha de inicio no es válida.")
           .optional()
           .nullable(),
         logo: logoValido.optional(),
@@ -96,7 +107,9 @@ export const guardarEmisor = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = await admin();
     await exigirAdmin(context.supabase, context.userId);
-    const { id, ...campos } = data;
+    const { id, ...camposEntrada } = data;
+    const cuit = camposEntrada.cuit?.trim() ? validarCuitEmisor(camposEntrada.cuit) : null;
+    const campos = { ...camposEntrada, cuit };
     const { error } = await sb.from("emisores").update(campos).eq("id", id);
     if (error) throw new Error(`No se pudo guardar: ${error.message}`);
     return { ok: true };

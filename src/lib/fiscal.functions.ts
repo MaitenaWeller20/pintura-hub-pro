@@ -2,8 +2,8 @@
  * Facturación electrónica: emisión, configuración y certificado.
  *
  * Todo corre en el servidor. El certificado y la clave privada no se exponen
- * jamás al navegador, y la tabla fiscal_config no tiene policies de RLS para
- * `authenticated` — se lee sólo con la service_role key desde acá.
+ * jamás al navegador, y `credenciales_arca` no tiene policies ni grants para
+ * `authenticated`: sólo se lee con la service role desde el backend.
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -33,14 +33,9 @@ import {
   MOCK,
 } from "./fiscal/arca";
 import { diasDesdeHoyAr, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "./fiscal/fecha";
-import {
-  generarParYCsr,
-  validarCuitEmisor,
-  prepararSubject,
-  verificarCertificado,
-} from "./fiscal/cert";
-import { encryptString, decryptString } from "./fiscal/crypto";
 import { qrAfipDataUrl } from "./fiscal/qr";
+import { cargarContextoFiscal } from "./fiscal/contexto.server";
+import { crearSnapshotFiscal, identidadReservaCoincide } from "./fiscal/snapshot";
 
 // Ventana de gracia del claim anti doble-submit: si una emisión de la MISMA venta
 // se reservó hace menos que esto, un segundo request no puede re-reservar (se
@@ -59,245 +54,9 @@ async function admin() {
   return supabaseAdmin as any;
 }
 
-async function requireAdmin(supabase: any, userId: string) {
-  const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-  if (!isAdmin) throw new Error("Sólo un administrador puede tocar la configuración fiscal.");
-}
-
-// ============================================================
-// Configuración fiscal
-// ============================================================
-
-export const obtenerConfigFiscal = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
-  .handler(async () => {
-    const sb = await admin();
-    const [{ data: cfg }, { data: pvs }] = await Promise.all([
-      sb.from("fiscal_config").select("*").eq("id", true).maybeSingle(),
-      sb.from("puntos_venta").select("*, sucursal:sucursales(nombre, codigo)").order("numero"),
-    ]);
-
-    const diasParaVencer = cfg?.cert_vence_at
-      ? Math.floor((new Date(cfg.cert_vence_at).getTime() - Date.now()) / 86_400_000)
-      : null;
-
-    return {
-      // Nunca mandamos arca_key_enc ni arca_cert_enc al navegador.
-      cuit: cfg?.cuit ?? null,
-      razon_social: cfg?.razon_social ?? null,
-      nombre_fantasia: cfg?.nombre_fantasia ?? null,
-      domicilio_fiscal: cfg?.domicilio_fiscal ?? null,
-      condicion_iva: cfg?.condicion_iva ?? "RESPONSABLE_INSCRIPTO",
-      inicio_actividades: cfg?.inicio_actividades ?? null,
-      ingresos_brutos: cfg?.ingresos_brutos ?? null,
-      habilitada: cfg?.habilitada ?? false,
-      tiene_clave: !!cfg?.arca_key_enc,
-      tiene_certificado: !!cfg?.arca_cert_enc,
-      cert_vence_at: cfg?.cert_vence_at ?? null,
-      dias_para_vencer: diasParaVencer,
-      puntos_venta: pvs ?? [],
-      mock_mode: MOCK,
-    };
-  });
-
-export const guardarConfigFiscal = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        cuit: z.string().min(1),
-        razon_social: z.string().min(1),
-        nombre_fantasia: z.string().optional().nullable(),
-        domicilio_fiscal: z.string().optional().nullable(),
-        // El EMISOR sólo puede ser RI o Monotributo: son las dos condiciones para
-        // las que la matriz A/B/C está definida. Un sujeto exento no emite con IVA
-        // discriminado. (El EXENTO sí es válido como condición del RECEPTOR.)
-        condicion_iva: z.enum(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"]),
-        inicio_actividades: z.string().optional().nullable(),
-        // Va impreso en el encabezado del comprobante. Texto libre porque admite
-        // "Exento" o "Convenio Multilateral NNN-NNNNNN", no sólo un número.
-        ingresos_brutos: z.string().optional().nullable(),
-        habilitada: z.boolean().default(false),
-      })
-      .parse(d),
-  )
-  .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await requireAdmin(context.supabase, context.userId);
-
-    const cuit = validarCuitEmisor(data.cuit);
-
-    const { error } = await sb
-      .from("fiscal_config")
-      .update({ ...data, cuit })
-      .eq("id", true);
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  });
-
-export const guardarPuntoVenta = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        sucursal_id: z.string().uuid(),
-        numero: z.number().int().positive(),
-        modo: z.enum(["HOMOLOGACION", "PRODUCCION"]),
-      })
-      .parse(d),
-  )
-  .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await requireAdmin(context.supabase, context.userId);
-
-    const { error } = await sb.from("puntos_venta").upsert(data, { onConflict: "sucursal_id" });
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  });
-
-// ============================================================
-// Certificado
-// ============================================================
-
-/**
- * Genera la clave privada + el CSR. El CSR se le da al contador para que lo suba
- * a AFIP; la clave privada queda cifrada acá y no sale nunca.
- */
-export const generarCsr = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const sb = await admin();
-    await requireAdmin(context.supabase, context.userId);
-
-    const { data: cfg } = await sb.from("fiscal_config").select("*").eq("id", true).maybeSingle();
-    const cuit = validarCuitEmisor(cfg?.cuit);
-
-    // Regenerar el CSR pisa la clave privada y deja huérfano al certificado que
-    // ya estuviera cargado. Es el footgun silencioso de lubricentro: acá avisamos.
-    if (cfg?.arca_cert_enc) {
-      throw new Error(
-        "Ya hay un certificado cargado. Generar un CSR nuevo invalida el actual y hay que rehacer el trámite en AFIP. " +
-          "Si querés renovarlo igual, primero borrá el certificado.",
-      );
-    }
-
-    const { org, cn } = prepararSubject(cfg?.razon_social ?? null, cfg?.nombre_fantasia ?? null);
-    const { csr, keyPem } = await generarParYCsr(org, cn, cuit);
-
-    const { error } = await sb
-      .from("fiscal_config")
-      .update({ arca_key_enc: encryptString(keyPem), cert_alias: cn })
-      .eq("id", true);
-    if (error) throw new Error(error.message);
-
-    return { csr, alias: cn };
-  });
-
-export const guardarCertificado = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ pem: z.string().min(1) }).parse(d))
-  .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await requireAdmin(context.supabase, context.userId);
-
-    const { data: cfg } = await sb
-      .from("fiscal_config")
-      .select("arca_key_enc")
-      .eq("id", true)
-      .maybeSingle();
-
-    if (!cfg?.arca_key_enc) {
-      throw new Error("Primero generá el CSR: todavía no hay clave privada asociada.");
-    }
-
-    const keyPem = decryptString(cfg.arca_key_enc);
-    if (!keyPem) {
-      throw new Error("No se pudo descifrar la clave privada. ¿Cambió ARCA_ENCRYPTION_KEY?");
-    }
-
-    // Falla cerrado: si el .crt no corresponde a nuestra clave, no se guarda.
-    const { vence } = verificarCertificado(data.pem, keyPem);
-
-    const { error } = await sb
-      .from("fiscal_config")
-      .update({ arca_cert_enc: encryptString(data.pem), cert_vence_at: vence.toISOString() })
-      .eq("id", true);
-    if (error) throw new Error(error.message);
-
-    return { vence: vence.toISOString() };
-  });
-
-export const borrarCertificado = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const sb = await admin();
-    await requireAdmin(context.supabase, context.userId);
-    await sb
-      .from("fiscal_config")
-      .update({ arca_cert_enc: null, arca_key_enc: null, cert_vence_at: null })
-      .eq("id", true);
-    return { ok: true };
-  });
-
-/** Prueba la conexión con AFIP consultando el último comprobante autorizado. */
-export const probarConexionAfip = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ sucursal_id: z.string().uuid() }).parse(d))
-  .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await requireAdmin(context.supabase, context.userId);
-
-    if (MOCK) {
-      return { ok: true, mock: true, ultimo: 0, mensaje: "Mock mode activo: no se llamó a AFIP." };
-    }
-
-    const { emisor, pv } = await cargarEmisorYPv(sb, data.sucursal_id);
-    // Factura B (6) es el tipo más común; sirve como sonda.
-    const ultimo = await ultimoAutorizado(emisor, pv, 6, sb);
-    return {
-      ok: true,
-      mock: false,
-      ultimo,
-      mensaje: `AFIP respondió. Último comprobante tipo B autorizado en el PV ${pv.numero}: ${ultimo}.`,
-    };
-  });
-
 // ============================================================
 // Emisión
 // ============================================================
-
-async function cargarEmisorYPv(sb: any, sucursalId: string) {
-  const [{ data: cfg }, { data: pv }] = await Promise.all([
-    sb.from("fiscal_config").select("*").eq("id", true).maybeSingle(),
-    sb.from("puntos_venta").select("*").eq("sucursal_id", sucursalId).maybeSingle(),
-  ]);
-
-  if (!cfg?.cuit) throw new Error("Falta configurar el CUIT del emisor.");
-  if (!cfg.habilitada) throw new Error("La facturación electrónica está deshabilitada.");
-  if (!pv) throw new Error("Esta sucursal no tiene punto de venta configurado.");
-  if (!pv.activo) throw new Error("El punto de venta de esta sucursal está inactivo.");
-
-  return {
-    emisor: {
-      cuit: cfg.cuit,
-      arca_key_enc: cfg.arca_key_enc,
-      arca_cert_enc: cfg.arca_cert_enc,
-      condicion_iva: cfg.condicion_iva as CondicionIva,
-    },
-    // Lo que se imprime en el encabezado del comprobante. Va aparte del `emisor`
-    // (que lleva los secretos) para no arrastrar el certificado a ningún lado.
-    emisorImpreso: {
-      razon_social: cfg.razon_social ?? null,
-      nombre_fantasia: cfg.nombre_fantasia ?? null,
-      cuit: cfg.cuit as string,
-      domicilio_fiscal: cfg.domicilio_fiscal ?? null,
-      condicion_iva: cfg.condicion_iva as CondicionIva,
-      ingresos_brutos: cfg.ingresos_brutos ?? null,
-      inicio_actividades: cfg.inicio_actividades ?? null,
-    },
-    pv: { numero: pv.numero as number, modo: pv.modo as "HOMOLOGACION" | "PRODUCCION" },
-  };
-}
 
 /**
  * Emite un comprobante en AFIP y le pega el CAE.
@@ -363,7 +122,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       );
     }
 
-    const { emisor, emisorImpreso, pv } = await cargarEmisorYPv(sb, venta.sucursal_id);
+    const { emisor, emisorImpreso, pv } = await cargarContextoFiscal(sb, venta.sucursal_id);
 
     // --- Letra y tipo -------------------------------------------------------
     const condReceptor: CondicionIva | null = venta.cliente?.tipo
@@ -378,7 +137,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       // referenciarlo (CbtesAsoc) o AFIP la rechaza.
       const { data: orig } = await supabase
         .from("ventas")
-        .select("tipo_comprobante, afip_cbte_tipo, afip_punto_venta, afip_numero, cae")
+        .select(
+          "tipo_comprobante, afip_emisor_cuit, afip_cbte_tipo, afip_punto_venta, afip_numero, cae",
+        )
         .eq("id", venta.afip_cbte_asoc_id ?? "")
         .maybeSingle();
 
@@ -386,6 +147,9 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         throw new Error(
           "La nota de crédito/débito tiene que estar asociada a un comprobante que ya tenga CAE.",
         );
+      }
+      if (orig.afip_emisor_cuit !== emisor.cuit) {
+        throw new Error("La nota no puede asociarse a un comprobante emitido por otro CUIT.");
       }
       // La letra de la NC sale del comprobante REALMENTE emitido (afip_cbte_tipo),
       // no del tipo_comprobante tipeado: una venta FACTURA_A emitida como B (por
@@ -449,10 +213,10 @@ export const emitirComprobante = createServerFn({ method: "POST" })
 
     // --- Snapshot fiscal ----------------------------------------------------
     // Congela lo que se le declara a AFIP. De acá en más el PDF y el QR se arman
-    // SIEMPRE con esta copia, nunca releyendo clientes/fiscal_config: si mañana se
+    // SIEMPRE con esta copia, nunca releyendo clientes/emisores: si mañana se
     // corrige el CUIT del cliente o el domicilio del emisor, el comprobante ya
     // emitido tiene que seguir imprimiéndose igual que el que se entregó.
-    const snapshot = {
+    const snapshot = crearSnapshotFiscal({
       emisor: emisorImpreso,
       receptor: {
         razon_social: venta.cliente?.razon_social ?? null,
@@ -481,17 +245,26 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         iva_porcentaje: Number(i.iva_porcentaje),
         subtotal_con_iva: Math.abs(Number(i.subtotal_con_iva ?? 0)),
       })),
-      version: 1,
-    };
+    });
 
     // --- Recuperación de un intento anterior --------------------------------
     // Si hay un número reservado, la identidad de esa reserva (punto de venta,
     // tipo y modo) manda: es lo que AFIP pudo haber autorizado.
     if (venta.afip_numero) {
-      const mismaIdentidad =
-        venta.afip_punto_venta === pv.numero &&
-        venta.afip_cbte_tipo === cbteTipo &&
-        venta.afip_modo === pv.modo;
+      const mismaIdentidad = identidadReservaCoincide(
+        {
+          cuit: venta.afip_emisor_cuit,
+          punto_venta: venta.afip_punto_venta,
+          cbte_tipo: venta.afip_cbte_tipo,
+          ambiente: venta.afip_modo,
+        },
+        {
+          cuit: emisor.cuit,
+          punto_venta: pv.numero,
+          cbte_tipo: cbteTipo,
+          ambiente: pv.modo,
+        },
+      );
 
       // La identidad cambió entre el intento fallido y este reintento: cambió la
       // condición de IVA del cliente (y con ella la letra), o el punto de venta
@@ -501,7 +274,8 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       if (!mismaIdentidad) {
         throw new Error(
           `Este comprobante tiene reservado el número ${venta.afip_numero} (punto de venta ` +
-            `${venta.afip_punto_venta}, tipo ${venta.afip_cbte_tipo}, ${venta.afip_modo}), pero ahora ` +
+            `${venta.afip_punto_venta}, tipo ${venta.afip_cbte_tipo}, ${venta.afip_modo}, CUIT ` +
+            `${venta.afip_emisor_cuit ?? "sin registrar"}), pero ahora ` +
             "correspondería emitir uno distinto. Puede haber quedado un comprobante autorizado en AFIP " +
             "sin registrar acá. No se emite para no duplicar: hay que reconciliar la numeración antes de seguir.",
         );
@@ -567,6 +341,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       const { data: ultimoLocalRow } = await sb
         .from("ventas")
         .select("afip_numero")
+        .eq("afip_emisor_cuit", emisor.cuit)
         .eq("afip_punto_venta", pv.numero)
         .eq("afip_cbte_tipo", cbteTipo)
         .eq("afip_modo", pv.modo)
@@ -624,6 +399,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     const { data: reservada, error: reservaErr } = await sb
       .from("ventas")
       .update({
+        afip_emisor_cuit: emisor.cuit,
         afip_cbte_tipo: cbteTipo,
         afip_punto_venta: pv.numero,
         afip_numero: numero,
@@ -724,7 +500,12 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       // AFIP y traba la numeración para siempre.
       await sb
         .from("ventas")
-        .update({ afip_estado: "ERROR", afip_error: msg, afip_numero: null })
+        .update({
+          afip_estado: "ERROR",
+          afip_error: msg,
+          afip_numero: null,
+          afip_emisor_cuit: null,
+        })
         .eq("id", venta.id);
       throw e;
     }
@@ -795,14 +576,20 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
 
     let emisor = snap?.emisor ?? null;
     if (!emisor) {
-      const { data: cfg } = await sb
-        .from("fiscal_config")
+      const { data: sucursal } = await sb
+        .from("sucursales")
         .select(
-          "cuit, razon_social, nombre_fantasia, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades",
+          "telefono, emisor:emisores(cuit, razon_social, nombre_fantasia, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades)",
         )
-        .eq("id", true)
+        .eq("id", venta.sucursal_id)
         .maybeSingle();
-      emisor = cfg ?? null;
+      emisor = sucursal?.emisor
+        ? {
+            ...sucursal.emisor,
+            cuit: venta.afip_emisor_cuit ?? sucursal.emisor.cuit,
+            telefono: sucursal.telefono ?? null,
+          }
+        : null;
     }
 
     const receptor = snap?.receptor ?? {

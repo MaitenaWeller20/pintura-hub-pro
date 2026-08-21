@@ -552,6 +552,56 @@ export type Database = {
           },
         ]
       }
+      credenciales_arca: {
+        Row: {
+          ambiente: string
+          arca_cert_enc: string | null
+          arca_key_enc: string | null
+          cert_alias: string | null
+          cert_vence_at: string | null
+          created_at: string
+          emisor_id: string
+          habilitada: boolean
+          id: string
+          probada_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          ambiente: string
+          arca_cert_enc?: string | null
+          arca_key_enc?: string | null
+          cert_alias?: string | null
+          cert_vence_at?: string | null
+          created_at?: string
+          emisor_id: string
+          habilitada?: boolean
+          id?: string
+          probada_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          ambiente?: string
+          arca_cert_enc?: string | null
+          arca_key_enc?: string | null
+          cert_alias?: string | null
+          cert_vence_at?: string | null
+          created_at?: string
+          emisor_id?: string
+          habilitada?: boolean
+          id?: string
+          probada_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credenciales_arca_emisor_id_fkey"
+            columns: ["emisor_id"]
+            isOneToOne: false
+            referencedRelation: "emisores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cuenta_corriente_movimientos: {
         Row: {
           cliente_id: string
@@ -691,6 +741,7 @@ export type Database = {
           ingresos_brutos: string | null
           inicio_actividades: string | null
           logo: string | null
+          nombre_fantasia: string | null
           razon_social: string
           updated_at: string
         }
@@ -704,6 +755,7 @@ export type Database = {
           ingresos_brutos?: string | null
           inicio_actividades?: string | null
           logo?: string | null
+          nombre_fantasia?: string | null
           razon_social: string
           updated_at?: string
         }
@@ -717,6 +769,7 @@ export type Database = {
           ingresos_brutos?: string | null
           inicio_actividades?: string | null
           logo?: string | null
+          nombre_fantasia?: string | null
           razon_social?: string
           updated_at?: string
         }
@@ -1665,6 +1718,7 @@ export type Database = {
         Row: {
           activo: boolean
           created_at: string
+          emisor_id: string
           id: string
           modo: string
           numero: number
@@ -1674,6 +1728,7 @@ export type Database = {
         Insert: {
           activo?: boolean
           created_at?: string
+          emisor_id: string
           id?: string
           modo?: string
           numero: number
@@ -1683,6 +1738,7 @@ export type Database = {
         Update: {
           activo?: boolean
           created_at?: string
+          emisor_id?: string
           id?: string
           modo?: string
           numero?: number
@@ -1690,6 +1746,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "fk_puntos_venta_sucursal_emisor"
+            columns: ["sucursal_id", "emisor_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id", "emisor_id"]
+          },
           {
             foreignKeyName: "puntos_venta_sucursal_id_fkey"
             columns: ["sucursal_id"]
@@ -2322,7 +2385,7 @@ export type Database = {
           codigo: Database["public"]["Enums"]["sucursal_codigo"]
           created_at: string
           direccion: string | null
-          emisor_id: string | null
+          emisor_id: string
           id: string
           nombre: string
           numero: string
@@ -2334,7 +2397,7 @@ export type Database = {
           codigo: Database["public"]["Enums"]["sucursal_codigo"]
           created_at?: string
           direccion?: string | null
-          emisor_id?: string | null
+          emisor_id: string
           id?: string
           nombre: string
           numero: string
@@ -2346,7 +2409,7 @@ export type Database = {
           codigo?: Database["public"]["Enums"]["sucursal_codigo"]
           created_at?: string
           direccion?: string | null
-          emisor_id?: string | null
+          emisor_id?: string
           id?: string
           nombre?: string
           numero?: string
@@ -2523,6 +2586,7 @@ export type Database = {
         Row: {
           afip_cbte_asoc_id: string | null
           afip_cbte_tipo: number | null
+          afip_emisor_cuit: string | null
           afip_emitido_at: string | null
           afip_error: string | null
           afip_estado: string
@@ -2561,6 +2625,7 @@ export type Database = {
         Insert: {
           afip_cbte_asoc_id?: string | null
           afip_cbte_tipo?: number | null
+          afip_emisor_cuit?: string | null
           afip_emitido_at?: string | null
           afip_error?: string | null
           afip_estado?: string
@@ -2599,6 +2664,7 @@ export type Database = {
         Update: {
           afip_cbte_asoc_id?: string | null
           afip_cbte_tipo?: number | null
+          afip_emisor_cuit?: string | null
           afip_emitido_at?: string | null
           afip_error?: string | null
           afip_estado?: string

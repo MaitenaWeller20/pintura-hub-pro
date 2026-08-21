@@ -22,8 +22,8 @@ import { anularVenta } from "@/lib/ventas.functions";
 import {
   emitirComprobante,
   datosFiscalesComprobante,
-  obtenerConfigFiscal,
 } from "@/lib/fiscal.functions";
+import { obtenerConfigFiscal } from "@/lib/fiscal/config.functions";
 import { esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
 import { diasRestantesVentanaAfip, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "@/lib/fiscal/fecha";
 import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
@@ -158,11 +158,10 @@ function VentasList() {
   });
 
   // Sólo interesa el flag de modo simulado, para no avisar de un plazo que en
-  // mock no se aplica. Se cachea con la misma clave que usa la pantalla de
-  // Facturación, así que no agrega un ida y vuelta si ya se visitó.
+  // mock no se aplica. La respuesta pública no contiene claves ni certificados.
   const cargarCfg = useServerFn(obtenerConfigFiscal);
   const { data: cfgFiscal } = useQuery({
-    queryKey: ["fiscal-config"],
+    queryKey: ["fiscal-config-multiemisor"],
     queryFn: () => cargarCfg(),
     staleTime: 5 * 60_000,
   });

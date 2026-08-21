@@ -1,303 +1,123 @@
-# Facturación electrónica: paso a paso para dejarla andando
+# Facturación electrónica: puesta en marcha por empresa
 
-**Actualizado:** 2026-08-04
-**Para:** quien hace la configuración, con la clave fiscal del cliente en la mano.
+**Actualizado:** 2026-08-19
+**Alcance:** APLICACIONES Y SERVICIOS S.R.L. (General Paz) y GRUPO CASA FORMA S.A.S. (O'Higgins).
 
----
+## 1. Regla principal
 
-## 0. Antes de tocar nada, leé esto
+Cada persona jurídica se configura por separado:
 
-Tres cosas que, si las pasás por alto, hacen perder horas.
+| Local | Emisor | CUIT | Estado inicial |
+|---|---|---|---|
+| CasaForma General Paz | APLICACIONES Y SERVICIOS S.R.L. | 30-71419966-4 | PV 00005 de producción confirmado; CSR de producción generado |
+| CasaForma O'Higgins | GRUPO CASA FORMA S.A.S. | 30-71732246-7 | PV 00001 de homologación inactivo; falta confirmar PV productivo y generar su CSR |
 
-### 0.1 `INVOICING_MOCK_MODE` tiene que estar en `false`
+Cada CUIT tiene su propia clave privada, CSR, certificado, habilitación y numeración. Nunca hay que cargar el certificado de una empresa en la tarjeta de la otra.
 
-Hay una variable de entorno en Vercel que hace que el sistema **invente el CAE**
-en vez de pedírselo a AFIP. Existe para poder demostrar el circuito completo
-mientras el trámite del certificado está en curso, y los comprobantes que emite
-**no tienen ninguna validez legal**.
+Dos CUIT distintos pueden usar el mismo número de punto de venta sin conflicto. El número se repite sólo si ARCA efectivamente lo asignó a ambos; no se supone.
 
-Está seteada en producción desde hace 20 días. Verificá su valor y, cuando vayas
-a facturar de verdad:
+Producción y homologación también tienen credenciales separadas y pueden convivir. Para salir legalmente alcanza con preparar la credencial de **producción**.
 
-```
-vercel env ls production                 # ver que exista
-vercel env rm INVOICING_MOCK_MODE production
-vercel env add INVOICING_MOCK_MODE production     # y escribí: false
-vercel --prod --yes                                # sin redeploy no toma efecto
-```
+## 2. Antes del trámite
 
-Cómo darte cuenta de que está prendido: el botón de probar conexión responde
-*"Mock mode activo: no se llamó a AFIP"*.
+En `/facturacion`, revisar la tarjeta de cada empresa:
 
-### 0.2 `ARCA_ENCRYPTION_KEY` no se toca nunca más
+- razón social y CUIT exactos;
+- condición frente al IVA;
+- domicilio fiscal;
+- Ingresos Brutos;
+- fecha de inicio de actividades;
+- sucursal y número de punto de venta.
 
-Con esa clave se cifra la clave privada del certificado. **Si cambia, el
-certificado guardado queda ilegible y hay que rehacer todo el trámite con AFIP.**
-Ya está configurada en producción. Si alguna vez hay que rotarla, se hace con
-`ARCA_ENCRYPTION_KEY_PREVIOUS` (ver `src/lib/fiscal/crypto.ts`), no pisándola.
+La fecha de inicio de actividades todavía debe confirmarse con la contadora. No se completa por aproximación porque queda impresa en el comprobante.
 
-### 0.3 Un certificado por vez: homologación **o** producción
+`ARCA_ENCRYPTION_KEY` no debe cambiarse: cifra las claves privadas. Si se pierde o se pisa, los certificados dejan de ser utilizables.
 
-El sistema guarda **un solo** certificado. AFIP tiene dos mundos separados
-(homologación y producción) con certificados distintos y que no se cruzan.
+Mientras `INVOICING_MOCK_MODE=true`, el sistema no llama a ARCA, no registra una conexión como verificada y no permite habilitar credenciales reales.
 
-O sea: podés probar en homologación, pero para pasar a producción hay que
-**borrar el certificado, generar un CSR nuevo y hacer el trámite de producción**.
-No conviven.
+## 3. CSR que recibe la contadora
 
-Si tenés poco tiempo y el cliente ya factura con otro sistema, **saltéate
-homologación y andá directo a producción** (§3). Homologación sirve para probar
-sin riesgo, no es un requisito.
+En `/facturacion` → **ARCA por empresa** → tarjeta del CUIT correcto → **Producción**:
 
----
+- Si ya existe una clave, aparece **Descargar CSR de producción**. Descargarlo de nuevo no rota ni reemplaza la clave privada.
+- Si no existe, aparece **Generar CSR de producción**. El botón se habilita cuando el emisor tiene CUIT y razón social, y la sucursal tiene un PV productivo activo.
 
-## 1. Lo que necesitás tener
+El archivo `.csr` sí se envía a la contadora. La clave privada nunca se descarga ni se manda: queda cifrada en el servidor.
 
-- **CUIT** del cliente y **clave fiscal nivel 3** (o superior).
-- Que ese usuario sea **Administrador de Relaciones** del CUIT, o que tenga
-  delegado el servicio. Si al entrar no ves "Administrador de Relaciones de Clave
-  Fiscal", no vas a poder hacer nada de esto: falta ese permiso.
-- **Razón social exacta** como figura en AFIP.
-- Acceso de **administrador** al sistema (la pantalla `/facturacion` es sólo
-  admin).
+Para General Paz se envía el CSR de APLICACIONES Y SERVICIOS S.R.L. Para O'Higgins se genera y envía otro CSR desde la tarjeta de GRUPO CASA FORMA S.A.S.
 
----
+## 4. Pasos de la contadora en ARCA (producción)
 
-## 2. En el sistema: datos del emisor y CSR
+Repetir todo el trámite con el CUIT representado correspondiente a cada empresa.
 
-**El orden importa.** El CSR se arma con los datos del emisor, así que primero se
-cargan y recién después se genera.
+1. Entrar a ARCA con clave fiscal y seleccionar el CUIT de la sociedad.
+2. Abrir **Administración de Certificados Digitales**.
+3. Crear un alias identificable, por ejemplo `CasaForma-GeneralPaz` o `CasaForma-OHiggins`.
+4. Subir el `.csr` correspondiente a ese CUIT.
+5. Descargar el certificado emitido por ARCA (`.crt`, `.cer` o PEM).
+6. En **Administrador de Relaciones de Clave Fiscal**, crear la relación entre ese certificado/alias y el Web Service de negocio **Facturación Electrónica (wsfe)**.
+7. En **Administración de Puntos de Venta y Domicilios**, verificar o crear el PV para **RECE para aplicativo y web services**. No usar un PV de Comprobantes en Línea ni de Controlador Fiscal.
+8. Informar para cada empresa: archivo del certificado, número de PV productivo, fecha de inicio de actividades y cualquier corrección de datos fiscales.
 
-### 2.1 Cargar el emisor
+ARCA indica oficialmente que los certificados de producción se gestionan con Administración de Certificados Digitales, y que después deben asociarse al Web Service mediante Administrador de Relaciones. Véanse [Certificados](https://www.arca.gob.ar/ws/documentacion/certificados.asp) y [WSAA](https://www.arca.gob.ar/ws/documentacion/wsaa.asp).
 
-`/facturacion` → **"1. Datos del emisor"**
+## 5. De vuelta en el sistema
 
-| Campo | Qué va |
+Para cada empresa:
+
+1. Confirmar el número de PV y elegir **Producción (legal)**.
+2. Activar **Sucursal habilitada para facturación electrónica** y guardar el PV.
+3. En la credencial de producción, cargar el certificado devuelto por ARCA.
+4. El sistema valida que el certificado corresponda a la clave privada de ese CSR. Si pertenece al otro CUIT o a otra clave, lo rechaza.
+5. Apagar el modo simulado en el entorno desplegado (`INVOICING_MOCK_MODE=false`) y volver a desplegar.
+6. Usar el botón de enchufe del PV para probar una conexión real.
+7. Sólo después de una prueba real exitosa, presionar **Habilitar producción**.
+
+Cambiar el número, ambiente o estado de un PV borra la verificación y deshabilita la credencial. Hay que probarla de nuevo; es intencional.
+
+## 6. Orden recomendado para CasaForma
+
+### General Paz
+
+1. Confirmar fecha de inicio de actividades y demás datos fiscales.
+2. Enviar a la contadora el CSR de producción ya generado.
+3. Recibir y cargar el certificado de APLICACIONES Y SERVICIOS S.R.L.
+4. Mantener PV 00005 en producción, salvo que ARCA muestre otro dato.
+5. Probar conexión real y habilitar producción.
+
+### O'Higgins
+
+1. Confirmar fecha de inicio de actividades y demás datos fiscales.
+2. Confirmar o crear en ARCA el PV productivo de GRUPO CASA FORMA S.A.S.
+3. Cargar ese PV como producción, activarlo y guardarlo.
+4. Generar el CSR de producción desde la tarjeta de O'Higgins y enviarlo a la contadora.
+5. Recibir y cargar el certificado de GRUPO CASA FORMA S.A.S.
+6. Probar conexión real y habilitar producción.
+
+No hace falta que las dos empresas queden listas el mismo día: el sistema bloquea individualmente la que todavía no tenga credencial válida.
+
+## 7. Primera factura real
+
+Hacer una operación pequeña por cada CUIT habilitado y verificar:
+
+1. que la venta muestre CAE y vencimiento;
+2. que el CUIT emisor, PV y número sean los esperados;
+3. que la numeración continúe desde el último comprobante autorizado de ese CUIT/PV/tipo;
+4. que el comprobante aparezca en ARCA.
+
+ARCA exige correlatividad dentro de cada punto de venta y que el PV usado para WSFE sea específico para ese sistema: [Solicitud de autorización](https://arca.gob.ar/fe/emision-autorizacion/solicitud-autorizacion.asp).
+
+## 8. Diagnóstico rápido
+
+| Mensaje o estado | Qué falta |
 |---|---|
-| CUIT * | sólo números, sin guiones |
-| Condición de IVA * | Responsable Inscripto o Monotributo |
-| Razón social * | **exacta** como figura en AFIP |
-| Nombre de fantasía | opcional — es lo que va a ser el **alias** del certificado |
-| Inicio de actividades | opcional |
-| Domicilio fiscal | opcional |
-
-Dejá el switch **"Facturación electrónica habilitada" apagado** por ahora. Se
-prende al final, cuando esté todo probado.
-
-Apretá **Guardar**.
-
-### 2.2 Generar el CSR
-
-`/facturacion` → **"3. Certificado digital"** → **Generar CSR**
-
-Sale un bloque de texto que empieza con `-----BEGIN CERTIFICATE REQUEST-----`.
-Copialo entero, lo vas a pegar en AFIP.
-
-También te muestra el **alias**: es el nombre de fantasía (o la razón social si
-no cargaste fantasía). Anotalo, en AFIP te lo va a pedir.
-
-> ⚠️ **Generar un CSR nuevo invalida el certificado que ya esté cargado.** El
-> sistema te frena si hay uno, y para forzarlo hay que borrarlo primero. Esto es
-> a propósito: regenerar el CSR pisa la clave privada y deja el certificado
-> viejo huérfano.
-
-La clave privada **se queda en el sistema, cifrada**. No se descarga, no se
-manda por mail, no existe fuera de ahí. Al de AFIP le das sólo el CSR, que es
-público.
-
----
-
-## 3. En ARCA (ex AFIP): el trámite
-
-> Los nombres de los menús de ARCA cambian seguido desde el rebranding de 2025.
-> Abajo va el nombre que tienen hoy y, entre paréntesis, cómo se llamaban antes,
-> por si el portal te muestra otra cosa. **Lo que buscás por función** está en
-> negrita.
-
-Entrá a **arca.gob.ar** → *Iniciar sesión* → CUIT + clave fiscal.
-
-### 3.1 Habilitar los dos servicios que vas a usar
-
-En **"Administrador de Relaciones de Clave Fiscal"**:
-
-1. **Adherir servicio** → AFIP/ARCA → Servicios Interactivos →
-   **"Administración de Certificados Digitales"**.
-2. **Adherir servicio** → **"Administración de Puntos de Venta y Domicilios"**.
-
-Después de adherir un servicio hay que **cerrar sesión y volver a entrar** para
-que aparezca en el menú. Es el paso que a todo el mundo se le pasa.
-
-### 3.2 Crear el certificado
-
-**"Administración de Certificados Digitales"** → *Agregar alias*
-
-| Campo | Qué poner |
-|---|---|
-| Alias | el que te mostró el sistema (el nombre de fantasía) |
-| Solicitud (CSR) | pegar / subir el CSR que copiaste en §2.2 |
-
-Te devuelve un **certificado (.crt)**. Descargalo o copiá el texto — empieza con
-`-----BEGIN CERTIFICATE-----`.
-
-### 3.3 Autorizar el certificado a facturar
-
-Esto es lo que más se olvida: tener el certificado **no** alcanza. Hay que
-darle permiso a ese certificado para usar el servicio de facturación.
-
-**"Administrador de Relaciones de Clave Fiscal"** → **Nueva Relación**
-
-| Campo | Qué poner |
-|---|---|
-| Representado | el CUIT del cliente |
-| Servicio | Buscar → AFIP/ARCA → **WebServices** → **"Facturación Electrónica"** (wsfe) |
-| Representante | el **alias** del certificado que creaste en §3.2 |
-
-Confirmá. Si el representante no aparece en la lista, es porque el certificado
-todavía no se creó o estás mirando el CUIT equivocado.
-
-### 3.4 El punto de venta
-
-**"Administración de Puntos de Venta y Domicilios"**
-
-#### Si ya hay un punto de venta creado
-
-Entrá a la lista y fijate el **sistema** con el que está dado de alta. Tiene que
-decir algo del estilo **"Factura Electrónica – Web Services"** o **"RECE para
-aplicativo y web services"**.
-
-- ✅ Si dice eso: anotá el número y listo, seguí en §4.
-- ❌ Si dice **"Factura en Línea"**, **"Comprobantes en Línea"**, **"RCEL"** o
-  **"Controlador Fiscal"**: **ese punto de venta no sirve** para este sistema. No
-  se puede convertir: hay que dar de alta uno nuevo (abajo). El viejo lo podés
-  dejar como está, conviven sin problema.
-
-#### Si hay que crear uno nuevo
-
-*Alta de punto de venta* (o "A/B/M de puntos de venta" → Alta):
-
-| Campo | Qué poner |
-|---|---|
-| Número | el que sigue libre (si ya existe el 1, poné 2, 3…) |
-| Nombre de fantasía | el del local |
-| Sistema | **Factura Electrónica – Web Services** (WSFE / "RECE para aplicativo y web services") |
-| Domicilio | el domicilio fiscal donde se emite |
-
-El alta es **inmediata**: no hay que esperar aprobación.
-
-> **Una sucursal, un punto de venta.** La base tiene un `UNIQUE` sobre
-> `sucursal_id`, así que O'Higgins y General Paz necesitan **números
-> distintos**. Si las dos usaran el mismo, la numeración de comprobantes se
-> pisaría entre sucursales y AFIP rechazaría los que quedaran fuera de secuencia.
-
----
-
-## 4. De vuelta en el sistema: cargar el certificado y el PV
-
-### 4.1 Certificado
-
-`/facturacion` → **"3. Certificado digital"** → pegar el `.crt` completo en el
-cuadro → **Guardar certificado**.
-
-El sistema **verifica que ese certificado corresponda a la clave privada que
-generó** antes de aceptarlo. Si te equivocaste de archivo, o subiste el de
-homologación teniendo la clave de producción, te lo rechaza en el momento con un
-mensaje claro. Si lo aceptó, te muestra la fecha de vencimiento.
-
-> Anotá esa fecha. Los certificados de AFIP duran **2 años** y cuando vencen la
-> facturación se corta de golpe. El sistema no manda avisos.
-
-### 4.2 Punto de venta
-
-`/facturacion` → **"2. Puntos de venta"**
-
-Hay una fila por sucursal. Poné el **número** que te dio AFIP y elegí el
-**ambiente**:
-
-- **Homologación (prueba)** → los comprobantes no valen legalmente.
-- **Producción (legal)** → valen. La pantalla te lo avisa en rojo.
-
-**Guardar**.
-
-### 4.3 Probar la conexión
-
-En esa misma fila hay un botón con un enchufe. Apretalo.
-
-| Qué responde | Qué significa |
-|---|---|
-| *"AFIP respondió. Último comprobante tipo B autorizado en el PV N: X"* | ✅ anda todo |
-| *"Mock mode activo: no se llamó a AFIP"* | falta apagar `INVOICING_MOCK_MODE` (§0.1) |
-| Error de certificado / no autorizado | falta el paso §3.3, o el certificado es del otro ambiente |
-| *"Esta sucursal no tiene punto de venta configurado"* | falta guardar el número en §4.2 |
-
-Ese "último comprobante autorizado" también te sirve de control: si el cliente ya
-venía facturando en ese punto de venta, **el número tiene que coincidir con el
-último que emitió**. Si da 0 y debería dar 1500, estás mirando el PV equivocado.
-
-### 4.4 Recién ahora, prender el switch
-
-`/facturacion` → **"1. Datos del emisor"** → **"Facturación electrónica
-habilitada"** → **Guardar**.
-
-Con el switch apagado el sistema no emite nada, aunque esté todo lo demás
-configurado.
-
----
-
-## 5. La primera factura de verdad
-
-Hacé **una sola** venta chica y facturala. Después verificá tres cosas:
-
-1. Que la venta muestre **CAE y su vencimiento**.
-2. Que el número de comprobante sea **el que sigue** al último que emitió el
-   cliente.
-3. Entrá a **"Comprobantes en línea"** en ARCA con la clave fiscal y confirmá que
-   la factura figura ahí. Si no aparece, no existe para AFIP por más que el
-   sistema muestre un CAE.
-
-Ese tercer punto es el único que te dice de verdad que quedó bien.
-
----
-
-## 6. Resumen del orden
-
-```
-  1. Sistema  → datos del emisor (switch APAGADO)          §2.1
-  2. Sistema  → Generar CSR, copiarlo                      §2.2
-  3. ARCA     → adherir los dos servicios + relogin        §3.1
-  4. ARCA     → Certificados Digitales: alias + CSR → .crt §3.2
-  5. ARCA     → Nueva Relación: wsfe ← alias               §3.3   ← el más olvidado
-  6. ARCA     → punto de venta tipo WEB SERVICES           §3.4
-  7. Sistema  → pegar el .crt                              §4.1
-  8. Sistema  → número de PV + ambiente                    §4.2
-  9. Sistema  → probar conexión                            §4.3
- 10. Vercel   → INVOICING_MOCK_MODE=false + redeploy       §0.1
- 11. Sistema  → prender el switch                          §4.4
- 12.          → una factura de prueba y verificarla en ARCA §5
-```
-
----
-
-## 7. Errores frecuentes y qué significan
-
-| Lo que ves | Qué pasó |
-|---|---|
-| "No hay certificado de AFIP cargado" | falta §4.1 |
-| "La facturación electrónica está deshabilitada" | falta §4.4 |
-| "Esta sucursal no tiene punto de venta configurado" | falta §4.2 |
-| "No se pudo descifrar la clave privada. ¿Cambió ARCA_ENCRYPTION_KEY?" | alguien tocó la variable de entorno. Ver §0.2 |
-| "Ya hay un certificado cargado…" al generar CSR | es el guard de §2.2. Borrá el certificado si querés renovar |
-| "El certificado no corresponde a la clave privada" | subiste el .crt equivocado, o el del otro ambiente |
-| Error SOAP raro / "no autorizado" al pedir CAE | casi siempre falta la relación del §3.3 |
-| El CAE tiene 14 dígitos y empieza con muchos 7 | es un CAE **simulado**: mock mode sigue prendido |
-| "El punto de venta no está autorizado" | el PV es de "Factura en Línea", no de Web Services (§3.4) |
-
----
-
-## 8. Después de dejarlo andando
-
-- **Anotá el vencimiento del certificado** (2 años) en algún lado con alarma. Es
-  el fallo más molesto: un día deja de facturar y nadie sabe por qué.
-- Los **puntos de venta de cada sucursal tienen que ser distintos**.
-- Si alguna vez hay que rehacer el certificado: borrar → generar CSR → §3.2 →
-  §3.3 → cargar. La relación con el servicio (§3.3) hay que rehacerla también,
-  porque el alias nuevo es otro representante.
+| `Falta generar CSR` | CUIT/razón social/PV activo del ambiente, o generar la clave |
+| `Esperando certificado` | la contadora debe devolver el certificado de ese CSR |
+| `Falta probar conexión` | apagar mock y ejecutar la prueba real con ese PV |
+| `Lista, deshabilitada` | habilitar manualmente la credencial |
+| `Bloqueada: PV inactivo` | confirmar, activar y guardar el PV de esa empresa |
+| `Mock mode activo` | no hubo llamada a ARCA; no cuenta como prueba |
+| `El certificado no corresponde a la clave privada` | se cargó otro certificado, posiblemente el del otro CUIT |
+| `La nota no puede asociarse a un comprobante emitido por otro CUIT` | el comprobante original pertenece a la otra empresa |
+
+La renovación de certificados es un flujo separado. No se borra ni rota una clave desde esta pantalla para evitar invalidar por accidente un certificado vigente.

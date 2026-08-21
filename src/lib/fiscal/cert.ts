@@ -21,11 +21,30 @@ import { cuitValido } from "./codigos";
 const CUIT_PROVISORIO = "20111111112";
 
 /** X.509 limita los campos del DN a 64 chars y AFIP rechaza caracteres raros. */
-const limpio = (s: string) => s.replace(/[^a-zA-Z0-9 .\-]/g, "").slice(0, 64);
+const limpio = (s: string) => s.replace(/[^a-zA-Z0-9 .-]/g, "").slice(0, 64);
 
 export interface ParYCsr {
   csr: string;
   keyPem: string;
+}
+
+function crearCsr(
+  publicKey: forge.pki.rsa.PublicKey,
+  privateKey: forge.pki.rsa.PrivateKey,
+  razonSocial: string,
+  alias: string,
+  cuit: string,
+): string {
+  const csr = forge.pki.createCertificationRequest();
+  csr.publicKey = publicKey;
+  csr.setSubject([
+    { shortName: "C", value: "AR" },
+    { shortName: "O", value: razonSocial },
+    { shortName: "CN", value: alias },
+    { type: "2.5.4.5", value: `CUIT ${cuit}` },
+  ]);
+  csr.sign(privateKey, forge.md.sha256.create());
+  return forge.pki.certificationRequestToPem(csr);
 }
 
 /**
@@ -43,17 +62,8 @@ export function generarParYCsr(razonSocial: string, alias: string, cuit: string)
     forge.pki.rsa.generateKeyPair({ bits: 2048 }, (err, keys) => {
       if (err || !keys) return reject(err ?? new Error("No se pudo generar la clave."));
       try {
-        const csr = forge.pki.createCertificationRequest();
-        csr.publicKey = keys.publicKey;
-        csr.setSubject([
-          { shortName: "C", value: "AR" },
-          { shortName: "O", value: razonSocial },
-          { shortName: "CN", value: alias },
-          { type: "2.5.4.5", value: `CUIT ${cuit}` },
-        ]);
-        csr.sign(keys.privateKey, forge.md.sha256.create());
         resolve({
-          csr: forge.pki.certificationRequestToPem(csr),
+          csr: crearCsr(keys.publicKey, keys.privateKey, razonSocial, alias, cuit),
           keyPem: forge.pki.privateKeyToPem(keys.privateKey),
         });
       } catch (e) {
@@ -61,6 +71,22 @@ export function generarParYCsr(razonSocial: string, alias: string, cuit: string)
       }
     });
   });
+}
+
+/**
+ * Vuelve a producir el CSR público a partir de la clave ya guardada.
+ * No crea ni rota material criptográfico: el certificado que devuelva ARCA
+ * seguirá correspondiendo a la misma clave privada.
+ */
+export function generarCsrDesdeClave(
+  razonSocial: string,
+  alias: string,
+  cuit: string,
+  keyPem: string,
+): string {
+  const privateKey = forge.pki.privateKeyFromPem(keyPem) as forge.pki.rsa.PrivateKey;
+  const publicKey = forge.pki.rsa.setPublicKey(privateKey.n, privateKey.e);
+  return crearCsr(publicKey, privateKey, razonSocial, alias, cuit);
 }
 
 export function validarCuitEmisor(cuit: string | null | undefined): string {
@@ -103,7 +129,9 @@ export function verificarCertificado(pem: string, keyPem: string): { vence: Date
   try {
     cert = forge.pki.certificateFromPem(pem);
   } catch {
-    throw new Error("No se pudo leer el certificado. Tiene que ser el .crt de AFIP, en formato PEM.");
+    throw new Error(
+      "No se pudo leer el certificado. Tiene que ser el .crt de AFIP, en formato PEM.",
+    );
   }
 
   let priv: forge.pki.rsa.PrivateKey;
@@ -123,6 +151,14 @@ export function verificarCertificado(pem: string, keyPem: string): { vence: Date
     throw new Error(
       "El certificado no corresponde a la clave que generamos. ¿Subiste el .crt que te dio AFIP para ESTE CSR?",
     );
+  }
+
+  const ahora = new Date();
+  if (cert.validity.notBefore > ahora) {
+    throw new Error("El certificado todavía no está vigente.");
+  }
+  if (cert.validity.notAfter <= ahora) {
+    throw new Error("El certificado está vencido. Pedí uno vigente antes de cargarlo.");
   }
 
   return { vence: cert.validity.notAfter };

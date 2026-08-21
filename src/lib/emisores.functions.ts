@@ -38,7 +38,14 @@ export const listarEmisores = createServerFn({ method: "GET" })
         "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, sucursales(id, nombre, direccion, telefono)",
       )
       .order("razon_social");
-    if (error) throw new Error(`No se pudieron traer los emisores: ${error.message}`);
+    if (error) {
+      console.error("[Emisores] no se pudieron cargar", {
+        codigo: error.code,
+        mensaje: error.message,
+      });
+      throw new Error(`No se pudieron traer los emisores: ${error.message}`);
+    }
+    console.info("[Emisores] cargados", { cantidad: data?.length ?? 0 });
     return data ?? [];
   });
 

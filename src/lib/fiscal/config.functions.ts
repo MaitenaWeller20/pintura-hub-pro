@@ -68,73 +68,93 @@ function ambienteArca(valor: string): AmbienteArca {
 export const obtenerConfigFiscal = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async (): Promise<ConfigFiscalPublica> => {
-    const sb = await admin();
-    const [{ data: emisores, error: emisoresError }, { data: credenciales, error: credError }] =
-      await Promise.all([
-        sb
-          .from("emisores")
-          .select(
-            "id,razon_social,nombre_fantasia,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,inicio_actividades,sucursales(id,nombre,telefono,punto_venta:puntos_venta!puntos_venta_sucursal_id_fkey(id,numero,modo,activo))",
-          )
-          .order("razon_social"),
-        sb
-          .from("credenciales_arca")
-          .select(
-            "emisor_id,ambiente,arca_key_enc,arca_cert_enc,cert_vence_at,cert_alias,probada_at,habilitada",
-          ),
-      ]);
-    if (emisoresError) throw new Error(`No se pudo cargar los emisores: ${emisoresError.message}`);
-    if (credError) throw new Error(`No se pudo cargar el estado de ARCA: ${credError.message}`);
+    const inicio = Date.now();
+    try {
+      const sb = await admin();
+      const [{ data: emisores, error: emisoresError }, { data: credenciales, error: credError }] =
+        await Promise.all([
+          sb
+            .from("emisores")
+            .select(
+              "id,razon_social,nombre_fantasia,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,inicio_actividades,sucursales(id,nombre,telefono,punto_venta:puntos_venta!puntos_venta_sucursal_id_fkey(id,numero,modo,activo))",
+            )
+            .order("razon_social"),
+          sb
+            .from("credenciales_arca")
+            .select(
+              "emisor_id,ambiente,arca_key_enc,arca_cert_enc,cert_vence_at,cert_alias,probada_at,habilitada",
+            ),
+        ]);
+      if (emisoresError) {
+        throw new Error(`No se pudo cargar los emisores: ${emisoresError.message}`);
+      }
+      if (credError) throw new Error(`No se pudo cargar el estado de ARCA: ${credError.message}`);
 
-    return {
-      mock_mode: MOCK,
-      emisores: (emisores ?? []).map((emisor) => {
-        const condicion =
-          emisor.condicion_iva === "RESPONSABLE_INSCRIPTO" || emisor.condicion_iva === "MONOTRIBUTO"
-            ? emisor.condicion_iva
-            : null;
-        const filas: CredencialArcaSecreta[] = (credenciales ?? [])
-          .filter((fila) => fila.emisor_id === emisor.id)
-          .map((fila) => ({
-            ambiente: ambienteArca(fila.ambiente),
-            arca_key_enc: fila.arca_key_enc,
-            arca_cert_enc: fila.arca_cert_enc,
-            cert_vence_at: fila.cert_vence_at,
-            cert_alias: fila.cert_alias,
-            probada_at: fila.probada_at,
-            habilitada: fila.habilitada,
-          }));
+      const resultado = {
+        mock_mode: MOCK,
+        emisores: (emisores ?? []).map((emisor) => {
+          const condicion =
+            emisor.condicion_iva === "RESPONSABLE_INSCRIPTO" ||
+            emisor.condicion_iva === "MONOTRIBUTO"
+              ? emisor.condicion_iva
+              : null;
+          const filas: CredencialArcaSecreta[] = (credenciales ?? [])
+            .filter((fila) => fila.emisor_id === emisor.id)
+            .map((fila) => ({
+              ambiente: ambienteArca(fila.ambiente),
+              arca_key_enc: fila.arca_key_enc,
+              arca_cert_enc: fila.arca_cert_enc,
+              cert_vence_at: fila.cert_vence_at,
+              cert_alias: fila.cert_alias,
+              probada_at: fila.probada_at,
+              habilitada: fila.habilitada,
+            }));
 
-        return {
-          id: emisor.id as string,
-          razon_social: emisor.razon_social as string,
-          nombre_fantasia: (emisor.nombre_fantasia ?? null) as string | null,
-          cuit: (emisor.cuit ?? null) as string | null,
-          domicilio_fiscal: (emisor.domicilio_fiscal ?? null) as string | null,
-          condicion_iva: condicion,
-          ingresos_brutos: (emisor.ingresos_brutos ?? null) as string | null,
-          inicio_actividades: (emisor.inicio_actividades ?? null) as string | null,
-          sucursales: (emisor.sucursales ?? []).map((sucursal) => {
-            const relacionPv = sucursal.punto_venta;
-            const pv = Array.isArray(relacionPv) ? relacionPv[0] : relacionPv;
-            return {
-              id: sucursal.id as string,
-              nombre: sucursal.nombre as string,
-              telefono: (sucursal.telefono ?? null) as string | null,
-              punto_venta: pv
-                ? {
-                    id: pv.id as string,
-                    numero: Number(pv.numero),
-                    modo: ambienteArca(pv.modo),
-                    activo: Boolean(pv.activo),
-                  }
-                : null,
-            };
-          }),
-          credenciales: normalizarCredencialesPublicas(filas),
-        };
-      }),
-    };
+          return {
+            id: emisor.id as string,
+            razon_social: emisor.razon_social as string,
+            nombre_fantasia: (emisor.nombre_fantasia ?? null) as string | null,
+            cuit: (emisor.cuit ?? null) as string | null,
+            domicilio_fiscal: (emisor.domicilio_fiscal ?? null) as string | null,
+            condicion_iva: condicion,
+            ingresos_brutos: (emisor.ingresos_brutos ?? null) as string | null,
+            inicio_actividades: (emisor.inicio_actividades ?? null) as string | null,
+            sucursales: (emisor.sucursales ?? []).map((sucursal) => {
+              const relacionPv = sucursal.punto_venta;
+              const pv = Array.isArray(relacionPv) ? relacionPv[0] : relacionPv;
+              return {
+                id: sucursal.id as string,
+                nombre: sucursal.nombre as string,
+                telefono: (sucursal.telefono ?? null) as string | null,
+                punto_venta: pv
+                  ? {
+                      id: pv.id as string,
+                      numero: Number(pv.numero),
+                      modo: ambienteArca(pv.modo),
+                      activo: Boolean(pv.activo),
+                    }
+                  : null,
+              };
+            }),
+            credenciales: normalizarCredencialesPublicas(filas),
+          };
+        }),
+      } satisfies ConfigFiscalPublica;
+
+      console.info("[FiscalConfig] configuración cargada", {
+        emisores: resultado.emisores.length,
+        credenciales: credenciales?.length ?? 0,
+        duracion_ms: Date.now() - inicio,
+      });
+      return resultado;
+    } catch (error) {
+      console.error("[FiscalConfig] no se pudo cargar", {
+        nombre: error instanceof Error ? error.name : typeof error,
+        mensaje: error instanceof Error ? error.message : String(error),
+        duracion_ms: Date.now() - inicio,
+      });
+      throw error;
+    }
   });
 
 export const guardarPuntoVenta = createServerFn({ method: "POST" })

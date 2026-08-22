@@ -878,14 +878,30 @@ BEGIN
       'id',v.id,'numeroComercial',v.numero_comprobante,'tipoComprobante','VENTA',
       'condicionVenta',v.condicion_venta,'fechaComercial','2026-08-22T12:00:00.000Z'
     ),
-    'items',jsonb_build_array(jsonb_build_object(
-      'id','71000000-0000-4000-8000-000000000011',
-      'productoId','c4000000-0000-0000-0000-000000000001',
-      'codigo','P-1','descripcion','Pintura','cantidad','1.00',
-      'precioUnitarioSinIva','1000.00','descuentoPorcentaje','0.00',
-      'ivaPorcentaje','21.00','subtotalNeto','1000.00',
-      'importeIva','210.00','subtotalTotal',p_total
-    )),
+    'items',jsonb_build_array(
+      jsonb_build_object(
+        'id','71000000-0000-4000-8000-000000000011',
+        'productoId','c4000000-0000-0000-0000-000000000001',
+        'codigo','P-1','descripcion','Pintura','cantidad','1.00',
+        'precioUnitarioSinIva','999.98','descuentoPorcentaje','0.00',
+        'ivaPorcentaje','21.00','subtotalNeto','999.98',
+        'importeIva','210.00','subtotalTotal','1209.98'
+      ),
+      jsonb_build_object(
+        'id','71000000-0000-4000-8000-000000000012',
+        'productoId',NULL,'codigo','P-ROUND-105','descripcion','Borde 10,5%',
+        'cantidad','1.00','precioUnitarioSinIva','0.01','descuentoPorcentaje','0.00',
+        'ivaPorcentaje','10.50','subtotalNeto','0.01','importeIva','0.00',
+        'subtotalTotal','0.01'
+      ),
+      jsonb_build_object(
+        'id','71000000-0000-4000-8000-000000000013',
+        'productoId',NULL,'codigo','P-ROUND-21','descripcion','Borde 21%',
+        'cantidad','1.00','precioUnitarioSinIva','0.01','descuentoPorcentaje','0.00',
+        'ivaPorcentaje','21.00','subtotalNeto','0.01','importeIva','0.00',
+        'subtotalTotal','0.01'
+      )
+    ),
     'emisor',jsonb_build_object(
       'id','71000000-0000-4000-8000-000000000201',
       'razonSocial','APLICACIONES Y SERVICIOS S.R.L.','nombreFantasia','CasaForma',
@@ -909,9 +925,10 @@ BEGIN
     'letra','B','concepto',1,'fechaComprobante','2026-08-22',
     'importeNeto','1000.00','importeExento','0.00','importeNoGravado','0.00',
     'importeIva','210.00','importeTributos','0.00','importeTotal',p_total,
-    'alicuotasIva',jsonb_build_array(jsonb_build_object(
-      'id',5,'baseImponible','1000.00','importe','210.00'
-    )),
+    'alicuotasIva',jsonb_build_array(
+      jsonb_build_object('id',4,'baseImponible','0.01','importe','0.00'),
+      jsonb_build_object('id',5,'baseImponible','999.99','importe','210.00')
+    ),
     'tributos','[]'::jsonb,'moneda','PES','cotizacion','1.000000',
     'ivaContenido','210.00','otrosImpuestosNacionalesIndirectos','0.00',
     'origen','VENTA','comprobanteOriginalId',NULL,'cbtesAsoc','[]'::jsonb
@@ -1225,6 +1242,27 @@ INSERT INTO t_nc_reservas_invalidas VALUES
   )),
   ('CUIT asociado no heredado',pg_temp.rehash_reserva_payload(
     jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,cbtesAsoc,0,cuit}',to_jsonb('30717322467'::text))
+  )),
+  ('descripción de item no heredada',pg_temp.rehash_reserva_payload(
+    jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,items,0,descripcion}',to_jsonb('OTRA DESCRIPCIÓN'::text))
+  )),
+  ('cantidad precio y descuento de item no heredados',pg_temp.rehash_reserva_payload(
+    jsonb_set(
+      jsonb_set(
+        jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,items,0,cantidad}',to_jsonb('2.00'::text)),
+        '{snapshot,items,0,precioUnitarioSinIva}',to_jsonb('624.99'::text)
+      ),
+      '{snapshot,items,0,descuentoPorcentaje}',to_jsonb('20.00'::text)
+    )
+  )),
+  ('IVA por item no heredado con grupos iguales',pg_temp.rehash_reserva_payload(
+    jsonb_set(
+      jsonb_set(
+        pg_temp.nc_reserva_payload(),
+        '{snapshot,items,1,ivaPorcentaje}',to_jsonb('21.00'::text)
+      ),
+      '{snapshot,items,2,ivaPorcentaje}',to_jsonb('10.50'::text)
+    )
   ));
 
 CREATE TEMP TABLE t_nc_invalidas_aceptadas(caso text PRIMARY KEY);
@@ -1252,7 +1290,7 @@ END;
 $$;
 SELECT pg_temp.assert_true(
   NOT EXISTS (SELECT 1 FROM t_nc_invalidas_aceptadas),
-  'RESERVAR rechaza receptor, identidad, tipo, monto y asociación no heredados'
+  'RESERVAR rechaza receptor, identidad, tipo, monto, items y asociación no heredados'
 );
 
 -- Aunque el resto del original sea v2 productivo y completo, SQL NULL en fase

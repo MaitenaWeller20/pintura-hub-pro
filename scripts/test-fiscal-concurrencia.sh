@@ -312,6 +312,13 @@ expect_snapshot_invalido() {
   expect_fail_like "$name" "$pattern" \
     "SELECT public.validar_snapshot_fiscal_v2('$snapshot'::jsonb);"
 }
+expect_snapshot_valido() {
+  local name="$1" filter="$2" body hash snapshot
+  body="$(jq -cS "$filter | del(.hash)" <<<"$PARITY_INPUT")"
+  hash="$(printf '%s' "$body" | shasum -a 256 | awk '{print $1}')"
+  snapshot="$(jq -c --arg hash "$hash" '. + {hash:$hash}' <<<"$body")"
+  check_sql "$name" "" "SELECT public.validar_snapshot_fiscal_v2('$snapshot'::jsonb);"
+}
 expect_snapshot_invalido "v2 rechaza claves anidadas desconocidas" \
   '.receptor.extra=true' 'receptor.*(incompleto|inválido)'
 expect_snapshot_invalido "v2 rechaza claves anidadas faltantes" \
@@ -326,6 +333,45 @@ expect_snapshot_invalido "v2 rechaza arrays fuera del orden de dominio" \
   '.items |= reverse' 'items.*(desordenados|duplicados)'
 expect_snapshot_invalido "v2 rechaza modo y validez incoherentes" \
   '.identidad.validez="HOMOLOGACION"' 'identidad.*incoherente'
+expect_snapshot_invalido "v2 recalcula cada línea desde cantidad, precio y descuento" \
+  '.items[0].cantidad="3.00"' 'item.*(cálculo|incoherente)'
+expect_snapshot_invalido "v2 exige el ID ARCA exacto del grupo IVA" \
+  '.alicuotasIva[0].id=4' 'alícuota|IVA'
+expect_snapshot_invalido "v2 rechaza repartir una base 21% como tasa cero" \
+  '.alicuotasIva=[{id:3,baseImponible:"100.00",importe:"0.00"},{id:5,baseImponible:"900.00",importe:"210.00"}]' \
+  'alícuota|IVA'
+expect_snapshot_invalido "v2 rechaza fecha comercial 24:00 normalizada" \
+  '.venta.fechaComercial="2026-08-22T24:00:00Z"' 'fecha|instante'
+expect_snapshot_invalido "v2 rechaza verificación ARCA 24:00 normalizada" \
+  '.receptor.verificadoArcaAt="2026-08-22T24:00:00.000Z"' 'verificación|instante'
+expect_snapshot_invalido "v2 rechaza fecha comercial inexistente normalizada" \
+  '.venta.fechaComercial="2026-02-30T15:00:00Z"' 'fecha|instante'
+expect_snapshot_invalido "v2 rechaza verificación ARCA inexistente normalizada" \
+  '.receptor.verificadoArcaAt="2026-02-30T15:00:00.000Z"' 'verificación|instante'
+expect_snapshot_valido "v2 acepta instantes canónicos con y sin milisegundos" \
+  '.venta.fechaComercial="2026-08-20T15:00:00Z" | .receptor.verificadoArcaAt="2026-08-21T14:59:58.123Z"'
+expect_snapshot_valido "v2 redondea IVA por ítem antes de agrupar" '
+  .items=[
+    (.items[0] | .id="71000000-0000-4000-8000-000000000011" | .productoId=null |
+      .cantidad="1.00" | .precioUnitarioSinIva="0.05" | .descuentoPorcentaje="10.00" |
+      .ivaPorcentaje="10.50" | .subtotalNeto="0.05" | .importeIva="0.01" | .subtotalTotal="0.06"),
+    (.items[0] | .id="71000000-0000-4000-8000-000000000012" | .productoId=null |
+      .cantidad="1.00" | .precioUnitarioSinIva="0.05" | .descuentoPorcentaje="10.00" |
+      .ivaPorcentaje="10.50" | .subtotalNeto="0.05" | .importeIva="0.01" | .subtotalTotal="0.06")
+  ] |
+  .importeNeto="0.10" | .importeExento="0.00" | .importeNoGravado="0.00" |
+  .importeIva="0.02" | .importeTributos="0.00" | .importeTotal="0.12" |
+  .alicuotasIva=[{id:4,baseImponible:"0.10",importe:"0.02"}] |
+  .tributos=[] | .ivaContenido="0.02" | .otrosImpuestosNacionalesIndirectos="0.00"
+'
+expect_snapshot_valido "v2 representa neto gravado a tasa cero con ID 3" '
+  .items=[(.items[1] | .ivaPorcentaje="0.00" | .subtotalNeto="100.00" |
+    .importeIva="0.00" | .subtotalTotal="100.00")] |
+  .importeNeto="100.00" | .importeExento="0.00" | .importeNoGravado="0.00" |
+  .importeIva="0.00" | .importeTributos="0.00" | .importeTotal="100.00" |
+  .alicuotasIva=[{id:3,baseImponible:"100.00",importe:"0.00"}] |
+  .tributos=[] | .ivaContenido="0.00" | .otrosImpuestosNacionalesIndirectos="0.00"
+'
 
 expect_fail_like "authenticated no llama la RPC" "permission denied for function" \
   "RESET ROLE; SET ROLE authenticated; SELECT public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000014','CANCELAR',NULL,'{\"expected_version\":0}'::jsonb);"

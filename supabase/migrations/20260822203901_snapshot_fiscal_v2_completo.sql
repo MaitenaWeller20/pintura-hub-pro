@@ -29,6 +29,15 @@ DECLARE
   v_tributos numeric;
   v_items_neto numeric := 0;
   v_items_iva numeric := 0;
+  v_item_neto_esperado_centavos numeric;
+  v_item_iva_esperado_centavos numeric;
+  v_items_base_iva_cero numeric := 0;
+  v_base_no_cero numeric := 0;
+  v_base_gravada_iva_cero numeric := 0;
+  v_alicuotas_esperadas integer := 0;
+  v_alicuota_base_esperada numeric;
+  v_alicuota_iva_esperada numeric;
+  v_tasa_iva text;
   v_alicuotas_base numeric := 0;
   v_alicuotas_iva numeric := 0;
   v_tributos_total numeric := 0;
@@ -200,7 +209,18 @@ BEGIN
     IF pg_catalog.to_char(v_fecha,'YYYY-MM-DD') IS DISTINCT FROM v_emisor->>'inicioActividades' THEN
       RAISE EXCEPTION 'fecha no canónica';
     END IF;
-    PERFORM (v_venta->>'fechaComercial')::timestamp with time zone;
+    IF (CASE WHEN v_venta->>'fechaComercial' ~ '\.[0-9]{3}Z$'
+          THEN pg_catalog.to_char(
+            ((v_venta->>'fechaComercial')::timestamp with time zone) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          )
+          ELSE pg_catalog.to_char(
+            ((v_venta->>'fechaComercial')::timestamp with time zone) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+          )
+        END) IS DISTINCT FROM v_venta->>'fechaComercial' THEN
+      RAISE EXCEPTION 'instante no canónico';
+    END IF;
   EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
     RAISE EXCEPTION 'snapshot v2: fecha inválida';
   END;
@@ -271,10 +291,25 @@ BEGIN
        OR v_item->>'ivaPorcentaje' NOT IN ('0.00','2.50','5.00','10.50','21.00','27.00')
        OR (v_item->>'cantidad')::numeric<=0
        OR (v_item->>'descuentoPorcentaje')::numeric>100
-       OR (v_item->>'subtotalTotal')::numeric<=0
-       OR (v_item->>'subtotalNeto')::numeric+(v_item->>'importeIva')::numeric
-            IS DISTINCT FROM (v_item->>'subtotalTotal')::numeric THEN
+       OR (v_item->>'subtotalTotal')::numeric<=0 THEN
       RAISE EXCEPTION 'snapshot v2: item incompleto o incoherente';
+    END IF;
+    -- Todos los operandos ya son centésimos enteros canónicos. La suma de la
+    -- mitad del divisor implementa round-half-up positivo sin deriva binaria.
+    v_item_neto_esperado_centavos := pg_catalog.trunc((
+      (v_item->>'precioUnitarioSinIva')::numeric*100
+      * (v_item->>'cantidad')::numeric*100
+      * (10000-(v_item->>'descuentoPorcentaje')::numeric*100)
+      + 500000
+    )/1000000);
+    v_item_iva_esperado_centavos := pg_catalog.trunc((
+      v_item_neto_esperado_centavos*(v_item->>'ivaPorcentaje')::numeric*100 + 5000
+    )/10000);
+    IF (v_item->>'subtotalNeto')::numeric*100 IS DISTINCT FROM v_item_neto_esperado_centavos
+       OR (v_item->>'importeIva')::numeric*100 IS DISTINCT FROM v_item_iva_esperado_centavos
+       OR (v_item->>'subtotalTotal')::numeric*100
+            IS DISTINCT FROM v_item_neto_esperado_centavos+v_item_iva_esperado_centavos THEN
+      RAISE EXCEPTION 'snapshot v2: item incoherente; cálculo de subtotales no coincide con cantidad, precio, descuento e IVA';
     END IF;
     IF v_anterior IS NOT NULL AND (v_anterior->>'id') COLLATE "C" >= (v_item->>'id') COLLATE "C" THEN
       RAISE EXCEPTION 'snapshot v2: items desordenados o duplicados';
@@ -282,17 +317,31 @@ BEGIN
     v_anterior := v_item;
     v_items_neto := v_items_neto+(v_item->>'subtotalNeto')::numeric;
     v_items_iva := v_items_iva+(v_item->>'importeIva')::numeric;
+    IF v_item->>'ivaPorcentaje'='0.00' THEN
+      v_items_base_iva_cero := v_items_base_iva_cero+(v_item->>'subtotalNeto')::numeric;
+    ELSE
+      v_base_no_cero := v_base_no_cero+(v_item->>'subtotalNeto')::numeric;
+    END IF;
   END LOOP;
   IF v_items_neto IS DISTINCT FROM v_neto+v_exento+v_no_gravado
      OR v_items_iva IS DISTINCT FROM v_iva THEN
     RAISE EXCEPTION 'snapshot v2: items no coinciden con la cabecera';
   END IF;
+  v_base_gravada_iva_cero := v_neto-v_base_no_cero;
+  IF v_base_gravada_iva_cero<0
+     OR v_items_base_iva_cero IS DISTINCT FROM v_exento+v_no_gravado+v_base_gravada_iva_cero THEN
+    RAISE EXCEPTION 'snapshot v2: items IVA 0 no coinciden con exento, no gravado y base gravada a tasa cero';
+  END IF;
+  SELECT pg_catalog.count(DISTINCT item->>'ivaPorcentaje')::integer
+    INTO v_alicuotas_esperadas
+    FROM pg_catalog.jsonb_array_elements(p_snapshot->'items') AS item
+   WHERE item->>'ivaPorcentaje'<>'0.00';
+  IF v_base_gravada_iva_cero>0 THEN
+    v_alicuotas_esperadas := v_alicuotas_esperadas+1;
+  END IF;
 
   IF pg_catalog.jsonb_typeof(p_snapshot->'alicuotasIva') IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'snapshot v2: alicuotasIva debe ser array';
-  END IF;
-  IF pg_catalog.jsonb_array_length(p_snapshot->'alicuotasIva')=0 AND (v_neto<>0 OR v_iva<>0) THEN
-    RAISE EXCEPTION 'snapshot v2: falta desglose IVA';
   END IF;
   v_anterior := NULL;
   FOR v_alicuota IN SELECT value FROM pg_catalog.jsonb_array_elements(p_snapshot->'alicuotasIva') LOOP
@@ -315,10 +364,35 @@ BEGIN
     IF v_anterior IS NOT NULL AND (v_anterior->>'id')::integer >= (v_alicuota->>'id')::integer THEN
       RAISE EXCEPTION 'snapshot v2: alícuotas desordenadas o duplicadas';
     END IF;
+    IF v_alicuota->>'id'='3' THEN
+      v_alicuota_base_esperada := v_base_gravada_iva_cero;
+      v_alicuota_iva_esperada := 0;
+    ELSE
+      v_tasa_iva := CASE v_alicuota->>'id'
+        WHEN '4' THEN '10.50'
+        WHEN '5' THEN '21.00'
+        WHEN '6' THEN '27.00'
+        WHEN '8' THEN '5.00'
+        WHEN '9' THEN '2.50'
+      END;
+      SELECT
+        COALESCE(pg_catalog.sum((item->>'subtotalNeto')::numeric),0::numeric),
+        COALESCE(pg_catalog.sum((item->>'importeIva')::numeric),0::numeric)
+        INTO v_alicuota_base_esperada,v_alicuota_iva_esperada
+        FROM pg_catalog.jsonb_array_elements(p_snapshot->'items') AS item
+       WHERE item->>'ivaPorcentaje'=v_tasa_iva;
+    END IF;
+    IF (v_alicuota->>'baseImponible')::numeric IS DISTINCT FROM v_alicuota_base_esperada
+       OR (v_alicuota->>'importe')::numeric IS DISTINCT FROM v_alicuota_iva_esperada THEN
+      RAISE EXCEPTION 'snapshot v2: id o importes de alícuota no coinciden con items';
+    END IF;
     v_anterior := v_alicuota;
     v_alicuotas_base := v_alicuotas_base+(v_alicuota->>'baseImponible')::numeric;
     v_alicuotas_iva := v_alicuotas_iva+(v_alicuota->>'importe')::numeric;
   END LOOP;
+  IF pg_catalog.jsonb_array_length(p_snapshot->'alicuotasIva') IS DISTINCT FROM v_alicuotas_esperadas THEN
+    RAISE EXCEPTION 'snapshot v2: desglose IVA con filas faltantes o adicionales';
+  END IF;
   IF v_alicuotas_base IS DISTINCT FROM v_neto OR v_alicuotas_iva IS DISTINCT FROM v_iva THEN
     RAISE EXCEPTION 'snapshot v2: alícuotas no coinciden con cabecera';
   END IF;
@@ -418,7 +492,18 @@ BEGIN
       RAISE EXCEPTION 'snapshot v2: verificación ARCA inválida';
     END IF;
     BEGIN
-      PERFORM (v_receptor->>'verificadoArcaAt')::timestamp with time zone;
+      IF (CASE WHEN v_receptor->>'verificadoArcaAt' ~ '\.[0-9]{3}Z$'
+            THEN pg_catalog.to_char(
+              ((v_receptor->>'verificadoArcaAt')::timestamp with time zone) AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+            )
+            ELSE pg_catalog.to_char(
+              ((v_receptor->>'verificadoArcaAt')::timestamp with time zone) AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+            )
+          END) IS DISTINCT FROM v_receptor->>'verificadoArcaAt' THEN
+        RAISE EXCEPTION 'instante no canónico';
+      END IF;
     EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
       RAISE EXCEPTION 'snapshot v2: verificación ARCA inválida';
     END;
@@ -1116,12 +1201,13 @@ BEGIN
          OR v_snapshot->>'importeIva' IS DISTINCT FROM v_original.afip_snapshot->>'importeIva'
          OR v_snapshot->>'importeTributos' IS DISTINCT FROM v_original.afip_snapshot->>'importeTributos'
          OR v_snapshot->>'importeTotal' IS DISTINCT FROM v_original.afip_snapshot->>'importeTotal'
+         OR v_snapshot->'items' IS DISTINCT FROM v_original.afip_snapshot->'items'
          OR v_snapshot->'alicuotasIva' IS DISTINCT FROM v_original.afip_snapshot->'alicuotasIva'
          OR v_snapshot->'tributos' IS DISTINCT FROM v_original.afip_snapshot->'tributos'
          OR v_snapshot->>'ivaContenido' IS DISTINCT FROM v_original.afip_snapshot->>'ivaContenido'
          OR v_snapshot->>'otrosImpuestosNacionalesIndirectos'
               IS DISTINCT FROM v_original.afip_snapshot->>'otrosImpuestosNacionalesIndirectos' THEN
-        RAISE EXCEPTION 'NC asociada: emisor, sucursal, receptor, letra/concepto, moneda y desglose positivo deben heredarse del original';
+        RAISE EXCEPTION 'NC asociada: emisor, sucursal, receptor, items, letra/concepto, moneda y desglose positivo deben heredarse del original';
       END IF;
 
       IF pg_catalog.jsonb_typeof(v_snapshot->'origen') IS DISTINCT FROM 'string'

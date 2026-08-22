@@ -323,8 +323,15 @@ const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const DECIMAL_DOS = /^(0|[1-9][0-9]{0,11})\.[0-9]{2}$/;
 const DECIMAL_SEIS = /^(0|[1-9][0-9]{0,11})\.[0-9]{6}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
-const IVA_PORCENTAJES = new Set(["0.00", "2.50", "5.00", "10.50", "21.00", "27.00"]);
-const IVA_IDS = new Set([3, 4, 5, 6, 8, 9]);
+const IVA_ID_POR_PORCENTAJE: ReadonlyMap<string, number> = new Map([
+  ["0.00", 3],
+  ["2.50", 9],
+  ["5.00", 8],
+  ["10.50", 4],
+  ["21.00", 5],
+  ["27.00", 6],
+]);
+const IVA_IDS: ReadonlySet<number> = new Set(IVA_ID_POR_PORCENTAJE.values());
 
 function validarUnicode(value: string): void {
   for (let index = 0; index < value.length; index += 1) {
@@ -487,17 +494,36 @@ function clonarCanonico(
   stack.add(value);
   try {
     if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) {
+        throw new Error("Los arrays fiscales deben usar el prototipo Array estándar.");
+      }
       const ownKeys = Reflect.ownKeys(value);
       for (const ownKey of ownKeys) {
         if (ownKey === "length") continue;
         if (typeof ownKey !== "string" || !/^(0|[1-9][0-9]*)$/.test(ownKey)) {
           throw new Error("Los arrays fiscales no admiten propiedades adicionales.");
         }
+        const numericIndex = Number(ownKey);
+        if (
+          !Number.isSafeInteger(numericIndex) ||
+          numericIndex >= value.length ||
+          String(numericIndex) !== ownKey
+        ) {
+          throw new Error("Los arrays fiscales no admiten propiedades adicionales.");
+        }
       }
-      if (Object.keys(value).length !== value.length) {
-        throw new Error("Los arrays fiscales no pueden contener huecos.");
+      const result: JsonCanonico[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor) throw new Error("Los arrays fiscales no pueden contener huecos.");
+        if (!descriptor.enumerable) {
+          throw new Error("Los arrays fiscales no admiten índices no enumerables.");
+        }
+        if (descriptor.get || descriptor.set || !("value" in descriptor)) {
+          throw new Error("Los arrays fiscales no admiten accessors.");
+        }
+        result.push(clonarCanonico(descriptor.value, stack, null, ordenarArrays));
       }
-      const result = value.map((entry) => clonarCanonico(entry, stack, null, ordenarArrays));
       if (ordenarArrays && key && ["items", "alicuotasIva", "tributos", "cbtesAsoc"].includes(key)) {
         result.sort((a, b) => compararDominio(key, a, b));
       }
@@ -683,6 +709,10 @@ function instante(value: unknown, label: string, nullable = false): string | nul
   }
   const parsed = new Date(result);
   if (Number.isNaN(parsed.getTime())) throw new Error(`${label} no es un instante válido.`);
+  const canonico = result.includes(".")
+    ? parsed.toISOString()
+    : parsed.toISOString().replace(".000Z", "Z");
+  if (canonico !== result) throw new Error(`${label} no es un instante válido y canónico.`);
   return result;
 }
 
@@ -700,6 +730,10 @@ function porcentaje(value: unknown, label: string): bigint {
   const result = centavos(value, label);
   if (result > 10_000n) throw new Error(`${label} no puede superar 100.00.`);
   return result;
+}
+
+function redondearCocientePositivo(numerador: bigint, denominador: bigint): bigint {
+  return (numerador + denominador / 2n) / denominador;
 }
 
 function ordenado<T>(values: readonly T[], compare: (a: T, b: T) => number): boolean {
@@ -798,6 +832,8 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   const itemIds = new Set<string>();
   let itemsNeto = 0n;
   let itemsIva = 0n;
+  let itemsBaseIvaCero = 0n;
+  const gruposIvaEsperados = new Map<number, { base: bigint; importe: bigint }>();
   for (const rawItem of value.items) {
     const item = objeto(rawItem, "item");
     clavesExactas(
@@ -811,18 +847,37 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     uuid(item.productoId, "item.productoId", true);
     texto(item.codigo, "item.codigo");
     texto(item.descripcion, "item.descripcion");
-    centavos(item.cantidad, "item.cantidad", true);
-    centavos(item.precioUnitarioSinIva, "item.precioUnitarioSinIva");
-    porcentaje(item.descuentoPorcentaje, "item.descuentoPorcentaje");
-    if (typeof item.ivaPorcentaje !== "string" || !IVA_PORCENTAJES.has(item.ivaPorcentaje)) {
+    const cantidad = centavos(item.cantidad, "item.cantidad", true);
+    const precioUnitario = centavos(item.precioUnitarioSinIva, "item.precioUnitarioSinIva");
+    const descuento = porcentaje(item.descuentoPorcentaje, "item.descuentoPorcentaje");
+    if (typeof item.ivaPorcentaje !== "string" || !IVA_ID_POR_PORCENTAJE.has(item.ivaPorcentaje)) {
       throw new Error("item.ivaPorcentaje no está soportado.");
     }
+    const tasaIva = porcentaje(item.ivaPorcentaje, "item.ivaPorcentaje");
     const neto = centavos(item.subtotalNeto, "item.subtotalNeto");
     const iva = centavos(item.importeIva, "item.importeIva");
     const total = centavos(item.subtotalTotal, "item.subtotalTotal", true);
-    if (neto + iva !== total) throw new Error("El total del item no coincide con neto más IVA.");
+    const netoEsperado = redondearCocientePositivo(
+      precioUnitario * cantidad * (10_000n - descuento),
+      1_000_000n,
+    );
+    const ivaEsperado = redondearCocientePositivo(netoEsperado * tasaIva, 10_000n);
+    if (neto !== netoEsperado || iva !== ivaEsperado || total !== netoEsperado + ivaEsperado) {
+      throw new Error(
+        "Los subtotales del item no coinciden con cantidad, precio neto, descuento e IVA redondeados por línea.",
+      );
+    }
     itemsNeto += neto;
     itemsIva += iva;
+    const idIva = IVA_ID_POR_PORCENTAJE.get(item.ivaPorcentaje)!;
+    if (idIva === 3) {
+      itemsBaseIvaCero += neto;
+    } else {
+      const grupo = gruposIvaEsperados.get(idIva) ?? { base: 0n, importe: 0n };
+      grupo.base += neto;
+      grupo.importe += iva;
+      gruposIvaEsperados.set(idIva, grupo);
+    }
   }
   if (itemsNeto !== importeNeto + importeExento + importeNoGravado || itemsIva !== importeIva) {
     throw new Error("Los items no coinciden con el neto/exento/no gravado/IVA de cabecera.");
@@ -831,13 +886,25 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     throw new Error("items no respeta el orden canónico.");
   }
 
-  if (!Array.isArray(value.alicuotasIva)) throw new Error("alicuotasIva debe ser un array.");
-  if (value.alicuotasIva.length === 0 && (importeNeto !== 0n || importeIva !== 0n)) {
-    throw new Error("alicuotasIva debe contener el desglose enviado a ARCA cuando hay neto o IVA.");
+  const baseNoCero = [...gruposIvaEsperados.values()].reduce(
+    (total, grupo) => total + grupo.base,
+    0n,
+  );
+  const baseGravadaIvaCero = importeNeto - baseNoCero;
+  if (baseGravadaIvaCero < 0n) {
+    throw new Error("La base imponible de IVA no coincide con los items.");
   }
+  if (itemsBaseIvaCero !== importeExento + importeNoGravado + baseGravadaIvaCero) {
+    throw new Error(
+      "Los items con IVA 0% no coinciden con exento, no gravado y base gravada a tasa cero.",
+    );
+  }
+  if (baseGravadaIvaCero > 0n) {
+    gruposIvaEsperados.set(3, { base: baseGravadaIvaCero, importe: 0n });
+  }
+
+  if (!Array.isArray(value.alicuotasIva)) throw new Error("alicuotasIva debe ser un array.");
   const alicuotaIds = new Set<number>();
-  let baseAlicuotas = 0n;
-  let ivaAlicuotas = 0n;
   for (const rawRow of value.alicuotasIva) {
     const row = objeto(rawRow, "alicuotaIva");
     clavesExactas(row, ["id", "baseImponible", "importe"], "alicuotaIva");
@@ -848,11 +915,13 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     const base = centavos(row.baseImponible, "alicuotaIva.baseImponible");
     const iva = centavos(row.importe, "alicuotaIva.importe");
     if (base === 0n && iva === 0n) throw new Error("Una alícuota de IVA vacía no se envía a ARCA.");
-    baseAlicuotas += base;
-    ivaAlicuotas += iva;
+    const esperado = gruposIvaEsperados.get(id);
+    if (!esperado || base !== esperado.base || iva !== esperado.importe) {
+      throw new Error("El id o los importes del desglose de IVA no coinciden con los items.");
+    }
   }
-  if (baseAlicuotas !== importeNeto || ivaAlicuotas !== importeIva) {
-    throw new Error("El desglose de IVA no coincide con neto e IVA de cabecera.");
+  if (alicuotaIds.size !== gruposIvaEsperados.size) {
+    throw new Error("El desglose de IVA tiene alícuotas faltantes o adicionales.");
   }
   if (exigirOrdenCanonico && !ordenado(value.alicuotasIva as JsonCanonico[], (a, b) => compararDominio("alicuotasIva", a, b))) {
     throw new Error("alicuotasIva no respeta el orden canónico.");

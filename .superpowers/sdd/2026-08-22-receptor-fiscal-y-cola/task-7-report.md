@@ -36,6 +36,36 @@ Test Files  1 passed (1)
 Tests       57 passed (57)
 ```
 
+### Corrección de review 1/5
+
+Sobre la base exacta `82aaebc7d36b6e8bafd2045c5eb399854c117441` se
+reprodujeron independientemente los cuatro hallazgos confirmados. El RED focal
+de TypeScript quedó en `63 passed / 10 failed`; el contrato PostgreSQL aceptó
+indebidamente cinco casos equivalentes. El contrato atómico también demostró
+que una NC podía reservarse con ítems distintos del original.
+
+El GREEN posterior agrega:
+
+- recálculo por línea en aritmética fija desde cantidad, precio unitario neto,
+  descuento e IVA, con redondeo half-up por ítem antes de sumar;
+- mapeo exacto de tasa a ID ARCA y comparación exacta de cada grupo ya
+  redondeado, incluida la regla agregada inequívoca para IVA 0%/ID 3;
+- herencia byte-a-byte de `items` para NC, probada con descripción y cambios
+  aritméticamente válidos de cantidad/precio/descuento/tasa;
+- arrays con prototipo estándar e índices data/enumerables propios: se
+  rechazan accessors sin ejecutarlos, setters, índices no enumerables, huecos,
+  extras, símbolos y prototipos custom;
+- instantes UTC canónicos con segundos o exactamente tres milisegundos, sin
+  aceptar normalizaciones de fechas imposibles ni `24:00`.
+
+GREEN focal final de esta ronda:
+
+```text
+npx vitest run src/lib/fiscal/snapshot.test.ts
+Test Files  1 passed (1)
+Tests       74 passed (74)
+```
+
 ## Implementación TypeScript
 
 `SnapshotFiscalV2` congela venta, ítems, emisor, sucursal, receptor lógico y
@@ -57,9 +87,11 @@ La serialización:
   WebCrypto asíncrono ni dependencia transitiva.
 
 La validación recomputa el hash y falla cerrada ante cualquier diferencia. Las
-cuentas se hacen en centavos enteros; valida desglose de ítems, IVA, tributos y
-cabecera, además de fechas, CUIT, documentos, condición/id ARCA, asociación y
-la matriz RI A/B. No existe upgrade silencioso de v1.
+cuentas se hacen en centavos enteros: cada línea se recalcula desde sus cuatro
+operandos y recién entonces se agrupa por el ID ARCA exacto. Valida desglose de
+ítems, IVA, tributos y cabecera, además de fechas/instantes canónicos, CUIT,
+documentos, condición/id ARCA, asociación y la matriz RI A/B. No existe upgrade
+silencioso de v1.
 
 El fixture compartido quedó en
 `test/fixtures/fiscal-snapshot-parity-v2.json`. Su serialización canónica tiene
@@ -97,7 +129,7 @@ El diff mecánico contiene sólo estos cambios deliberados:
    `importeTotal` sea la magnitud de la venta.
 3. Para NC, el snapshot original también se valida completo y se le recalcula
    el hash bajo las mismas reglas.
-4. La NC hereda exactamente emisor, sucursal, receptor, letra/concepto,
+4. La NC hereda exactamente emisor, sucursal, receptor, `items`, letra/concepto,
    moneda/cotización, modo/validez y cada importe positivo de cabecera, IVA y
    tributos; sólo cambian identidad/tipo/fecha permitidos.
 5. `CbtesAsoc` exige las claves exactas y el CUIT del comprobante original.
@@ -110,7 +142,8 @@ No se agregó nota de débito ni motor de emisión/impresión.
 
 - `test-fiscal-concurrencia.sh` construye snapshots v2 completos desde el
   fixture, usa CUITs sintéticos con checksum válido y prueba paridad/hash,
-  privilegios, anidados, decimales, duplicados, orden y modo/validez.
+  privilegios, anidados, decimales, duplicados, orden, modo/validez, cálculo
+  fijo por línea, agrupación IVA/ID 3 e instantes canónicos.
 - `test-venta-fiscal-atomica.sh` deriva la NC completa exclusivamente desde el
   snapshot original, incluye CUIT en `CbtesAsoc` y prueba rechazo de toda
   divergencia de herencia, además de las carreras ya existentes.
@@ -130,13 +163,13 @@ Ejecutada después del último cambio:
   recreación del contenedor, antes de migraciones; la repetición detallada
   estabilizó healthchecks y no mostró error SQL.
 - `./scripts/test-receptor-fiscal-schema.sh`: PASS.
-- `./scripts/test-fiscal-concurrencia.sh`: PASS, `121 ok / 0 fallas`.
+- `./scripts/test-fiscal-concurrencia.sh`: PASS, `131 ok / 0 fallas`.
 - `./scripts/test-venta-fiscal-atomica.sh`: PASS, incluidas carreras reales.
 - `./scripts/test-facturacion-multiemisor.sh`: PASS.
 - `./scripts/test-venta-contado.sh`: PASS.
 - `./scripts/test-nota-credito-sin-factura.sh`: PASS.
 - `./scripts/test-caja-y-saldos.sh`: PASS, `28 ok / 0 fallas`.
-- `npm test`: PASS, 30 archivos; 567 tests aprobados y 4 omitidos.
+- `npm test`: PASS, 30 archivos; 584 tests aprobados y 4 omitidos.
 - `npm run typecheck`: PASS.
 - `INVOICING_MOCK_MODE=true npm run build:vercel`: PASS; sólo warnings
   preexistentes de `inputValidator`, plugin de paths y tamaño de chunks.

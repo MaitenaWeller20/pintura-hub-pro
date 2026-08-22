@@ -410,6 +410,97 @@ describe("snapshot fiscal v2", () => {
     expect(snapshot.tributos.map((row) => row.id)).toEqual([1, 2]);
   });
 
+  it("recalcula cada línea y no acepta subtotales coherentes sólo a nivel agregado", () => {
+    const input = inputV2() as any;
+    input.items[0].cantidad = "3.00";
+
+    expect(() => crearSnapshotFiscalV2(input)).toThrow(/cálculo|subtotal|item/i);
+  });
+
+  it("redondea una vez por ítem y agrupa los importes ya redondeados", () => {
+    const input = inputV2() as any;
+    input.items = [
+      {
+        ...input.items[0],
+        id: "71000000-0000-4000-8000-000000000011",
+        productoId: null,
+        cantidad: "1.00",
+        precioUnitarioSinIva: "0.05",
+        descuentoPorcentaje: "10.00",
+        ivaPorcentaje: "10.50",
+        subtotalNeto: "0.05",
+        importeIva: "0.01",
+        subtotalTotal: "0.06",
+      },
+      {
+        ...input.items[0],
+        id: "71000000-0000-4000-8000-000000000012",
+        productoId: null,
+        cantidad: "1.00",
+        precioUnitarioSinIva: "0.05",
+        descuentoPorcentaje: "10.00",
+        ivaPorcentaje: "10.50",
+        subtotalNeto: "0.05",
+        importeIva: "0.01",
+        subtotalTotal: "0.06",
+      },
+    ];
+    input.importeNeto = "0.10";
+    input.importeExento = "0.00";
+    input.importeNoGravado = "0.00";
+    input.importeIva = "0.02";
+    input.importeTributos = "0.00";
+    input.importeTotal = "0.12";
+    input.alicuotasIva = [{ id: 4, baseImponible: "0.10", importe: "0.02" }];
+    input.tributos = [];
+    input.ivaContenido = "0.02";
+    input.otrosImpuestosNacionalesIndirectos = "0.00";
+
+    expect(crearSnapshotFiscalV2(input).alicuotasIva).toEqual([
+      { id: 4, baseImponible: "0.10", importe: "0.02" },
+    ]);
+  });
+
+  it("exige el ID ARCA y los importes exactos de cada grupo de IVA", () => {
+    const idIncorrecto = inputV2() as any;
+    idIncorrecto.alicuotasIva[0].id = 4;
+    expect(() => crearSnapshotFiscalV2(idIncorrecto)).toThrow(/alícuota|IVA|ID/i);
+
+    const grupoIncorrecto = inputV2() as any;
+    grupoIncorrecto.alicuotasIva = [
+      { id: 3, baseImponible: "100.00", importe: "0.00" },
+      { id: 5, baseImponible: "900.00", importe: "210.00" },
+    ];
+    expect(() => crearSnapshotFiscalV2(grupoIncorrecto)).toThrow(/alícuota|IVA|grupo/i);
+  });
+
+  it("representa el neto gravado a tasa cero únicamente con ID 3", () => {
+    const input = inputV2() as any;
+    input.items = [
+      {
+        ...input.items[1],
+        ivaPorcentaje: "0.00",
+        subtotalNeto: "100.00",
+        importeIva: "0.00",
+        subtotalTotal: "100.00",
+      },
+    ];
+    input.importeNeto = "100.00";
+    input.importeExento = "0.00";
+    input.importeNoGravado = "0.00";
+    input.importeIva = "0.00";
+    input.importeTributos = "0.00";
+    input.importeTotal = "100.00";
+    input.alicuotasIva = [{ id: 3, baseImponible: "100.00", importe: "0.00" }];
+    input.tributos = [];
+    input.ivaContenido = "0.00";
+    input.otrosImpuestosNacionalesIndirectos = "0.00";
+
+    expect(crearSnapshotFiscalV2(input).alicuotasIva).toEqual([
+      { id: 3, baseImponible: "100.00", importe: "0.00" },
+    ]);
+  });
+
   it("hace el hash sensible a receptor, condición, fecha, número, total y asociación", () => {
     const base = bodyV2() as any;
     const hash = calcularHashSnapshotFiscal(base);
@@ -486,6 +577,29 @@ describe("snapshot fiscal v2", () => {
     input.otrosImpuestosNacionalesIndirectos = "0.00";
 
     expect(crearSnapshotFiscalV2(input).alicuotasIva).toEqual([]);
+  });
+
+  it("acepta instantes canónicos con segundos y con exactamente tres milisegundos", () => {
+    const input = inputV2() as any;
+    input.venta.fechaComercial = "2026-08-20T15:00:00Z";
+    input.receptor.verificadoArcaAt = "2026-08-21T14:59:58.123Z";
+
+    const snapshot = crearSnapshotFiscalV2(input);
+    expect(snapshot.venta.fechaComercial).toBe("2026-08-20T15:00:00Z");
+    expect(snapshot.receptor.verificadoArcaAt).toBe("2026-08-21T14:59:58.123Z");
+  });
+
+  it.each([
+    ["fecha comercial normalizada", "2026-02-30T15:00:00Z", false],
+    ["fecha comercial 24:00", "2026-08-22T24:00:00Z", false],
+    ["verificación normalizada", "2026-02-30T15:00:00.000Z", true],
+    ["verificación 24:00", "2026-08-22T24:00:00.000Z", true],
+  ])("rechaza %s", (_caso, instante, esVerificacion) => {
+    const input = inputV2() as any;
+    if (esVerificacion) input.receptor.verificadoArcaAt = instante;
+    else input.venta.fechaComercial = instante;
+
+    expect(() => crearSnapshotFiscalV2(input)).toThrow(/instante|fecha|verificación/i);
   });
 
   it("no confunde otros impuestos nacionales indirectos con el total de tributos", () => {
@@ -614,6 +728,75 @@ describe("snapshot fiscal v2", () => {
     });
     expect(() => serializarSnapshotFiscal(accessor)).toThrow(/accessor/i);
     expect(() => serializarSnapshotFiscal({ version: 2, hash: "x" })).toThrow(/sin hash/i);
+  });
+
+  it("nunca ejecuta accessors de índices de arrays", () => {
+    const ejecutar = (
+      operacion: (array: unknown[], input: Record<string, unknown>) => unknown,
+    ) => {
+      const input = inputV2() as any;
+      const items = structuredClone(input.items) as unknown[];
+      const primero = items[0];
+      let lecturas = 0;
+      Object.defineProperty(items, "0", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          lecturas += 1;
+          return primero;
+        },
+      });
+      input.items = items;
+
+      expect(() => operacion(items, input)).toThrow(/accessor/i);
+      expect(lecturas).toBe(0);
+    };
+
+    ejecutar((items) => serializarSnapshotFiscal({ items }));
+    ejecutar((items) => calcularHashSnapshotFiscal({ items }));
+    ejecutar((_items, input) => crearSnapshotFiscalV2(input as never));
+    ejecutar((_items, input) => {
+      const { hash: _hash, ...body } = structuredClone(parityFixture.input) as any;
+      body.items = input.items;
+      validarSnapshotFiscalV2({ ...body, hash: parityFixture.sha256 });
+    });
+  });
+
+  it.each([
+    [
+      "setter",
+      (array: unknown[]) =>
+        Object.defineProperty(array, "0", {
+          configurable: true,
+          enumerable: true,
+          set() {},
+        }),
+      /accessor/i,
+    ],
+    [
+      "índice no enumerable",
+      (array: unknown[]) =>
+        Object.defineProperty(array, "0", {
+          configurable: true,
+          enumerable: false,
+          writable: true,
+          value: array[0],
+        }),
+      /enumerable/i,
+    ],
+    ["hueco", (array: unknown[]) => delete array[0], /hueco/i],
+    ["propiedad extra", (array: any) => (array.extra = true), /adicional/i],
+    ["índice aparente fuera del largo", (array: any) => (array["4294967295"] = true), /adicional/i],
+    ["Symbol", (array: any) => (array[Symbol("x")] = true), /adicional|Symbol/i],
+    [
+      "prototipo custom",
+      (array: unknown[]) => Object.setPrototypeOf(array, Object.create(Array.prototype)),
+      /prototipo/i,
+    ],
+  ])("rechaza arrays con %s", (_caso, mutar, mensaje) => {
+    const array = [{ id: 1 }];
+    mutar(array);
+    expect(() => serializarSnapshotFiscal({ items: array })).toThrow(mensaje);
   });
 
   it("ordena claves por bytes UTF-8 y no por el orden de inserción", () => {

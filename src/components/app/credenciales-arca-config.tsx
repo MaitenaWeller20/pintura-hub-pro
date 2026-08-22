@@ -35,6 +35,7 @@ import {
   type ConfigFiscalPublica,
 } from "@/lib/fiscal/config.functions";
 import type { AmbienteArca } from "@/lib/fiscal/contexto";
+import { QUERY_KEY_CONFIG_FISCAL_ADMIN } from "@/lib/fiscal/config";
 
 type Emisor = ConfigFiscalPublica["emisores"][number];
 type Sucursal = Emisor["sucursales"][number];
@@ -88,11 +89,11 @@ export function CredencialesArcaConfig() {
   const habilitar = useServerFn(guardarHabilitacionCredencial);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["fiscal-config-multiemisor"],
+    queryKey: QUERY_KEY_CONFIG_FISCAL_ADMIN,
     queryFn: () => cargar(),
   });
 
-  const refrescar = () => qc.invalidateQueries({ queryKey: ["fiscal-config-multiemisor"] });
+  const refrescar = () => qc.invalidateQueries({ queryKey: QUERY_KEY_CONFIG_FISCAL_ADMIN });
 
   const mPv = useMutation({
     mutationFn: (entrada: {
@@ -135,8 +136,9 @@ export function CredencialesArcaConfig() {
   const mPrueba = useMutation({
     mutationFn: (sucursalId: string) => probar({ data: { sucursal_id: sucursalId } }),
     onSuccess: (r) => {
-      if (r.mock) toast.warning(r.mensaje);
-      else toast.success(r.mensaje);
+      const mensaje = `Acceso a secuencia A/B: A ${r.secuencia_a.ultimo}, B ${r.secuencia_b.ultimo}.`;
+      if (data?.mock_mode) toast.warning(`Modo simulado. ${mensaje}`);
+      else toast.success(mensaje);
       refrescar();
     },
     onError: (e: Error) => toast.error(e.message, { duration: 10_000 }),
@@ -345,8 +347,8 @@ function PuntoVentaEditor({
           <Button
             size="icon"
             variant="outline"
-            title="Probar conexión con ARCA"
-            aria-label="Probar conexión con ARCA"
+            title="Probar acceso a secuencia A/B"
+            aria-label="Probar acceso a secuencia A/B"
             disabled={!pv?.activo || cambio || probando}
             onClick={onProbar}
           >

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { construirContextoFiscal } from "./contexto";
+import { construirContextoFiscal, validarModalidadFacturaA } from "./contexto";
+import { cargarContextoFiscal } from "./contexto.server";
 
 const base = {
   sucursal: {
@@ -17,6 +18,8 @@ const base = {
     condicion_iva: "RESPONSABLE_INSCRIPTO" as const,
     ingresos_brutos: "280970280",
     inicio_actividades: "2018-09-01",
+    factura_a_modalidad: "ESTANDAR_CONFIRMADA" as const,
+    factura_a_revalidar_at: "2027-08-22",
   },
   pv: {
     sucursal_id: "s-general-paz",
@@ -41,6 +44,31 @@ describe("contexto fiscal multiemisor", () => {
     expect(r.emisor.cuit).toBe("30714199664");
     expect(r.emisorImpreso.telefono).toBe("3513229459");
     expect(r.pv).toEqual({ numero: 5, modo: "PRODUCCION" });
+    expect(r.facturaA).toEqual({
+      modalidad: "ESTANDAR_CONFIRMADA",
+      revalidar_at: "2027-08-22",
+    });
+  });
+
+  it("General Paz no acepta el emisor, PV ni credencial de O'Higgins", () => {
+    const sas = {
+      ...base.emisor,
+      id: "e-grupo",
+      razon_social: "GRUPO CASA FORMA S.A.S.",
+      cuit: "30717322467",
+    };
+
+    expect(() =>
+      construirContextoFiscal(
+        {
+          ...base,
+          emisor: sas,
+          pv: { ...base.pv, emisor_id: sas.id },
+          credencial: { ...base.credencial, emisor_id: sas.id },
+        },
+        { exigirHabilitada: true },
+      ),
+    ).toThrow(/emisor.*sucursal/i);
   });
 
   it("rechaza un PV de otro emisor", () => {
@@ -128,5 +156,95 @@ describe("contexto fiscal multiemisor", () => {
         { exigirHabilitada: true },
       ),
     ).toThrow(/número.*punto de venta/i);
+  });
+});
+
+describe("modalidad administrativa de Factura A", () => {
+  const ahora = new Date("2026-08-22T15:00:00.000Z");
+
+  it.each([
+    ["DESCONOCIDA", "2027-08-22"],
+    ["NO_SOPORTADA", "2027-08-22"],
+    ["ESTANDAR_CONFIRMADA", null],
+    ["ESTANDAR_CONFIRMADA", "fecha-invalida"],
+    ["ESTANDAR_CONFIRMADA", "2026-08-21"],
+  ] as const)("bloquea A con modalidad %s y revalidación %s", (modalidad, revalidarAt) => {
+    expect(() => validarModalidadFacturaA("A", modalidad, revalidarAt, ahora)).toThrow(
+      /Factura A|modalidad|revalid/i,
+    );
+  });
+
+  it("permite A estándar con evidencia vigente, incluido el día de revalidación", () => {
+    expect(() =>
+      validarModalidadFacturaA("A", "ESTANDAR_CONFIRMADA", "2026-08-22", ahora),
+    ).not.toThrow();
+  });
+
+  it.each(["B", "C"] as const)("no condiciona la letra %s a evidencia de A", (letra) => {
+    expect(() => validarModalidadFacturaA(letra, "DESCONOCIDA", null, ahora)).not.toThrow();
+  });
+
+  it("falla cerrado ante una modalidad guardada fuera de la allowlist", () => {
+    expect(() =>
+      validarModalidadFacturaA(
+        "A",
+        "VARIANTE_ESPECIAL" as "ESTANDAR_CONFIRMADA",
+        "2027-08-22",
+        ahora,
+      ),
+    ).toThrow(/modalidad/i);
+  });
+});
+
+describe("resolución server-side por sucursal", () => {
+  it("filtra PV y credencial con el emisor APLI vinculado a General Paz", async () => {
+    const consultas: Array<{ tabla: string; filtros: Array<[string, unknown]> }> = [];
+    const respuestas: Record<string, unknown> = {
+      sucursales: {
+        id: base.sucursal.id,
+        nombre: base.sucursal.nombre,
+        telefono: base.sucursal.telefono,
+        emisor_id: base.sucursal.emisor_id,
+        emisor: base.emisor,
+      },
+      puntos_venta: base.pv,
+      credenciales_arca: base.credencial,
+    };
+    const sb = {
+      from(tabla: string) {
+        const consulta = { tabla, filtros: [] as Array<[string, unknown]> };
+        consultas.push(consulta);
+        const cadena = {
+          select() {
+            return cadena;
+          },
+          eq(campo: string, valor: unknown) {
+            consulta.filtros.push([campo, valor]);
+            return cadena;
+          },
+          async maybeSingle() {
+            return { data: respuestas[tabla], error: null };
+          },
+        };
+        return cadena;
+      },
+    };
+
+    const resultado = await cargarContextoFiscal(sb as never, base.sucursal.id);
+
+    expect(resultado.emisor.cuit).toBe("30714199664");
+    expect(resultado.pv.numero).toBe(5);
+    expect(resultado.emisor.arca_key_enc).toBe("key");
+    expect(consultas).toEqual([
+      { tabla: "sucursales", filtros: [["id", "s-general-paz"]] },
+      { tabla: "puntos_venta", filtros: [["sucursal_id", "s-general-paz"]] },
+      {
+        tabla: "credenciales_arca",
+        filtros: [
+          ["emisor_id", "e-aplicaciones"],
+          ["ambiente", "PRODUCCION"],
+        ],
+      },
+    ]);
   });
 });

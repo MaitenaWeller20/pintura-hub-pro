@@ -32,10 +32,11 @@ async function exigirAdmin(supabase: SupabaseClient<Database>, userId: string) {
 export const listarEmisores = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    await exigirAdmin(context.supabase, context.userId);
     const { data, error } = await context.supabase
       .from("emisores")
       .select(
-        "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, sucursales(id, nombre, direccion, telefono)",
+        "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, factura_a_modalidad, factura_a_confirmada_at, factura_a_confirmada_por, factura_a_revalidar_at, factura_a_evidencia, sucursales(id, nombre, direccion, telefono)",
       )
       .order("razon_social");
     if (error) {
@@ -112,8 +113,8 @@ export const guardarEmisor = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
     await exigirAdmin(context.supabase, context.userId);
+    const sb = await admin();
     const { id, ...camposEntrada } = data;
     const cuit = camposEntrada.cuit?.trim() ? validarCuitEmisor(camposEntrada.cuit) : null;
     const campos = { ...camposEntrada, cuit };
@@ -143,8 +144,8 @@ export const guardarContactoSucursal = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
     await exigirAdmin(context.supabase, context.userId);
+    const sb = await admin();
     const { id, ...campos } = data;
     const { error } = await sb.from("sucursales").update(campos).eq("id", id);
     if (error) throw new Error(`No se pudo guardar: ${error.message}`);

@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/select";
 import { AlertTriangle, Loader2, Upload, Trash2 } from "lucide-react";
 import { listarEmisores, guardarEmisor, guardarContactoSucursal } from "@/lib/emisores.functions";
+import { guardarModalidadFacturaA } from "@/lib/fiscal/config.functions";
+import { QUERY_KEY_CONFIG_FISCAL_ADMIN } from "@/lib/fiscal/config";
 
 /**
  * Los datos que salen en el encabezado de presupuestos y remitos.
@@ -90,11 +92,12 @@ async function aDataUrl(file: File): Promise<string> {
   return jpeg;
 }
 
-export function EmisoresConfig() {
+export function EmisoresConfig({ esAdmin = false }: { esAdmin?: boolean }) {
   const qc = useQueryClient();
   const traer = useServerFn(listarEmisores);
   const grabarEmisor = useServerFn(guardarEmisor);
   const grabarSucursal = useServerFn(guardarContactoSucursal);
+  const grabarModalidadA = useServerFn(guardarModalidadFacturaA);
   const [subiendo, setSubiendo] = useState<string | null>(null);
 
   const { data: emisores = [], isLoading } = useQuery({
@@ -104,7 +107,7 @@ export function EmisoresConfig() {
 
   const refrescar = () => {
     qc.invalidateQueries({ queryKey: ["emisores"] });
-    qc.invalidateQueries({ queryKey: ["fiscal-config-multiemisor"] });
+    qc.invalidateQueries({ queryKey: QUERY_KEY_CONFIG_FISCAL_ADMIN });
     toast.success("Guardado");
   };
 
@@ -117,6 +120,16 @@ export function EmisoresConfig() {
     mutationFn: (d: any) => grabarSucursal({ data: d }),
     onSuccess: refrescar,
     onError: (e: any) => toast.error(e.message),
+  });
+  const mModalidadA = useMutation({
+    mutationFn: (d: {
+      emisor_id: string;
+      modalidad: "ESTANDAR_CONFIRMADA" | "NO_SOPORTADA";
+      evidencia: string;
+      revalidar_at: string;
+    }) => grabarModalidadA({ data: d }),
+    onSuccess: refrescar,
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const subirLogo = async (emisorId: string, file: File) => {
@@ -148,6 +161,13 @@ export function EmisoresConfig() {
               emisor={e}
               onGuardar={(d) => mEmisor.mutate(d)}
               guardando={mEmisor.isPending}
+            />
+
+            <ModalidadFacturaAEditor
+              emisor={e}
+              esAdmin={esAdmin}
+              guardando={mModalidadA.isPending}
+              onGuardar={(d) => mModalidadA.mutate(d)}
             />
 
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -205,6 +225,130 @@ export function EmisoresConfig() {
         ))}
       </div>
     </SectionCard>
+  );
+}
+
+type EmisorModalidadA = {
+  id: string;
+  factura_a_modalidad: "DESCONOCIDA" | "ESTANDAR_CONFIRMADA" | "NO_SOPORTADA";
+  factura_a_confirmada_at: string | null;
+  factura_a_revalidar_at: string | null;
+  factura_a_evidencia: string | null;
+};
+
+const etiquetaModalidadA = (modalidad: EmisorModalidadA["factura_a_modalidad"]) =>
+  modalidad === "ESTANDAR_CONFIRMADA"
+    ? "Factura A estándar confirmada"
+    : modalidad === "NO_SOPORTADA"
+      ? "Factura A estándar no soportada"
+      : "Factura A estándar sin confirmar";
+
+/**
+ * La evidencia completa y el formulario sólo existen para administradores.
+ * El fallback no incluye el texto guardado, aunque alguien reutilice este
+ * componente fuera de la ruta protegida.
+ */
+export function ModalidadFacturaAEditor({
+  emisor,
+  esAdmin,
+  guardando,
+  onGuardar,
+}: {
+  emisor: EmisorModalidadA;
+  esAdmin: boolean;
+  guardando: boolean;
+  onGuardar: (d: {
+    emisor_id: string;
+    modalidad: "ESTANDAR_CONFIRMADA" | "NO_SOPORTADA";
+    evidencia: string;
+    revalidar_at: string;
+  }) => void;
+}) {
+  const modalidadInicial =
+    emisor.factura_a_modalidad === "NO_SOPORTADA" ? "NO_SOPORTADA" : "ESTANDAR_CONFIRMADA";
+  const [modalidad, setModalidad] = useState<"ESTANDAR_CONFIRMADA" | "NO_SOPORTADA">(
+    modalidadInicial,
+  );
+  const [evidencia, setEvidencia] = useState(emisor.factura_a_evidencia ?? "");
+  const [revalidarAt, setRevalidarAt] = useState(emisor.factura_a_revalidar_at ?? "");
+
+  if (!esAdmin) {
+    return (
+      <p className="mt-3 text-xs text-muted-foreground">
+        {etiquetaModalidadA(emisor.factura_a_modalidad)}
+      </p>
+    );
+  }
+
+  const valido = evidencia.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(revalidarAt);
+  return (
+    <div className="mt-4 space-y-3 rounded-lg border border-border bg-muted/20 p-3">
+      <div>
+        <p className="text-sm font-medium">{etiquetaModalidadA(emisor.factura_a_modalidad)}</p>
+        {emisor.factura_a_confirmada_at && (
+          <p className="text-xs text-muted-foreground">
+            Última decisión: {new Date(emisor.factura_a_confirmada_at).toLocaleDateString("es-AR")}
+          </p>
+        )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <Label htmlFor={`modalidad-a-${emisor.id}`}>Modalidad administrativa</Label>
+          <Select
+            value={modalidad}
+            onValueChange={(valor) => setModalidad(valor as "ESTANDAR_CONFIRMADA" | "NO_SOPORTADA")}
+          >
+            <SelectTrigger id={`modalidad-a-${emisor.id}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ESTANDAR_CONFIRMADA">A estándar confirmada</SelectItem>
+              <SelectItem value="NO_SOPORTADA">No soportada</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor={`revalidar-a-${emisor.id}`}>Revalidar el</Label>
+          <Input
+            id={`revalidar-a-${emisor.id}`}
+            type="date"
+            value={revalidarAt}
+            onChange={(evento) => setRevalidarAt(evento.target.value)}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <Label htmlFor={`evidencia-a-${emisor.id}`}>Fuente o evidencia</Label>
+          <Input
+            id={`evidencia-a-${emisor.id}`}
+            value={evidencia}
+            maxLength={1_000}
+            onChange={(evento) => setEvidencia(evento.target.value)}
+            placeholder="Ej.: confirmación de la contadora y fecha"
+          />
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!valido || guardando}
+          onClick={() =>
+            onGuardar({
+              emisor_id: emisor.id,
+              modalidad,
+              evidencia,
+              revalidar_at: revalidarAt,
+            })
+          }
+        >
+          {guardando && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+          Confirmar modalidad A
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        La prueba técnica sólo informa acceso a secuencia A/B; nunca confirma esta modalidad.
+      </p>
+    </div>
   );
 }
 

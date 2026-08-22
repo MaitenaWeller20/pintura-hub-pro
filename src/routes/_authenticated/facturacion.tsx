@@ -26,7 +26,7 @@ function FacturacionPage() {
         title="Facturación electrónica"
         subtitle="Identidad fiscal, puntos de venta y credenciales ARCA separados por empresa."
       />
-      <EmisoresConfig />
+      <EmisoresConfig esAdmin />
       <CredencialesArcaConfig />
     </div>
   );

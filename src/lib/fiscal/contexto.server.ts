@@ -5,6 +5,7 @@ import {
   type EmisorFiscalRow,
   type PuntoVentaFiscalRow,
   type SucursalFiscalRow,
+  type ModalidadFacturaA,
 } from "./contexto";
 import type { CondicionIva } from "./codigos";
 import type { Database } from "@/integrations/supabase/types";
@@ -31,6 +32,13 @@ function ambienteArca(valor: string): "HOMOLOGACION" | "PRODUCCION" {
   throw new Error(`El ambiente ARCA guardado no es válido: ${valor}.`);
 }
 
+function modalidadFacturaA(valor: string): ModalidadFacturaA {
+  if (valor === "DESCONOCIDA" || valor === "ESTANDAR_CONFIRMADA" || valor === "NO_SOPORTADA") {
+    return valor;
+  }
+  throw new Error(`La modalidad de Factura A guardada no es válida: ${valor}.`);
+}
+
 /**
  * Resuelve el contexto exclusivamente desde la sucursal. El emisor nunca llega
  * como argumento del navegador: se sigue el vínculo guardado en la base y luego
@@ -44,7 +52,7 @@ export async function cargarContextoFiscal(
   const { data: sucursalData, error: sucursalError } = await sb
     .from("sucursales")
     .select(
-      "id,nombre,telefono,emisor_id,emisor:emisores(id,razon_social,nombre_fantasia,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,inicio_actividades)",
+      "id,nombre,telefono,emisor_id,emisor:emisores(id,razon_social,nombre_fantasia,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,inicio_actividades,factura_a_modalidad,factura_a_revalidar_at)",
     )
     .eq("id", sucursalId)
     .maybeSingle();
@@ -69,6 +77,8 @@ export async function cargarContextoFiscal(
         condicion_iva: condicionIva(emisorData.condicion_iva),
         ingresos_brutos: emisorData.ingresos_brutos,
         inicio_actividades: emisorData.inicio_actividades,
+        factura_a_modalidad: modalidadFacturaA(emisorData.factura_a_modalidad),
+        factura_a_revalidar_at: emisorData.factura_a_revalidar_at,
       }
     : null;
 

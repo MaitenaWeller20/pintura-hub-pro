@@ -4,7 +4,14 @@ import type { Database } from "@/integrations/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
+  actualizacionModalidadFacturaA,
+  autorizarAntesDeClientePrivilegiado,
+  confirmacionModalidadFacturaASchema,
+  estadoFiscalPublicoMinimo,
+  exigirEmisorActualizado,
   normalizarCredencialesPublicas,
+  probarAccesoSecuenciasFactura,
+  probarConexionSegunModo,
   validarHabilitacionCredencial,
   type CredencialArcaPublica,
   type CredencialArcaSecreta,
@@ -43,6 +50,11 @@ export type ConfigFiscalPublica = {
     condicion_iva: "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO" | null;
     ingresos_brutos: string | null;
     inicio_actividades: string | null;
+    factura_a_modalidad: "DESCONOCIDA" | "ESTANDAR_CONFIRMADA" | "NO_SOPORTADA";
+    factura_a_confirmada_at: string | null;
+    factura_a_confirmada_por: string | null;
+    factura_a_revalidar_at: string | null;
+    factura_a_evidencia: string | null;
     sucursales: Array<{
       id: string;
       nombre: string;
@@ -67,16 +79,19 @@ function ambienteArca(valor: string): AmbienteArca {
 
 export const obtenerConfigFiscal = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<ConfigFiscalPublica> => {
+  .handler(async ({ context }): Promise<ConfigFiscalPublica> => {
     const inicio = Date.now();
     try {
-      const sb = await admin();
+      const sb = await autorizarAntesDeClientePrivilegiado(
+        () => exigirAdmin(context.supabase, context.userId),
+        admin,
+      );
       const [{ data: emisores, error: emisoresError }, { data: credenciales, error: credError }] =
         await Promise.all([
           sb
             .from("emisores")
             .select(
-              "id,razon_social,nombre_fantasia,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,inicio_actividades,sucursales(id,nombre,telefono,punto_venta:puntos_venta!puntos_venta_sucursal_id_fkey(id,numero,modo,activo))",
+              "id,razon_social,nombre_fantasia,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,inicio_actividades,factura_a_modalidad,factura_a_confirmada_at,factura_a_confirmada_por,factura_a_revalidar_at,factura_a_evidencia,sucursales(id,nombre,telefono,punto_venta:puntos_venta!puntos_venta_sucursal_id_fkey(id,numero,modo,activo))",
             )
             .order("razon_social"),
           sb
@@ -119,6 +134,12 @@ export const obtenerConfigFiscal = createServerFn({ method: "GET" })
             condicion_iva: condicion,
             ingresos_brutos: (emisor.ingresos_brutos ?? null) as string | null,
             inicio_actividades: (emisor.inicio_actividades ?? null) as string | null,
+            factura_a_modalidad:
+              emisor.factura_a_modalidad as ConfigFiscalPublica["emisores"][number]["factura_a_modalidad"],
+            factura_a_confirmada_at: emisor.factura_a_confirmada_at,
+            factura_a_confirmada_por: emisor.factura_a_confirmada_por,
+            factura_a_revalidar_at: emisor.factura_a_revalidar_at,
+            factura_a_evidencia: emisor.factura_a_evidencia,
             sucursales: (emisor.sucursales ?? []).map((sucursal) => {
               const relacionPv = sucursal.punto_venta;
               const pv = Array.isArray(relacionPv) ? relacionPv[0] : relacionPv;
@@ -157,6 +178,11 @@ export const obtenerConfigFiscal = createServerFn({ method: "GET" })
     }
   });
 
+/** Lectura que puede usar una pantalla operativa: no abre el cliente service-role. */
+export const obtenerEstadoFiscalPublico = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => estadoFiscalPublicoMinimo(MOCK));
+
 export const guardarPuntoVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
@@ -170,8 +196,10 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await exigirAdmin(context.supabase, context.userId);
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
 
     const [{ data: sucursal, error: sucursalError }, { data: anterior, error: pvError }] =
       await Promise.all([
@@ -328,36 +356,50 @@ export const guardarCertificado = createServerFn({ method: "POST" })
 
 export const probarConexionAfip = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ sucursal_id: z.string().uuid() }).parse(d))
+  .inputValidator((d: unknown) => z.object({ sucursal_id: z.string().uuid() }).strict().parse(d))
   .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await exigirAdmin(context.supabase, context.userId);
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
 
-    if (MOCK) {
-      return {
-        ok: true,
-        mock: true,
-        ultimo: 0,
-        mensaje: "Mock mode activo: no se llamó a ARCA y la credencial sigue sin verificar.",
-      };
-    }
+    return probarConexionSegunModo(MOCK, async () => {
+      const fiscal = await cargarContextoFiscal(sb, data.sucursal_id, { exigirHabilitada: false });
+      const consultar = (cbteTipo: 6 | 1) =>
+        ultimoAutorizado(fiscal.emisor, fiscal.pv, cbteTipo, sb);
+      return probarAccesoSecuenciasFactura(consultar, async ({ probada_at }) => {
+        const { error } = await sb
+          .from("credenciales_arca")
+          .update({ probada_at })
+          .eq("emisor_id", fiscal.sucursal.emisor_id)
+          .eq("ambiente", fiscal.pv.modo);
+        if (error) throw new Error(error.message);
+      });
+    });
+  });
 
-    const fiscal = await cargarContextoFiscal(sb, data.sucursal_id, { exigirHabilitada: false });
-    const ultimo = await ultimoAutorizado(fiscal.emisor, fiscal.pv, 6, sb);
-    const probadaAt = new Date().toISOString();
-    const { error } = await sb
-      .from("credenciales_arca")
-      .update({ probada_at: probadaAt })
-      .eq("emisor_id", fiscal.sucursal.emisor_id)
-      .eq("ambiente", fiscal.pv.modo);
-    if (error) throw new Error(error.message);
-
+export const guardarModalidadFacturaA = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => confirmacionModalidadFacturaASchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
+    const campos = actualizacionModalidadFacturaA(data, context.userId);
+    const { data: actualizada, error } = await sb
+      .from("emisores")
+      .update(campos)
+      .eq("id", data.emisor_id)
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(`No se pudo guardar la modalidad de Factura A: ${error.message}`);
+    exigirEmisorActualizado(actualizada);
     return {
       ok: true,
-      mock: false,
-      ultimo,
-      probada_at: probadaAt,
-      mensaje: `ARCA respondió. Último comprobante tipo B autorizado en el PV ${fiscal.pv.numero}: ${ultimo}.`,
+      modalidad: campos.factura_a_modalidad,
+      confirmada_at: campos.factura_a_confirmada_at,
+      revalidar_at: campos.factura_a_revalidar_at,
     };
   });
 

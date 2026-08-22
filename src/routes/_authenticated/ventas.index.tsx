@@ -23,7 +23,8 @@ import {
   emitirComprobante,
   datosFiscalesComprobante,
 } from "@/lib/fiscal.functions";
-import { obtenerConfigFiscal } from "@/lib/fiscal/config.functions";
+import { obtenerEstadoFiscalPublico } from "@/lib/fiscal/config.functions";
+import { QUERY_KEY_ESTADO_FISCAL_PUBLICO } from "@/lib/fiscal/config";
 import { esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
 import { diasRestantesVentanaAfip, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "@/lib/fiscal/fecha";
 import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
@@ -159,9 +160,9 @@ function VentasList() {
 
   // Sólo interesa el flag de modo simulado, para no avisar de un plazo que en
   // mock no se aplica. La respuesta pública no contiene claves ni certificados.
-  const cargarCfg = useServerFn(obtenerConfigFiscal);
+  const cargarCfg = useServerFn(obtenerEstadoFiscalPublico);
   const { data: cfgFiscal } = useQuery({
-    queryKey: ["fiscal-config-multiemisor"],
+    queryKey: QUERY_KEY_ESTADO_FISCAL_PUBLICO,
     queryFn: () => cargarCfg(),
     staleTime: 5 * 60_000,
   });

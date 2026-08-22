@@ -20,7 +20,9 @@
 # ============================================================
 set -uo pipefail
 cd "$(dirname "$0")/.."
-PSQL="docker exec -i supabase_db_local psql -U postgres -d postgres -v ON_ERROR_STOP=1"
+PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
+DB="${DB:-supabase_db_${PROJECT_ID}}"
+PSQL="docker exec -i $DB psql -U postgres -d postgres -v ON_ERROR_STOP=1"
 fallos=0
 chequear() {
   if [[ "$2" == "$3" ]]; then echo "  ✓ $1"; else echo "  ✗ $1 — esperaba '$2', obtuvo '$3'"; fallos=$((fallos+1)); fi
@@ -40,6 +42,23 @@ SELECT set_config('request.jwt.claims',
                     'role','authenticated')::text, false);
 SQL
 }
+$PSQL <<'SQL' >/dev/null
+INSERT INTO auth.users(
+  id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at
+)
+SELECT
+  'a5000000-0000-0000-0000-000000000002',
+  '00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+  'ncsf-admin@local.test','x',now(),now(),now()
+WHERE NOT EXISTS (SELECT 1 FROM auth.users WHERE email='ncsf-admin@local.test');
+UPDATE public.profiles
+   SET username='ncsf-admin',nombre_completo='Admin NCSF',
+       sucursal_id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),activo=true
+ WHERE id='a5000000-0000-0000-0000-000000000002';
+INSERT INTO public.user_roles(user_id,role)
+VALUES ('a5000000-0000-0000-0000-000000000002','admin')
+ON CONFLICT DO NOTHING;
+SQL
 MAIL=$(q "select u.email from auth.users u join public.user_roles r on r.user_id=u.id where r.role='admin' limit 1")
 [ -n "$MAIL" ] || { echo "No hay ningún admin en la base local. Corré ./scripts/crear-admin-local.sh"; exit 1; }
 

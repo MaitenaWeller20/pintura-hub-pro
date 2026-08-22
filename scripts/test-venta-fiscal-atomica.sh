@@ -857,6 +857,70 @@ END;
 $$;
 
 -- CAE productivo v2: una NC pendiente ligada al original y montos ARCA positivos por ABS.
+CREATE OR REPLACE FUNCTION pg_temp.factura_snapshot_v2(
+  p_venta_id uuid,
+  p_punto_venta integer,
+  p_numero integer,
+  p_total text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v public.ventas%ROWTYPE;
+  s jsonb;
+  h text;
+BEGIN
+  SELECT x.* INTO STRICT v FROM public.ventas x WHERE x.id=p_venta_id;
+  s := jsonb_build_object(
+    'version',2,'hash','',
+    'venta',jsonb_build_object(
+      'id',v.id,'numeroComercial',v.numero_comprobante,'tipoComprobante','VENTA',
+      'condicionVenta',v.condicion_venta,'fechaComercial','2026-08-22T12:00:00.000Z'
+    ),
+    'items',jsonb_build_array(jsonb_build_object(
+      'id','71000000-0000-4000-8000-000000000011',
+      'productoId','c4000000-0000-0000-0000-000000000001',
+      'codigo','P-1','descripcion','Pintura','cantidad','1.00',
+      'precioUnitarioSinIva','1000.00','descuentoPorcentaje','0.00',
+      'ivaPorcentaje','21.00','subtotalNeto','1000.00',
+      'importeIva','210.00','subtotalTotal',p_total
+    )),
+    'emisor',jsonb_build_object(
+      'id','71000000-0000-4000-8000-000000000201',
+      'razonSocial','APLICACIONES Y SERVICIOS S.R.L.','nombreFantasia','CasaForma',
+      'cuit','30714199664','domicilioFiscal','SARMIENTO 1398 - CÓRDOBA',
+      'condicionIva','RESPONSABLE_INSCRIPTO','ingresosBrutos','280970280',
+      'inicioActividades','2013-10-01','telefono','3513229459'
+    ),
+    'sucursal',jsonb_build_object(
+      'id',v.sucursal_id,'nombre','CasaForma','direccion','Sarmiento 1398','telefono',NULL
+    ),
+    'receptor',jsonb_build_object(
+      'razonSocial','T4 CLIENTE FISCAL','domicilio',NULL,'tipoDocumento','DNI',
+      'numeroDocumento','30111222','docTipoArca',96,'docNroArca','30111222',
+      'condicionIva','CONSUMIDOR_FINAL','origen','CLIENTE_COMERCIAL',
+      'origenId',v.cliente_id,'verificadoArcaAt',NULL,'condicionIvaReceptorId',5
+    ),
+    'identidad',jsonb_build_object(
+      'numero',p_numero,'emisorCuit','30714199664','puntoVenta',p_punto_venta,
+      'cbteTipo',6,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION'
+    ),
+    'letra','B','concepto',1,'fechaComprobante','2026-08-22',
+    'importeNeto','1000.00','importeExento','0.00','importeNoGravado','0.00',
+    'importeIva','210.00','importeTributos','0.00','importeTotal',p_total,
+    'alicuotasIva',jsonb_build_array(jsonb_build_object(
+      'id',5,'baseImponible','1000.00','importe','210.00'
+    )),
+    'tributos','[]'::jsonb,'moneda','PES','cotizacion','1.000000',
+    'ivaContenido','210.00','otrosImpuestosNacionalesIndirectos','0.00',
+    'origen','VENTA','comprobanteOriginalId',NULL,'cbtesAsoc','[]'::jsonb
+  );
+  h := public.fiscal_snapshot_hash(s);
+  RETURN jsonb_set(s,'{hash}',to_jsonb(h));
+END;
+$$;
+
 CREATE TEMP TABLE t_approved_original AS
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
@@ -870,26 +934,13 @@ UPDATE public.ventas
        afip_numero=997001,afip_modo='PRODUCCION',afip_simulado=false,
        afip_validez='PRODUCCION',afip_fecha_comprobante='2026-08-22',
        afip_imp_total=1210,
-       afip_snapshot=jsonb_build_object(
-         'version',2,'hash',repeat('d',64),'fechaComprobante','2026-08-22',
-         'importeTotal','1210.00','items','[]'::jsonb,
-         'receptor',jsonb_build_object(
-           'origen','CLIENTE_COMERCIAL','razonSocial','T4 CLIENTE FISCAL',
-           'tipoDocumento','DNI','numeroDocumento','30111222'
-         ),
-         'identidad',jsonb_build_object(
-           'numero',997001,'emisorCuit','30714199664','puntoVenta',997,
-           'cbteTipo',6,'modo','PRODUCCION','simulado',false
-         )
-       ),
-       afip_snapshot_hash=repeat('d',64),cae='CAE-T4-PROD',
+       afip_snapshot=pg_temp.factura_snapshot_v2(id,997,997001,'1210.00'),
+       afip_snapshot_hash=pg_temp.factura_snapshot_v2(id,997,997001,'1210.00')->>'hash',
+       cae='CAE-T4-PROD',
        cae_vencimiento='2026-09-01',afip_emitido_at=now()
  WHERE id=(SELECT venta_id FROM t_approved_original);
 UPDATE public.ventas
-   SET afip_snapshot_hash=public.fiscal_snapshot_hash(afip_snapshot),
-       afip_snapshot=jsonb_set(
-         afip_snapshot,'{hash}',to_jsonb(public.fiscal_snapshot_hash(afip_snapshot))
-       )
+   SET afip_snapshot_hash=afip_snapshot->>'hash'
  WHERE id=(SELECT venta_id FROM t_approved_original);
 
 -- SQL NULL no puede satisfacer el requisito de fase PERSISTIDO. La anulación
@@ -1063,12 +1114,14 @@ BEGIN
      AND v.afip_modo=p_modo
      AND NOT v.afip_simulado
      AND v.afip_numero IS NOT NULL;
-  v_snapshot := jsonb_build_object(
-    'version',2,
-    'hash','',
+  v_snapshot := (v_original.afip_snapshot-'hash') || jsonb_build_object(
+    'venta',jsonb_build_object(
+      'id',v_nc.id,'numeroComercial',v_nc.numero_comprobante,
+      'tipoComprobante','NOTA_CREDITO','condicionVenta',v_nc.condicion_venta,
+      'fechaComercial','2026-08-22T12:30:00.000Z'
+    ),
     'fechaComprobante','2026-08-22',
     'importeTotal',p_importe,
-    'items','[]'::jsonb,
     'receptor',COALESCE(p_receptor,v_original.afip_snapshot->'receptor'),
     'identidad',jsonb_build_object(
       'numero',v_max+1,
@@ -1076,7 +1129,8 @@ BEGIN
       'puntoVenta',v_original.afip_punto_venta,
       'cbteTipo',p_cbte_tipo,
       'modo',p_modo,
-      'simulado',false
+      'simulado',false,
+      'validez',p_validez
     ),
     'origen',p_origen,
     'comprobanteOriginalId',COALESCE(p_original_id,v_original.id::text),
@@ -1086,6 +1140,7 @@ BEGIN
         'tipo',v_original.afip_cbte_tipo,
         'puntoVenta',v_original.afip_punto_venta,
         'numero',v_original.afip_numero,
+        'cuit',v_original.afip_emisor_cuit,
         'fecha',v_original.afip_fecha_comprobante::text
       ))
     )
@@ -1158,6 +1213,19 @@ SELECT
       (pg_temp.nc_reserva_payload()->'snapshot')-'comprobanteOriginalId'::text
     )
   );
+INSERT INTO t_nc_reservas_invalidas VALUES
+  ('emisor no heredado',pg_temp.rehash_reserva_payload(
+    jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,emisor,razonSocial}',to_jsonb('OTRO EMISOR'::text))
+  )),
+  ('sucursal no heredada',pg_temp.rehash_reserva_payload(
+    jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,sucursal,nombre}',to_jsonb('OTRA SUCURSAL'::text))
+  )),
+  ('moneda no heredada',pg_temp.rehash_reserva_payload(
+    jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,moneda}',to_jsonb('USD'::text))
+  )),
+  ('CUIT asociado no heredado',pg_temp.rehash_reserva_payload(
+    jsonb_set(pg_temp.nc_reserva_payload(),'{snapshot,cbtesAsoc,0,cuit}',to_jsonb('30717322467'::text))
+  ));
 
 CREATE TEMP TABLE t_nc_invalidas_aceptadas(caso text PRIMARY KEY);
 DO $$
@@ -1174,7 +1242,8 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
       IF SQLERRM='T4_NC_INVALIDA_ACEPTADA' THEN
         INSERT INTO t_nc_invalidas_aceptadas VALUES (r.caso);
-      ELSIF SQLERRM NOT LIKE 'NC asociada:%' THEN
+      ELSIF SQLERRM NOT LIKE 'NC asociada:%'
+            AND SQLERRM NOT LIKE 'snapshot v2:%' THEN
         RAISE;
       END IF;
     END;
@@ -1243,6 +1312,11 @@ SELECT pg_temp.assert_true(
        AND nc.afip_snapshot->'receptor'=o.afip_snapshot->'receptor'
        AND nc.afip_snapshot->>'origen'='COMPROBANTE_ORIGINAL'
        AND nc.afip_snapshot->>'comprobanteOriginalId'=o.id::text
+       AND nc.afip_snapshot#>>'{cbtesAsoc,0,cuit}'=o.afip_emisor_cuit
+       AND nc.afip_snapshot->'emisor'=o.afip_snapshot->'emisor'
+       AND nc.afip_snapshot->'sucursal'=o.afip_snapshot->'sucursal'
+       AND nc.afip_snapshot->>'moneda'=o.afip_snapshot->>'moneda'
+       AND nc.afip_snapshot->>'cotizacion'=o.afip_snapshot->>'cotizacion'
      FROM public.ventas nc
      JOIN public.ventas o ON o.id=nc.afip_cbte_asoc_id
     WHERE nc.id=(SELECT nc_id FROM t_nc_result)),
@@ -1531,16 +1605,45 @@ SELECT
   'CTA_CTE',100,21,121,0,'PENDIENTE','APROBADO','PERSISTIDO',2,
   '30714199664',992,6,992001,'PRODUCCION',false,'PRODUCCION','2026-08-22',121,
   jsonb_build_object(
-    'version',2,'hash',repeat('a',64),'fechaComprobante','2026-08-22',
-    'importeTotal','121.00','items','[]'::jsonb,
+    'version',2,'hash',repeat('a',64),
+    'venta',jsonb_build_object(
+      'id','f4000000-0000-0000-0000-000000000112',
+      'numeroComercial','T4-ORIGINAL-ANULAR-RACE','tipoComprobante','VENTA',
+      'condicionVenta','CTA_CTE','fechaComercial','2026-08-22T12:00:00.000Z'
+    ),
+    'items',jsonb_build_array(jsonb_build_object(
+      'id','71000000-0000-4000-8000-000000000011','productoId',NULL,
+      'codigo','P-1','descripcion','Pintura','cantidad','1.00',
+      'precioUnitarioSinIva','100.00','descuentoPorcentaje','0.00',
+      'ivaPorcentaje','21.00','subtotalNeto','100.00',
+      'importeIva','21.00','subtotalTotal','121.00'
+    )),
+    'emisor',jsonb_build_object(
+      'id','71000000-0000-4000-8000-000000000201',
+      'razonSocial','APLICACIONES Y SERVICIOS S.R.L.','nombreFantasia','CasaForma',
+      'cuit','30714199664','domicilioFiscal','SARMIENTO 1398 - CÓRDOBA',
+      'condicionIva','RESPONSABLE_INSCRIPTO','ingresosBrutos','280970280',
+      'inicioActividades','2013-10-01','telefono',NULL
+    ),
+    'sucursal',jsonb_build_object('id',id,'nombre','CasaForma','direccion','Sarmiento 1398','telefono',NULL),
     'receptor',jsonb_build_object(
-      'origen','CLIENTE_COMERCIAL','razonSocial','T4 LOCK CLIENTE',
-      'tipoDocumento','DNI','numeroDocumento','30111222'
+      'razonSocial','T4 LOCK CLIENTE','domicilio',NULL,'tipoDocumento','DNI',
+      'numeroDocumento','30111222','docTipoArca',96,'docNroArca','30111222',
+      'condicionIva','CONSUMIDOR_FINAL','origen','CLIENTE_COMERCIAL',
+      'origenId','b4000000-0000-0000-0000-000000000101','verificadoArcaAt',NULL,
+      'condicionIvaReceptorId',5
     ),
     'identidad',jsonb_build_object(
       'numero',992001,'emisorCuit','30714199664','puntoVenta',992,
-      'cbteTipo',6,'modo','PRODUCCION','simulado',false
-    )
+      'cbteTipo',6,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION'
+    ),
+    'letra','B','concepto',1,'fechaComprobante','2026-08-22',
+    'importeNeto','100.00','importeExento','0.00','importeNoGravado','0.00',
+    'importeIva','21.00','importeTributos','0.00','importeTotal','121.00',
+    'alicuotasIva',jsonb_build_array(jsonb_build_object('id',5,'baseImponible','100.00','importe','21.00')),
+    'tributos','[]'::jsonb,'moneda','PES','cotizacion','1.000000',
+    'ivaContenido','21.00','otrosImpuestosNacionalesIndirectos','0.00',
+    'origen','VENTA','comprobanteOriginalId',NULL,'cbtesAsoc','[]'::jsonb
   ),repeat('a',64),'CAE-T4-ANULAR-RACE','2026-09-01',now()
 FROM public.sucursales ORDER BY numero LIMIT 1;
 UPDATE public.ventas
@@ -1635,16 +1738,45 @@ SELECT
   'APROBADO','PERSISTIDO',2,'30714199664',991,6,991001,'PRODUCCION',
   false,'PRODUCCION','2026-08-22',121,
   jsonb_build_object(
-    'version',2,'hash',repeat('f',64),'fechaComprobante','2026-08-22',
-    'importeTotal','121.00','items','[]'::jsonb,
+    'version',2,'hash',repeat('f',64),
+    'venta',jsonb_build_object(
+      'id','f4000000-0000-0000-0000-000000000110',
+      'numeroComercial','T4-ORIGINAL-RACE','tipoComprobante','VENTA',
+      'condicionVenta','CTA_CTE','fechaComercial','2026-08-22T12:00:00.000Z'
+    ),
+    'items',jsonb_build_array(jsonb_build_object(
+      'id','71000000-0000-4000-8000-000000000011','productoId',NULL,
+      'codigo','P-1','descripcion','Pintura','cantidad','1.00',
+      'precioUnitarioSinIva','100.00','descuentoPorcentaje','0.00',
+      'ivaPorcentaje','21.00','subtotalNeto','100.00',
+      'importeIva','21.00','subtotalTotal','121.00'
+    )),
+    'emisor',jsonb_build_object(
+      'id','71000000-0000-4000-8000-000000000201',
+      'razonSocial','APLICACIONES Y SERVICIOS S.R.L.','nombreFantasia','CasaForma',
+      'cuit','30714199664','domicilioFiscal','SARMIENTO 1398 - CÓRDOBA',
+      'condicionIva','RESPONSABLE_INSCRIPTO','ingresosBrutos','280970280',
+      'inicioActividades','2013-10-01','telefono',NULL
+    ),
+    'sucursal',jsonb_build_object('id',id,'nombre','CasaForma','direccion','Sarmiento 1398','telefono',NULL),
     'receptor',jsonb_build_object(
-      'origen','CLIENTE_COMERCIAL','razonSocial','T4 LOCK CLIENTE',
-      'tipoDocumento','DNI','numeroDocumento','30111222'
+      'razonSocial','T4 LOCK CLIENTE','domicilio',NULL,'tipoDocumento','DNI',
+      'numeroDocumento','30111222','docTipoArca',96,'docNroArca','30111222',
+      'condicionIva','CONSUMIDOR_FINAL','origen','CLIENTE_COMERCIAL',
+      'origenId','b4000000-0000-0000-0000-000000000101','verificadoArcaAt',NULL,
+      'condicionIvaReceptorId',5
     ),
     'identidad',jsonb_build_object(
       'numero',991001,'emisorCuit','30714199664','puntoVenta',991,
-      'cbteTipo',6,'modo','PRODUCCION','simulado',false
-    )
+      'cbteTipo',6,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION'
+    ),
+    'letra','B','concepto',1,'fechaComprobante','2026-08-22',
+    'importeNeto','100.00','importeExento','0.00','importeNoGravado','0.00',
+    'importeIva','21.00','importeTributos','0.00','importeTotal','121.00',
+    'alicuotasIva',jsonb_build_array(jsonb_build_object('id',5,'baseImponible','100.00','importe','21.00')),
+    'tributos','[]'::jsonb,'moneda','PES','cotizacion','1.000000',
+    'ivaContenido','21.00','otrosImpuestosNacionalesIndirectos','0.00',
+    'origen','VENTA','comprobanteOriginalId',NULL,'cbtesAsoc','[]'::jsonb
   ),repeat('f',64),'CAE-T4-RACE','2026-09-01',now()
 FROM public.sucursales ORDER BY numero LIMIT 1;
 INSERT INTO public.ventas(
@@ -1700,21 +1832,28 @@ fi
 if NC_RACE_OUTPUT="$({
   docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq <<'SQL'
 WITH base AS (
-  SELECT jsonb_build_object(
-    'version',2,'hash','','fechaComprobante','2026-08-22',
-    'importeTotal','121.00','items','[]'::jsonb,
-    'receptor',o.afip_snapshot->'receptor',
+  SELECT (o.afip_snapshot-'hash') || jsonb_build_object(
+    'venta',jsonb_build_object(
+      'id',nc.id,'numeroComercial',nc.numero_comprobante,
+      'tipoComprobante','NOTA_CREDITO','condicionVenta',nc.condicion_venta,
+      'fechaComercial','2026-08-22T12:30:00.000Z'
+    ),
+    'fechaComprobante','2026-08-22',
     'identidad',jsonb_build_object(
       'numero',1,'emisorCuit',o.afip_emisor_cuit,'puntoVenta',o.afip_punto_venta,
-      'cbteTipo',8,'modo',o.afip_modo,'simulado',o.afip_simulado
+      'cbteTipo',8,'modo',o.afip_modo,'simulado',o.afip_simulado,
+      'validez',o.afip_validez
     ),
     'origen','COMPROBANTE_ORIGINAL','comprobanteOriginalId',o.id::text,
     'cbtesAsoc',jsonb_build_array(jsonb_build_object(
       'tipo',o.afip_cbte_tipo,'puntoVenta',o.afip_punto_venta,
-      'numero',o.afip_numero,'fecha',o.afip_fecha_comprobante::text
+      'numero',o.afip_numero,'cuit',o.afip_emisor_cuit,
+      'fecha',o.afip_fecha_comprobante::text
     ))
   ) AS snapshot
-  FROM public.ventas o WHERE o.id='f4000000-0000-0000-0000-000000000110'
+  FROM public.ventas o
+  JOIN public.ventas nc ON nc.afip_cbte_asoc_id=o.id
+  WHERE o.id='f4000000-0000-0000-0000-000000000110'
 ), payload AS (
   SELECT b.snapshot,public.fiscal_snapshot_hash(b.snapshot) AS hash FROM base b
 )

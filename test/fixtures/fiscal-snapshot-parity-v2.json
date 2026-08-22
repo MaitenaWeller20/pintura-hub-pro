@@ -1,31 +1,124 @@
 {
   "input": {
     "version": 2,
-    "hash": "0a723c78e12741e06048660e5928d96f2e9b8da7ae65346ae4be45fd16967076",
-    "identidad": {
-      "numero": 1,
-      "emisorCuit": "30900000001",
-      "puntoVenta": 990,
-      "cbteTipo": 1,
-      "modo": "PRODUCCION",
-      "simulado": false
+    "hash": "654e81eef4b7d1673eeabf7b6ffeb1e147a230f151cff7211f2e095134e4d705",
+    "venta": {
+      "id": "71000000-0000-4000-8000-000000000001",
+      "numeroComercial": "V-00001",
+      "tipoComprobante": "VENTA",
+      "condicionVenta": "CONTADO",
+      "fechaComercial": "2026-08-20T15:00:00.000Z"
     },
-    "fechaComprobante": "2026-08-22",
-    "receptor": {
-      "tipoDocumento": "CUIT",
-      "numeroDocumento": "30714199664",
-      "razonSocial": "RECEPTOR UNO"
-    },
-    "importeTotal": "1210.00",
     "items": [
       {
-        "id": "a",
+        "id": "71000000-0000-4000-8000-000000000011",
+        "productoId": "71000000-0000-4000-8000-000000000101",
+        "codigo": "P-1",
+        "descripcion": "Pintura interior",
+        "cantidad": "2.00",
+        "precioUnitarioSinIva": "500.00",
+        "descuentoPorcentaje": "0.00",
+        "ivaPorcentaje": "21.00",
+        "subtotalNeto": "1000.00",
+        "importeIva": "210.00",
+        "subtotalTotal": "1210.00"
+      },
+      {
+        "id": "71000000-0000-4000-8000-000000000012",
+        "productoId": "71000000-0000-4000-8000-000000000102",
+        "codigo": "E-1",
+        "descripcion": "Artículo exento",
         "cantidad": "1.00",
-        "importe": "1210.00"
+        "precioUnitarioSinIva": "100.00",
+        "descuentoPorcentaje": "0.00",
+        "ivaPorcentaje": "0.00",
+        "subtotalNeto": "100.00",
+        "importeIva": "0.00",
+        "subtotalTotal": "100.00"
+      },
+      {
+        "id": "71000000-0000-4000-8000-000000000013",
+        "productoId": null,
+        "codigo": "NG-1",
+        "descripcion": "Concepto no gravado",
+        "cantidad": "1.00",
+        "precioUnitarioSinIva": "50.00",
+        "descuentoPorcentaje": "0.00",
+        "ivaPorcentaje": "0.00",
+        "subtotalNeto": "50.00",
+        "importeIva": "0.00",
+        "subtotalTotal": "50.00"
       }
-    ]
+    ],
+    "emisor": {
+      "id": "71000000-0000-4000-8000-000000000201",
+      "razonSocial": "APLICACIONES Y SERVICIOS S.R.L.",
+      "nombreFantasia": "CasaForma",
+      "cuit": "30714199664",
+      "domicilioFiscal": "SARMIENTO 1398 - CÓRDOBA",
+      "condicionIva": "RESPONSABLE_INSCRIPTO",
+      "ingresosBrutos": "280970280",
+      "inicioActividades": "2013-10-01",
+      "telefono": "3513229459"
+    },
+    "sucursal": {
+      "id": "71000000-0000-4000-8000-000000000301",
+      "nombre": "CasaForma General Paz",
+      "direccion": "Sarmiento 1398 - Córdoba",
+      "telefono": "3513229459"
+    },
+    "receptor": {
+      "razonSocial": "CLIENTE FINAL",
+      "domicilio": "Av. Siempre Viva 742",
+      "tipoDocumento": "DNI",
+      "numeroDocumento": "30123456",
+      "docTipoArca": 96,
+      "docNroArca": "30123456",
+      "condicionIva": "CONSUMIDOR_FINAL",
+      "origen": "MANUAL",
+      "origenId": null,
+      "verificadoArcaAt": null,
+      "condicionIvaReceptorId": 5
+    },
+    "identidad": {
+      "numero": 1,
+      "emisorCuit": "30714199664",
+      "puntoVenta": 5,
+      "cbteTipo": 6,
+      "modo": "PRODUCCION",
+      "simulado": false,
+      "validez": "PRODUCCION"
+    },
+    "letra": "B",
+    "concepto": 1,
+    "fechaComprobante": "2026-08-22",
+    "importeNeto": "1000.00",
+    "importeExento": "100.00",
+    "importeNoGravado": "50.00",
+    "importeIva": "210.00",
+    "importeTributos": "20.00",
+    "importeTotal": "1380.00",
+    "alicuotasIva": [
+      { "id": 5, "baseImponible": "1000.00", "importe": "210.00" }
+    ],
+    "tributos": [
+      {
+        "id": 1,
+        "descripcion": "Impuesto interno",
+        "baseImponible": "1000.00",
+        "alicuota": "2.00",
+        "importe": "20.00"
+      }
+    ],
+    "moneda": "PES",
+    "cotizacion": "1.000000",
+    "ivaContenido": "210.00",
+    "otrosImpuestosNacionalesIndirectos": "20.00",
+    "origen": "VENTA",
+    "comprobanteOriginalId": null,
+    "cbtesAsoc": []
   },
-  "canonical": "{\"fechaComprobante\":\"2026-08-22\",\"identidad\":{\"cbteTipo\":1,\"emisorCuit\":\"30900000001\",\"modo\":\"PRODUCCION\",\"numero\":1,\"puntoVenta\":990,\"simulado\":false},\"importeTotal\":\"1210.00\",\"items\":[{\"cantidad\":\"1.00\",\"id\":\"a\",\"importe\":\"1210.00\"}],\"receptor\":{\"numeroDocumento\":\"30714199664\",\"razonSocial\":\"RECEPTOR UNO\",\"tipoDocumento\":\"CUIT\"},\"version\":2}",
-  "sha256": "0a723c78e12741e06048660e5928d96f2e9b8da7ae65346ae4be45fd16967076",
-  "downstreamConsumer": "Task 7: snapshot.test.ts imports this JSON fixture verbatim"
+  "canonical": "{\"alicuotasIva\":[{\"baseImponible\":\"1000.00\",\"id\":5,\"importe\":\"210.00\"}],\"cbtesAsoc\":[],\"comprobanteOriginalId\":null,\"concepto\":1,\"cotizacion\":\"1.000000\",\"emisor\":{\"condicionIva\":\"RESPONSABLE_INSCRIPTO\",\"cuit\":\"30714199664\",\"domicilioFiscal\":\"SARMIENTO 1398 - CÓRDOBA\",\"id\":\"71000000-0000-4000-8000-000000000201\",\"ingresosBrutos\":\"280970280\",\"inicioActividades\":\"2013-10-01\",\"nombreFantasia\":\"CasaForma\",\"razonSocial\":\"APLICACIONES Y SERVICIOS S.R.L.\",\"telefono\":\"3513229459\"},\"fechaComprobante\":\"2026-08-22\",\"identidad\":{\"cbteTipo\":6,\"emisorCuit\":\"30714199664\",\"modo\":\"PRODUCCION\",\"numero\":1,\"puntoVenta\":5,\"simulado\":false,\"validez\":\"PRODUCCION\"},\"importeExento\":\"100.00\",\"importeIva\":\"210.00\",\"importeNeto\":\"1000.00\",\"importeNoGravado\":\"50.00\",\"importeTotal\":\"1380.00\",\"importeTributos\":\"20.00\",\"items\":[{\"cantidad\":\"2.00\",\"codigo\":\"P-1\",\"descripcion\":\"Pintura interior\",\"descuentoPorcentaje\":\"0.00\",\"id\":\"71000000-0000-4000-8000-000000000011\",\"importeIva\":\"210.00\",\"ivaPorcentaje\":\"21.00\",\"precioUnitarioSinIva\":\"500.00\",\"productoId\":\"71000000-0000-4000-8000-000000000101\",\"subtotalNeto\":\"1000.00\",\"subtotalTotal\":\"1210.00\"},{\"cantidad\":\"1.00\",\"codigo\":\"E-1\",\"descripcion\":\"Artículo exento\",\"descuentoPorcentaje\":\"0.00\",\"id\":\"71000000-0000-4000-8000-000000000012\",\"importeIva\":\"0.00\",\"ivaPorcentaje\":\"0.00\",\"precioUnitarioSinIva\":\"100.00\",\"productoId\":\"71000000-0000-4000-8000-000000000102\",\"subtotalNeto\":\"100.00\",\"subtotalTotal\":\"100.00\"},{\"cantidad\":\"1.00\",\"codigo\":\"NG-1\",\"descripcion\":\"Concepto no gravado\",\"descuentoPorcentaje\":\"0.00\",\"id\":\"71000000-0000-4000-8000-000000000013\",\"importeIva\":\"0.00\",\"ivaPorcentaje\":\"0.00\",\"precioUnitarioSinIva\":\"50.00\",\"productoId\":null,\"subtotalNeto\":\"50.00\",\"subtotalTotal\":\"50.00\"}],\"ivaContenido\":\"210.00\",\"letra\":\"B\",\"moneda\":\"PES\",\"origen\":\"VENTA\",\"otrosImpuestosNacionalesIndirectos\":\"20.00\",\"receptor\":{\"condicionIva\":\"CONSUMIDOR_FINAL\",\"condicionIvaReceptorId\":5,\"docNroArca\":\"30123456\",\"docTipoArca\":96,\"domicilio\":\"Av. Siempre Viva 742\",\"numeroDocumento\":\"30123456\",\"origen\":\"MANUAL\",\"origenId\":null,\"razonSocial\":\"CLIENTE FINAL\",\"tipoDocumento\":\"DNI\",\"verificadoArcaAt\":null},\"sucursal\":{\"direccion\":\"Sarmiento 1398 - Córdoba\",\"id\":\"71000000-0000-4000-8000-000000000301\",\"nombre\":\"CasaForma General Paz\",\"telefono\":\"3513229459\"},\"tributos\":[{\"alicuota\":\"2.00\",\"baseImponible\":\"1000.00\",\"descripcion\":\"Impuesto interno\",\"id\":1,\"importe\":\"20.00\"}],\"venta\":{\"condicionVenta\":\"CONTADO\",\"fechaComercial\":\"2026-08-20T15:00:00.000Z\",\"id\":\"71000000-0000-4000-8000-000000000001\",\"numeroComercial\":\"V-00001\",\"tipoComprobante\":\"VENTA\"},\"version\":2}",
+  "sha256": "654e81eef4b7d1673eeabf7b6ffeb1e147a230f151cff7211f2e095134e4d705",
+  "downstreamConsumer": "Task 7: snapshot.test.ts and PostgreSQL contracts consume this fixture verbatim"
 }

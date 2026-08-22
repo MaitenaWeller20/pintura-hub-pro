@@ -100,11 +100,44 @@ crear_snapshot() {
   local numero="$1" cuit="$2" pv="$3" tipo="$4" modo="$5" simulado="$6"
   local receptor_documento="$7" receptor_nombre="$8" total="$9"
   local canonical
-  canonical=$(printf '%s' \
-    "{\"fechaComprobante\":\"2026-08-22\",\"identidad\":{\"cbteTipo\":${tipo},\"emisorCuit\":\"${cuit}\",\"modo\":\"${modo}\",\"numero\":${numero},\"puntoVenta\":${pv},\"simulado\":${simulado}},\"importeTotal\":\"${total}\",\"items\":[{\"cantidad\":\"1.00\",\"id\":\"a\",\"importe\":\"${total}\"}],\"receptor\":{\"numeroDocumento\":\"${receptor_documento}\",\"razonSocial\":\"${receptor_nombre}\",\"tipoDocumento\":\"CUIT\"},\"version\":2}")
+  canonical=$(jq -cS \
+    --argjson numero "$numero" --arg cuit "$cuit" --argjson pv "$pv" \
+    --argjson tipo "$tipo" --arg modo "$modo" --argjson simulado "$simulado" \
+    --arg receptor_documento "$receptor_documento" \
+    --arg receptor_nombre "$receptor_nombre" --arg total "$total" '
+      .input | del(.hash)
+      | .emisor.cuit=$cuit
+      | .receptor={
+          razonSocial:$receptor_nombre,domicilio:"Domicilio fiscal",
+          tipoDocumento:"CUIT",numeroDocumento:$receptor_documento,
+          docTipoArca:80,docNroArca:$receptor_documento,
+          condicionIva:"RESPONSABLE_INSCRIPTO",origen:"MANUAL",
+          origenId:null,verificadoArcaAt:null,condicionIvaReceptorId:1
+        }
+      | .identidad={
+          numero:$numero,emisorCuit:$cuit,puntoVenta:$pv,cbteTipo:$tipo,
+          modo:$modo,simulado:$simulado,
+          validez:(if $simulado then "SIMULADA" else $modo end)
+        }
+      | .letra="A"
+      | .items=[{
+          id:"71000000-0000-4000-8000-000000000011",
+          productoId:"71000000-0000-4000-8000-000000000101",
+          codigo:"P-1",descripcion:"Pintura",cantidad:"1.00",
+          precioUnitarioSinIva:"1000.00",descuentoPorcentaje:"0.00",
+          ivaPorcentaje:"21.00",subtotalNeto:"1000.00",
+          importeIva:"210.00",subtotalTotal:$total
+        }]
+      | .importeNeto="1000.00" | .importeExento="0.00"
+      | .importeNoGravado="0.00" | .importeIva="210.00"
+      | .importeTributos="0.00" | .importeTotal=$total
+      | .alicuotasIva=[{id:5,baseImponible:"1000.00",importe:"210.00"}]
+      | .tributos=[] | .ivaContenido="0.00"
+      | .otrosImpuestosNacionalesIndirectos="0.00"
+      | .origen="VENTA" | .comprobanteOriginalId=null | .cbtesAsoc=[]
+    ' "$PARITY_FIXTURE")
   SNAPSHOT_HASH="$(printf '%s' "$canonical" | shasum -a 256 | awk '{print $1}')"
-  SNAPSHOT=$(printf '%s' \
-    "{\"version\":2,\"hash\":\"${SNAPSHOT_HASH}\",\"identidad\":{\"numero\":${numero},\"emisorCuit\":\"${cuit}\",\"puntoVenta\":${pv},\"cbteTipo\":${tipo},\"modo\":\"${modo}\",\"simulado\":${simulado}},\"fechaComprobante\":\"2026-08-22\",\"receptor\":{\"tipoDocumento\":\"CUIT\",\"numeroDocumento\":\"${receptor_documento}\",\"razonSocial\":\"${receptor_nombre}\"},\"importeTotal\":\"${total}\",\"items\":[{\"id\":\"a\",\"cantidad\":\"1.00\",\"importe\":\"${total}\"}]}")
+  SNAPSHOT=$(jq -c --arg hash "$SNAPSHOT_HASH" '. + {hash:$hash}' <<<"$canonical")
 }
 
 claim() {
@@ -171,7 +204,7 @@ FROM generate_series(1,40) AS n;
 SQL
 
 echo "== Matriz estado/fase =="
-identity_sql="afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_emisor_cuit='30900000001',afip_punto_venta=990,afip_cbte_tipo=1,afip_numero=1,afip_modo='PRODUCCION',afip_simulado=false,afip_validez='PRODUCCION',afip_fecha_comprobante='2026-08-22',afip_snapshot='$PARITY_INPUT'::jsonb,afip_snapshot_hash='$PARITY_HASH',afip_imp_total=1210.00,afip_version=2"
+identity_sql="afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_emisor_cuit='30900000010',afip_punto_venta=990,afip_cbte_tipo=1,afip_numero=1,afip_modo='PRODUCCION',afip_simulado=false,afip_validez='PRODUCCION',afip_fecha_comprobante='2026-08-22',afip_snapshot='$PARITY_INPUT'::jsonb,afip_snapshot_hash='$PARITY_HASH',afip_imp_total=1210.00,afip_version=2"
 identity_sql_validez_null="${identity_sql/afip_validez=\'PRODUCCION\'/afip_validez=NULL}"
 expect_fail_like "PERSISTIDO no es una fase válida de EMITIENDO" "ck_ventas_afip_estado_integridad" \
   "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='PERSISTIDO',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000017'; ROLLBACK;"
@@ -188,7 +221,7 @@ expect_fail_like "RESERVADO exige identidad fiscal completa y snapshot coherente
 expect_fail_like "RESERVADO rechaza identidad completa con afip_validez NULL" "ck_ventas_afip_estado_integridad" \
   "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='RESERVADO',$identity_sql_validez_null WHERE id='c3000000-0000-0000-0000-000000000026'; ROLLBACK;"
 check_sql "la excepción legacy APROBADO versión 0 sigue siendo válida" "1" \
-  "BEGIN; UPDATE public.ventas SET afip_estado='APROBADO',afip_fase=NULL,afip_version=0,afip_numero=9001,afip_emisor_cuit='30900000001',afip_punto_venta=990,afip_cbte_tipo=1,afip_modo='PRODUCCION',cae='CAE-LEGACY' WHERE id='c3000000-0000-0000-0000-000000000022'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000022' AND afip_estado='APROBADO'; ROLLBACK;"
+  "BEGIN; UPDATE public.ventas SET afip_estado='APROBADO',afip_fase=NULL,afip_version=0,afip_numero=9001,afip_emisor_cuit='30900000010',afip_punto_venta=990,afip_cbte_tipo=1,afip_modo='PRODUCCION',cae='CAE-LEGACY' WHERE id='c3000000-0000-0000-0000-000000000022'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000022' AND afip_estado='APROBADO'; ROLLBACK;"
 check_sql "la excepción aditiva EMITIENDO sin fase sigue siendo válida" "1" \
   "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase=NULL,afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_snapshot='$PARITY_INPUT'::jsonb,afip_snapshot_hash='$PARITY_HASH',afip_version=2 WHERE id='c3000000-0000-0000-0000-000000000023'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000023' AND afip_estado='EMITIENDO'; ROLLBACK;"
 check_sql "la excepción aditiva RECONCILIAR sin fase sigue siendo válida" "1" \
@@ -256,6 +289,9 @@ check "authenticated no actualiza ventas ni escribe intentos" \
 check "el helper de hash es interno y no está otorgado a roles API" \
   "false|false|false|false" \
   "$(q "SELECT has_function_privilege('public','public.fiscal_snapshot_hash(jsonb)','execute')::text||'|'||has_function_privilege('anon','public.fiscal_snapshot_hash(jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.fiscal_snapshot_hash(jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.fiscal_snapshot_hash(jsonb)','execute')::text")"
+check "sólo service_role puede ejecutar el validador v2" \
+  "false|false|false|true" \
+  "$(q "SELECT has_function_privilege('public','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('anon','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text")"
 check "fixture canónico PostgreSQL/Task 7 tiene SHA-256 determinista" \
   "$PARITY_HASH" \
   "$(q "SELECT public.fiscal_snapshot_hash('$PARITY_INPUT'::jsonb)")"
@@ -264,7 +300,32 @@ check "fixture compartido conserva la serialización canónica recursiva" \
   "$(q "SELECT public.fiscal_json_canonico('$PARITY_INPUT'::jsonb-'hash')")"
 check "el orden de claves JSON no altera el hash" \
   "$PARITY_HASH" \
-  "$(q "SELECT public.fiscal_snapshot_hash(jsonb_build_object('version',2,'receptor',jsonb_build_object('tipoDocumento','CUIT','razonSocial','RECEPTOR UNO','numeroDocumento','30714199664'),'items',jsonb_build_array(jsonb_build_object('importe','1210.00','id','a','cantidad','1.00')),'importeTotal','1210.00','identidad',jsonb_build_object('simulado',false,'puntoVenta',990,'numero',1,'modo','PRODUCCION','emisorCuit','30900000001','cbteTipo',1),'fechaComprobante','2026-08-22','hash','$PARITY_HASH'))")"
+  "$(q "SELECT public.fiscal_snapshot_hash(('$PARITY_INPUT'::jsonb-'version')||jsonb_build_object('version',2))")"
+check_sql "PostgreSQL valida el fixture v2 compartido completo" "" \
+  "SELECT public.validar_snapshot_fiscal_v2('$PARITY_INPUT'::jsonb);"
+
+expect_snapshot_invalido() {
+  local name="$1" filter="$2" pattern="$3" body hash snapshot
+  body="$(jq -cS "$filter | del(.hash)" <<<"$PARITY_INPUT")"
+  hash="$(printf '%s' "$body" | shasum -a 256 | awk '{print $1}')"
+  snapshot="$(jq -c --arg hash "$hash" '. + {hash:$hash}' <<<"$body")"
+  expect_fail_like "$name" "$pattern" \
+    "SELECT public.validar_snapshot_fiscal_v2('$snapshot'::jsonb);"
+}
+expect_snapshot_invalido "v2 rechaza claves anidadas desconocidas" \
+  '.receptor.extra=true' 'receptor.*(incompleto|inválido)'
+expect_snapshot_invalido "v2 rechaza claves anidadas faltantes" \
+  'del(.items[0].codigo)' 'item.*(incompleto|incoherente)'
+expect_snapshot_invalido "v2 rechaza importes JSON numéricos" \
+  '.importeTotal=1380' 'importes.*strings'
+expect_snapshot_invalido "v2 rechaza alícuotas duplicadas" \
+  '.alicuotasIva=[.alicuotasIva[0],.alicuotasIva[0]]' 'alícuotas.*(desordenadas|duplicadas)'
+expect_snapshot_invalido "v2 rechaza tributos duplicados" \
+  '.tributos=[.tributos[0],.tributos[0]]' 'tributos.*(desordenados|duplicados)'
+expect_snapshot_invalido "v2 rechaza arrays fuera del orden de dominio" \
+  '.items |= reverse' 'items.*(desordenados|duplicados)'
+expect_snapshot_invalido "v2 rechaza modo y validez incoherentes" \
+  '.identidad.validez="HOMOLOGACION"' 'identidad.*incoherente'
 
 expect_fail_like "authenticated no llama la RPC" "permission denied for function" \
   "RESET ROLE; SET ROLE authenticated; SELECT public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000014','CANCELAR',NULL,'{\"expected_version\":0}'::jsonb);"
@@ -274,10 +335,10 @@ expect_fail_like "authenticated no modifica columnas fiscales directamente" "per
 echo
 echo "== Validación optimista, token y allowlists =="
 claim 'c3000000-0000-0000-0000-000000000015' 'd3000000-0000-0000-0000-000000000015' >/dev/null
-crear_snapshot 1 30900000015 995 1 PRODUCCION false 30714199664 'RECEPTOR STALE' 1210.00
+crear_snapshot 1 30900000150 995 1 PRODUCCION false 30714199664 'RECEPTOR STALE' 1210.00
 reserva_base="$(jq -cn \
   --argjson snapshot "$SNAPSHOT" --arg hash "$SNAPSHOT_HASH" \
-  '{expected_version:1,snapshot:$snapshot,snapshot_hash:$hash,numero_propuesto:1,fecha_comprobante:"2026-08-22",emisor_cuit:"30900000015",punto_venta:995,cbte_tipo:1,modo:"PRODUCCION",simulado:false,validez:"PRODUCCION",ultimo_remoto:0,ultimo_local_observado:0}')"
+  '{expected_version:1,snapshot:$snapshot,snapshot_hash:$hash,numero_propuesto:1,fecha_comprobante:"2026-08-22",emisor_cuit:"30900000150",punto_venta:995,cbte_tipo:1,modo:"PRODUCCION",simulado:false,validez:"PRODUCCION",ultimo_remoto:0,ultimo_local_observado:0}')"
 expect_reserva_invalida() {
   local name="$1" filter="$2" payload
   payload="$(jq -c "$filter" <<<"$reserva_base")"
@@ -306,9 +367,9 @@ expect_reserva_invalida "RESERVAR rechaza scalar de identidad snapshot con tipo 
 expect_reserva_invalida "RESERVAR rechaza snapshot_hash JSON null" '.snapshot_hash=null'
 expect_reserva_invalida "RESERVAR rechaza snapshot_hash no string" '.snapshot_hash=123'
 expect_fail_like "expected_version obsoleto levanta error" "versi.n esperada" \
-  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015',jsonb_build_object('expected_version',0,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000015','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
+  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015',jsonb_build_object('expected_version',0,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000150','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
 expect_fail_like "un token ajeno levanta error" "token.*no coincide" \
-  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000099',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000015','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
+  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000099',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000150','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
 check "fallos optimistas no mutan la venta ni el intento" "EMITIENDO|PREFLIGHT|1|1" \
   "$(q "SELECT v.afip_estado||'|'||v.afip_fase||'|'||v.afip_version||'|'||count(i.id) FROM public.ventas v LEFT JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000015' GROUP BY v.id")"
 
@@ -328,14 +389,14 @@ echo
 echo "== Reserva serializada =="
 claim 'c3000000-0000-0000-0000-000000000002' 'd3000000-0000-0000-0000-000000000022' >/dev/null
 claim 'c3000000-0000-0000-0000-000000000003' 'd3000000-0000-0000-0000-000000000023' >/dev/null
-crear_snapshot 1 30900000001 990 1 PRODUCCION false 30714199664 'RECEPTOR UNO' 1210.00
+crear_snapshot 1 30900000010 990 1 PRODUCCION false 30714199664 'RECEPTOR UNO' 1210.00
 snapshot_uno="$SNAPSHOT"; hash_uno="$SNAPSHOT_HASH"
-crear_snapshot 1 30900000001 990 1 PRODUCCION false 30714199665 'RECEPTOR DOS' 1210.00
+crear_snapshot 1 30900000010 990 1 PRODUCCION false 30717322467 'RECEPTOR DOS' 1210.00
 snapshot_dos="$SNAPSHOT"; hash_dos="$SNAPSHOT_HASH"
 
-reservar 'c3000000-0000-0000-0000-000000000002' 'd3000000-0000-0000-0000-000000000022' 1 1 30900000001 990 1 PRODUCCION false PRODUCCION 0 0 "$snapshot_uno" "$hash_uno" >"$TMP_DIR/reserva-uno.out" 2>&1 &
+reservar 'c3000000-0000-0000-0000-000000000002' 'd3000000-0000-0000-0000-000000000022' 1 1 30900000010 990 1 PRODUCCION false PRODUCCION 0 0 "$snapshot_uno" "$hash_uno" >"$TMP_DIR/reserva-uno.out" 2>&1 &
 pid_reserva_uno=$!
-reservar 'c3000000-0000-0000-0000-000000000003' 'd3000000-0000-0000-0000-000000000023' 1 1 30900000001 990 1 PRODUCCION false PRODUCCION 0 0 "$snapshot_dos" "$hash_dos" >"$TMP_DIR/reserva-dos.out" 2>&1 &
+reservar 'c3000000-0000-0000-0000-000000000003' 'd3000000-0000-0000-0000-000000000023' 1 1 30900000010 990 1 PRODUCCION false PRODUCCION 0 0 "$snapshot_dos" "$hash_dos" >"$TMP_DIR/reserva-dos.out" 2>&1 &
 pid_reserva_dos=$!
 
 set +e
@@ -370,38 +431,38 @@ for n in 5 6 7 8 16; do
   claim "c3000000-0000-0000-0000-$(printf '%012d' "$n")" "d3000000-0000-0000-0000-$(printf '%012d' "$n")" >/dev/null
 done
 
-crear_snapshot 1 30900000002 990 1 PRODUCCION false 30714199664 'CUIT DISTINTO' 1210.00
-reservar 'c3000000-0000-0000-0000-000000000005' 'd3000000-0000-0000-0000-000000000005' 1 1 30900000002 990 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
-crear_snapshot 1 30900000001 990 1 HOMOLOGACION false 30714199664 'MODO DISTINTO' 1210.00
-reservar 'c3000000-0000-0000-0000-000000000006' 'd3000000-0000-0000-0000-000000000006' 1 1 30900000001 990 1 HOMOLOGACION false HOMOLOGACION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
-crear_snapshot 1 30900000001 990 1 PRODUCCION true 30714199664 'SIMULADA UNO' 1210.00
-reservar 'c3000000-0000-0000-0000-000000000007' 'd3000000-0000-0000-0000-000000000007' 1 1 30900000001 990 1 PRODUCCION true SIMULADA 987654 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+crear_snapshot 1 30900000029 990 1 PRODUCCION false 30714199664 'CUIT DISTINTO' 1210.00
+reservar 'c3000000-0000-0000-0000-000000000005' 'd3000000-0000-0000-0000-000000000005' 1 1 30900000029 990 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+crear_snapshot 1 30900000010 990 1 HOMOLOGACION false 30714199664 'MODO DISTINTO' 1210.00
+reservar 'c3000000-0000-0000-0000-000000000006' 'd3000000-0000-0000-0000-000000000006' 1 1 30900000010 990 1 HOMOLOGACION false HOMOLOGACION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+crear_snapshot 1 30900000010 990 1 PRODUCCION true 30714199664 'SIMULADA UNO' 1210.00
+reservar 'c3000000-0000-0000-0000-000000000007' 'd3000000-0000-0000-0000-000000000007' 1 1 30900000010 990 1 PRODUCCION true SIMULADA 987654 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 check "CUIT, modo y simulación separan secuencias aun con número 1" "4" \
   "$(q "SELECT count(*) FROM public.ventas WHERE afip_numero=1 AND afip_punto_venta=990 AND id::text LIKE 'c3000000-0000-0000-0000-%'")"
 
-crear_snapshot 2 30900000001 990 1 PRODUCCION true 30714199664 'SIMULADA DOS' 1210.00
-reservar 'c3000000-0000-0000-0000-000000000008' 'd3000000-0000-0000-0000-000000000008' 1 2 30900000001 990 1 PRODUCCION true SIMULADA 0 1 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+crear_snapshot 2 30900000010 990 1 PRODUCCION true 30714199664 'SIMULADA DOS' 1210.00
+reservar 'c3000000-0000-0000-0000-000000000008' 'd3000000-0000-0000-0000-000000000008' 1 2 30900000010 990 1 PRODUCCION true SIMULADA 0 1 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 check "dos simuladas secuenciales usan números locales 1 y 2" "1|2" \
-  "$(q "SELECT min(afip_numero)||'|'||max(afip_numero) FROM public.ventas WHERE afip_emisor_cuit='30900000001' AND afip_punto_venta=990 AND afip_cbte_tipo=1 AND afip_modo='PRODUCCION' AND afip_simulado")"
+  "$(q "SELECT min(afip_numero)||'|'||max(afip_numero) FROM public.ventas WHERE afip_emisor_cuit='30900000010' AND afip_punto_venta=990 AND afip_cbte_tipo=1 AND afip_modo='PRODUCCION' AND afip_simulado")"
 
-crear_snapshot 3 30900000001 990 1 PRODUCCION false 30714199664 'NUMERO INCORRECTO' 1210.00
+crear_snapshot 3 30900000010 990 1 PRODUCCION false 30714199664 'NUMERO INCORRECTO' 1210.00
 expect_fail_like "la numeración real exige ultimo_remoto + 1" "numero_propuesto.*ultimo_remoto" \
-  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',3,'fecha_comprobante','2026-08-22','emisor_cuit','30900000001','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',1,'ultimo_local_observado',1));"
-crear_snapshot 1 30900000001 990 1 PRODUCCION false 30714199664 'LOCAL ADELANTADO' 1210.00
+  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',3,'fecha_comprobante','2026-08-22','emisor_cuit','30900000010','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',1,'ultimo_local_observado',1));"
+crear_snapshot 1 30900000010 990 1 PRODUCCION false 30714199664 'LOCAL ADELANTADO' 1210.00
 check_sql "local adelantado persiste bloqueo durable y señal de conciliación de secuencia" \
   $'BLOQUEADO|PREFLIGHT||2\nRECONCILIACION_SECUENCIA_REQUERIDA|1|0' \
-  "SELECT afip_estado||'|'||afip_fase||'|'||coalesce(afip_numero::text,'')||'|'||afip_version FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000001','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',1)); SELECT resultado||'|'||(respuesta_resumen#>>'{diagnostico,maximo_local}')||'|'||(respuesta_resumen#>>'{diagnostico,ultimo_remoto}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000016';"
+  "SELECT afip_estado||'|'||afip_fase||'|'||coalesce(afip_numero::text,'')||'|'||afip_version FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000010','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',1)); SELECT resultado||'|'||(respuesta_resumen#>>'{diagnostico,maximo_local}')||'|'||(respuesta_resumen#>>'{diagnostico,ultimo_remoto}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000016';"
 
-crear_snapshot 1 30900000015 995 1 PRODUCCION false 30714199664 'HASH MALO' 1210.00
-expect_fail_like "la reserva no confía en un hash del cliente" "hash.*no coincide" \
-  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015',jsonb_build_object('expected_version',1,'snapshot',jsonb_set('$SNAPSHOT'::jsonb,'{hash}','\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"'::jsonb),'snapshot_hash','ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000015','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
+crear_snapshot 1 30900000150 995 1 PRODUCCION false 30714199664 'HASH MALO' 1210.00
+expect_fail_like "la reserva no confía en un hash del cliente" "hash.*(no coincide|inválido)" \
+  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015',jsonb_build_object('expected_version',1,'snapshot',jsonb_set('$SNAPSHOT'::jsonb,'{hash}','\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"'::jsonb),'snapshot_hash','ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000150','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
 
 echo
 echo "== Durabilidad, incertidumbre y reenvío seguro =="
 claim 'c3000000-0000-0000-0000-000000000004' 'd3000000-0000-0000-0000-000000000004' >/dev/null
-crear_snapshot 1 30900000004 994 1 PRODUCCION false 30714199664 'RECEPTOR INMUTABLE' 1210.00
+crear_snapshot 1 30900000045 994 1 PRODUCCION false 30714199664 'RECEPTOR INMUTABLE' 1210.00
 hash_reenvio="$SNAPSHOT_HASH"
-reservar 'c3000000-0000-0000-0000-000000000004' 'd3000000-0000-0000-0000-000000000004' 1 1 30900000004 994 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+reservar 'c3000000-0000-0000-0000-000000000004' 'd3000000-0000-0000-0000-000000000004' 1 1 30900000045 994 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 identity_before="$(q "SELECT concat_ws('|',afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_fecha_comprobante,afip_imp_total,afip_snapshot::text,afip_snapshot_hash) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000004'")"
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','REQUEST_INICIADO','d3000000-0000-0000-0000-000000000004','{\"expected_version\":2}'::jsonb);" >/dev/null
 check "REQUEST_INICIADO queda durable en una conexión nueva" \
@@ -444,8 +505,8 @@ check "el reenvío verificado reutiliza la transición REQUEST normal" "REQUEST_
 echo
 echo "== Resultado, rechazo, liberación, cancelación y bloqueo =="
 claim 'c3000000-0000-0000-0000-000000000009' 'd3000000-0000-0000-0000-000000000009' >/dev/null
-crear_snapshot 1 30900000009 999 1 PRODUCCION false 30714199664 'APROBADA' 1210.00
-reservar 'c3000000-0000-0000-0000-000000000009' 'd3000000-0000-0000-0000-000000000009' 1 1 30900000009 999 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+crear_snapshot 1 30900000096 999 1 PRODUCCION false 30714199664 'APROBADA' 1210.00
+reservar 'c3000000-0000-0000-0000-000000000009' 'd3000000-0000-0000-0000-000000000009' 1 1 30900000096 999 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','REQUEST_INICIADO','d3000000-0000-0000-0000-000000000009','{\"expected_version\":2}'::jsonb);" >/dev/null
 expect_resumen_invalido() {
   local name="$1" resumen_sql="$2"
@@ -471,8 +532,8 @@ check "la evidencia externa no sobrescribe el control interno del lease" "300|EM
   "$(q "SELECT (respuesta_resumen#>>'{control,lease_segundos}')||'|'||(respuesta_resumen#>>'{evidencia_externa,respuesta_emision,tipo}')||'|'||(respuesta_resumen#>>'{evidencia_externa,respuesta_emision,resultado}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000009'")"
 
 claim 'c3000000-0000-0000-0000-000000000010' 'd3000000-0000-0000-0000-000000000010' >/dev/null
-crear_snapshot 1 30900000010 998 1 PRODUCCION false 30714199664 'RECHAZADA' 1210.00
-reservar 'c3000000-0000-0000-0000-000000000010' 'd3000000-0000-0000-0000-000000000010' 1 1 30900000010 998 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+crear_snapshot 1 30900000109 998 1 PRODUCCION false 30714199664 'RECHAZADA' 1210.00
+reservar 'c3000000-0000-0000-0000-000000000010' 'd3000000-0000-0000-0000-000000000010' 1 1 30900000109 998 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','REQUEST_INICIADO','d3000000-0000-0000-0000-000000000010','{\"expected_version\":2}'::jsonb);" >/dev/null
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000010',jsonb_build_object('expected_version',3,'respuesta_resumen',jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','rechazo_confirmado',true,'observaciones',jsonb_build_array())));" >/dev/null
 check_rechazo_no_confirmado() {

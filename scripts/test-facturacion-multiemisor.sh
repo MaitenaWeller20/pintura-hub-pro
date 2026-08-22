@@ -2,7 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PSQL=(docker exec -i supabase_db_local psql -U postgres -d postgres -v ON_ERROR_STOP=1)
+PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
+DB="${DB:-supabase_db_${PROJECT_ID}}"
+PSQL=(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1)
 
 q() { "${PSQL[@]}" -tAc "$1"; }
 check() {

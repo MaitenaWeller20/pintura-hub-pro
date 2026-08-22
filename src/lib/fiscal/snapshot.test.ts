@@ -1,9 +1,15 @@
-import { expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 import { condicionIvaReceptorId, determinarLetra } from "./codigos";
 import {
+  calcularHashSnapshotFiscal,
   crearSnapshotFiscal,
+  crearSnapshotFiscalV2,
   identidadReservaCoincide,
   resolverReceptorFiscalLegacy,
+  serializarSnapshotFiscal,
+  sha256HexUtf8,
+  validarSnapshotFiscalV2,
 } from "./snapshot";
 
 it("congela CUIT e información del emisor correcto", () => {
@@ -322,5 +328,295 @@ it("no impone la matriz nueva A/B a una nota C histórica coherente", () => {
   ).toEqual({
     ...snapshotFacturaBHistorica.receptor,
     condicion_iva: "RESPONSABLE_INSCRIPTO",
+  });
+});
+
+const parityFixture = JSON.parse(
+  readFileSync(
+    new URL("../../../test/fixtures/fiscal-snapshot-parity-v2.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  input: Record<string, unknown>;
+  canonical: string;
+  sha256: string;
+};
+
+function inputV2() {
+  const { hash: _hash, version: _version, ...input } = structuredClone(parityFixture.input) as Record<
+    string,
+    unknown
+  >;
+  return input;
+}
+
+function bodyV2() {
+  const { hash: _hash, ...body } = structuredClone(parityFixture.input) as Record<string, unknown>;
+  return body;
+}
+
+describe("snapshot fiscal v2", () => {
+  it.each([
+    ["", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
+    ["abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"],
+    ["á🚀", "48f2689b4d2b0b4341df4a7f142e93c1fb45f2adc48f4c1eddf65848dbaa9eb9"],
+  ])("implementa el vector SHA-256 UTF-8 de %j", (texto, esperado) => {
+    expect(sha256HexUtf8(texto)).toBe(esperado);
+  });
+
+  it("produce los mismos bytes y SHA-256 que el fixture compartido con PostgreSQL", () => {
+    const snapshot = crearSnapshotFiscalV2(inputV2() as never);
+
+    expect(serializarSnapshotFiscal(bodyV2())).toBe(parityFixture.canonical);
+    expect(calcularHashSnapshotFiscal(bodyV2())).toBe(parityFixture.sha256);
+    expect(snapshot.hash).toBe(parityFixture.sha256);
+    expect(snapshot).toEqual(parityFixture.input);
+    expect(validarSnapshotFiscalV2(snapshot)).toEqual(snapshot);
+  });
+
+  it("normaliza el orden de items, alícuotas, tributos y asociaciones con claves de dominio", () => {
+    const base = inputV2() as any;
+    base.items[1] = {
+      ...base.items[1],
+      ivaPorcentaje: "10.50",
+      importeIva: "10.50",
+      subtotalTotal: "110.50",
+    };
+    base.items.reverse();
+    base.alicuotasIva = [
+      { id: 4, baseImponible: "100.00", importe: "10.50" },
+      ...base.alicuotasIva,
+    ];
+    base.tributos = [
+      { id: 2, descripcion: "Tasa nacional", baseImponible: "100.00", alicuota: "5.00", importe: "5.00" },
+      ...base.tributos,
+    ];
+    base.importeNeto = "1100.00";
+    base.importeExento = "0.00";
+    base.importeIva = "220.50";
+    base.importeTributos = "25.00";
+    base.importeTotal = "1395.50";
+    base.ivaContenido = "220.50";
+    base.otrosImpuestosNacionalesIndirectos = "25.00";
+
+    const snapshot = crearSnapshotFiscalV2(base);
+
+    expect(snapshot.items.map((item) => item.id)).toEqual([
+      "71000000-0000-4000-8000-000000000011",
+      "71000000-0000-4000-8000-000000000012",
+      "71000000-0000-4000-8000-000000000013",
+    ]);
+    expect(snapshot.alicuotasIva.map((row) => row.id)).toEqual([4, 5]);
+    expect(snapshot.tributos.map((row) => row.id)).toEqual([1, 2]);
+  });
+
+  it("hace el hash sensible a receptor, condición, fecha, número, total y asociación", () => {
+    const base = bodyV2() as any;
+    const hash = calcularHashSnapshotFiscal(base);
+    const variantes = [
+      { ...base, receptor: { ...base.receptor, razonSocial: "OTRO" } },
+      { ...base, receptor: { ...base.receptor, condicionIva: "EXENTO" } },
+      { ...base, fechaComprobante: "2026-08-23" },
+      { ...base, identidad: { ...base.identidad, numero: 2 } },
+      { ...base, importeTotal: "1380.01" },
+      {
+        ...base,
+        cbtesAsoc: [
+          {
+            tipo: 6,
+            puntoVenta: 5,
+            numero: 99,
+            cuit: "30714199664",
+            fecha: "2026-08-21",
+          },
+        ],
+      },
+    ];
+
+    for (const variante of variantes) {
+      expect(calcularHashSnapshotFiscal(variante)).not.toBe(hash);
+    }
+  });
+
+  it("congela copias y no retiene referencias mutables", () => {
+    const entrada = inputV2() as any;
+    const snapshot = crearSnapshotFiscalV2(entrada);
+    entrada.items[0].descripcion = "mutada";
+    entrada.receptor.razonSocial = "mutado";
+
+    expect(snapshot.items[0].descripcion).toBe("Pintura interior");
+    expect(snapshot.receptor.razonSocial).toBe("CLIENTE FINAL");
+  });
+
+  it("el constructor controla version=2 y no la acepta desde el caller", () => {
+    expect(crearSnapshotFiscalV2(inputV2() as never).version).toBe(2);
+    expect(() => crearSnapshotFiscalV2({ ...inputV2(), version: 1 } as never)).toThrow(
+      /desconocida|faltante/i,
+    );
+  });
+
+  it("bloquea emisores no RI y comprobantes C nuevos", () => {
+    const input = inputV2() as any;
+    input.emisor.condicionIva = "MONOTRIBUTO";
+    input.letra = "C";
+    input.identidad.cbteTipo = 11;
+
+    expect(() => crearSnapshotFiscalV2(input)).toThrow(/emisor.*RI|responsable inscripto/i);
+  });
+
+  it("acepta alícuotas vacías sólo para un comprobante puramente exento", () => {
+    const input = inputV2() as any;
+    input.items = [
+      {
+        ...input.items[1],
+        subtotalNeto: "100.00",
+        importeIva: "0.00",
+        subtotalTotal: "100.00",
+      },
+    ];
+    input.importeNeto = "0.00";
+    input.importeExento = "100.00";
+    input.importeNoGravado = "0.00";
+    input.importeIva = "0.00";
+    input.importeTributos = "0.00";
+    input.importeTotal = "100.00";
+    input.alicuotasIva = [];
+    input.tributos = [];
+    input.ivaContenido = "0.00";
+    input.otrosImpuestosNacionalesIndirectos = "0.00";
+
+    expect(crearSnapshotFiscalV2(input).alicuotasIva).toEqual([]);
+  });
+
+  it("no confunde otros impuestos nacionales indirectos con el total de tributos", () => {
+    const input = inputV2() as any;
+    input.otrosImpuestosNacionalesIndirectos = "25.00";
+
+    expect(crearSnapshotFiscalV2(input).otrosImpuestosNacionalesIndirectos).toBe("25.00");
+  });
+
+  it("valida una NC completa con CUIT en CbtesAsoc y rechaza ND nueva", () => {
+    const nc = inputV2() as any;
+    nc.venta.tipoComprobante = "NOTA_CREDITO";
+    nc.identidad.cbteTipo = 8;
+    nc.origen = "COMPROBANTE_ORIGINAL";
+    nc.comprobanteOriginalId = "71000000-0000-4000-8000-000000000901";
+    nc.cbtesAsoc = [
+      {
+        tipo: 6,
+        puntoVenta: 5,
+        numero: 42,
+        cuit: "30714199664",
+        fecha: "2026-08-21",
+      },
+    ];
+
+    expect(crearSnapshotFiscalV2(nc).cbtesAsoc[0].cuit).toBe("30714199664");
+    expect(() =>
+      crearSnapshotFiscalV2({
+        ...nc,
+        venta: { ...nc.venta, tipoComprobante: "NOTA_DEBITO" },
+        identidad: { ...nc.identidad, cbteTipo: 7 },
+      }),
+    ).toThrow(/débito.*fuera de alcance/i);
+  });
+
+  it.each([
+    ["decimal numérico", (value: any) => (value.importeTotal = 1380)],
+    ["total incoherente", (value: any) => (value.importeTotal = "1380.01")],
+    ["documento ARCA distinto", (value: any) => (value.receptor.docNroArca = "30123457")],
+    ["condición ARCA distinta", (value: any) => (value.receptor.condicionIvaReceptorId = 4)],
+    ["CUIT emisor distinto", (value: any) => (value.identidad.emisorCuit = "30717322467")],
+    ["letra/tipo distinto", (value: any) => (value.identidad.cbteTipo = 1)],
+    ["validez incoherente", (value: any) => (value.identidad.validez = "SIMULADA")],
+    ["fecha imposible", (value: any) => (value.fechaComprobante = "2026-02-30")],
+    ["clave desconocida", (value: any) => (value.secreto = "no")],
+    ["item duplicado", (value: any) => value.items.push(structuredClone(value.items[0]))],
+    [
+      "alícuota duplicada",
+      (value: any) => value.alicuotasIva.push(structuredClone(value.alicuotasIva[0])),
+    ],
+    [
+      "alícuota vacía",
+      (value: any) => (value.alicuotasIva[0] = { id: 5, baseImponible: "0.00", importe: "0.00" }),
+    ],
+    [
+      "tributo vacío",
+      (value: any) =>
+        (value.tributos[0] = {
+          ...value.tributos[0],
+          baseImponible: "0.00",
+          alicuota: "0.00",
+          importe: "0.00",
+        }),
+    ],
+    ["tributo duplicado", (value: any) => value.tributos.push(structuredClone(value.tributos[0]))],
+    ["clave anidada desconocida", (value: any) => (value.receptor.secreto = "no")],
+    ["clave anidada faltante", (value: any) => delete value.emisor.cuit],
+  ])("falla cerrado ante %s", (_caso, mutar) => {
+    const value = inputV2() as any;
+    mutar(value);
+    expect(() => crearSnapshotFiscalV2(value)).toThrow();
+  });
+
+  it("rechaza asociaciones duplicadas aunque el resto de la nota sea coherente", () => {
+    const nc = inputV2() as any;
+    nc.venta.tipoComprobante = "NOTA_CREDITO";
+    nc.identidad.cbteTipo = 8;
+    nc.origen = "COMPROBANTE_ORIGINAL";
+    nc.comprobanteOriginalId = "71000000-0000-4000-8000-000000000901";
+    const asociacion = {
+      tipo: 6,
+      puntoVenta: 5,
+      numero: 42,
+      cuit: "30714199664",
+      fecha: "2026-08-21",
+    };
+    nc.cbtesAsoc = [asociacion, { ...asociacion }];
+
+    expect(() => crearSnapshotFiscalV2(nc)).toThrow(/asociaci/i);
+  });
+
+  it("rechaza v1, hashes alterados y arrays desordenados al leer lo persistido", () => {
+    expect(() => validarSnapshotFiscalV2(snapshotFacturaBHistorica)).toThrow(/versión 2/i);
+
+    const valido = crearSnapshotFiscalV2(inputV2() as never) as any;
+    expect(() => validarSnapshotFiscalV2({ ...valido, hash: "f".repeat(64) })).toThrow(/hash/i);
+
+    const desordenado = structuredClone(valido);
+    desordenado.items.reverse();
+    expect(() => validarSnapshotFiscalV2(desordenado)).toThrow(/orden canónico/i);
+  });
+
+  it.each([
+    ["NaN", { value: Number.NaN }],
+    ["infinito", { value: Number.POSITIVE_INFINITY }],
+    ["menos cero", { value: -0 }],
+    ["unsafe integer", { value: Number.MAX_SAFE_INTEGER + 1 }],
+    ["undefined", { value: undefined }],
+    ["función", { value: () => null }],
+    ["símbolo", { value: Symbol("x") }],
+    ["bigint", { value: 1n }],
+    ["Date", { value: new Date("2026-08-22T00:00:00Z") }],
+    ["surrogate", { value: "\ud800" }],
+  ])("el serializador rechaza %s", (_caso, value) => {
+    expect(() => serializarSnapshotFiscal(value)).toThrow();
+  });
+
+  it("rechaza ciclos, accessors y la propiedad hash en el valor a serializar", () => {
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(() => serializarSnapshotFiscal(cycle)).toThrow(/cíclico/i);
+
+    const accessor = Object.defineProperty({}, "valor", {
+      enumerable: true,
+      get: () => 1,
+    });
+    expect(() => serializarSnapshotFiscal(accessor)).toThrow(/accessor/i);
+    expect(() => serializarSnapshotFiscal({ version: 2, hash: "x" })).toThrow(/sin hash/i);
+  });
+
+  it("ordena claves por bytes UTF-8 y no por el orden de inserción", () => {
+    expect(serializarSnapshotFiscal({ "á": 1, a: 2 })).toBe('{"a":2,"á":1}');
   });
 });

@@ -262,4 +262,21 @@ describe("decisión de conciliación", () => {
       }),
     ).toEqual({ accion: "BLOQUEAR", diferencias: [ruta] });
   });
+
+  it("bloquea un CAE numérico aunque su representación tenga catorce dígitos", () => {
+    const remotoConCaeNumerico = {
+      ...remotoFixture,
+      cae: 74123456789012,
+    } as unknown as ComprobanteArcaConsultado;
+
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotFiscalFixture,
+        remoto: remotoConCaeNumerico,
+        ultimoRemoto: 42,
+        numeroReservado: 42,
+        payloadHash: snapshotFiscalFixture.hash,
+      }),
+    ).toEqual({ accion: "BLOQUEAR", diferencias: ["cae"] });
+  });
 });

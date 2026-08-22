@@ -193,7 +193,8 @@ export function decidirConciliacion(input: {
   if (input.remoto) {
     const diferencias = compararSnapshotConArca(input.snapshot, input.remoto);
     if (diferencias.length > 0) return { accion: "BLOQUEAR", diferencias };
-    if (!/^\d{14}$/.test(input.remoto.cae)) return { accion: "BLOQUEAR", diferencias: ["cae"] };
+    if (typeof input.remoto.cae !== "string" || !/^\d{14}$/.test(input.remoto.cae))
+      return { accion: "BLOQUEAR", diferencias: ["cae"] };
     if (input.remoto.caeVencimiento !== null && !fechaFiscalValida(input.remoto.caeVencimiento))
       return { accion: "BLOQUEAR", diferencias: ["caeVencimiento"] };
     return {

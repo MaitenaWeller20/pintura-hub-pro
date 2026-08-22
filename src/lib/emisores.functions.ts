@@ -13,6 +13,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { bytesDeDataUrl, medirImagen } from "@/lib/impresos/imagen";
 import { validarCuitEmisor } from "@/lib/fiscal/cert";
+import { autorizarAntesDeClientePrivilegiado } from "@/lib/fiscal/config";
 import type { Database } from "@/integrations/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -32,8 +33,11 @@ async function exigirAdmin(supabase: SupabaseClient<Database>, userId: string) {
 export const listarEmisores = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await exigirAdmin(context.supabase, context.userId);
-    const { data, error } = await context.supabase
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
+    const { data, error } = await sb
       .from("emisores")
       .select(
         "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, factura_a_modalidad, factura_a_confirmada_at, factura_a_confirmada_por, factura_a_revalidar_at, factura_a_evidencia, sucursales(id, nombre, direccion, telefono)",

@@ -28,6 +28,39 @@ check "flags de rollout nacen v2 apagado y legacy encendido" "false|true" \
   "$(q "select facturacion_receptor_v2_enabled::text||'|'||facturacion_legacy_writer_enabled::text from public.settings where id=true")"
 check "modalidad A nace desconocida" "'DESCONOCIDA'::text" \
   "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='emisores' and column_name='factura_a_modalidad'")"
+check "authenticated no conserva SELECT de tabla completa sobre emisores" "false" \
+  "$(q "select has_table_privilege('authenticated','public.emisores','select')::text")"
+check "authenticated puede leer sólo las columnas públicas de emisores" "true|true|true|true|true|true|true|true|true|true|true|true" \
+  "$(q "select has_column_privilege('authenticated','public.emisores','id','select')::text||'|'||has_column_privilege('authenticated','public.emisores','razon_social','select')::text||'|'||has_column_privilege('authenticated','public.emisores','cuit','select')::text||'|'||has_column_privilege('authenticated','public.emisores','domicilio_fiscal','select')::text||'|'||has_column_privilege('authenticated','public.emisores','condicion_iva','select')::text||'|'||has_column_privilege('authenticated','public.emisores','ingresos_brutos','select')::text||'|'||has_column_privilege('authenticated','public.emisores','inicio_actividades','select')::text||'|'||has_column_privilege('authenticated','public.emisores','logo','select')::text||'|'||has_column_privilege('authenticated','public.emisores','activo','select')::text||'|'||has_column_privilege('authenticated','public.emisores','created_at','select')::text||'|'||has_column_privilege('authenticated','public.emisores','updated_at','select')::text||'|'||has_column_privilege('authenticated','public.emisores','nombre_fantasia','select')::text")"
+check "authenticated no puede leer ninguna columna administrativa de Factura A" "false|false|false|false|false" \
+  "$(q "select has_column_privilege('authenticated','public.emisores','factura_a_modalidad','select')::text||'|'||has_column_privilege('authenticated','public.emisores','factura_a_confirmada_at','select')::text||'|'||has_column_privilege('authenticated','public.emisores','factura_a_confirmada_por','select')::text||'|'||has_column_privilege('authenticated','public.emisores','factura_a_revalidar_at','select')::text||'|'||has_column_privilege('authenticated','public.emisores','factura_a_evidencia','select')::text")"
+check "service_role conserva lectura completa de emisores" "true" \
+  "$(q "select has_table_privilege('service_role','public.emisores','select')::text")"
+check "emisores conserva RLS y su policy de lectura" "true|1" \
+  "$(q "select c.relrowsecurity::text||'|'||(select count(*) from pg_policies p where p.schemaname='public' and p.tablename='emisores' and p.policyname='emisores_lectura')::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='emisores'")"
+
+"${PSQL[@]}" <<'SQL'
+BEGIN;
+SET LOCAL ROLE authenticated;
+
+-- La lectura operativa sigue disponible por columnas y la policy RLS vigente.
+SELECT id,razon_social,cuit,domicilio_fiscal,condicion_iva,ingresos_brutos,
+       inicio_actividades,logo,activo,created_at,updated_at,nombre_fantasia
+  FROM public.emisores
+ LIMIT 1;
+
+DO $$
+BEGIN
+  BEGIN
+    PERFORM factura_a_evidencia FROM public.emisores LIMIT 1;
+    RAISE EXCEPTION 'authenticated pudo seleccionar factura_a_evidencia';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+ROLLBACK;
+SQL
+echo "✓ authenticated lee identidad pública pero no evidencia administrativa de emisores"
 
 check "tablas auxiliares existen" "receptores_fiscales|emision_fiscal_intentos" \
   "$(q "select string_agg(relname,'|' order by relname desc) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname in ('receptores_fiscales','emision_fiscal_intentos') and relkind='r'")"

@@ -242,10 +242,7 @@ CREATE POLICY "receptores fiscales select" ON public.receptores_fiscales
     OR (
       public.puede_facturar((SELECT auth.uid()))
       AND sucursal_id=public.current_sucursal_id()
-      -- El creador conserva visibilidad administrativa de sus inactivos. Esto
-      -- es necesario para que PostgreSQL pueda validar el nuevo row de un
-      -- UPDATE activo->inactivo; los selectores operativos filtran activo=true.
-      AND (activo OR creado_por=(SELECT auth.uid()))
+      AND activo
     )
   );
 
@@ -283,6 +280,56 @@ CREATE POLICY "receptores fiscales empleado update" ON public.receptores_fiscale
 CREATE POLICY "receptores fiscales admin delete" ON public.receptores_fiscales
   FOR DELETE TO authenticated
   USING (public.is_admin((SELECT auth.uid())));
+
+-- Con SELECT activo-only PostgreSQL también exige que el row nuevo de un
+-- UPDATE que lee columnas satisfaga esa policy. Por eso la desactivación no se
+-- expone como UPDATE general: esta RPC hace sólo activo=true->false y repite
+-- explícitamente capacidad, sucursal activa y creador.
+CREATE OR REPLACE FUNCTION public.desactivar_receptor_fiscal(
+  p_receptor_id uuid
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=''
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_receptor public.receptores_fiscales%ROWTYPE;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'No autenticado' USING ERRCODE='42501';
+  END IF;
+
+  SELECT * INTO v_receptor
+    FROM public.receptores_fiscales
+   WHERE id=p_receptor_id
+   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Favorito fiscal inexistente o no autorizado'
+      USING ERRCODE='42501';
+  END IF;
+
+  IF NOT public.is_admin(v_uid) AND NOT (
+    public.puede_facturar(v_uid)
+    AND v_receptor.sucursal_id=public.current_sucursal_id()
+    AND v_receptor.creado_por=v_uid
+  ) THEN
+    RAISE EXCEPTION 'No puede desactivar este favorito fiscal'
+      USING ERRCODE='42501';
+  END IF;
+
+  UPDATE public.receptores_fiscales
+     SET activo=false
+   WHERE id=p_receptor_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.desactivar_receptor_fiscal(uuid)
+  FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.desactivar_receptor_fiscal(uuid)
+  TO authenticated;
 
 -- ------------------------------------------------------------
 -- 4. Auditoría interna de intentos
@@ -332,6 +379,14 @@ SECURITY DEFINER
 SET search_path=''
 AS $$
 BEGIN
+  -- El permiso fiscal exige una identidad admin aun para un caller con bypass
+  -- de RLS. La RPC administrativa de abajo conserva auth.uid() y satisface esta
+  -- condición; service_role sin JWT no es un atajo de elevación.
+  IF NEW.puede_facturar IS DISTINCT FROM OLD.puede_facturar
+     AND (auth.uid() IS NULL OR NOT public.is_admin(auth.uid())) THEN
+    RAISE EXCEPTION 'No puede modificar el permiso fiscal de su propio perfil';
+  END IF;
+
   IF auth.uid() IS NULL OR public.is_admin(auth.uid()) THEN
     RETURN NEW;
   END IF;
@@ -360,9 +415,6 @@ BEGIN
   IF NEW.secciones IS DISTINCT FROM OLD.secciones THEN
     RAISE EXCEPTION 'Sólo un administrador puede cambiar las secciones de un usuario';
   END IF;
-  IF NEW.puede_facturar IS DISTINCT FROM OLD.puede_facturar THEN
-    RAISE EXCEPTION 'No puede modificar el permiso fiscal de su propio perfil';
-  END IF;
 
   RETURN NEW;
 END;
@@ -370,6 +422,38 @@ $$;
 
 REVOKE ALL ON FUNCTION public.guard_profiles_columnas()
   FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.administrar_puede_facturar(
+  p_profile_id uuid,
+  p_puede_facturar boolean
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=''
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+BEGIN
+  IF v_uid IS NULL OR NOT public.is_admin(v_uid) THEN
+    RAISE EXCEPTION 'Sólo un administrador autenticado puede cambiar el permiso fiscal'
+      USING ERRCODE='42501';
+  END IF;
+
+  UPDATE public.profiles
+     SET puede_facturar=p_puede_facturar
+   WHERE id=p_profile_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Perfil inexistente';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.administrar_puede_facturar(uuid,boolean)
+  FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.administrar_puede_facturar(uuid,boolean)
+  TO authenticated;
 
 -- ------------------------------------------------------------
 -- 6. Backfill definido, bloqueado y no ejecutado
@@ -398,6 +482,15 @@ BEGIN
                AND v.afip_snapshot_hash IS NOT NULL
             THEN 'RECONCILIAR'
           WHEN v.afip_numero IS NOT NULL THEN 'BLOQUEADO'
+          WHEN v.afip_estado='ERROR'
+               AND v.afip_numero IS NULL
+            THEN 'ERROR_CORREGIBLE'
+          WHEN v.estado='ACTIVA'
+               AND v.tipo_comprobante IN ('FACTURA_A','FACTURA_B','FACTURA_C')
+               AND v.afip_numero IS NULL
+               AND v.cae IS NULL
+            THEN 'SIN_FACTURAR'
+          WHEN v.estado='ANULADA' AND v.cae IS NULL THEN 'CANCELADO'
           WHEN v.tipo_comprobante IN ('REMITO','REMITO_OBRA','FAC_INTERNA_CTA_CTE')
             THEN 'NO_APLICA'
           WHEN v.tipo_comprobante IN ('NOTA_CREDITO','NOTA_DEBITO')
@@ -412,11 +505,6 @@ BEGIN
                  )
                )
             THEN 'BLOQUEADO'
-          WHEN v.estado='ANULADA' THEN 'CANCELADO'
-          WHEN v.afip_estado='ERROR' THEN 'ERROR_CORREGIBLE'
-          WHEN v.estado='ACTIVA'
-               AND v.tipo_comprobante IN ('FACTURA_A','FACTURA_B','FACTURA_C')
-            THEN 'SIN_FACTURAR'
           ELSE NULL
         END AS destino
       FROM public.ventas v
@@ -445,6 +533,8 @@ BEGIN
                    AND v.afip_snapshot IS NOT NULL
                    AND v.afip_snapshot->>'version'='2'
                    AND v.afip_snapshot_hash IS NOT NULL
+                   AND v.afip_fecha_comprobante IS NOT NULL
+                   AND v.afip_validez IS NOT NULL
                  )
                )
                OR (

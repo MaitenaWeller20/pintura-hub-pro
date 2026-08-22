@@ -45,14 +45,22 @@ check "puede_facturar tiene una única firma invoker" "1|false" \
   "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='puede_facturar' and pg_get_function_identity_arguments(p.oid)='_uid uuid'")"
 check "backfill tiene una única firma invoker" "1|false" \
   "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='backfill_cola_fiscal' and pg_get_function_identity_arguments(p.oid)='p_aplicar boolean'")"
+check "desactivar favorito tiene una única firma definer" "1|true" \
+  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='desactivar_receptor_fiscal' and pg_get_function_identity_arguments(p.oid)='p_receptor_id uuid'")"
+check "administrar permiso fiscal tiene una única firma definer" "1|true" \
+  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='administrar_puede_facturar' and pg_get_function_identity_arguments(p.oid)='p_profile_id uuid, p_puede_facturar boolean'")"
 check "PUBLIC no ejecuta rutinas fiscales o privilegiadas nuevas" "0" \
-  "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
+  "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','desactivar_receptor_fiscal','administrar_puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
 check "authenticated y service_role ejecutan puede_facturar" "true|true" \
   "$(q "select has_function_privilege('authenticated','public.puede_facturar(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.puede_facturar(uuid)','execute')::text")"
 check "el navegador no ejecuta backfill" "false|false" \
   "$(q "select has_function_privilege('anon','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.backfill_cola_fiscal(boolean)','execute')::text")"
 check "el navegador no ejecuta directamente el guard de perfiles" "false|false" \
   "$(q "select has_function_privilege('anon','public.guard_profiles_columnas()','execute')::text||'|'||has_function_privilege('authenticated','public.guard_profiles_columnas()','execute')::text")"
+check "sólo authenticated ejecuta la desactivación controlada" "false|true|false" \
+  "$(q "select has_function_privilege('anon','public.desactivar_receptor_fiscal(uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.desactivar_receptor_fiscal(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.desactivar_receptor_fiscal(uuid)','execute')::text")"
+check "sólo authenticated ejecuta la administración del permiso fiscal" "false|true|false" \
+  "$(q "select has_function_privilege('anon','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('service_role','public.administrar_puede_facturar(uuid,boolean)','execute')::text")"
 
 check "índices de cola, favoritos e intentos existen" "4" \
   "$(q "select count(*) from pg_indexes where schemaname='public' and indexname in ('idx_ventas_cola_fiscal','idx_receptores_fiscales_sucursal','idx_receptores_fiscales_documento','idx_emision_fiscal_intentos_venta')")"
@@ -76,8 +84,13 @@ INSERT INTO public.user_roles (user_id,role)
 VALUES ('a2000000-0000-0000-0000-000000000001','admin');
 INSERT INTO public.profile_sucursales (profile_id,sucursal_id)
 SELECT p.id,p.sucursal_id FROM public.profiles p WHERE p.id::text LIKE 'a2000000-%';
-UPDATE public.profiles SET puede_facturar=true
-WHERE id='a2000000-0000-0000-0000-000000000002';
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"a2000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+SELECT public.administrar_puede_facturar(
+  'a2000000-0000-0000-0000-000000000002',true
+);
+RESET ROLE;
+SELECT set_config('request.jwt.claims','{}',true);
 
 INSERT INTO public.clientes (id,razon_social)
 VALUES ('b2000000-0000-0000-0000-000000000001','T2 CLIENTE SCHEMA');
@@ -223,8 +236,9 @@ SELECT set_config('request.jwt.claims','{"sub":"a2000000-0000-0000-0000-00000000
 DO $$
 DECLARE v_count integer; v_rows integer;
 BEGIN
+  -- Sin filtro activo del cliente: la policy debe ocultar por sí sola los inactivos.
   SELECT count(*) INTO v_count FROM public.receptores_fiscales
-   WHERE activo AND razon_social LIKE 'T2 FAV %';
+   WHERE razon_social LIKE 'T2 FAV %';
   IF v_count <> 2 THEN
     RAISE EXCEPTION 'empleado fiscal vio % favoritos; esperaba 2 activos de su sucursal',v_count;
   END IF;
@@ -290,12 +304,25 @@ BEGIN
     RAISE EXCEPTION 'empleado editó un favorito creado por otro usuario';
   END IF;
 
-  UPDATE public.receptores_fiscales SET activo=false
-   WHERE id='d2000000-0000-0000-0000-000000000010';
-  GET DIAGNOSTICS v_rows=ROW_COUNT;
-  IF v_rows <> 1 THEN
-    RAISE EXCEPTION 'empleado no pudo desactivar su favorito';
+  PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000010');
+  IF EXISTS (
+    SELECT 1 FROM public.receptores_fiscales
+     WHERE id='d2000000-0000-0000-0000-000000000010'
+  ) THEN
+    RAISE EXCEPTION 'el favorito desactivado siguió visible para el empleado';
   END IF;
+
+  BEGIN
+    PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000002');
+    RAISE EXCEPTION 'empleado desactivó un favorito de otra sucursal';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  BEGIN
+    PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000004');
+    RAISE EXCEPTION 'empleado desactivó un favorito de otro creador';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 END $$;
 RESET ROLE;
 
@@ -312,6 +339,23 @@ BEGIN
     RAISE EXCEPTION 'puede_facturar elevó a un empleado sin permiso';
   END IF;
   BEGIN
+    PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000004');
+    RAISE EXCEPTION 'empleado sin capacidad desactivó su favorito';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.administrar_puede_facturar(auth.uid(),true);
+    RAISE EXCEPTION 'empleado se autoelevó mediante la RPC administrativa';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.administrar_puede_facturar(
+      'a2000000-0000-0000-0000-000000000002',false
+    );
+    RAISE EXCEPTION 'empleado cambió el permiso fiscal de otro perfil';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
     UPDATE public.profiles SET puede_facturar=true WHERE id=auth.uid();
     RAISE EXCEPTION 'empleado se autoasignó puede_facturar';
   EXCEPTION WHEN raise_exception THEN
@@ -322,20 +366,20 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- El canal administrativo de servidor puede cambiar el permiso; el trigger
--- distingue este canal por auth.uid() NULL, igual que los guards existentes.
+-- Un backend sin identidad administrativa no es el camino de mutación fiscal.
 SET LOCAL ROLE service_role;
 SELECT set_config('request.jwt.claims','{}',true);
-UPDATE public.profiles SET puede_facturar=true
- WHERE id='a2000000-0000-0000-0000-000000000003';
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.profiles
-     WHERE id='a2000000-0000-0000-0000-000000000003' AND puede_facturar
-  ) THEN
-    RAISE EXCEPTION 'el canal administrativo de servidor no pudo asignar puede_facturar';
-  END IF;
+  BEGIN
+    UPDATE public.profiles SET puede_facturar=true
+     WHERE id='a2000000-0000-0000-0000-000000000003';
+    RAISE EXCEPTION 'service_role sin admin autenticado cambió puede_facturar';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM='service_role sin admin autenticado cambió puede_facturar' THEN
+      RAISE;
+    END IF;
+  END;
 END $$;
 RESET ROLE;
 
@@ -344,6 +388,15 @@ SELECT set_config('request.jwt.claims','{"sub":"a2000000-0000-0000-0000-00000000
 DO $$
 DECLARE v_count integer; v_rows integer;
 BEGIN
+  PERFORM public.administrar_puede_facturar(
+    'a2000000-0000-0000-0000-000000000003',true
+  );
+  IF NOT EXISTS (
+    SELECT 1 FROM public.profiles
+     WHERE id='a2000000-0000-0000-0000-000000000003' AND puede_facturar
+  ) THEN
+    RAISE EXCEPTION 'admin autenticado no pudo asignar puede_facturar por la RPC';
+  END IF;
   SELECT count(*) INTO v_count FROM public.receptores_fiscales WHERE razon_social LIKE 'T2 FAV %';
   IF v_count <> 5 THEN
     RAISE EXCEPTION 'admin vio % favoritos; esperaba los 4 originales y el insertado',v_count;
@@ -393,6 +446,18 @@ INSERT INTO public.ventas (
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-BACKFILL-RESERVA-LEGACY','FACTURA_A','PENDIENTE',930003,'30714199664'
 );
+-- Tiene snapshot v2/hash pero le falta fecha fiscal: aún es APROBADO incompleto.
+INSERT INTO public.ventas (
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,
+  cae,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_modo,
+  afip_snapshot,afip_snapshot_hash,afip_version
+) VALUES (
+  'e2000000-0000-0000-0000-000000000011',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
+  'T2-BACKFILL-CAE-V2-SIN-FECHA','FACTURA_B','PENDIENTE','CAE-V2-SIN-FECHA',930011,
+  '30714199664',91,6,'PRODUCCION','{"version":2,"receptor":{"tipoDocumento":"CUIT"}}'::jsonb,
+  repeat('b',64),2
+);
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,estado
 ) VALUES
@@ -400,7 +465,10 @@ INSERT INTO public.ventas (
   ('e2000000-0000-0000-0000-000000000005',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-SIN-FACTURAR','FACTURA_C','NO_APLICA','ACTIVA'),
   ('e2000000-0000-0000-0000-000000000006',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-CANCELADO','FACTURA_B','NO_APLICA','ANULADA'),
   ('e2000000-0000-0000-0000-000000000007',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-REMITO','REMITO','PENDIENTE','ACTIVA'),
-  ('e2000000-0000-0000-0000-000000000008',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-NOTA','NOTA_CREDITO','ERROR','ACTIVA');
+  ('e2000000-0000-0000-0000-000000000008',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-NOTA','NOTA_CREDITO','PENDIENTE','ACTIVA'),
+  -- Solapes deliberados: la precedencia, no sólo cada rama aislada, es contrato.
+  ('e2000000-0000-0000-0000-000000000009',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-NOTA-ANULADA','NOTA_CREDITO','PENDIENTE','ANULADA'),
+  ('e2000000-0000-0000-0000-000000000010',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-REMITO-ERROR','REMITO','ERROR','ACTIVA');
 
 CREATE TEMP TABLE t2_backfill_antes ON COMMIT DROP AS
 SELECT id,afip_estado,afip_validez,afip_legacy_incompleto,afip_snapshot,
@@ -459,11 +527,19 @@ BEGIN
      OR (SELECT afip_punto_venta FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000003') IS NOT NULL THEN
     RAISE EXCEPTION 'la reserva legacy inventó historia o no quedó bloqueada';
   END IF;
+  IF (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000011') <> 'APROBADO'
+     OR NOT (SELECT afip_legacy_incompleto FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000011')
+     OR (SELECT afip_fecha_comprobante FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000011') IS NOT NULL
+     OR (SELECT afip_validez FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000011') <> 'PRODUCCION' THEN
+    RAISE EXCEPTION 'el aprobado v2 sin fecha no quedó marcado como legacy incompleto';
+  END IF;
   IF (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000004') <> 'ERROR_CORREGIBLE'
      OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000005') <> 'SIN_FACTURAR'
      OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000006') <> 'CANCELADO'
      OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000007') <> 'NO_APLICA'
-     OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000008') <> 'BLOQUEADO' THEN
+     OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000008') <> 'BLOQUEADO'
+     OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000009') <> 'CANCELADO'
+     OR (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000010') <> 'ERROR_CORREGIBLE' THEN
     RAISE EXCEPTION 'el backfill no respetó la matriz de clasificación';
   END IF;
 END $$;

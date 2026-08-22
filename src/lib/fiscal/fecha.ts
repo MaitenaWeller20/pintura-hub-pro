@@ -9,10 +9,17 @@
  * Es un bug latente en los dos sistemas de referencia. Acá no lo repetimos.
  */
 
-const TZ = "America/Argentina/Buenos_Aires";
+const TZ = "America/Argentina/Cordoba";
 
-/** Partes año/mes/día de una fecha, según el reloj de Buenos Aires. */
-function partesEnBuenosAires(d: Date): { year: string; month: string; day: string } {
+export type RelojFiscal = () => Date;
+
+const relojSistema: RelojFiscal = () => new Date();
+
+/** Partes año/mes/día de una fecha, según el reloj fiscal de Córdoba. */
+function partesEnCordoba(d: Date): { year: string; month: string; day: string } {
+  if (!(d instanceof Date) || !Number.isFinite(d.getTime())) {
+    throw new Error("La fecha fiscal debe ser una fecha válida.");
+  }
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
@@ -28,14 +35,65 @@ function partesEnBuenosAires(d: Date): { year: string; month: string; day: strin
 
 /** YYYYMMDD — el formato que espera AFIP en CbteFch / FchServDesde / etc. */
 export function fmtFechaAfip(d: Date): string {
-  const { year, month, day } = partesEnBuenosAires(d);
+  const { year, month, day } = partesEnCordoba(d);
   return `${year}${month}${day}`;
 }
 
 /** YYYY-MM-DD — el formato que espera el QR de AFIP (RG 4892). */
 export function fmtFechaIsoAr(d: Date): string {
-  const { year, month, day } = partesEnBuenosAires(d);
+  const { year, month, day } = partesEnCordoba(d);
   return `${year}-${month}-${day}`;
+}
+
+/** Fecha fiscal nueva: siempre hoy en America/Argentina/Cordoba. */
+export function fechaFiscalHoyAr(reloj: RelojFiscal = relojSistema): string {
+  return fmtFechaIsoAr(reloj());
+}
+
+function validarFechaIsoCalendario(fecha: string, nombre: string): void {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fecha);
+  if (!match) throw new Error(`${nombre} debe tener formato YYYY-MM-DD.`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const comprobacion = new Date(Date.UTC(year, month - 1, day));
+  if (
+    comprobacion.getUTCFullYear() !== year ||
+    comprobacion.getUTCMonth() !== month - 1 ||
+    comprobacion.getUTCDate() !== day
+  ) {
+    throw new Error(`${nombre} no es una fecha calendario válida.`);
+  }
+}
+
+/**
+ * Valida la fecha antes de reservar. No corrige ni elige otra fecha: un
+ * incumplimiento bloquea para revisión.
+ */
+export function validarCorrelatividadFechaFiscal(
+  fechaFiscal: string,
+  ultimaFechaAutorizada: string | null,
+  reloj: RelojFiscal = relojSistema,
+): void {
+  validarFechaIsoCalendario(fechaFiscal, "La fecha fiscal");
+  if (ultimaFechaAutorizada !== null) {
+    validarFechaIsoCalendario(ultimaFechaAutorizada, "La última fecha autorizada");
+  }
+
+  const hoy = fechaFiscalHoyAr(reloj);
+  if (ultimaFechaAutorizada !== null && ultimaFechaAutorizada > hoy) {
+    throw new Error(
+      "La última autorizada está fechada en el futuro; la secuencia requiere revisión.",
+    );
+  }
+  if (ultimaFechaAutorizada !== null && fechaFiscal < ultimaFechaAutorizada) {
+    throw new Error("La fecha fiscal no puede ser anterior a la última autorizada.");
+  }
+  if (fechaFiscal !== hoy) {
+    throw new Error(
+      "La fecha fiscal de una emisión nueva debe ser hoy; no se retrodata a la venta.",
+    );
+  }
 }
 
 /**
@@ -51,15 +109,15 @@ export function fmtFechaIsoAr(d: Date): string {
  */
 export const VENTANA_AFIP_DIAS = 5;
 
-/** Día calendario absoluto (en el reloj de Buenos Aires) como número entero. */
+/** Día calendario absoluto (en el reloj de Córdoba) como número entero. */
 function diaAbsolutoAr(d: Date): number {
-  const { year, month, day } = partesEnBuenosAires(d);
+  const { year, month, day } = partesEnCordoba(d);
   return Math.floor(Date.UTC(Number(year), Number(month) - 1, Number(day)) / 86_400_000);
 }
 
 /**
  * Días calendario entre la fecha de un comprobante y hoy, con el reloj de
- * Buenos Aires (el que usa AFIP). Positivo = el comprobante es del pasado;
+ * Córdoba (el que usa este dominio fiscal). Positivo = el comprobante es del pasado;
  * negativo = está fechado a futuro. Se cuenta por día calendario, no por horas:
  * una venta de ayer a las 23:00 es 1 día, aunque hayan pasado 2 horas.
  */
@@ -75,6 +133,14 @@ export function diasRestantesVentanaAfip(fecha: Date, hoy: Date = new Date()): n
 /** ¿La fecha del comprobante quedó fuera de lo que AFIP acepta? */
 export function fueraDeVentanaAfip(fecha: Date, hoy: Date = new Date()): boolean {
   return Math.abs(diasDesdeHoyAr(fecha, hoy)) > VENTANA_AFIP_DIAS;
+}
+
+/** Una venta de más de cinco días exige confirmación administrativa, sin retrodata. */
+export function requiereConfirmacionVentaDemorada(
+  fechaVentaComercial: Date,
+  reloj: RelojFiscal = relojSistema,
+): boolean {
+  return diasDesdeHoyAr(fechaVentaComercial, reloj()) > VENTANA_AFIP_DIAS;
 }
 
 /**

@@ -11,7 +11,7 @@ import {
   esNotaInterna,
   letraDeFactura,
   letraDeCbteTipo,
-  puedeForzarConsumidorFinal,
+  tituloDeCbteTipo,
   TIPOS_C,
 } from "./codigos";
 import { calcularTotales, conIva, round2 } from "./iva";
@@ -21,31 +21,34 @@ import {
   parseFechaAfip,
   diasDesdeHoyAr,
   diasRestantesVentanaAfip,
+  fechaFiscalHoyAr,
   fueraDeVentanaAfip,
+  requiereConfirmacionVentaDemorada,
+  validarCorrelatividadFechaFiscal,
 } from "./fecha";
 import { urlQrAfip } from "./qr";
 import { detalleRechazoAfip } from "./arca";
 
-describe("tipo de comprobante (matriz A/B/C)", () => {
-  it("emisor monotributista siempre emite C", () => {
-    expect(determinarLetra("MONOTRIBUTO", "RESPONSABLE_INSCRIPTO")).toBe("C");
-    expect(determinarLetra("MONOTRIBUTO", "CONSUMIDOR_FINAL")).toBe("C");
-    expect(determinarLetra("MONOTRIBUTO", null)).toBe("C");
-  });
-
+describe("tipo de comprobante (rollout A/B para emisor RI)", () => {
   it("responsable inscripto a responsable inscripto = A", () => {
     expect(determinarLetra("RESPONSABLE_INSCRIPTO", "RESPONSABLE_INSCRIPTO")).toBe("A");
   });
 
-  it("responsable inscripto al resto = B", () => {
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL")).toBe("B");
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "MONOTRIBUTO")).toBe("B");
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "EXENTO")).toBe("B");
+  it("responsable inscripto a monotributista = A, sin downgrade manual", () => {
+    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "MONOTRIBUTO")).toBe("A");
   });
 
-  it("venta de mostrador sin cliente identificado = B (el caso dominante en una pinturería)", () => {
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", null)).toBe("B");
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", undefined)).toBe("B");
+  it("responsable inscripto a exento o consumidor final = B", () => {
+    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "EXENTO")).toBe("B");
+    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL")).toBe("B");
+  });
+
+  it("no habilita emisión C nueva ni adivina la condición del receptor", () => {
+    expect(() => determinarLetra("MONOTRIBUTO", "CONSUMIDOR_FINAL")).toThrow(/rollout.*RI/i);
+    expect(() => determinarLetra("RESPONSABLE_INSCRIPTO", null)).toThrow(/condición.*receptor/i);
+    expect(() => determinarLetra("RESPONSABLE_INSCRIPTO", undefined)).toThrow(
+      /condición.*receptor/i,
+    );
   });
 });
 
@@ -56,10 +59,22 @@ describe("códigos de comprobante de AFIP", () => {
     expect(cbteTipoAfip("FACTURA_C", "C")).toBe(11);
   });
 
+  it("la venta neutral deriva 1/6 sólo después de confirmar A/B", () => {
+    expect(cbteTipoAfip("VENTA", "A")).toBe(1);
+    expect(cbteTipoAfip("VENTA", "B")).toBe(6);
+    expect(() => cbteTipoAfip("VENTA", "C")).toThrow(/VENTA.*A o B/i);
+  });
+
   it("notas de crédito heredan la letra del comprobante que rectifican", () => {
     expect(cbteTipoAfip("NOTA_CREDITO", "A")).toBe(3);
     expect(cbteTipoAfip("NOTA_CREDITO", "B")).toBe(8);
     expect(cbteTipoAfip("NOTA_CREDITO", "C")).toBe(13);
+  });
+
+  it("una nota sin letra original confirmada se bloquea", () => {
+    expect(() => cbteTipoAfip("NOTA_CREDITO", null as unknown as "A")).toThrow(
+      /letra.*confirmada/i,
+    );
   });
 
   it("notas de débito", () => {
@@ -86,6 +101,11 @@ describe("códigos de comprobante de AFIP", () => {
     expect(letraDeFactura("FACTURA_B")).toBe("B");
     expect(letraDeFactura("FACTURA_C")).toBe("C");
   });
+
+  it("la venta neutral no obtiene una B por default desde letraDeFactura", () => {
+    expect(() => letraDeFactura("VENTA")).toThrow(/no tiene letra/i);
+    expect(() => letraDeFactura("DESCONOCIDO")).toThrow(/no tiene letra/i);
+  });
 });
 
 describe("documentos internos vs fiscales", () => {
@@ -96,10 +116,17 @@ describe("documentos internos vs fiscales", () => {
   });
 
   it("las facturas y notas sí", () => {
+    expect(esComprobanteFiscal("VENTA")).toBe(true);
     expect(esComprobanteFiscal("FACTURA_A")).toBe(true);
     expect(esComprobanteFiscal("FACTURA_B")).toBe(true);
+    expect(esComprobanteFiscal("FACTURA_C")).toBe(true);
     expect(esComprobanteFiscal("NOTA_CREDITO")).toBe(true);
     expect(esComprobanteFiscal("NOTA_DEBITO")).toBe(true);
+  });
+
+  it("un valor desconocido no se vuelve fiscal por descarte", () => {
+    expect(esComprobanteFiscal("FACTURA_X")).toBe(false);
+    expect(esComprobanteFiscal("")).toBe(false);
   });
 });
 
@@ -160,7 +187,7 @@ describe("alícuotas de IVA", () => {
   });
 });
 
-describe("receptor", () => {
+describe("receptor legacy", () => {
   it("11 dígitos = CUIT (80)", () => {
     expect(docTipoAfip("30712345678")).toBe(80);
     expect(docTipoAfip("30-71234567-8")).toBe(80);
@@ -338,6 +365,44 @@ describe("ventana de ±5 días de AFIP (Concepto=1, productos)", () => {
   });
 });
 
+describe("fecha fiscal nueva y correlatividad", () => {
+  // 23:30 del 22/08 en Córdoba; UTC ya está en el día siguiente.
+  const reloj = () => new Date("2026-08-23T02:30:00.000Z");
+
+  it("toma hoy en America/Argentina/Cordoba y no retrodata a la venta", () => {
+    expect(fechaFiscalHoyAr(reloj)).toBe("2026-08-22");
+    expect(() => validarCorrelatividadFechaFiscal("2026-08-16", null, reloj)).toThrow(
+      /fecha fiscal.*hoy/i,
+    );
+  });
+
+  it("no permite una fecha nueva anterior a la última autorizada", () => {
+    expect(() => validarCorrelatividadFechaFiscal("2026-08-21", "2026-08-22", reloj)).toThrow(
+      /anterior.*última autorizada/i,
+    );
+  });
+
+  it("bloquea si la última fecha autorizada está en el futuro", () => {
+    expect(() => validarCorrelatividadFechaFiscal("2026-08-22", "2026-08-23", reloj)).toThrow(
+      /última autorizada.*futuro/i,
+    );
+  });
+
+  it("acepta hoy cuando conserva la correlatividad", () => {
+    expect(() => validarCorrelatividadFechaFiscal("2026-08-22", "2026-08-21", reloj)).not.toThrow();
+  });
+
+  it("una venta comercial de más de cinco días sólo requiere confirmación admin", () => {
+    expect(requiereConfirmacionVentaDemorada(new Date("2026-08-16T15:00:00.000Z"), reloj)).toBe(
+      true,
+    );
+    expect(requiereConfirmacionVentaDemorada(new Date("2026-08-17T15:00:00.000Z"), reloj)).toBe(
+      false,
+    );
+    expect(fechaFiscalHoyAr(reloj)).toBe("2026-08-22");
+  });
+});
+
 describe("QR de AFIP (RG 4892)", () => {
   const base = {
     fecha: new Date("2026-07-13T15:00:00Z"),
@@ -441,31 +506,24 @@ describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
   });
 });
 
-describe("selector Factura A/B (RI puede emitir B a un cliente RI)", () => {
-  it("sólo se puede forzar Consumidor Final cuando emisor Y receptor son RI", () => {
-    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", "RESPONSABLE_INSCRIPTO")).toBe(true);
-    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL")).toBe(false);
-    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", "MONOTRIBUTO")).toBe(false);
-    expect(puedeForzarConsumidorFinal("MONOTRIBUTO", "RESPONSABLE_INSCRIPTO")).toBe(false);
-    expect(puedeForzarConsumidorFinal("RESPONSABLE_INSCRIPTO", null)).toBe(false);
-  });
-
-  it("forzar CF sobre un receptor RI baja la letra de A a B", () => {
-    // Sin forzar: RI + RI = A.
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "RESPONSABLE_INSCRIPTO")).toBe("A");
-    // Forzado: la condición efectiva pasa a CONSUMIDOR_FINAL -> B.
-    expect(determinarLetra("RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL")).toBe("B");
-  });
-
+describe("letra y título desde el CbteTipo autorizado", () => {
   it("la letra de la NC sale del CbteTipo REALMENTE emitido, no del tipo tipeado", () => {
-    // Una venta FACTURA_A emitida como B (forzado) tiene cbte 6 -> su NC es B.
     expect(letraDeCbteTipo(6)).toBe("B"); // Factura B
     expect(letraDeCbteTipo(1)).toBe("A"); // Factura A
     expect(letraDeCbteTipo(11)).toBe("C"); // Factura C
     expect(letraDeCbteTipo(8)).toBe("B"); // NC B
     expect(letraDeCbteTipo(3)).toBe("A"); // NC A
     expect(letraDeCbteTipo(13)).toBe("C"); // NC C
-    expect(letraDeCbteTipo(null)).toBe("A"); // sin dato: default A
+  });
+
+  it("código nulo o desconocido no obtiene letra A por default", () => {
+    expect(() => letraDeCbteTipo(null)).toThrow(/CbteTipo.*desconocido/i);
+    expect(() => letraDeCbteTipo(999)).toThrow(/CbteTipo.*desconocido/i);
+  });
+
+  it("código nulo o desconocido no obtiene título Factura por default", () => {
+    expect(() => tituloDeCbteTipo(null as unknown as number)).toThrow(/CbteTipo.*desconocido/i);
+    expect(() => tituloDeCbteTipo(999)).toThrow(/CbteTipo.*desconocido/i);
   });
 });
 

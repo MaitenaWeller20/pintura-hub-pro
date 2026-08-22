@@ -6,16 +6,13 @@
  * equivocado a AFIP no es un error que quieras descubrir en la declaración de IVA.
  */
 
-export type CondicionIva =
-  | "RESPONSABLE_INSCRIPTO"
-  | "MONOTRIBUTO"
-  | "EXENTO"
-  | "CONSUMIDOR_FINAL";
+export type CondicionIva = "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO" | "EXENTO" | "CONSUMIDOR_FINAL";
 
 export type Letra = "A" | "B" | "C";
 
 /** Los tipos de comprobante que maneja quimex. */
 export type TipoComprobante =
+  | "VENTA"
   | "FACTURA_A"
   | "FACTURA_B"
   | "FACTURA_C"
@@ -35,7 +32,16 @@ export const TIPOS_INTERNOS: ReadonlySet<string> = new Set([
   "FAC_INTERNA_CTA_CTE",
 ]);
 
-export const esComprobanteFiscal = (tipo: string): boolean => !TIPOS_INTERNOS.has(tipo);
+const TIPOS_FISCALES: ReadonlySet<string> = new Set([
+  "VENTA",
+  "FACTURA_A",
+  "FACTURA_B",
+  "FACTURA_C",
+  "NOTA_CREDITO",
+  "NOTA_DEBITO",
+]);
+
+export const esComprobanteFiscal = (tipo: string): boolean => TIPOS_FISCALES.has(tipo);
 
 /**
  * Una nota de crédito/débito SIN comprobante asociado es la reversión interna de
@@ -47,10 +53,7 @@ export const esComprobanteFiscal = (tipo: string): boolean => !TIPOS_INTERNOS.ha
  * obtener un CAE. Antes estas notas mostraban el botón de emitir y fallaban
  * siempre, quedando como pendientes irresolubles.
  */
-export function esNotaInterna(
-  tipo: string,
-  afipCbteAsocId: string | null | undefined,
-): boolean {
+export function esNotaInterna(tipo: string, afipCbteAsocId: string | null | undefined): boolean {
   return (tipo === "NOTA_CREDITO" || tipo === "NOTA_DEBITO") && !afipCbteAsocId;
 }
 
@@ -63,18 +66,22 @@ export const CONDICION_IVA_CLIENTE: Record<string, CondicionIva> = {
 };
 
 /**
- * Matriz A/B/C.
- *   - Emisor monotributista -> siempre C.
- *   - Emisor RI + receptor RI -> A.
- *   - Emisor RI + cualquier otro (o sin cliente) -> B.
+ * Matriz vigente del rollout para un emisor Responsable Inscripto.
+ * La emisión nueva de clase C queda fuera de alcance; los códigos C se conservan
+ * para leer comprobantes históricos y derivar sus notas.
  */
 export function determinarLetra(
   condEmisor: CondicionIva,
   condReceptor: CondicionIva | null | undefined,
 ): Letra {
-  if (condEmisor === "MONOTRIBUTO") return "C";
-  if (condReceptor === "RESPONSABLE_INSCRIPTO") return "A";
-  return "B";
+  if (condEmisor !== "RESPONSABLE_INSCRIPTO") {
+    throw new Error("El rollout fiscal actual sólo admite un emisor RI.");
+  }
+  if (condReceptor === "RESPONSABLE_INSCRIPTO" || condReceptor === "MONOTRIBUTO") {
+    return "A";
+  }
+  if (condReceptor === "EXENTO" || condReceptor === "CONSUMIDOR_FINAL") return "B";
+  throw new Error("La condición de IVA del receptor debe estar confirmada.");
 }
 
 export function facturaDeLetra(letra: Letra): TipoComprobante {
@@ -84,35 +91,22 @@ export function facturaDeLetra(letra: Letra): TipoComprobante {
 /** La letra de una factura ya emitida (para derivar la letra de su nota de crédito). */
 export function letraDeFactura(tipo: string): Letra {
   if (tipo === "FACTURA_A") return "A";
+  if (tipo === "FACTURA_B") return "B";
   if (tipo === "FACTURA_C") return "C";
-  return "B";
+  throw new Error(`El tipo ${tipo} no tiene letra de factura confirmada.`);
 }
 
 /**
  * Letra REAL emitida, derivada del CbteTipo de AFIP guardado en la venta
  * (afip_cbte_tipo). Es la fuente de verdad para la letra de una nota de crédito:
- * una venta tipeada FACTURA_A pero emitida como B (ver puedeForzarConsumidorFinal)
- * tiene afip_cbte_tipo=6, y su NC debe salir B, no A.
+ * la nota hereda esa letra autorizada sin releer ni reinterpretar datos vivos.
  *   A: 1 (Fac), 2 (ND), 3 (NC)  ·  B: 6, 7, 8  ·  C: 11, 12, 13, 15
  */
 export function letraDeCbteTipo(cbteTipo: number | null | undefined): Letra {
+  if (cbteTipo != null && [1, 2, 3].includes(cbteTipo)) return "A";
   if (cbteTipo != null && [6, 7, 8].includes(cbteTipo)) return "B";
   if (cbteTipo != null && TIPOS_C.has(cbteTipo)) return "C";
-  return "A";
-}
-
-/**
- * ¿Se puede emitir Factura B (Consumidor Final) a un cliente RESPONSABLE INSCRIPTO?
- * Sólo cuando emisor Y receptor son RI: ahí la matriz daría A, pero el negocio a
- * veces quiere B. Para cualquier otra condición del receptor la letra ya es B (o C),
- * así que el "forzado" no aplica. Es server-authoritative: sólo habilita el
- * downgrade A→B, nunca al revés.
- */
-export function puedeForzarConsumidorFinal(
-  condEmisor: CondicionIva,
-  condReceptor: CondicionIva | null | undefined,
-): boolean {
-  return condEmisor === "RESPONSABLE_INSCRIPTO" && condReceptor === "RESPONSABLE_INSCRIPTO";
+  throw new Error(`CbteTipo desconocido: ${String(cbteTipo)}`);
 }
 
 /**
@@ -120,6 +114,14 @@ export function puedeForzarConsumidorFinal(
  * Las notas de crédito/débito heredan la letra del comprobante que rectifican.
  */
 export function cbteTipoAfip(tipo: string, letra: Letra): number {
+  if (letra !== "A" && letra !== "B" && letra !== "C") {
+    throw new Error("El CbteTipo exige una letra original confirmada.");
+  }
+  if (tipo === "VENTA") {
+    if (letra === "A") return 1;
+    if (letra === "B") return 6;
+    throw new Error("VENTA requiere una letra confirmada A o B.");
+  }
   const mapa: Record<string, Record<Letra, number>> = {
     FACTURA_A: { A: 1, B: 6, C: 11 },
     FACTURA_B: { A: 1, B: 6, C: 11 },
@@ -174,17 +176,25 @@ export function porcentajeDeIvaId(id: number): number {
 
 /** Letra y código impreso de AFIP para el recuadro del comprobante. */
 export const CBTE_INFO: Record<number, { letra: Letra; cod: string }> = {
-  1: { letra: "A", cod: "01" }, 2: { letra: "A", cod: "02" }, 3: { letra: "A", cod: "03" },
-  6: { letra: "B", cod: "06" }, 7: { letra: "B", cod: "07" }, 8: { letra: "B", cod: "08" },
-  11: { letra: "C", cod: "11" }, 12: { letra: "C", cod: "12" }, 13: { letra: "C", cod: "13" },
+  1: { letra: "A", cod: "01" },
+  2: { letra: "A", cod: "02" },
+  3: { letra: "A", cod: "03" },
+  6: { letra: "B", cod: "06" },
+  7: { letra: "B", cod: "07" },
+  8: { letra: "B", cod: "08" },
+  11: { letra: "C", cod: "11" },
+  12: { letra: "C", cod: "12" },
+  13: { letra: "C", cod: "13" },
   15: { letra: "C", cod: "15" },
 };
 
-/** Título del comprobante según el CbteTipo de AFIP. */
-export function tituloDeCbteTipo(cbteTipo: number): string {
-  if ([3, 8, 13].includes(cbteTipo)) return "NOTA DE CRÉDITO";
-  if ([2, 7, 12].includes(cbteTipo)) return "NOTA DE DÉBITO";
-  return "FACTURA";
+/** Título del comprobante según un CbteTipo de AFIP conocido. */
+export function tituloDeCbteTipo(cbteTipo: number | null | undefined): string {
+  if ([1, 6, 11].includes(cbteTipo as number)) return "FACTURA";
+  if ([3, 8, 13].includes(cbteTipo as number)) return "NOTA DE CRÉDITO";
+  if ([2, 7, 12].includes(cbteTipo as number)) return "NOTA DE DÉBITO";
+  if (cbteTipo === 15) return "RECIBO";
+  throw new Error(`CbteTipo desconocido: ${String(cbteTipo)}`);
 }
 
 /** Etiqueta legible de una condición de IVA, para imprimir. */
@@ -226,7 +236,11 @@ export function alicuotaValida(valor: unknown, fallback: number): number {
     : fallback;
 }
 
-/** Tipo de documento del receptor. */
+/**
+ * @deprecated Compatibilidad exclusiva del escritor/lector legacy.
+ * El camino fiscal v2 usa documentoFiscalArca() con tipo explícito y nunca llama
+ * a este helper, que infiere por longitud.
+ */
 export function docTipoAfip(cuitDni: string | null | undefined): number {
   const limpio = (cuitDni ?? "").replace(/\D/g, "");
   if (limpio.length === 11) return 80; // CUIT

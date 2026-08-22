@@ -108,6 +108,7 @@ ALTER TABLE public.ventas
             AND afip_punto_venta BETWEEN 1 AND 99999
             AND afip_cbte_tipo BETWEEN 1 AND 9999
             AND afip_modo IN ('PRODUCCION','HOMOLOGACION')
+            AND afip_validez IS NOT NULL
             AND afip_validez IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
             AND afip_fecha_comprobante IS NOT NULL
             AND afip_imp_total IS NOT NULL
@@ -143,6 +144,7 @@ ALTER TABLE public.ventas
             AND afip_punto_venta BETWEEN 1 AND 99999
             AND afip_cbte_tipo BETWEEN 1 AND 9999
             AND afip_modo IN ('PRODUCCION','HOMOLOGACION')
+            AND afip_validez IS NOT NULL
             AND afip_validez IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
             AND afip_fecha_comprobante IS NOT NULL
             AND afip_imp_total IS NOT NULL
@@ -179,6 +181,7 @@ ALTER TABLE public.ventas
             AND afip_punto_venta BETWEEN 1 AND 99999
             AND afip_cbte_tipo BETWEEN 1 AND 9999
             AND afip_modo IN ('PRODUCCION','HOMOLOGACION')
+            AND afip_validez IS NOT NULL
             AND afip_validez IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
             AND afip_fecha_comprobante IS NOT NULL
             AND afip_imp_total IS NOT NULL
@@ -1139,10 +1142,10 @@ BEGIN
        OR v_venta.afip_fase NOT IN ('PREFLIGHT','RESERVADO') THEN
       RAISE EXCEPTION 'LIBERAR está prohibido desde %',COALESCE(v_venta.afip_fase,'NULL');
     END IF;
-    IF NOT (
+    IF (
          (v_intento.fase='PREFLIGHT' AND v_intento.resultado='RECLAMADO')
          OR (v_intento.fase='RESERVADO' AND v_intento.resultado='RESERVADO')
-       )
+       ) IS DISTINCT FROM true
        OR v_intento.respuesta_resumen ? 'evidencia_externa' THEN
       RAISE EXCEPTION 'El intento contiene evidencia de envío y no se puede liberar';
     END IF;

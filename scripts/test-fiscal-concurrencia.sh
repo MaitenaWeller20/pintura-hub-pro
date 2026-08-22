@@ -172,6 +172,7 @@ SQL
 
 echo "== Matriz estado/fase =="
 identity_sql="afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_emisor_cuit='30900000001',afip_punto_venta=990,afip_cbte_tipo=1,afip_numero=1,afip_modo='PRODUCCION',afip_simulado=false,afip_validez='PRODUCCION',afip_fecha_comprobante='2026-08-22',afip_snapshot='$PARITY_INPUT'::jsonb,afip_snapshot_hash='$PARITY_HASH',afip_imp_total=1210.00,afip_version=2"
+identity_sql_validez_null="${identity_sql/afip_validez=\'PRODUCCION\'/afip_validez=NULL}"
 expect_fail_like "PERSISTIDO no es una fase válida de EMITIENDO" "ck_ventas_afip_estado_integridad" \
   "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='PERSISTIDO',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000017'; ROLLBACK;"
 expect_fail_like "RESPUESTA_RECIBIDA no es una fase válida de APROBADO" "ck_ventas_afip_estado_integridad" \
@@ -184,6 +185,8 @@ expect_fail_like "REQUEST_INICIADO no es una fase válida de ERROR_CORREGIBLE" "
   "BEGIN; UPDATE public.ventas SET afip_estado='ERROR_CORREGIBLE',afip_fase='REQUEST_INICIADO',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000021'; ROLLBACK;"
 expect_fail_like "RESERVADO exige identidad fiscal completa y snapshot coherente" "ck_ventas_afip_estado_integridad" \
   "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='RESERVADO',afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_snapshot='{\"version\":2}'::jsonb,afip_snapshot_hash=repeat('e',64),afip_version=2 WHERE id='c3000000-0000-0000-0000-000000000025'; ROLLBACK;"
+expect_fail_like "RESERVADO rechaza identidad completa con afip_validez NULL" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='RESERVADO',$identity_sql_validez_null WHERE id='c3000000-0000-0000-0000-000000000026'; ROLLBACK;"
 check_sql "la excepción legacy APROBADO versión 0 sigue siendo válida" "1" \
   "BEGIN; UPDATE public.ventas SET afip_estado='APROBADO',afip_fase=NULL,afip_version=0,afip_numero=9001,afip_emisor_cuit='30900000001',afip_punto_venta=990,afip_cbte_tipo=1,afip_modo='PRODUCCION',cae='CAE-LEGACY' WHERE id='c3000000-0000-0000-0000-000000000022'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000022' AND afip_estado='APROBADO'; ROLLBACK;"
 check_sql "la excepción aditiva EMITIENDO sin fase sigue siendo válida" "1" \
@@ -513,6 +516,9 @@ expect_liberar_invalido "LIBERAR rechaza fuente de verificación inesperada" "js
 expect_liberar_invalido "LIBERAR rechaza resultado de intento fuera de whitelist" \
   "jsonb_build_object('nunca_enviado',true,'fuente','log_intento')" \
   "UPDATE public.emision_fiscal_intentos SET resultado='ERROR_PREFLIGHT' WHERE venta_id='c3000000-0000-0000-0000-000000000011';"
+expect_liberar_invalido "LIBERAR rechaza resultado de intento SQL NULL" \
+  "jsonb_build_object('nunca_enviado',true,'fuente','log_intento')" \
+  "UPDATE public.emision_fiscal_intentos SET resultado=NULL WHERE venta_id='c3000000-0000-0000-0000-000000000011';"
 expect_liberar_invalido "LIBERAR rechaza combinación fase/resultado incoherente" \
   "jsonb_build_object('nunca_enviado',true,'fuente','log_intento')" \
   "UPDATE public.emision_fiscal_intentos SET fase='RESERVADO',resultado='RECLAMADO' WHERE venta_id='c3000000-0000-0000-0000-000000000011';"

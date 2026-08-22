@@ -892,6 +892,41 @@ UPDATE public.ventas
        )
  WHERE id=(SELECT venta_id FROM t_approved_original);
 
+-- SQL NULL no puede satisfacer el requisito de fase PERSISTIDO. La anulación
+-- debe fallar antes de crear la NC o revertir efectos comerciales.
+UPDATE public.ventas SET afip_fase=NULL
+ WHERE id=(SELECT venta_id FROM t_approved_original);
+SELECT pg_temp.capture_effects('null-phase-anular-before');
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.anular_venta((SELECT venta_id FROM t_approved_original));
+    RAISE EXCEPTION 'T4_NULL_PHASE_ANULAR_ACEPTADA';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='T4_NULL_PHASE_ANULAR_ACEPTADA'
+       OR SQLERRM NOT LIKE '%identidad fiscal v2 completa%' THEN
+      RAISE;
+    END IF;
+  END;
+END;
+$$;
+SELECT pg_temp.capture_effects('null-phase-anular-after');
+SELECT pg_temp.assert_effects_equal(
+  'null-phase-anular-before','null-phase-anular-after',
+  'anular rechaza fase SQL NULL sin efectos comerciales'
+);
+SELECT pg_temp.assert_true(
+  (SELECT v.estado='ACTIVA' AND v.venta_anulada_por IS NULL
+       AND v.afip_estado='APROBADO' AND v.afip_fase IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM public.ventas n WHERE n.afip_cbte_asoc_id=v.id
+       )
+     FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_approved_original)),
+  'anular deja intacto el original APROBADO con fase SQL NULL'
+);
+UPDATE public.ventas SET afip_fase='PERSISTIDO'
+ WHERE id=(SELECT venta_id FROM t_approved_original);
+
 -- Una NC legacy PENDIENTE también es una nota activa y bloquea una segunda.
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
@@ -1151,6 +1186,45 @@ SELECT pg_temp.assert_true(
   'RESERVAR rechaza receptor, identidad, tipo, monto y asociación no heredados'
 );
 
+-- Aunque el resto del original sea v2 productivo y completo, SQL NULL en fase
+-- no equivale a PERSISTIDO. RESERVAR debe fallar sin consumir la reserva.
+UPDATE public.ventas SET afip_fase=NULL
+ WHERE id=(SELECT venta_id FROM t_approved_original);
+SELECT pg_temp.capture_effects('null-phase-reservar-before');
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.transicionar_emision_fiscal(
+      (SELECT nc_id FROM t_nc_result),'RESERVAR',
+      'e4000000-0000-0000-0000-000000000064',
+      pg_temp.nc_reserva_payload()
+    );
+    RAISE EXCEPTION 'T4_NULL_PHASE_RESERVAR_ACEPTADA';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='T4_NULL_PHASE_RESERVAR_ACEPTADA'
+       OR SQLERRM NOT LIKE 'NC asociada:%' THEN
+      RAISE;
+    END IF;
+  END;
+END;
+$$;
+SELECT pg_temp.capture_effects('null-phase-reservar-after');
+SELECT pg_temp.assert_effects_equal(
+  'null-phase-reservar-before','null-phase-reservar-after',
+  'RESERVAR rechaza fase SQL NULL sin efectos comerciales'
+);
+SELECT pg_temp.assert_true(
+  (SELECT nc.afip_estado='EMITIENDO' AND nc.afip_fase='PREFLIGHT'
+       AND nc.afip_version=1 AND nc.afip_numero IS NULL
+       AND nc.afip_snapshot IS NULL AND o.afip_fase IS NULL
+     FROM public.ventas nc
+     JOIN public.ventas o ON o.id=nc.afip_cbte_asoc_id
+    WHERE nc.id=(SELECT nc_id FROM t_nc_result)),
+  'RESERVAR deja intactos original y NC cuando la fase es SQL NULL'
+);
+UPDATE public.ventas SET afip_fase='PERSISTIDO'
+ WHERE id=(SELECT venta_id FROM t_approved_original);
+
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT nc_id FROM t_nc_result),'RESERVAR',
   'e4000000-0000-0000-0000-000000000064',
@@ -1297,6 +1371,13 @@ DELETE FROM public.ventas
  WHERE id='f4000000-0000-0000-0000-000000000110';
 DELETE FROM public.ventas
  WHERE id='f4000000-0000-0000-0000-000000000101';
+DELETE FROM public.caja_movimientos
+ WHERE caja_sesion_id IN (
+   SELECT id FROM public.caja_sesiones
+    WHERE abierta_por='a4000000-0000-0000-0000-000000000101'
+ );
+DELETE FROM public.caja_sesiones
+ WHERE abierta_por='a4000000-0000-0000-0000-000000000101';
 UPDATE public.profiles
    SET activo=false,sucursal_id=NULL
  WHERE id='a4000000-0000-0000-0000-000000000101';

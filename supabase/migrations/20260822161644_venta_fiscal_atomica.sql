@@ -1156,17 +1156,18 @@ BEGIN
       -- identidad superior corresponde a la NC y deriva emisor/PV/modo del
       -- original, con cbteTipo 1→3, 6→8 o 11→13.
       IF v_original.afip_estado<>'APROBADO'
-         OR v_original.afip_fase<>'PERSISTIDO'
+         OR v_original.afip_fase IS DISTINCT FROM 'PERSISTIDO'
          OR v_original.afip_version<2
          OR v_original.afip_legacy_incompleto
          OR v_original.estado<>'ANULADA'
          OR v_original.venta_anulada_por IS DISTINCT FROM v_venta.id
          OR v_original.cae IS NULL
-         OR v_original.afip_validez<>'PRODUCCION'
-         OR v_original.afip_modo<>'PRODUCCION'
+         OR v_original.afip_validez IS DISTINCT FROM 'PRODUCCION'
+         OR v_original.afip_modo IS DISTINCT FROM 'PRODUCCION'
          OR v_original.afip_simulado
          OR v_original.afip_emisor_cuit IS NULL
          OR v_original.afip_punto_venta IS NULL
+         OR v_original.afip_cbte_tipo IS NULL
          OR v_original.afip_cbte_tipo NOT IN (1,6,11)
          OR v_original.afip_numero IS NULL
          OR v_original.afip_fecha_comprobante IS NULL
@@ -2108,15 +2109,16 @@ BEGIN
     -- El receptor y toda la identidad se heredan por afip_cbte_asoc_id; nunca se
     -- releen del cliente ni se duplican en una fila pendiente mutable.
     IF v_v.afip_estado<>'APROBADO'
-       OR v_v.afip_fase<>'PERSISTIDO'
+       OR v_v.afip_fase IS DISTINCT FROM 'PERSISTIDO'
        OR v_v.afip_version<2
        OR v_v.afip_legacy_incompleto
-       OR v_v.afip_validez<>'PRODUCCION'
-       OR v_v.afip_modo<>'PRODUCCION'
+       OR v_v.afip_validez IS DISTINCT FROM 'PRODUCCION'
+       OR v_v.afip_modo IS DISTINCT FROM 'PRODUCCION'
        OR v_v.afip_simulado
        OR v_v.afip_numero IS NULL
        OR v_v.afip_emisor_cuit IS NULL
        OR v_v.afip_punto_venta IS NULL
+       OR v_v.afip_cbte_tipo IS NULL
        OR v_v.afip_cbte_tipo NOT IN (1,6,11)
        OR v_v.afip_fecha_comprobante IS NULL
        OR v_v.afip_imp_total IS NULL

@@ -1,4 +1,4 @@
-import type { CondicionIva, Letra } from "./codigos";
+import { cuitValido, type CondicionIva, type Letra } from "./codigos";
 import type { TotalesFiscales } from "./iva";
 
 export type EmisorSnapshotFiscal = {
@@ -78,7 +78,16 @@ function esRegistro(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function receptorDesdeSnapshotV1(snapshot: unknown): ReceptorDeclaradoLegacy {
+function normalizarDocumentoLogico(valor: string): string {
+  if (!/^(?=.*\d)[\d .-]+$/.test(valor)) {
+    throw new Error(
+      "El formato del documento lógico en el snapshot v1 sólo admite dígitos, puntos, guiones y espacios.",
+    );
+  }
+  return valor.replace(/[ .-]/g, "");
+}
+
+function receptorDesdeSnapshotV1(snapshot: unknown, letra: Letra): ReceptorDeclaradoLegacy {
   if (!esRegistro(snapshot) || snapshot.version !== 1 || !esRegistro(snapshot.receptor)) {
     throw new Error("La nota exige un snapshot v1 válido del receptor original.");
   }
@@ -99,12 +108,52 @@ function receptorDesdeSnapshotV1(snapshot: unknown): ReceptorDeclaradoLegacy {
     throw new Error("La nota exige un snapshot v1 válido del receptor original.");
   }
 
+  const condicionDeclarada = receptor.condicion_iva as CondicionIva | null;
+  let documentoLogico: string | null = null;
+  if (receptor.doc_tipo === 99) {
+    if (
+      receptor.cuit_dni !== null ||
+      receptor.doc_nro !== 0 ||
+      (condicionDeclarada !== null && condicionDeclarada !== "CONSUMIDOR_FINAL")
+    ) {
+      throw new Error(
+        "El receptor anónimo del snapshot v1 debe declarar cuit_dni null, DocTipo 99, DocNro 0 y condición consumidor final.",
+      );
+    }
+  } else {
+    if (receptor.cuit_dni === null) {
+      throw new Error("El documento lógico del receptor identificado es obligatorio.");
+    }
+    documentoLogico = normalizarDocumentoLogico(receptor.cuit_dni as string);
+    const largoValido =
+      ([80, 86, 87].includes(receptor.doc_tipo) && /^\d{11}$/.test(documentoLogico)) ||
+      (receptor.doc_tipo === 96 && /^\d{7,8}$/.test(documentoLogico));
+    if (!largoValido) {
+      throw new Error("El documento lógico no tiene la longitud exigida por DocTipo.");
+    }
+    if (documentoLogico !== String(receptor.doc_nro)) {
+      throw new Error("El documento lógico del snapshot v1 no coincide exactamente con DocNro.");
+    }
+    if (receptor.doc_tipo === 80 && !cuitValido(documentoLogico)) {
+      throw new Error("DocTipo 80 exige un CUIT válido en el snapshot v1 original.");
+    }
+    if (condicionDeclarada === null) {
+      throw new Error("La condición de IVA es obligatoria para un receptor identificado.");
+    }
+  }
+
+  const condicionEfectiva = condicionDeclarada ?? "CONSUMIDOR_FINAL";
   if (
-    (receptor.doc_tipo === 99 && receptor.doc_nro !== 0) ||
-    ([80, 86, 87].includes(receptor.doc_tipo) && String(receptor.doc_nro).length !== 11) ||
-    (receptor.doc_tipo === 96 && !/^\d{7,8}$/.test(String(receptor.doc_nro)))
+    letra === "A" &&
+    (!(condicionEfectiva === "RESPONSABLE_INSCRIPTO" || condicionEfectiva === "MONOTRIBUTO") ||
+      receptor.doc_tipo !== 80 ||
+      documentoLogico === null ||
+      !cuitValido(documentoLogico))
   ) {
-    throw new Error("El documento del receptor en el snapshot v1 original es incoherente.");
+    throw new Error("La letra A es incompatible con la condición o el documento del receptor.");
+  }
+  if (letra === "B" && condicionEfectiva !== "EXENTO" && condicionEfectiva !== "CONSUMIDOR_FINAL") {
+    throw new Error("La letra B es incompatible con la condición del receptor.");
   }
 
   return {
@@ -114,7 +163,7 @@ function receptorDesdeSnapshotV1(snapshot: unknown): ReceptorDeclaradoLegacy {
     doc_nro: receptor.doc_nro,
     // Snapshot v1 guardaba null para el consumidor final anónimo, pero el
     // payload legacy declaraba 5 mediante condicionIvaReceptorId(null).
-    condicion_iva: (receptor.condicion_iva as CondicionIva | null) ?? "CONSUMIDOR_FINAL",
+    condicion_iva: condicionEfectiva,
     domicilio: receptor.domicilio as string | null,
   };
 }
@@ -133,7 +182,9 @@ export function resolverReceptorFiscalLegacy(input: {
   const esNota =
     input.tipoComprobante === "NOTA_CREDITO" || input.tipoComprobante === "NOTA_DEBITO";
   if (!esNota) return { ...input.receptorVivo };
-  if (input.snapshotOriginal !== null) return receptorDesdeSnapshotV1(input.snapshotOriginal);
+  if (input.snapshotOriginal !== null) {
+    return receptorDesdeSnapshotV1(input.snapshotOriginal, input.letra);
+  }
   if (input.letra === "B" && input.receptorVivo.condicion_iva === "RESPONSABLE_INSCRIPTO") {
     return { ...input.receptorVivo, condicion_iva: "CONSUMIDOR_FINAL" };
   }

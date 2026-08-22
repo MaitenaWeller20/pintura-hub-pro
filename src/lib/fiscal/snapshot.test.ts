@@ -164,3 +164,163 @@ it("un snapshot original desconocido bloquea la nota en vez de releer datos vivo
     }),
   ).toThrow(/snapshot v1/i);
 });
+
+it("bloquea un CUIT visible que no coincide con el DocNro declarado", () => {
+  expect(() =>
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_CREDITO",
+      letra: "B",
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          ...snapshotFacturaBHistorica.receptor,
+          doc_nro: 30712345672,
+        },
+      },
+    }),
+  ).toThrow(/documento lógico.*DocNro/i);
+});
+
+it("bloquea un CUIT informado como anónimo 99/0 y responsable inscripto", () => {
+  expect(() =>
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_CREDITO",
+      letra: "B",
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          ...snapshotFacturaBHistorica.receptor,
+          doc_tipo: 99,
+          doc_nro: 0,
+          condicion_iva: "RESPONSABLE_INSCRIPTO",
+        },
+      },
+    }),
+  ).toThrow(/receptor anónimo/i);
+});
+
+it("rechaza letras o ruido al normalizar el documento lógico", () => {
+  expect(() =>
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_CREDITO",
+      letra: "B",
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          ...snapshotFacturaBHistorica.receptor,
+          cuit_dni: "30-71234567-1XYZ",
+        },
+      },
+    }),
+  ).toThrow(/formato del documento lógico/i);
+});
+
+it("bloquea DocTipo 80 aunque número lógico y DocNro coincidan si el CUIT es inválido", () => {
+  expect(() =>
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_CREDITO",
+      letra: "B",
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          ...snapshotFacturaBHistorica.receptor,
+          cuit_dni: "30-71234567-2",
+          doc_nro: 30712345672,
+        },
+      },
+    }),
+  ).toThrow(/CUIT válido/i);
+});
+
+it.each([
+  ["A", "CONSUMIDOR_FINAL"],
+  ["B", "RESPONSABLE_INSCRIPTO"],
+] as const)("bloquea letra %s con condición incompatible %s", (letra, condicionIva) => {
+  expect(() =>
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_CREDITO",
+      letra,
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          ...snapshotFacturaBHistorica.receptor,
+          condicion_iva: condicionIva,
+        },
+      },
+    }),
+  ).toThrow(new RegExp(`letra ${letra}.*condición`, "i"));
+});
+
+it("acepta separadores permitidos y conserva una copia exacta sin mutar el snapshot", () => {
+  const snapshot = {
+    ...snapshotFacturaBHistorica,
+    receptor: {
+      ...snapshotFacturaBHistorica.receptor,
+      cuit_dni: "30 . 71234567 - 1",
+    },
+  };
+
+  const receptor = resolverReceptorFiscalLegacy({
+    tipoComprobante: "NOTA_CREDITO",
+    letra: "B",
+    receptorVivo: receptorVivoRi,
+    snapshotOriginal: snapshot,
+  });
+  receptor.razon_social = "Mutada afuera";
+
+  expect(receptor.cuit_dni).toBe("30 . 71234567 - 1");
+  expect(snapshot.receptor.razon_social).toBe("ACME SA al emitir");
+});
+
+it("tolera condición null sólo para el consumidor final anónimo del snapshot v1", () => {
+  expect(
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_DEBITO",
+      letra: "B",
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          razon_social: "Consumidor Final",
+          cuit_dni: null,
+          doc_tipo: 99,
+          doc_nro: 0,
+          condicion_iva: null,
+          domicilio: null,
+        },
+      },
+    }),
+  ).toEqual({
+    razon_social: "Consumidor Final",
+    cuit_dni: null,
+    doc_tipo: 99,
+    doc_nro: 0,
+    condicion_iva: "CONSUMIDOR_FINAL",
+    domicilio: null,
+  });
+});
+
+it("no impone la matriz nueva A/B a una nota C histórica coherente", () => {
+  expect(
+    resolverReceptorFiscalLegacy({
+      tipoComprobante: "NOTA_CREDITO",
+      letra: "C",
+      receptorVivo: receptorVivoRi,
+      snapshotOriginal: {
+        ...snapshotFacturaBHistorica,
+        receptor: {
+          ...snapshotFacturaBHistorica.receptor,
+          condicion_iva: "RESPONSABLE_INSCRIPTO",
+        },
+      },
+    }),
+  ).toEqual({
+    ...snapshotFacturaBHistorica.receptor,
+    condicion_iva: "RESPONSABLE_INSCRIPTO",
+  });
+});

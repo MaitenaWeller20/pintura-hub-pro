@@ -207,3 +207,57 @@ Task 7 deja construido y validado el dato inmutable; no conecta todavía el
 motor nuevo de Task 9 ni modifica impresión. El caller de Task 9 debe construir
 exactamente este shape y las NC exclusivamente desde el snapshot original. Los
 dos findings históricos del lint permanecen fuera de alcance y sin cambios.
+
+## Fix round 2/5 — fechas y CUIT canónicos
+
+Se cerraron los dos hallazgos confirmados sin cambiar el contrato aritmético de
+Task 7 ni las APIs legacy:
+
+- `fecha()` e `instante()` rechazan explícitamente el año `0000`; conservan el
+  rango canónico `0001..9999`, aceptan `0001-01-01` y `2024-02-29`, y rechazan
+  `2100-02-29` en los cinco campos fiscales de fecha/instante.
+- Snapshot v2 usa un validador de CUIT propio: exactamente once dígitos, distinto
+  de todo cero y módulo 11 válido. Se aplica a emisor, identidad, receptor CUIT y
+  `CbtesAsoc`; `cuitValido` legacy queda intacto.
+- La migración forward creada exclusivamente con
+  `supabase migration new snapshot_fiscal_v2_fechas_cuit_canonicos` agrega
+  `cuit_fiscal_snapshot_valido(text)`, revocado a `PUBLIC`, `anon` y
+  `authenticated`, y otorgado sólo a `service_role` para que el validator/RPC
+  `SECURITY INVOKER` puedan usarlo. `RESERVAR` valida el payload antes del lock.
+- `validar_snapshot_fiscal_v2` declara el dominio anual `0001..9999` antes de
+  cualquier cast. La función efectiva y la RPC son copias mecánicas de
+  `20260822203901`; el diff contra esa migración muestra únicamente el helper y
+  los guards intencionales de fecha/CUIT. Se conservaron firma, `search_path`,
+  grants, locks, CAS y hardenings de NC/Task 4.
+
+Entrega manual: aplicar localmente
+`20260822215956_snapshot_fiscal_v2_fechas_cuit_canonicos.sql` inmediatamente
+después de `20260822203901_snapshot_fiscal_v2_completo.sql`. No se ejecutó ni
+se autorizó ninguna migración remota.
+
+### TDD y verificación fresca
+
+- RED TS: `snapshot.test.ts` falló exactamente en los cinco campos con año
+  `0000` y en CUIT emisor puntuado (`6 failed / 89 passed`).
+- RED SQL: el contrato previo aceptó CUIT todo cero tanto en emisor como en
+  receptor (`146 ok / 2 fallas`).
+- GREEN focal TS: `95/95`.
+- `supabase db reset --debug`: PASS con la nueva migración; un segundo reset
+  fresco sin debug también PASS después de ajustar el grant interno.
+- `scripts/test-receptor-fiscal-schema.sh`: PASS.
+- `scripts/test-fiscal-concurrencia.sh`: PASS, `155 ok / 0 fallas`.
+- `scripts/test-venta-fiscal-atomica.sh`: PASS, incluido contrato NC y carreras.
+- `scripts/test-facturacion-multiemisor.sh`: PASS.
+- `scripts/test-venta-contado.sh`: PASS.
+- `scripts/test-nota-credito-sin-factura.sh`: PASS.
+- `scripts/test-caja-y-saldos.sh`: PASS, `28 ok / 0 fallas`.
+- `npm test`: PASS, 30 archivos; `605 passed / 4 skipped`.
+- `npm run typecheck`: PASS.
+- `INVOICING_MOCK_MODE=true npm run build:vercel`: PASS; sólo warnings
+  preexistentes de `inputValidator`, paths y tamaño de chunks.
+- `supabase db lint --level warning`: exit 0; persisten exclusivamente los dos
+  hallazgos históricos ajenos ya documentados (`_objetivo` y
+  `p_idempotency_key`).
+- `git diff --check`: PASS; la migración histórica `20260822161644` no cambió.
+
+No se usó red ARCA, deploy, push, flags de producción ni migraciones remotas.

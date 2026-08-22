@@ -355,6 +355,45 @@ function bodyV2() {
   return body;
 }
 
+function notaInputV2() {
+  const input = inputV2() as any;
+  input.venta.tipoComprobante = "NOTA_CREDITO";
+  input.identidad.cbteTipo = 8;
+  input.origen = "COMPROBANTE_ORIGINAL";
+  input.comprobanteOriginalId = "71000000-0000-4000-8000-000000000401";
+  input.cbtesAsoc = [
+    {
+      tipo: 6,
+      puntoVenta: input.identidad.puntoVenta,
+      numero: 1,
+      cuit: input.emisor.cuit,
+      fecha: "2026-08-20",
+    },
+  ];
+  return input;
+}
+
+function inputV2ConReceptorRi() {
+  const input = inputV2() as any;
+  input.receptor = {
+    razonSocial: "CLIENTE RI",
+    domicilio: "Domicilio fiscal 123",
+    tipoDocumento: "CUIT",
+    numeroDocumento: "30714199664",
+    docTipoArca: 80,
+    docNroArca: "30714199664",
+    condicionIva: "RESPONSABLE_INSCRIPTO",
+    origen: "MANUAL",
+    origenId: null,
+    verificadoArcaAt: null,
+    condicionIvaReceptorId: 1,
+  };
+  input.letra = "A";
+  input.identidad.cbteTipo = 1;
+  input.ivaContenido = "0.00";
+  return input;
+}
+
 describe("snapshot fiscal v2", () => {
   it.each([
     ["", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
@@ -600,6 +639,98 @@ describe("snapshot fiscal v2", () => {
     else input.venta.fechaComercial = instante;
 
     expect(() => crearSnapshotFiscalV2(input)).toThrow(/instante|fecha|verificación/i);
+  });
+
+  it.each([
+    ["venta.fechaComercial", (input: any) => (input.venta.fechaComercial = "0000-01-01T00:00:00Z")],
+    [
+      "receptor.verificadoArcaAt",
+      (input: any) => (input.receptor.verificadoArcaAt = "0000-01-01T00:00:00.000Z"),
+    ],
+    ["fechaComprobante", (input: any) => (input.fechaComprobante = "0000-01-01")],
+    ["emisor.inicioActividades", (input: any) => (input.emisor.inicioActividades = "0000-01-01")],
+    ["cbtesAsoc.fecha", (input: any) => (input.cbtesAsoc[0].fecha = "0000-01-01")],
+  ])("rechaza el año 0000 en %s", (_campo, mutar) => {
+    const input = notaInputV2();
+    mutar(input);
+    expect(() => crearSnapshotFiscalV2(input)).toThrow(/fecha|instante|año/i);
+  });
+
+  it.each([
+    ["venta.fechaComercial", (input: any) => (input.venta.fechaComercial = "2100-02-29T00:00:00Z")],
+    [
+      "receptor.verificadoArcaAt",
+      (input: any) => (input.receptor.verificadoArcaAt = "2100-02-29T00:00:00.000Z"),
+    ],
+    ["fechaComprobante", (input: any) => (input.fechaComprobante = "2100-02-29")],
+    ["emisor.inicioActividades", (input: any) => (input.emisor.inicioActividades = "2100-02-29")],
+    ["cbtesAsoc.fecha", (input: any) => (input.cbtesAsoc[0].fecha = "2100-02-29")],
+  ])("rechaza 2100-02-29 en %s", (_campo, mutar) => {
+    const input = notaInputV2();
+    mutar(input);
+    expect(() => crearSnapshotFiscalV2(input)).toThrow(/fecha|instante/i);
+  });
+
+  it.each([
+    ["0001-01-01", "0001-01-01T00:00:00Z", "0001-01-01T00:00:00.000Z"],
+    ["2024-02-29", "2024-02-29T00:00:00Z", "2024-02-29T00:00:00.000Z"],
+  ])("acepta la fecha gregoriana válida %s en los cinco campos", (dia, instanteVenta, instanteArca) => {
+    const input = notaInputV2();
+    input.venta.fechaComercial = instanteVenta;
+    input.receptor.verificadoArcaAt = instanteArca;
+    input.fechaComprobante = dia;
+    input.emisor.inicioActividades = dia;
+    input.cbtesAsoc[0].fecha = dia;
+
+    const snapshot = crearSnapshotFiscalV2(input);
+    expect(snapshot.fechaComprobante).toBe(dia);
+    expect(snapshot.cbtesAsoc[0].fecha).toBe(dia);
+  });
+
+  it.each(["00000000000", "30-71419966-4"])(
+    "rechaza CUIT de emisor no canónico o inválido: %s",
+    (cuit) => {
+      const input = inputV2() as any;
+      input.emisor.cuit = cuit;
+      input.identidad.emisorCuit = cuit;
+      expect(() => crearSnapshotFiscalV2(input)).toThrow(/CUIT/i);
+    },
+  );
+
+  it.each(["00000000000", "30-71419966-4"])(
+    "rechaza CUIT de identidad no canónico o inválido: %s",
+    (cuit) => {
+      const input = inputV2() as any;
+      input.identidad.emisorCuit = cuit;
+      expect(() => crearSnapshotFiscalV2(input)).toThrow(/CUIT/i);
+    },
+  );
+
+  it.each(["00000000000", "30-71419966-4"])(
+    "rechaza CUIT de receptor no canónico o inválido: %s",
+    (cuit) => {
+      const input = inputV2ConReceptorRi();
+      input.receptor.numeroDocumento = cuit;
+      input.receptor.docNroArca = cuit.replace(/\D/g, "");
+      expect(() => crearSnapshotFiscalV2(input)).toThrow(/CUIT|documento/i);
+    },
+  );
+
+  it.each(["00000000000", "30-71419966-4"])(
+    "rechaza CUIT de CbtesAsoc no canónico o inválido: %s",
+    (cuit) => {
+      const input = notaInputV2();
+      input.cbtesAsoc[0].cuit = cuit;
+      expect(() => crearSnapshotFiscalV2(input)).toThrow(/CUIT|asociación/i);
+    },
+  );
+
+  it("acepta CUIT canónico válido en emisor, identidad, receptor y asociación", () => {
+    const facturaA = inputV2ConReceptorRi();
+    expect(crearSnapshotFiscalV2(facturaA).receptor.numeroDocumento).toBe("30714199664");
+
+    const nota = notaInputV2();
+    expect(crearSnapshotFiscalV2(nota).cbtesAsoc[0].cuit).toBe("30714199664");
   });
 
   it("no confunde otros impuestos nacionales indirectos con el total de tributos", () => {

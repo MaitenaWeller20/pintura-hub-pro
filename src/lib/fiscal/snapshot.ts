@@ -323,6 +323,7 @@ const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const DECIMAL_DOS = /^(0|[1-9][0-9]{0,11})\.[0-9]{2}$/;
 const DECIMAL_SEIS = /^(0|[1-9][0-9]{0,11})\.[0-9]{6}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+const CUIT_FISCAL_CANONICO = /^[0-9]{11}$/;
 const IVA_ID_POR_PORCENTAJE: ReadonlyMap<string, number> = new Map([
   ["0.00", 3],
   ["2.50", 9],
@@ -694,6 +695,7 @@ function entero(value: unknown, label: string, min: number, max: number): number
 function fecha(value: unknown, label: string): string {
   const result = texto(value, label)!;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(result)) throw new Error(`${label} debe usar YYYY-MM-DD.`);
+  if (result.startsWith("0000-")) throw new Error(`${label} debe tener un año entre 0001 y 9999.`);
   const parsed = new Date(`${result}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== result) {
     throw new Error(`${label} no es una fecha válida.`);
@@ -707,6 +709,7 @@ function instante(value: unknown, label: string, nullable = false): string | nul
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(result)) {
     throw new Error(`${label} debe ser un instante ISO UTC.`);
   }
+  if (result.startsWith("0000-")) throw new Error(`${label} debe tener un año entre 0001 y 9999.`);
   const parsed = new Date(result);
   if (Number.isNaN(parsed.getTime())) throw new Error(`${label} no es un instante válido.`);
   const canonico = result.includes(".")
@@ -714,6 +717,15 @@ function instante(value: unknown, label: string, nullable = false): string | nul
     : parsed.toISOString().replace(".000Z", "Z");
   if (canonico !== result) throw new Error(`${label} no es un instante válido y canónico.`);
   return result;
+}
+
+function cuitFiscalSnapshotValido(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    CUIT_FISCAL_CANONICO.test(value) &&
+    value !== "00000000000" &&
+    cuitValido(value)
+  );
 }
 
 function centavos(value: unknown, label: string, positivo = false): bigint {
@@ -782,7 +794,9 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   uuid(emisor.id, "emisor.id");
   texto(emisor.razonSocial, "emisor.razonSocial");
   texto(emisor.nombreFantasia, "emisor.nombreFantasia", true);
-  if (typeof emisor.cuit !== "string" || !cuitValido(emisor.cuit)) throw new Error("emisor.cuit debe ser válido.");
+  if (!cuitFiscalSnapshotValido(emisor.cuit)) {
+    throw new Error("emisor.cuit debe ser un CUIT canónico válido de 11 dígitos.");
+  }
   texto(emisor.domicilioFiscal, "emisor.domicilioFiscal");
   if (emisor.condicionIva !== "RESPONSABLE_INSCRIPTO") {
     throw new Error("El rollout v2 sólo admite un emisor Responsable Inscripto (RI).");
@@ -805,6 +819,9 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     "identidad",
   );
   entero(identidad.numero, "identidad.numero", 1, 2_147_483_647);
+  if (!cuitFiscalSnapshotValido(identidad.emisorCuit)) {
+    throw new Error("identidad.emisorCuit debe ser un CUIT canónico válido de 11 dígitos.");
+  }
   if (identidad.emisorCuit !== emisor.cuit) throw new Error("El CUIT de identidad no coincide con el emisor.");
   entero(identidad.puntoVenta, "identidad.puntoVenta", 1, 99_999);
   entero(identidad.cbteTipo, "identidad.cbteTipo", 1, 9_999);
@@ -956,6 +973,13 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     "receptor",
   );
   const { condicionIvaReceptorId: receptorCondicionId, ...receptorBase } = receptor;
+  if (
+    receptor.tipoDocumento === "CUIT" &&
+    (!cuitFiscalSnapshotValido(receptor.numeroDocumento) ||
+      !cuitFiscalSnapshotValido(receptor.docNroArca))
+  ) {
+    throw new Error("El CUIT del receptor debe ser canónico, válido y coincidir con DocNro ARCA.");
+  }
   validarReceptorFiscalConfirmado(receptorBase, Number(importeTotal) / 100);
   instante(receptor.verificadoArcaAt, "receptor.verificadoArcaAt", true);
   const condicionId = condicionIvaReceptorId(receptor.condicionIva as CondicionIva);
@@ -994,7 +1018,9 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     entero(asoc.tipo, "cbteAsoc.tipo", 1, 9_999);
     entero(asoc.puntoVenta, "cbteAsoc.puntoVenta", 1, 99_999);
     entero(asoc.numero, "cbteAsoc.numero", 1, 2_147_483_647);
-    if (typeof asoc.cuit !== "string" || !cuitValido(asoc.cuit)) throw new Error("cbteAsoc.cuit debe ser válido.");
+    if (!cuitFiscalSnapshotValido(asoc.cuit)) {
+      throw new Error("cbteAsoc.cuit debe ser un CUIT canónico válido de 11 dígitos.");
+    }
     fecha(asoc.fecha, "cbteAsoc.fecha");
     const domainKey = `${asoc.tipo}|${asoc.puntoVenta}|${asoc.numero}|${asoc.cuit}|${asoc.fecha}`;
     if (asocKeys.has(domainKey)) throw new Error("Las asociaciones no pueden repetirse.");

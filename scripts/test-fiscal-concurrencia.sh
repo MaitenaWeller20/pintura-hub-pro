@@ -283,6 +283,15 @@ check "la RPC tiene una sola firma SECURITY INVOKER y search_path fijado" \
 check "sólo service_role puede ejecutar la RPC" \
   "false|false|false|true" \
   "$(q "SELECT has_function_privilege('public','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text||'|'||has_function_privilege('anon','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text")"
+check "el helper CUIT tiene una sola firma inmutable, invoker y search_path fijado" \
+  "1|true|false|true" \
+  "$(q "SELECT count(*)||'|'||bool_and(p.provolatile='i')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='cuit_fiscal_snapshot_valido' AND pg_get_function_identity_arguments(p.oid)='p_cuit text'")"
+check "sólo service_role puede ejecutar el helper CUIT interno" \
+  "false|false|false|true" \
+  "$(q "SELECT has_function_privilege('public','public.cuit_fiscal_snapshot_valido(text)','execute')::text||'|'||has_function_privilege('anon','public.cuit_fiscal_snapshot_valido(text)','execute')::text||'|'||has_function_privilege('authenticated','public.cuit_fiscal_snapshot_valido(text)','execute')::text||'|'||has_function_privilege('service_role','public.cuit_fiscal_snapshot_valido(text)','execute')::text")"
+check "el helper CUIT distingue cero, puntuado y canónico válido" \
+  "false|false|true" \
+  "$(q "SELECT public.cuit_fiscal_snapshot_valido('00000000000')::text||'|'||public.cuit_fiscal_snapshot_valido('30-71419966-4')::text||'|'||public.cuit_fiscal_snapshot_valido('30714199664')::text")"
 check "authenticated no actualiza ventas ni escribe intentos" \
   "false|false|false|false" \
   "$(q "SELECT has_table_privilege('authenticated','public.ventas','update')::text||'|'||has_table_privilege('authenticated','public.emision_fiscal_intentos','insert')::text||'|'||has_table_privilege('authenticated','public.emision_fiscal_intentos','update')::text||'|'||has_table_privilege('authenticated','public.emision_fiscal_intentos','delete')::text")"
@@ -292,6 +301,12 @@ check "el helper de hash es interno y no está otorgado a roles API" \
 check "sólo service_role puede ejecutar el validador v2" \
   "false|false|false|true" \
   "$(q "SELECT has_function_privilege('public','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('anon','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text")"
+check "el validador v2 conserva una sola firma invoker y search_path fijado" \
+  "1|false|true" \
+  "$(q "SELECT count(*)||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='validar_snapshot_fiscal_v2' AND pg_get_function_identity_arguments(p.oid)='p_snapshot jsonb'")"
+check "RESERVAR aplica explícitamente el helper CUIT estricto" \
+  "true" \
+  "$(q "SELECT (pg_get_functiondef('public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)'::regprocedure) LIKE '%NOT public.cuit_fiscal_snapshot_valido(p_payload->>''emisor_cuit'')%')::text")"
 check "fixture canónico PostgreSQL/Task 7 tiene SHA-256 determinista" \
   "$PARITY_HASH" \
   "$(q "SELECT public.fiscal_snapshot_hash('$PARITY_INPUT'::jsonb)")"
@@ -348,8 +363,97 @@ expect_snapshot_invalido "v2 rechaza fecha comercial inexistente normalizada" \
   '.venta.fechaComercial="2026-02-30T15:00:00Z"' 'fecha|instante'
 expect_snapshot_invalido "v2 rechaza verificación ARCA inexistente normalizada" \
   '.receptor.verificadoArcaAt="2026-02-30T15:00:00.000Z"' 'verificación|instante'
+expect_snapshot_invalido "v2 rechaza año 0000 en fecha comercial" \
+  '.venta.fechaComercial="0000-01-01T00:00:00Z"' 'fecha|instante|año|inv.lid'
+expect_snapshot_invalido "v2 rechaza año 0000 en verificación ARCA" \
+  '.receptor.verificadoArcaAt="0000-01-01T00:00:00.000Z"' 'verificación|instante|año'
+expect_snapshot_invalido "v2 rechaza año 0000 en fecha del comprobante" \
+  '.fechaComprobante="0000-01-01"' 'fecha|año'
+expect_snapshot_invalido "v2 rechaza año 0000 en inicio de actividades" \
+  '.emisor.inicioActividades="0000-01-01"' 'emisor|fecha|año'
+expect_snapshot_invalido "v2 rechaza año 0000 en comprobante asociado" '
+  .venta.tipoComprobante="NOTA_CREDITO" |
+  .identidad.cbteTipo=8 |
+  .origen="COMPROBANTE_ORIGINAL" |
+  .comprobanteOriginalId="71000000-0000-4000-8000-000000000401" |
+  .cbtesAsoc=[{tipo:6,puntoVenta:5,numero:1,cuit:"30714199664",fecha:"0000-01-01"}]
+' 'asociación|fecha|año|inv.lid'
+expect_snapshot_invalido "v2 rechaza 2100-02-29 en fecha comercial" \
+  '.venta.fechaComercial="2100-02-29T00:00:00Z"' 'fecha|instante'
+expect_snapshot_invalido "v2 rechaza 2100-02-29 en verificación ARCA" \
+  '.receptor.verificadoArcaAt="2100-02-29T00:00:00.000Z"' 'verificación|instante'
+expect_snapshot_invalido "v2 rechaza 2100-02-29 en fecha del comprobante" \
+  '.fechaComprobante="2100-02-29"' 'fecha'
+expect_snapshot_invalido "v2 rechaza 2100-02-29 en inicio de actividades" \
+  '.emisor.inicioActividades="2100-02-29"' 'emisor|fecha'
+expect_snapshot_invalido "v2 rechaza 2100-02-29 en comprobante asociado" '
+  .venta.tipoComprobante="NOTA_CREDITO" |
+  .identidad.cbteTipo=8 |
+  .origen="COMPROBANTE_ORIGINAL" |
+  .comprobanteOriginalId="71000000-0000-4000-8000-000000000401" |
+  .cbtesAsoc=[{tipo:6,puntoVenta:5,numero:1,cuit:"30714199664",fecha:"2100-02-29"}]
+' 'asociación|fecha'
+expect_snapshot_valido "v2 acepta año 0001 en los cinco campos" '
+  .venta.fechaComercial="0001-01-01T00:00:00Z" |
+  .receptor.verificadoArcaAt="0001-01-01T00:00:00.000Z" |
+  .fechaComprobante="0001-01-01" |
+  .emisor.inicioActividades="0001-01-01" |
+  .venta.tipoComprobante="NOTA_CREDITO" |
+  .identidad.cbteTipo=8 |
+  .origen="COMPROBANTE_ORIGINAL" |
+  .comprobanteOriginalId="71000000-0000-4000-8000-000000000401" |
+  .cbtesAsoc=[{tipo:6,puntoVenta:5,numero:1,cuit:"30714199664",fecha:"0001-01-01"}]
+'
+expect_snapshot_valido "v2 acepta 2024-02-29 en los cinco campos" '
+  .venta.fechaComercial="2024-02-29T00:00:00Z" |
+  .receptor.verificadoArcaAt="2024-02-29T00:00:00.000Z" |
+  .fechaComprobante="2024-02-29" |
+  .emisor.inicioActividades="2024-02-29" |
+  .venta.tipoComprobante="NOTA_CREDITO" |
+  .identidad.cbteTipo=8 |
+  .origen="COMPROBANTE_ORIGINAL" |
+  .comprobanteOriginalId="71000000-0000-4000-8000-000000000401" |
+  .cbtesAsoc=[{tipo:6,puntoVenta:5,numero:1,cuit:"30714199664",fecha:"2024-02-29"}]
+'
 expect_snapshot_valido "v2 acepta instantes canónicos con y sin milisegundos" \
   '.venta.fechaComercial="2026-08-20T15:00:00Z" | .receptor.verificadoArcaAt="2026-08-21T14:59:58.123Z"'
+expect_snapshot_invalido "v2 rechaza CUIT emisor todo cero" \
+  '.emisor.cuit="00000000000" | .identidad.emisorCuit="00000000000"' 'CUIT|emisor|identidad'
+expect_snapshot_invalido "v2 rechaza CUIT emisor puntuado" \
+  '.emisor.cuit="30-71419966-4" | .identidad.emisorCuit="30-71419966-4"' 'CUIT|emisor|identidad'
+expect_snapshot_invalido "v2 rechaza CUIT receptor todo cero" '
+  .receptor.tipoDocumento="CUIT" |
+  .receptor.numeroDocumento="00000000000" |
+  .receptor.docTipoArca=80 |
+  .receptor.docNroArca="00000000000" |
+  .receptor.condicionIva="RESPONSABLE_INSCRIPTO" |
+  .receptor.condicionIvaReceptorId=1 |
+  .letra="A" | .identidad.cbteTipo=1 | .ivaContenido="0.00"
+' 'CUIT|receptor|documento'
+expect_snapshot_invalido "v2 rechaza CUIT receptor puntuado" '
+  .receptor.tipoDocumento="CUIT" |
+  .receptor.numeroDocumento="30-71419966-4" |
+  .receptor.docTipoArca=80 |
+  .receptor.docNroArca="30714199664" |
+  .receptor.condicionIva="RESPONSABLE_INSCRIPTO" |
+  .receptor.condicionIvaReceptorId=1 |
+  .letra="A" | .identidad.cbteTipo=1 | .ivaContenido="0.00"
+' 'CUIT|receptor|documento'
+expect_snapshot_valido "v2 acepta CUIT canónico válido en emisor, identidad, receptor y asociación" '
+  .receptor.tipoDocumento="CUIT" |
+  .receptor.numeroDocumento="30714199664" |
+  .receptor.docTipoArca=80 |
+  .receptor.docNroArca="30714199664" |
+  .receptor.condicionIva="RESPONSABLE_INSCRIPTO" |
+  .receptor.condicionIvaReceptorId=1 |
+  .letra="A" |
+  .venta.tipoComprobante="NOTA_CREDITO" |
+  .identidad.cbteTipo=3 |
+  .ivaContenido="0.00" |
+  .origen="COMPROBANTE_ORIGINAL" |
+  .comprobanteOriginalId="71000000-0000-4000-8000-000000000401" |
+  .cbtesAsoc=[{tipo:1,puntoVenta:5,numero:1,cuit:"30714199664",fecha:"2026-08-20"}]
+'
 expect_snapshot_valido "v2 redondea IVA por ítem antes de agrupar" '
   .items=[
     (.items[0] | .id="71000000-0000-4000-8000-000000000011" | .productoId=null |
@@ -402,6 +506,8 @@ expect_reserva_invalida "RESERVAR rechaza ultimo_remoto JSON null" '.ultimo_remo
 expect_reserva_invalida "RESERVAR rechaza ultimo_local_observado JSON null" '.ultimo_local_observado=null'
 expect_reserva_invalida "RESERVAR rechaza CUIT JSON null antes del advisory lock" '.emisor_cuit=null'
 expect_reserva_invalida "RESERVAR rechaza CUIT con formato inválido" '.emisor_cuit=""'
+expect_reserva_invalida "RESERVAR rechaza CUIT todo cero" '.emisor_cuit="00000000000"'
+expect_reserva_invalida "RESERVAR rechaza CUIT puntuado" '.emisor_cuit="30-90000015-0"'
 expect_reserva_invalida "RESERVAR rechaza modo JSON null antes del advisory lock" '.modo=null'
 expect_reserva_invalida "RESERVAR rechaza simulado JSON null antes del advisory lock" '.simulado=null'
 expect_reserva_invalida "RESERVAR rechaza validez JSON null" '.validez=null'

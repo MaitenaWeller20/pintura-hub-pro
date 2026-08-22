@@ -732,6 +732,110 @@ BEGIN
 END;
 $$;
 
+-- FACTURA_A/B/C legacy sin CAE ni evidencia usa la misma acción CANCELAR y no
+-- crea una venta-NC paralela.
+UPDATE public.settings
+   SET facturacion_receptor_v2_enabled=false,
+       facturacion_legacy_writer_enabled=true
+ WHERE id=true;
+INSERT INTO public.clientes(
+  id,razon_social,tipo,condicion_cta_cte,limite_credito,activo
+) VALUES (
+  'b4000000-0000-0000-0000-000000000055','T4 CLIENTE RI LEGACY',
+  'RESPONSABLE_INSCRIPTO',true,99999999,true
+);
+CREATE TEMP TABLE t_legacy_cancel(tipo public.tipo_comprobante PRIMARY KEY,venta_id uuid);
+INSERT INTO t_legacy_cancel
+SELECT 'FACTURA_A',venta_id FROM public.crear_venta(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b4000000-0000-0000-0000-000000000055','FACTURA_A','CTA_CTE',
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T4-CANCEL-LEGACY-A',NULL,NULL,NULL,
+  'e4000000-0000-0000-0000-000000000055');
+INSERT INTO t_legacy_cancel
+SELECT 'FACTURA_B',venta_id FROM public.crear_venta(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b4000000-0000-0000-0000-000000000055','FACTURA_B','CTA_CTE',
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T4-CANCEL-LEGACY-B',NULL,NULL,NULL,
+  'e4000000-0000-0000-0000-000000000056');
+INSERT INTO t_legacy_cancel
+SELECT 'FACTURA_C',venta_id FROM public.crear_venta(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b4000000-0000-0000-0000-000000000055','FACTURA_C','CTA_CTE',
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T4-CANCEL-LEGACY-C',NULL,NULL,NULL,
+  'e4000000-0000-0000-0000-000000000057');
+CREATE TEMP TABLE t_legacy_cancel_before AS
+SELECT
+  (SELECT count(*) FROM public.ventas) AS ventas_count,
+  (SELECT cantidad FROM public.stock_sucursal
+    WHERE producto_id='c4000000-0000-0000-0000-000000000001'
+      AND sucursal_id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1)) AS stock;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT * FROM t_legacy_cancel ORDER BY tipo LOOP
+    PERFORM * FROM public.anular_venta(r.venta_id);
+  END LOOP;
+END;
+$$;
+SELECT pg_temp.assert_true(
+  (SELECT count(*) FROM public.ventas)=(SELECT ventas_count FROM t_legacy_cancel_before)
+  AND NOT EXISTS (
+    SELECT 1 FROM t_legacy_cancel x JOIN public.ventas v ON v.id=x.venta_id
+     WHERE v.estado<>'ANULADA' OR v.afip_estado<>'CANCELADO'
+        OR v.venta_anulada_por IS NOT NULL
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM t_legacy_cancel x
+    JOIN public.cuenta_corriente_movimientos c ON c.venta_id=x.venta_id
+    WHERE c.estado<>'ANULADO'
+  )
+  AND (SELECT cantidad FROM public.stock_sucursal
+        WHERE producto_id='c4000000-0000-0000-0000-000000000001'
+          AND sucursal_id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1))
+      =(SELECT stock+3 FROM t_legacy_cancel_before),
+  'FACTURA_A/B/C legacy vírgenes cancelan intención y comercio sin crear NC'
+);
+
+CREATE TEMP TABLE t_legacy_evidence AS
+SELECT * FROM public.crear_venta(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b4000000-0000-0000-0000-000000000055','FACTURA_B','CTA_CTE',
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T4-CANCEL-LEGACY-EVIDENCIA',NULL,NULL,NULL,
+  'e4000000-0000-0000-0000-000000000058');
+UPDATE public.ventas SET afip_numero=123,afip_emisor_cuit='30714199664'
+ WHERE id=(SELECT venta_id FROM t_legacy_evidence);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.anular_venta((SELECT venta_id FROM t_legacy_evidence));
+    RAISE EXCEPTION 'la factura legacy con evidencia se anuló';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='la factura legacy con evidencia se anuló'
+       OR SQLERRM NOT LIKE '%evidencia fiscal%' THEN RAISE; END IF;
+  END;
+END;
+$$;
+SELECT pg_temp.assert_true(
+  (SELECT estado='ACTIVA' AND afip_estado='PENDIENTE' AND afip_numero=123
+       AND afip_emisor_cuit='30714199664'
+     FROM public.ventas WHERE id=(SELECT venta_id FROM t_legacy_evidence))
+  AND NOT EXISTS (
+    SELECT 1 FROM public.ventas
+     WHERE venta_anulada_por=(SELECT venta_id FROM t_legacy_evidence)
+        OR afip_cbte_asoc_id=(SELECT venta_id FROM t_legacy_evidence)
+  ),
+  'una factura legacy con número/evidencia queda intacta y requiere revisión'
+);
+UPDATE public.settings
+   SET facturacion_receptor_v2_enabled=true,
+       facturacion_legacy_writer_enabled=false
+ WHERE id=true;
+
 -- EMITIENDO y RECONCILIAR bloquean antes de cualquier reversión.
 DO $$
 BEGIN
@@ -781,8 +885,38 @@ UPDATE public.ventas
        afip_snapshot_hash=repeat('d',64),cae='CAE-T4-PROD',
        cae_vencimiento='2026-09-01',afip_emitido_at=now()
  WHERE id=(SELECT venta_id FROM t_approved_original);
+UPDATE public.ventas
+   SET afip_snapshot_hash=public.fiscal_snapshot_hash(afip_snapshot),
+       afip_snapshot=jsonb_set(
+         afip_snapshot,'{hash}',to_jsonb(public.fiscal_snapshot_hash(afip_snapshot))
+       )
+ WHERE id=(SELECT venta_id FROM t_approved_original);
 
--- Una NC ya en curso consume el límite y bloquea la reversión total.
+-- Una NC legacy PENDIENTE también es una nota activa y bloquea una segunda.
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+  condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
+  estado_pago,observaciones,afip_cbte_asoc_id,afip_estado,afip_version
+)
+SELECT
+  'f4000000-0000-0000-0000-000000000059',v.sucursal_id,v.cliente_id,v.usuario_id,
+  'T4-NC-LEGACY-PENDIENTE','NOTA_CREDITO','CONTADO',-82.64,-17.36,0,-100,0,
+  'PENDIENTE','T4 NC legacy pendiente',v.id,'PENDIENTE',0
+FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_approved_original);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.anular_venta((SELECT venta_id FROM t_approved_original));
+    RAISE EXCEPTION 'una NC legacy PENDIENTE permitió crear otra';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='una NC legacy PENDIENTE permitió crear otra'
+       OR SQLERRM NOT LIKE '%nota de crédito activa%' THEN RAISE; END IF;
+  END;
+END;
+$$;
+DELETE FROM public.ventas WHERE id='f4000000-0000-0000-0000-000000000059';
+
+  -- Una NC parcial ya en curso consume el límite y bloquea la reversión total.
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
@@ -853,6 +987,192 @@ SELECT pg_temp.assert_true(
        AND (ABS(vi.subtotal_sin_iva)<=0 OR ABS(vi.iva_monto)<=0 OR ABS(vi.subtotal_con_iva)<=0)
   ),
   'los importes de la NC tienen magnitud positiva para serializarlos a ARCA con ABS'
+);
+
+-- La frontera fiscal debe derivar la NC del original, no aceptar un snapshot
+-- autoconsistente pero inventado por el caller.
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT nc_id FROM t_nc_result),'RECLAMAR',
+  'e4000000-0000-0000-0000-000000000064',
+  '{"expected_version":0,"lease_segundos":300}'::jsonb
+);
+CREATE OR REPLACE FUNCTION pg_temp.nc_reserva_payload(
+  p_receptor jsonb DEFAULT NULL,
+  p_modo text DEFAULT 'PRODUCCION',
+  p_validez text DEFAULT 'PRODUCCION',
+  p_cbte_tipo integer DEFAULT 8,
+  p_importe text DEFAULT '1210.00',
+  p_original_id text DEFAULT NULL,
+  p_cbtes_asoc jsonb DEFAULT NULL,
+  p_origen text DEFAULT 'COMPROBANTE_ORIGINAL'
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_original public.ventas%ROWTYPE;
+  v_nc public.ventas%ROWTYPE;
+  v_snapshot jsonb;
+  v_hash text;
+  v_max integer;
+BEGIN
+  SELECT v.* INTO v_nc
+    FROM public.ventas v WHERE v.id=(SELECT nc_id FROM t_nc_result);
+  SELECT v.* INTO v_original
+    FROM public.ventas v WHERE v.id=v_nc.afip_cbte_asoc_id;
+  SELECT COALESCE(max(v.afip_numero),0) INTO v_max
+    FROM public.ventas v
+   WHERE v.afip_emisor_cuit=v_original.afip_emisor_cuit
+     AND v.afip_punto_venta=v_original.afip_punto_venta
+     AND v.afip_cbte_tipo=p_cbte_tipo
+     AND v.afip_modo=p_modo
+     AND NOT v.afip_simulado
+     AND v.afip_numero IS NOT NULL;
+  v_snapshot := jsonb_build_object(
+    'version',2,
+    'hash','',
+    'fechaComprobante','2026-08-22',
+    'importeTotal',p_importe,
+    'items','[]'::jsonb,
+    'receptor',COALESCE(p_receptor,v_original.afip_snapshot->'receptor'),
+    'identidad',jsonb_build_object(
+      'numero',v_max+1,
+      'emisorCuit',v_original.afip_emisor_cuit,
+      'puntoVenta',v_original.afip_punto_venta,
+      'cbteTipo',p_cbte_tipo,
+      'modo',p_modo,
+      'simulado',false
+    ),
+    'origen',p_origen,
+    'comprobanteOriginalId',COALESCE(p_original_id,v_original.id::text),
+    'cbtesAsoc',COALESCE(
+      p_cbtes_asoc,
+      jsonb_build_array(jsonb_build_object(
+        'tipo',v_original.afip_cbte_tipo,
+        'puntoVenta',v_original.afip_punto_venta,
+        'numero',v_original.afip_numero,
+        'fecha',v_original.afip_fecha_comprobante::text
+      ))
+    )
+  );
+  v_hash := public.fiscal_snapshot_hash(v_snapshot);
+  v_snapshot := jsonb_set(v_snapshot,'{hash}',to_jsonb(v_hash));
+  RETURN jsonb_build_object(
+    'expected_version',1,
+    'snapshot',v_snapshot,
+    'snapshot_hash',v_hash,
+    'numero_propuesto',v_max+1,
+    'fecha_comprobante','2026-08-22',
+    'emisor_cuit',v_original.afip_emisor_cuit,
+    'punto_venta',v_original.afip_punto_venta,
+    'cbte_tipo',p_cbte_tipo,
+    'modo',p_modo,
+    'simulado',false,
+    'validez',p_validez,
+    'ultimo_remoto',v_max,
+    'ultimo_local_observado',v_max
+  );
+END;
+$$;
+CREATE OR REPLACE FUNCTION pg_temp.rehash_reserva_payload(p_payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_snapshot jsonb := p_payload->'snapshot';
+  v_hash text;
+BEGIN
+  v_hash := public.fiscal_snapshot_hash(v_snapshot);
+  v_snapshot := jsonb_set(v_snapshot,'{hash}',to_jsonb(v_hash));
+  RETURN jsonb_set(
+    jsonb_set(p_payload,'{snapshot}',v_snapshot),
+    '{snapshot_hash}',to_jsonb(v_hash)
+  );
+END;
+$$;
+
+CREATE TEMP TABLE t_nc_reservas_invalidas(caso text PRIMARY KEY,payload jsonb);
+INSERT INTO t_nc_reservas_invalidas VALUES
+  ('receptor distinto',pg_temp.nc_reserva_payload(
+    '{"origen":"MANUAL","razonSocial":"OTRO","tipoDocumento":"CUIT","numeroDocumento":"30709999999"}'::jsonb
+  )),
+  ('modo y validez distintos',pg_temp.nc_reserva_payload(
+    NULL,'HOMOLOGACION','HOMOLOGACION'
+  )),
+  ('cbteTipo no derivado',pg_temp.nc_reserva_payload(NULL,'PRODUCCION','PRODUCCION',3)),
+  ('importe distinto',pg_temp.nc_reserva_payload(
+    NULL,'PRODUCCION','PRODUCCION',8,'1.00'
+  )),
+  ('origen ambiguo',pg_temp.nc_reserva_payload(
+    NULL,'PRODUCCION','PRODUCCION',8,'1210.00',NULL,NULL,'CLIENTE_COMERCIAL'
+  )),
+  ('asociación distinta',pg_temp.nc_reserva_payload(
+    NULL,'PRODUCCION','PRODUCCION',8,'1210.00',
+    '00000000-0000-0000-0000-000000000099'
+  )),
+  ('CbtesAsoc distinto',pg_temp.nc_reserva_payload(
+    NULL,'PRODUCCION','PRODUCCION',8,'1210.00',NULL,
+    '[{"tipo":6,"puntoVenta":997,"numero":1,"fecha":"2026-08-22"}]'::jsonb
+  ));
+INSERT INTO t_nc_reservas_invalidas
+SELECT
+  'asociación faltante',
+  pg_temp.rehash_reserva_payload(
+    jsonb_set(
+      pg_temp.nc_reserva_payload(),'{snapshot}',
+      (pg_temp.nc_reserva_payload()->'snapshot')-'comprobanteOriginalId'::text
+    )
+  );
+
+CREATE TEMP TABLE t_nc_invalidas_aceptadas(caso text PRIMARY KEY);
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT * FROM t_nc_reservas_invalidas ORDER BY caso LOOP
+    BEGIN
+      PERFORM * FROM public.transicionar_emision_fiscal(
+        (SELECT nc_id FROM t_nc_result),'RESERVAR',
+        'e4000000-0000-0000-0000-000000000064',r.payload
+      );
+      RAISE EXCEPTION 'T4_NC_INVALIDA_ACEPTADA';
+    EXCEPTION WHEN OTHERS THEN
+      IF SQLERRM='T4_NC_INVALIDA_ACEPTADA' THEN
+        INSERT INTO t_nc_invalidas_aceptadas VALUES (r.caso);
+      ELSIF SQLERRM NOT LIKE 'NC asociada:%' THEN
+        RAISE;
+      END IF;
+    END;
+  END LOOP;
+END;
+$$;
+SELECT pg_temp.assert_true(
+  NOT EXISTS (SELECT 1 FROM t_nc_invalidas_aceptadas),
+  'RESERVAR rechaza receptor, identidad, tipo, monto y asociación no heredados'
+);
+
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT nc_id FROM t_nc_result),'RESERVAR',
+  'e4000000-0000-0000-0000-000000000064',
+  pg_temp.nc_reserva_payload()
+);
+SELECT pg_temp.assert_true(
+  (SELECT nc.afip_estado='EMITIENDO'
+       AND nc.afip_fase='RESERVADO'
+       AND nc.afip_emisor_cuit=o.afip_emisor_cuit
+       AND nc.afip_punto_venta=o.afip_punto_venta
+       AND nc.afip_cbte_tipo=8
+       AND nc.afip_modo=o.afip_modo
+       AND nc.afip_validez=o.afip_validez
+       AND nc.afip_simulado=o.afip_simulado
+       AND nc.afip_imp_total=ABS(nc.total)
+       AND nc.afip_snapshot->'receptor'=o.afip_snapshot->'receptor'
+       AND nc.afip_snapshot->>'origen'='COMPROBANTE_ORIGINAL'
+       AND nc.afip_snapshot->>'comprobanteOriginalId'=o.id::text
+     FROM public.ventas nc
+     JOIN public.ventas o ON o.id=nc.afip_cbte_asoc_id
+    WHERE nc.id=(SELECT nc_id FROM t_nc_result)),
+  'RESERVAR acepta la NC con receptor, identidad y CbtesAsoc heredados'
 );
 
 -- Homologación/simulación y legado incompleto jamás originan una NC productiva.
@@ -948,26 +1268,73 @@ LOCK_DIR="$(mktemp -d)"
 LOCK_PID=""
 cleanup_concurrency_fixture() {
   if [[ -n "$LOCK_PID" ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
-    kill "$LOCK_PID" 2>/dev/null || true
-    wait "$LOCK_PID" 2>/dev/null || true
+    kill "$LOCK_PID"
+    if ! wait "$LOCK_PID"; then
+      : # terminar el holder por la señal del trap es el resultado esperado
+    fi
+    LOCK_PID=""
   fi
-  "${PSQL[@]}" >/dev/null 2>&1 <<'SQL' || true
+  "${PSQL[@]}" >/dev/null <<'SQL'
 BEGIN;
+DELETE FROM public.emision_fiscal_intentos
+ WHERE venta_id='f4000000-0000-0000-0000-000000000111';
+DELETE FROM public.emision_fiscal_intentos
+ WHERE venta_id IN (
+   SELECT id FROM public.ventas
+    WHERE afip_cbte_asoc_id='f4000000-0000-0000-0000-000000000112'
+ );
+UPDATE public.ventas SET venta_anulada_por=NULL
+ WHERE id='f4000000-0000-0000-0000-000000000112';
+DELETE FROM public.ventas
+ WHERE afip_cbte_asoc_id='f4000000-0000-0000-0000-000000000112';
+DELETE FROM public.ventas
+ WHERE id='f4000000-0000-0000-0000-000000000112';
+UPDATE public.ventas SET venta_anulada_por=NULL
+ WHERE id='f4000000-0000-0000-0000-000000000110';
+DELETE FROM public.ventas
+ WHERE id='f4000000-0000-0000-0000-000000000111';
+DELETE FROM public.ventas
+ WHERE id='f4000000-0000-0000-0000-000000000110';
 DELETE FROM public.ventas
  WHERE id='f4000000-0000-0000-0000-000000000101';
+UPDATE public.profiles
+   SET activo=false,sucursal_id=NULL
+ WHERE id='a4000000-0000-0000-0000-000000000101';
 DELETE FROM public.profile_sucursales
  WHERE profile_id='a4000000-0000-0000-0000-000000000101';
 DELETE FROM public.user_roles
  WHERE user_id='a4000000-0000-0000-0000-000000000101';
 DELETE FROM public.clientes
  WHERE id='b4000000-0000-0000-0000-000000000101';
-DELETE FROM public.profiles
- WHERE id='a4000000-0000-0000-0000-000000000101';
 DELETE FROM auth.users
  WHERE id='a4000000-0000-0000-0000-000000000101';
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM auth.users
+     WHERE id='a4000000-0000-0000-0000-000000000101'
+  ) OR EXISTS (
+    SELECT 1 FROM public.profiles
+     WHERE id='a4000000-0000-0000-0000-000000000101'
+  ) OR EXISTS (
+    SELECT 1 FROM public.clientes
+     WHERE id='b4000000-0000-0000-0000-000000000101'
+  ) OR EXISTS (
+    SELECT 1 FROM public.ventas
+     WHERE id IN (
+       'f4000000-0000-0000-0000-000000000101',
+       'f4000000-0000-0000-0000-000000000110',
+       'f4000000-0000-0000-0000-000000000111',
+       'f4000000-0000-0000-0000-000000000112'
+     )
+  ) THEN
+    RAISE EXCEPTION 'la limpieza concurrente dejó filas del fixture';
+  END IF;
+END;
+$$;
 COMMIT;
 SQL
-  rm -rf "$LOCK_DIR"
+  rm -rf -- "$LOCK_DIR"
 }
 trap cleanup_concurrency_fixture EXIT
 
@@ -1064,6 +1431,252 @@ if [[ "$CONCURRENT_RESULT" != "f" ]]; then
   exit 1
 fi
 echo "✓ replay concurrente espera el lock y observa el estado comercial confirmado"
+
+# Dos anulaciones reales compiten por el mismo original. La segunda debe
+# esperar el lock, observar ANULADA y no crear una segunda NC.
+"${PSQL[@]}" <<'SQL'
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+  condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
+  afip_estado,afip_fase,afip_version,afip_emisor_cuit,afip_punto_venta,
+  afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_validez,
+  afip_fecha_comprobante,afip_imp_total,afip_snapshot,afip_snapshot_hash,
+  cae,cae_vencimiento,afip_emitido_at
+)
+SELECT
+  'f4000000-0000-0000-0000-000000000112',id,
+  'b4000000-0000-0000-0000-000000000101',
+  'a4000000-0000-0000-0000-000000000101','T4-ORIGINAL-ANULAR-RACE','VENTA',
+  'CTA_CTE',100,21,121,0,'PENDIENTE','APROBADO','PERSISTIDO',2,
+  '30714199664',992,6,992001,'PRODUCCION',false,'PRODUCCION','2026-08-22',121,
+  jsonb_build_object(
+    'version',2,'hash',repeat('a',64),'fechaComprobante','2026-08-22',
+    'importeTotal','121.00','items','[]'::jsonb,
+    'receptor',jsonb_build_object(
+      'origen','CLIENTE_COMERCIAL','razonSocial','T4 LOCK CLIENTE',
+      'tipoDocumento','DNI','numeroDocumento','30111222'
+    ),
+    'identidad',jsonb_build_object(
+      'numero',992001,'emisorCuit','30714199664','puntoVenta',992,
+      'cbteTipo',6,'modo','PRODUCCION','simulado',false
+    )
+  ),repeat('a',64),'CAE-T4-ANULAR-RACE','2026-09-01',now()
+FROM public.sucursales ORDER BY numero LIMIT 1;
+UPDATE public.ventas
+   SET afip_snapshot_hash=public.fiscal_snapshot_hash(afip_snapshot),
+       afip_snapshot=jsonb_set(
+         afip_snapshot,'{hash}',to_jsonb(public.fiscal_snapshot_hash(afip_snapshot))
+       )
+ WHERE id='f4000000-0000-0000-0000-000000000112';
+SQL
+
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/anular-holder.out" 2>"$LOCK_DIR/anular-holder.err" <<'SQL' &
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a4000000-0000-0000-0000-000000000101","role":"authenticated"}',
+  true
+);
+SELECT * FROM public.anular_venta('f4000000-0000-0000-0000-000000000112');
+SELECT 'T4_ANULAR_LOCK_READY';
+SELECT pg_sleep(3);
+COMMIT;
+SQL
+LOCK_PID=$!
+for _ in {1..100}; do
+  if rg -q 'T4_ANULAR_LOCK_READY' "$LOCK_DIR/anular-holder.out"; then
+    break
+  fi
+  if ! kill -0 "$LOCK_PID" 2>/dev/null; then
+    cat "$LOCK_DIR/anular-holder.err" >&2
+    echo "FALLO: la primera anulación terminó antes de adquirir el lock" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if ! rg -q 'T4_ANULAR_LOCK_READY' "$LOCK_DIR/anular-holder.out"; then
+  echo "FALLO: la primera anulación no retuvo el lock del original" >&2
+  exit 1
+fi
+
+if ANULAR_RACE_OUTPUT="$({
+  docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq <<'SQL'
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a4000000-0000-0000-0000-000000000101","role":"authenticated"}',
+  false
+);
+SELECT * FROM public.anular_venta('f4000000-0000-0000-0000-000000000112');
+SQL
+} 2>&1)"; then
+  echo "FALLO: dos anulaciones concurrentes confirmaron resultado" >&2
+  exit 1
+fi
+wait "$LOCK_PID"
+LOCK_PID=""
+if [[ "$ANULAR_RACE_OUTPUT" != *"La venta ya fue anulada"* ]]; then
+  echo "$ANULAR_RACE_OUTPUT" >&2
+  echo "FALLO: la segunda anulación falló por un motivo inesperado" >&2
+  exit 1
+fi
+ANULAR_RACE_STATE="$(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq <<'SQL'
+SELECT o.estado||'|'||count(n.id)::text||'|'||
+       count(n.id) FILTER (WHERE n.id=o.venta_anulada_por)::text
+  FROM public.ventas o
+  LEFT JOIN public.ventas n ON n.afip_cbte_asoc_id=o.id
+ WHERE o.id='f4000000-0000-0000-0000-000000000112'
+ GROUP BY o.id,o.estado;
+SQL
+)"
+if [[ "$ANULAR_RACE_STATE" != "ANULADA|1|1" ]]; then
+  echo "FALLO: dos anulaciones dejaron resultados incompatibles: $ANULAR_RACE_STATE" >&2
+  exit 1
+fi
+echo "✓ dos anulaciones concurrentes crean exactamente una NC"
+
+# Una reserva de NC comparte el lock del original. Mientras otra sesión invalida
+# el vínculo de anulación, la reserva debe esperar y luego fallar cerrada.
+"${PSQL[@]}" <<'SQL'
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+  condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
+  estado,venta_anulada_por,afip_estado,afip_fase,afip_version,
+  afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,
+  afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,
+  afip_snapshot,afip_snapshot_hash,cae,cae_vencimiento,afip_emitido_at
+)
+SELECT
+  'f4000000-0000-0000-0000-000000000110',id,
+  'b4000000-0000-0000-0000-000000000101',
+  'a4000000-0000-0000-0000-000000000101','T4-ORIGINAL-RACE','VENTA',
+  'CTA_CTE',100,21,121,0,'PENDIENTE','ANULADA',NULL,
+  'APROBADO','PERSISTIDO',2,'30714199664',991,6,991001,'PRODUCCION',
+  false,'PRODUCCION','2026-08-22',121,
+  jsonb_build_object(
+    'version',2,'hash',repeat('f',64),'fechaComprobante','2026-08-22',
+    'importeTotal','121.00','items','[]'::jsonb,
+    'receptor',jsonb_build_object(
+      'origen','CLIENTE_COMERCIAL','razonSocial','T4 LOCK CLIENTE',
+      'tipoDocumento','DNI','numeroDocumento','30111222'
+    ),
+    'identidad',jsonb_build_object(
+      'numero',991001,'emisorCuit','30714199664','puntoVenta',991,
+      'cbteTipo',6,'modo','PRODUCCION','simulado',false
+    )
+  ),repeat('f',64),'CAE-T4-RACE','2026-09-01',now()
+FROM public.sucursales ORDER BY numero LIMIT 1;
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+  condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
+  estado,afip_cbte_asoc_id,afip_estado,afip_version
+)
+SELECT
+  'f4000000-0000-0000-0000-000000000111',o.sucursal_id,o.cliente_id,o.usuario_id,
+  'T4-NC-RACE','NOTA_CREDITO','CONTADO',-100,-21,-121,0,'PENDIENTE',
+  'ACTIVA',o.id,'SIN_FACTURAR',0
+FROM public.ventas o WHERE o.id='f4000000-0000-0000-0000-000000000110';
+UPDATE public.ventas
+   SET venta_anulada_por='f4000000-0000-0000-0000-000000000111',
+       afip_snapshot_hash=public.fiscal_snapshot_hash(afip_snapshot),
+       afip_snapshot=jsonb_set(
+         afip_snapshot,'{hash}',to_jsonb(public.fiscal_snapshot_hash(afip_snapshot))
+       )
+ WHERE id='f4000000-0000-0000-0000-000000000110';
+SELECT * FROM public.transicionar_emision_fiscal(
+  'f4000000-0000-0000-0000-000000000111','RECLAMAR',
+  'e4000000-0000-0000-0000-000000000111',
+  '{"expected_version":0,"lease_segundos":300}'::jsonb
+);
+SQL
+
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/nc-holder.out" 2>"$LOCK_DIR/nc-holder.err" <<'SQL' &
+BEGIN;
+UPDATE public.ventas SET venta_anulada_por=NULL
+ WHERE id='f4000000-0000-0000-0000-000000000110';
+SELECT 'T4_NC_ORIGINAL_LOCK_READY';
+SELECT pg_sleep(3);
+COMMIT;
+SQL
+LOCK_PID=$!
+for _ in {1..100}; do
+  if rg -q 'T4_NC_ORIGINAL_LOCK_READY' "$LOCK_DIR/nc-holder.out"; then
+    break
+  fi
+  if ! kill -0 "$LOCK_PID" 2>/dev/null; then
+    cat "$LOCK_DIR/nc-holder.err" >&2
+    echo "FALLO: la sesión del original terminó antes de adquirir el lock" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if ! rg -q 'T4_NC_ORIGINAL_LOCK_READY' "$LOCK_DIR/nc-holder.out"; then
+  echo "FALLO: la sesión no bloqueó el original de la NC" >&2
+  exit 1
+fi
+
+if NC_RACE_OUTPUT="$({
+  docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq <<'SQL'
+WITH base AS (
+  SELECT jsonb_build_object(
+    'version',2,'hash','','fechaComprobante','2026-08-22',
+    'importeTotal','121.00','items','[]'::jsonb,
+    'receptor',o.afip_snapshot->'receptor',
+    'identidad',jsonb_build_object(
+      'numero',1,'emisorCuit',o.afip_emisor_cuit,'puntoVenta',o.afip_punto_venta,
+      'cbteTipo',8,'modo',o.afip_modo,'simulado',o.afip_simulado
+    ),
+    'origen','COMPROBANTE_ORIGINAL','comprobanteOriginalId',o.id::text,
+    'cbtesAsoc',jsonb_build_array(jsonb_build_object(
+      'tipo',o.afip_cbte_tipo,'puntoVenta',o.afip_punto_venta,
+      'numero',o.afip_numero,'fecha',o.afip_fecha_comprobante::text
+    ))
+  ) AS snapshot
+  FROM public.ventas o WHERE o.id='f4000000-0000-0000-0000-000000000110'
+), payload AS (
+  SELECT b.snapshot,public.fiscal_snapshot_hash(b.snapshot) AS hash FROM base b
+)
+SELECT t.*
+FROM payload p
+CROSS JOIN LATERAL public.transicionar_emision_fiscal(
+  'f4000000-0000-0000-0000-000000000111','RESERVAR',
+  'e4000000-0000-0000-0000-000000000111',
+  jsonb_build_object(
+    'expected_version',1,
+    'snapshot',jsonb_set(p.snapshot,'{hash}',to_jsonb(p.hash)),
+    'snapshot_hash',p.hash,'numero_propuesto',1,
+    'fecha_comprobante','2026-08-22','emisor_cuit','30714199664',
+    'punto_venta',991,'cbte_tipo',8,'modo','PRODUCCION','simulado',false,
+    'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0
+  )
+) AS t;
+SQL
+} 2>&1)"; then
+  echo "FALLO: la NC se reservó mientras el original quedaba incompatible" >&2
+  exit 1
+fi
+wait "$LOCK_PID"
+LOCK_PID=""
+if [[ "$NC_RACE_OUTPUT" != *"NC asociada:"* ]]; then
+  echo "$NC_RACE_OUTPUT" >&2
+  echo "FALLO: la carrera de NC falló por un motivo inesperado" >&2
+  exit 1
+fi
+NC_RACE_STATE="$(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq <<'SQL'
+SELECT nc.afip_estado||'|'||nc.afip_fase||'|'||nc.afip_version::text||'|'||
+       COALESCE(nc.afip_numero::text,'NULL')||'|'||
+       COALESCE(o.venta_anulada_por::text,'NULL')
+  FROM public.ventas nc
+  JOIN public.ventas o ON o.id=nc.afip_cbte_asoc_id
+ WHERE nc.id='f4000000-0000-0000-0000-000000000111';
+SQL
+)"
+if [[ "$NC_RACE_STATE" != "EMITIENDO|PREFLIGHT|1|NULL|NULL" ]]; then
+  echo "FALLO: carrera NC dejó estado incompatible: $NC_RACE_STATE" >&2
+  exit 1
+fi
+echo "✓ reserva concurrente de NC espera al original y falla cerrada si cambia"
 
 cleanup_concurrency_fixture
 trap - EXIT

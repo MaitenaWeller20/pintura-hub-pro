@@ -3,6 +3,7 @@ import { fmtFechaAfip, parseFechaAfip } from "./fecha";
 import { TIPOS_C, CONCEPTO_PRODUCTOS } from "./codigos";
 import { SupabaseTicketStorage } from "./ticket-storage";
 import type { AlicuotaAfip } from "./iva";
+import type { SnapshotFiscalV2 } from "./snapshot";
 
 /**
  * Cliente de AFIP/ARCA (WSAA + WSFEv1) sobre @arcasdk/core.
@@ -57,16 +58,22 @@ class AfipTimeout extends Error {
   override name = "AfipTimeout";
 }
 
+class ArcaRespuestaIncierta extends Error {
+  override name = "ArcaRespuestaIncierta";
+}
+
+class ArcaRechazoDefinitivo extends Error {
+  override name = "ArcaRechazoDefinitivo";
+}
+
 function conTimeout<T>(p: Promise<T>, etiqueta: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new AfipTimeout(`AFIP no respondió al ${etiqueta} (${TIMEOUT_MS / 1000}s).`)),
-        TIMEOUT_MS,
-      ),
-    ),
-  ]);
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new AfipTimeout(`AFIP no respondió al ${etiqueta} (${TIMEOUT_MS / 1000}s).`)),
+      TIMEOUT_MS,
+    );
+    p.then(resolve, reject).finally(() => clearTimeout(timeout));
+  });
 }
 
 /**
@@ -79,18 +86,227 @@ function conTimeout<T>(p: Promise<T>, etiqueta: string): Promise<T> {
  */
 export function esErrorTransitorio(e: unknown): boolean {
   const err = e as { name?: string; code?: string; message?: string };
-  if (err?.name === "AfipTimeout") return true;
+  if (err?.name === "AfipTimeout" || err?.name === "ArcaRespuestaIncierta") return true;
   if (
     err?.code &&
-    ["ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ENETUNREACH", "EPIPE"].includes(
-      err.code,
-    )
+    [
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "ECONNRESET",
+      "ENETUNREACH",
+      "EPIPE",
+    ].includes(err.code)
   ) {
     return true;
   }
   return /AfipTimeout|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNRESET|ENETUNREACH|socket hang up|network error|getaddrinfo|\b50[234]\b|Service Unavailable|Gateway Time-?out|Bad Gateway|ECONNABORTED/i.test(
     String(err?.message ?? ""),
   );
+}
+
+export type ComprobanteArcaConsultado = {
+  puntoVenta: number;
+  cbteTipo: number;
+  numero: number;
+  cae: string;
+  caeVencimiento: string | null;
+  concepto: number;
+  docTipo: number;
+  docNro: string;
+  condicionIvaReceptorId: number;
+  fecha: string;
+  total: string;
+  neto: string;
+  exento: string;
+  noGravado: string;
+  iva: string;
+  tributosTotal: string;
+  moneda: string;
+  cotizacion: string;
+  alicuotas: Array<{ id: number; base: string; importe: string }>;
+  tributos: Array<{ id: number; base: string; alicuota: string; importe: string }>;
+  asociados: Array<{
+    tipo: number;
+    puntoVenta: number;
+    numero: number;
+    cuit: string;
+    fecha: string | null;
+  }>;
+};
+
+function fechaArca(value: unknown, campo: string, nullable = false): string | null {
+  if (nullable && (value === undefined || value === null || value === "")) return null;
+  if (typeof value !== "string") throw new Error(`ARCA omitió o devolvió inválido ${campo}.`);
+  const compacta = /^\d{8}$/.test(value)
+    ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+    : value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(compacta)) throw new Error(`ARCA devolvió inválido ${campo}.`);
+  const parsed = new Date(`${compacta}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== compacta) {
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  }
+  return compacta;
+}
+
+function enteroArca(value: unknown, campo: string): number {
+  if (value === "" || value === null || value === undefined)
+    throw new Error(`ARCA omitió ${campo}.`);
+  const numero = Number(value);
+  if (!Number.isSafeInteger(numero) || numero < 0)
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  return numero;
+}
+
+function decimalArca(value: unknown, campo: string, posiciones: 2 | 6): string {
+  if (value === "" || value === null || value === undefined)
+    throw new Error(`ARCA omitió ${campo}.`);
+  const numero = Number(value);
+  if (!Number.isFinite(numero) || numero < 0) throw new Error(`ARCA devolvió inválido ${campo}.`);
+  return numero.toFixed(posiciones);
+}
+
+function textoArca(value: unknown, campo: string, permiteVacio = false): string {
+  if (typeof value !== "string" && typeof value !== "number")
+    throw new Error(`ARCA omitió ${campo}.`);
+  const texto = String(value).trim();
+  if (!permiteVacio && texto === "") throw new Error(`ARCA devolvió vacío ${campo}.`);
+  return texto;
+}
+
+function comoArray(value: unknown): unknown[] {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function registro(value: unknown, campo: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  return value as Record<string, unknown>;
+}
+
+/** Construye el detalle FECAEDetRequest exclusivamente desde el snapshot fiscal congelado. */
+export function crearPayloadCaeDesdeSnapshot(snapshot: SnapshotFiscalV2): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    CantReg: 1,
+    PtoVta: snapshot.identidad.puntoVenta,
+    CbteTipo: snapshot.identidad.cbteTipo,
+    Concepto: snapshot.concepto,
+    DocTipo: snapshot.receptor.docTipoArca,
+    DocNro: Number(snapshot.receptor.docNroArca),
+    CbteDesde: snapshot.identidad.numero,
+    CbteHasta: snapshot.identidad.numero,
+    CbteFch: snapshot.fechaComprobante.replaceAll("-", ""),
+    ImpTotal: Number(snapshot.importeTotal),
+    ImpTotConc: Number(snapshot.importeNoGravado),
+    ImpNeto: Number(snapshot.importeNeto),
+    ImpOpEx: Number(snapshot.importeExento),
+    ImpIVA: Number(snapshot.importeIva),
+    ImpTrib: Number(snapshot.importeTributos),
+    MonId: snapshot.moneda,
+    MonCotiz: Number(snapshot.cotizacion),
+    CondicionIVAReceptorId: snapshot.receptor.condicionIvaReceptorId,
+  };
+  if (snapshot.alicuotasIva.length > 0)
+    payload.Iva = snapshot.alicuotasIva.map((row) => ({
+      Id: row.id,
+      BaseImp: Number(row.baseImponible),
+      Importe: Number(row.importe),
+    }));
+  if (snapshot.tributos.length > 0)
+    payload.Tributos = snapshot.tributos.map((row) => ({
+      Id: row.id,
+      Desc: row.descripcion,
+      BaseImp: Number(row.baseImponible),
+      Alic: Number(row.alicuota),
+      Importe: Number(row.importe),
+    }));
+  if (snapshot.cbtesAsoc.length > 0)
+    payload.CbtesAsoc = snapshot.cbtesAsoc.map((row) => ({
+      Tipo: row.tipo,
+      PtoVta: row.puntoVenta,
+      Nro: row.numero,
+      Cuit: row.cuit,
+      CbteFch: row.fecha.replaceAll("-", ""),
+    }));
+  return payload;
+}
+
+/** Convierte ResultGet completo a la representación canónica usada al conciliar. */
+export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaConsultado {
+  const result = registro(resultGet, "ResultGet");
+  const desde = enteroArca(result.CbteDesde, "CbteDesde");
+  const hasta = enteroArca(result.CbteHasta, "CbteHasta");
+  if (desde !== hasta) throw new Error("ARCA devolvió CbteDesde y CbteHasta distintos.");
+  const alicuotas = comoArray(registro(result.Iva ?? {}, "Iva").AlicIva).map((raw) => {
+    const row = registro(raw, "Iva.AlicIva");
+    return {
+      id: enteroArca(row.Id, "Iva.AlicIva.Id"),
+      base: decimalArca(row.BaseImp, "Iva.AlicIva.BaseImp", 2),
+      importe: decimalArca(row.Importe, "Iva.AlicIva.Importe", 2),
+    };
+  });
+  const tributos = comoArray(registro(result.Tributos ?? {}, "Tributos").Tributo).map((raw) => {
+    const row = registro(raw, "Tributos.Tributo");
+    return {
+      id: enteroArca(row.Id, "Tributos.Tributo.Id"),
+      base: decimalArca(row.BaseImp, "Tributos.Tributo.BaseImp", 2),
+      alicuota: decimalArca(row.Alic, "Tributos.Tributo.Alic", 2),
+      importe: decimalArca(row.Importe, "Tributos.Tributo.Importe", 2),
+    };
+  });
+  const asociados = comoArray(registro(result.CbtesAsoc ?? {}, "CbtesAsoc").CbteAsoc).map((raw) => {
+    const row = registro(raw, "CbtesAsoc.CbteAsoc");
+    return {
+      tipo: enteroArca(row.Tipo, "CbtesAsoc.CbteAsoc.Tipo"),
+      puntoVenta: enteroArca(row.PtoVta, "CbtesAsoc.CbteAsoc.PtoVta"),
+      numero: enteroArca(row.Nro, "CbtesAsoc.CbteAsoc.Nro"),
+      cuit: textoArca(row.Cuit, "CbtesAsoc.CbteAsoc.Cuit"),
+      fecha: fechaArca(row.CbteFch, "CbtesAsoc.CbteAsoc.CbteFch", true),
+    };
+  });
+  alicuotas.sort(
+    (a, b) => a.id - b.id || a.base.localeCompare(b.base) || a.importe.localeCompare(b.importe),
+  );
+  tributos.sort(
+    (a, b) =>
+      a.id - b.id ||
+      a.base.localeCompare(b.base) ||
+      a.alicuota.localeCompare(b.alicuota) ||
+      a.importe.localeCompare(b.importe),
+  );
+  asociados.sort(
+    (a, b) =>
+      a.tipo - b.tipo ||
+      a.puntoVenta - b.puntoVenta ||
+      a.numero - b.numero ||
+      a.cuit.localeCompare(b.cuit) ||
+      (a.fecha ?? "").localeCompare(b.fecha ?? ""),
+  );
+  return {
+    puntoVenta: enteroArca(result.PtoVta, "PtoVta"),
+    cbteTipo: enteroArca(result.CbteTipo, "CbteTipo"),
+    numero: desde,
+    cae: textoArca(result.CodAutorizacion, "CodAutorizacion", true),
+    caeVencimiento: fechaArca(result.FchVto, "FchVto", true),
+    concepto: enteroArca(result.Concepto, "Concepto"),
+    docTipo: enteroArca(result.DocTipo, "DocTipo"),
+    docNro: textoArca(result.DocNro, "DocNro"),
+    condicionIvaReceptorId: enteroArca(result.CondicionIVAReceptorId, "CondicionIVAReceptorId"),
+    fecha: fechaArca(result.CbteFch, "CbteFch")!,
+    total: decimalArca(result.ImpTotal, "ImpTotal", 2),
+    neto: decimalArca(result.ImpNeto, "ImpNeto", 2),
+    exento: decimalArca(result.ImpOpEx, "ImpOpEx", 2),
+    noGravado: decimalArca(result.ImpTotConc, "ImpTotConc", 2),
+    iva: decimalArca(result.ImpIVA, "ImpIVA", 2),
+    tributosTotal: decimalArca(result.ImpTrib, "ImpTrib", 2),
+    moneda: textoArca(result.MonId, "MonId"),
+    cotizacion: decimalArca(result.MonCotiz, "MonCotiz", 6),
+    alicuotas,
+    tributos,
+    asociados,
+  };
 }
 
 /**
@@ -163,20 +379,59 @@ export async function consultarComprobante(
   numero: number,
   supabaseAdmin: any,
 ): Promise<{ cae: string; vencimiento: Date | null } | null> {
+  const comprobante = await consultarComprobanteCompleto(
+    emisor,
+    pv,
+    cbteTipo,
+    numero,
+    supabaseAdmin,
+  );
+  if (!comprobante) return null;
+  return {
+    cae: comprobante.cae,
+    vencimiento: parseFechaAfip(comprobante.caeVencimiento?.replaceAll("-", "")),
+  };
+}
+
+export async function consultarComprobanteCompleto(
+  emisor: EmisorFiscal,
+  pv: PuntoVenta,
+  cbteTipo: number,
+  numero: number,
+  supabaseAdmin: unknown,
+): Promise<ComprobanteArcaConsultado | null> {
   if (MOCK) return null;
   const arca = await buildArca(emisor, pv, supabaseAdmin);
   try {
-    const info = await conTimeout(
-      arca.electronicBillingService.getVoucherInfo(numero, pv.numero, cbteTipo),
+    const raw = await conTimeout(
+      arca.genericService.call("wsfe", "FECompConsultar", {
+        FeCompConsReq: { CbteNro: numero, PtoVta: pv.numero, CbteTipo: cbteTipo },
+      }),
       "consultar el comprobante",
     );
-    if (!info) return null;
-    const i = info as { codAutorizacion?: string; fchVto?: string };
-    if (!i.codAutorizacion) return null;
-    return { cae: String(i.codAutorizacion), vencimiento: parseFechaAfip(i.fchVto) };
+    const envelope = registro(raw, "FECompConsultarResponse");
+    const response = registro(envelope.FECompConsultarResult, "FECompConsultarResult");
+    if (!response.ResultGet) {
+      const errores = comoArray(registro(response.Errors ?? {}, "Errors").Err).map((rawError) => {
+        const error = registro(rawError, "Errors.Err");
+        return enteroArca(error.Code, "Errors.Err.Code");
+      });
+      if (errores.length === 1 && errores[0] === 602) return null;
+      throw new ArcaRespuestaIncierta("ARCA no devolvió un comprobante comparable.");
+    }
+    const result = registro(response.ResultGet, "ResultGet");
+    const resultado = typeof result.Resultado === "string" ? result.Resultado.trim() : "";
+    const cae = typeof result.CodAutorizacion === "string" ? result.CodAutorizacion.trim() : "";
+    if (!cae && resultado === "R")
+      throw new ArcaRechazoDefinitivo("ARCA informó un rechazo definitivo para el comprobante.");
+    if (!cae)
+      throw new ArcaRespuestaIncierta(
+        "ARCA devolvió una respuesta sin CAE ni rechazo estructurado.",
+      );
+    return normalizarComprobanteArca(result);
   } catch (e) {
-    const msg = String((e as Error)?.message ?? "");
-    if (/602|no existen datos|not found|no existe/i.test(msg)) return null;
+    if (typeof (e as { code?: unknown })?.code === "number" && (e as { code: number }).code === 602)
+      return null;
     throw e;
   }
 }
@@ -291,7 +546,11 @@ export async function solicitarCae(
 export function detalleRechazoAfip(response: unknown): string {
   const r = response as
     | {
-        FeDetResp?: { FECAEDetResponse?: Array<{ Observaciones?: { Obs?: Array<{ Code?: number; Msg?: string }> } }> };
+        FeDetResp?: {
+          FECAEDetResponse?: Array<{
+            Observaciones?: { Obs?: Array<{ Code?: number; Msg?: string }> };
+          }>;
+        };
         Errors?: { Err?: Array<{ Code?: number; Msg?: string }> };
       }
     | null
@@ -302,6 +561,7 @@ export function detalleRechazoAfip(response: unknown): string {
     if (msg) partes.push(c != null ? `[${c}] ${msg}` : msg);
   };
   for (const e of r?.Errors?.Err ?? []) push(e?.Code, e?.Msg);
-  for (const det of r?.FeDetResp?.FECAEDetResponse ?? []) for (const o of det?.Observaciones?.Obs ?? []) push(o?.Code, o?.Msg);
+  for (const det of r?.FeDetResp?.FECAEDetResponse ?? [])
+    for (const o of det?.Observaciones?.Obs ?? []) push(o?.Code, o?.Msg);
   return partes.join(" · ");
 }

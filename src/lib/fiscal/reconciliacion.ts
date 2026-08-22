@@ -60,6 +60,7 @@ const compararTributoLocal = (
   b: SnapshotFiscalV2["tributos"][number],
 ) =>
   a.id - b.id ||
+  a.descripcion.localeCompare(b.descripcion) ||
   a.baseImponible.localeCompare(b.baseImponible) ||
   a.alicuota.localeCompare(b.alicuota) ||
   a.importe.localeCompare(b.importe);
@@ -68,6 +69,7 @@ const compararTributoRemoto = (
   b: ComprobanteArcaConsultado["tributos"][number],
 ) =>
   a.id - b.id ||
+  a.descripcion.localeCompare(b.descripcion) ||
   a.base.localeCompare(b.base) ||
   a.alicuota.localeCompare(b.alicuota) ||
   a.importe.localeCompare(b.importe);
@@ -150,6 +152,7 @@ export function compararSnapshotConArca(
     compararTributoRemoto,
     [
       ["id", (row) => row.id, (row) => row.id],
+      ["descripcion", (row) => row.descripcion, (row) => row.descripcion],
       ["baseImponible", (row) => row.baseImponible, (row) => row.base],
       ["alicuota", (row) => row.alicuota, (row) => row.alicuota],
       ["importe", (row) => row.importe, (row) => row.importe],
@@ -180,10 +183,19 @@ export function decidirConciliacion(input: {
   numeroReservado: number;
   payloadHash: string;
 }): DecisionConciliacion {
+  const invariantes: string[] = [];
+  if (input.payloadHash !== input.snapshot.hash) invariantes.push("hash");
+  if (input.numeroReservado !== input.snapshot.identidad.numero) {
+    invariantes.push("identidad.numero");
+  }
+  if (invariantes.length > 0) return { accion: "BLOQUEAR", diferencias: invariantes };
+
   if (input.remoto) {
     const diferencias = compararSnapshotConArca(input.snapshot, input.remoto);
     if (diferencias.length > 0) return { accion: "BLOQUEAR", diferencias };
-    if (!input.remoto.cae) return { accion: "BLOQUEAR", diferencias: ["cae"] };
+    if (!/^\d{14}$/.test(input.remoto.cae)) return { accion: "BLOQUEAR", diferencias: ["cae"] };
+    if (input.remoto.caeVencimiento !== null && !fechaFiscalValida(input.remoto.caeVencimiento))
+      return { accion: "BLOQUEAR", diferencias: ["caeVencimiento"] };
     return {
       accion: "RECUPERAR_CAE",
       cae: input.remoto.cae,
@@ -191,13 +203,16 @@ export function decidirConciliacion(input: {
     };
   }
   const diferencias: string[] = [];
-  if (input.payloadHash !== input.snapshot.hash) diferencias.push("hash");
-  if (input.numeroReservado !== input.snapshot.identidad.numero) {
-    diferencias.push("identidad.numero");
-  } else if (input.ultimoRemoto !== input.numeroReservado - 1) {
+  if (input.ultimoRemoto !== input.numeroReservado - 1) {
     diferencias.push("secuencia");
   }
   return diferencias.length > 0
     ? { accion: "BLOQUEAR", diferencias }
     : { accion: "REENVIAR_MISMO_NUMERO" };
+}
+
+function fechaFiscalValida(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-")) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }

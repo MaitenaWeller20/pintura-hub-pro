@@ -102,7 +102,9 @@ export const resultGetFixture = {
   MonId: "PES",
   MonCotiz: 1,
   Iva: { AlicIva: [{ Id: 5, BaseImp: 100, Importe: 21 }] },
-  Tributos: { Tributo: [{ Id: 99, BaseImp: 100, Alic: 3, Importe: 3 }] },
+  Tributos: {
+    Tributo: [{ Id: 99, Desc: "Percepción", BaseImp: 100, Alic: 3, Importe: 3 }],
+  },
   CbtesAsoc: {
     CbteAsoc: [{ Tipo: 1, PtoVta: 5, Nro: 40, Cuit: "30714199664", CbteFch: "20260820" }],
   },
@@ -165,7 +167,15 @@ describe("adaptador fiscal ARCA", () => {
       moneda: "PES",
       cotizacion: "1.000000",
       alicuotas: [{ id: 5, base: "100.00", importe: "21.00" }],
-      tributos: [{ id: 99, base: "100.00", alicuota: "3.00", importe: "3.00" }],
+      tributos: [
+        {
+          id: 99,
+          descripcion: "Percepción",
+          base: "100.00",
+          alicuota: "3.00",
+          importe: "3.00",
+        },
+      ],
       asociados: [{ tipo: 1, puntoVenta: 5, numero: 40, cuit: "30714199664", fecha: "2026-08-20" }],
     });
   });
@@ -199,4 +209,104 @@ describe("adaptador fiscal ARCA", () => {
       /CbteDesde.*CbteHasta/i,
     );
   });
+
+  it("rechaza registros con prototipo personalizado o propiedades heredadas", () => {
+    const heredado = Object.create(resultGetFixture) as Record<string, unknown>;
+    expect(() => normalizarComprobanteArca(heredado)).toThrow(/ResultGet|registro|plano/i);
+  });
+
+  it("rechaza accessors sin ejecutarlos", () => {
+    let ejecutado = false;
+    const accessor = { ...resultGetFixture };
+    Object.defineProperty(accessor, "PtoVta", {
+      enumerable: true,
+      get() {
+        ejecutado = true;
+        return 5;
+      },
+    });
+
+    expect(() => normalizarComprobanteArca(accessor)).toThrow(/accessor|PtoVta|datos/i);
+    expect(ejecutado).toBe(false);
+  });
+
+  it("rechaza arrays SOAP con prototipo personalizado", () => {
+    const rows = [{ Id: 5, BaseImp: 100, Importe: 21 }];
+    Object.setPrototypeOf(rows, { ...Array.prototype });
+    expect(() =>
+      normalizarComprobanteArca({ ...resultGetFixture, Iva: { AlicIva: rows } }),
+    ).toThrow(/array|prototipo/i);
+  });
+
+  it.each([
+    ["fracción monetaria no cero más allá de centavos", { ImpTotal: "136.004" }],
+    ["booleano", { ImpTotal: true }],
+    ["notación exponencial", { ImpTotal: "1e2" }],
+    ["magnitud no segura", { ImpTotal: "90071992547409.92" }],
+    ["cotización con séptimo decimal no cero", { MonCotiz: "1.0000001" }],
+  ])("rechaza decimal no canónico: %s", (_caso, cambio) => {
+    expect(() => normalizarComprobanteArca({ ...resultGetFixture, ...cambio })).toThrow(
+      /decimal|precisión|ImpTotal|MonCotiz/i,
+    );
+  });
+
+  it("acepta ceros decimales extra sólo cuando no pierden precisión", () => {
+    expect(
+      normalizarComprobanteArca({
+        ...resultGetFixture,
+        ImpTotal: "136.0000",
+        MonCotiz: "1.00000000",
+      }),
+    ).toMatchObject({ total: "136.00", cotizacion: "1.000000" });
+  });
+
+  it.each(["7412345678901", "7412345678901X", " 74123456789012 "])(
+    "rechaza CAE no canónico de catorce dígitos: %j",
+    (cae) => {
+      expect(() =>
+        normalizarComprobanteArca({ ...resultGetFixture, CodAutorizacion: cae }),
+      ).toThrow(/CAE|CodAutorizacion/i);
+    },
+  );
+
+  it.each(["00000101", "20260230"])("rechaza vencimiento CAE inválido: %s", (FchVto) => {
+    expect(() => normalizarComprobanteArca({ ...resultGetFixture, FchVto })).toThrow(/FchVto/i);
+  });
+
+  it("mantiene el vencimiento CAE nullable", () => {
+    expect(
+      normalizarComprobanteArca({ ...resultGetFixture, FchVto: undefined }).caeVencimiento,
+    ).toBeNull();
+  });
+
+  it("requiere la descripción observable de cada tributo", () => {
+    const tributo = { ...resultGetFixture.Tributos.Tributo[0] } as Record<string, unknown>;
+    delete tributo.Desc;
+    expect(() =>
+      normalizarComprobanteArca({ ...resultGetFixture, Tributos: { Tributo: tributo } }),
+    ).toThrow(/Tributos.*Desc|descripci/i);
+  });
+
+  it("ordena tributos incluyendo la descripción como parte estable del dominio", () => {
+    const normalizado = normalizarComprobanteArca({
+      ...resultGetFixture,
+      ImpTrib: 6,
+      Tributos: {
+        Tributo: [
+          { Id: 99, Desc: "Zeta", BaseImp: 100, Alic: 3, Importe: 3 },
+          { Id: 99, Desc: "Alfa", BaseImp: 100, Alic: 3, Importe: 3 },
+        ],
+      },
+    });
+    expect(normalizado.tributos.map((row) => row.descripcion)).toEqual(["Alfa", "Zeta"]);
+  });
+
+  it.each([undefined, "R", "P"])(
+    "normalización pública exige Resultado A exacto: %j",
+    (Resultado) => {
+      expect(() => normalizarComprobanteArca({ ...resultGetFixture, Resultado })).toThrow(
+        /Resultado/i,
+      );
+    },
+  );
 });

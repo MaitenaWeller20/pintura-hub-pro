@@ -50,7 +50,15 @@ const remotoFixture: ComprobanteArcaConsultado = {
   moneda: "PES",
   cotizacion: "1.000000",
   alicuotas: [{ id: 5, base: "100.00", importe: "21.00" }],
-  tributos: [{ id: 99, base: "100.00", alicuota: "3.00", importe: "3.00" }],
+  tributos: [
+    {
+      id: 99,
+      descripcion: "Percepción",
+      base: "100.00",
+      alicuota: "3.00",
+      importe: "3.00",
+    },
+  ],
   asociados: [{ tipo: 1, puntoVenta: 5, numero: 40, cuit: "30714199664", fecha: "2026-08-20" }],
 };
 
@@ -87,6 +95,7 @@ describe("comparación exacta del snapshot contra ARCA", () => {
     ["alicuotasIva[0].baseImponible", "alicuotas", { base: "99.00" }],
     ["alicuotasIva[0].importe", "alicuotas", { importe: "20.00" }],
     ["tributos[0].id", "tributos", { id: 98 }],
+    ["tributos[0].descripcion", "tributos", { descripcion: "Otra percepción" }],
     ["tributos[0].baseImponible", "tributos", { base: "99.00" }],
     ["tributos[0].alicuota", "tributos", { alicuota: "2.00" }],
     ["tributos[0].importe", "tributos", { importe: "2.00" }],
@@ -125,7 +134,7 @@ describe("comparación exacta del snapshot contra ARCA", () => {
       alicuotas: [...remotoFixture.alicuotas, { id: 4, base: "10.00", importe: "1.05" }],
       tributos: [
         ...remotoFixture.tributos,
-        { id: 2, base: "10.00", alicuota: "2.00", importe: "0.20" },
+        { id: 2, descripcion: "Tasa", base: "10.00", alicuota: "2.00", importe: "0.20" },
       ],
       asociados: [
         ...remotoFixture.asociados,
@@ -133,6 +142,16 @@ describe("comparación exacta del snapshot contra ARCA", () => {
       ],
     };
     expect(compararSnapshotConArca(snapshot, remoto)).toEqual([]);
+  });
+
+  it("bloquea si ARCA omite la descripción de un tributo", () => {
+    const remoto = {
+      ...remotoFixture,
+      tributos: [{ id: 99, base: "100.00", alicuota: "3.00", importe: "3.00" }],
+    } as ComprobanteArcaConsultado;
+    expect(compararSnapshotConArca(snapshotFiscalFixture, remoto)).toEqual([
+      "tributos[0].descripcion",
+    ]);
   });
 });
 
@@ -211,5 +230,36 @@ describe("decisión de conciliación", () => {
         payloadHash: snapshotFiscalFixture.hash,
       }),
     ).toEqual({ accion: "BLOQUEAR", diferencias: ["identidad.numero"] });
+  });
+
+  it.each([
+    ["hash", { numeroReservado: 42, payloadHash: "b".repeat(64) }],
+    ["identidad.numero", { numeroReservado: 43, payloadHash: snapshotFiscalFixture.hash }],
+  ] as const)("valida %s congelado antes de recuperar un remoto presente", (ruta, cambio) => {
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotFiscalFixture,
+        remoto: remotoFixture,
+        ultimoRemoto: 42,
+        ...cambio,
+      }),
+    ).toEqual({ accion: "BLOQUEAR", diferencias: [ruta] });
+  });
+
+  it.each([
+    ["cae", { cae: "7412345678901" }],
+    ["cae", { cae: "7412345678901X" }],
+    ["caeVencimiento", { caeVencimiento: "0000-01-01" }],
+    ["caeVencimiento", { caeVencimiento: "2026-02-30" }],
+  ] as const)("bloquea recuperación con %s remoto inválido", (ruta, cambio) => {
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotFiscalFixture,
+        remoto: { ...remotoFixture, ...cambio },
+        ultimoRemoto: 42,
+        numeroReservado: 42,
+        payloadHash: snapshotFiscalFixture.hash,
+      }),
+    ).toEqual({ accion: "BLOQUEAR", diferencias: [ruta] });
   });
 });

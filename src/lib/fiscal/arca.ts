@@ -126,7 +126,13 @@ export type ComprobanteArcaConsultado = {
   moneda: string;
   cotizacion: string;
   alicuotas: Array<{ id: number; base: string; importe: string }>;
-  tributos: Array<{ id: number; base: string; alicuota: string; importe: string }>;
+  tributos: Array<{
+    id: number;
+    descripcion: string;
+    base: string;
+    alicuota: string;
+    importe: string;
+  }>;
   asociados: Array<{
     tipo: number;
     puntoVenta: number;
@@ -142,7 +148,8 @@ function fechaArca(value: unknown, campo: string, nullable = false): string | nu
   const compacta = /^\d{8}$/.test(value)
     ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
     : value;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(compacta)) throw new Error(`ARCA devolvió inválido ${campo}.`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(compacta) || compacta.startsWith("0000-"))
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
   const parsed = new Date(`${compacta}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== compacta) {
     throw new Error(`ARCA devolvió inválido ${campo}.`);
@@ -153,18 +160,36 @@ function fechaArca(value: unknown, campo: string, nullable = false): string | nu
 function enteroArca(value: unknown, campo: string): number {
   if (value === "" || value === null || value === undefined)
     throw new Error(`ARCA omitió ${campo}.`);
-  const numero = Number(value);
-  if (!Number.isSafeInteger(numero) || numero < 0)
+  if (typeof value === "number") {
+    if (Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)) return value;
     throw new Error(`ARCA devolvió inválido ${campo}.`);
-  return numero;
+  }
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value))
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  const exacto = BigInt(value);
+  if (exacto > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`ARCA devolvió inválido ${campo}.`);
+  return Number(exacto);
 }
 
 function decimalArca(value: unknown, campo: string, posiciones: 2 | 6): string {
   if (value === "" || value === null || value === undefined)
     throw new Error(`ARCA omitió ${campo}.`);
-  const numero = Number(value);
-  if (!Number.isFinite(numero) || numero < 0) throw new Error(`ARCA devolvió inválido ${campo}.`);
-  return numero.toFixed(posiciones);
+  if (typeof value !== "string" && typeof value !== "number")
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  if (typeof value === "number" && (!Number.isFinite(value) || value < 0 || Object.is(value, -0)))
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  const texto = String(value);
+  const coincidencia = /^(0|[1-9]\d*)(?:\.(\d+))?$/.exec(texto);
+  if (!coincidencia) throw new Error(`ARCA devolvió inválido ${campo}.`);
+  const enteros = coincidencia[1];
+  const decimales = coincidencia[2] ?? "";
+  const excedente = decimales.slice(posiciones);
+  if (/[^0]/.test(excedente)) throw new Error(`ARCA devolvió inválido ${campo}.`);
+  const fraccion = decimales.slice(0, posiciones).padEnd(posiciones, "0");
+  const escalado = BigInt(`${enteros}${fraccion}`);
+  if (escalado > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  return `${enteros}.${fraccion}`;
 }
 
 function textoArca(value: unknown, campo: string, permiteVacio = false): string {
@@ -175,15 +200,81 @@ function textoArca(value: unknown, campo: string, permiteVacio = false): string 
   return texto;
 }
 
-function comoArray(value: unknown): unknown[] {
+function comoArray(value: unknown, campo: string): unknown[] {
   if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
+  if (!Array.isArray(value)) return [value];
+  if (Object.getPrototypeOf(value) !== Array.prototype)
+    throw new Error(`ARCA devolvió un array con prototipo inválido en ${campo}.`);
+  const claves = Reflect.ownKeys(value);
+  if (
+    claves.some(
+      (clave) => typeof clave !== "string" || (clave !== "length" && !/^(0|[1-9]\d*)$/.test(clave)),
+    )
+  )
+    throw new Error(`ARCA devolvió un array inválido en ${campo}.`);
+  const descriptorLongitud = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    !descriptorLongitud ||
+    !("value" in descriptorLongitud) ||
+    !Number.isSafeInteger(descriptorLongitud.value) ||
+    descriptorLongitud.value < 0 ||
+    claves.length !== descriptorLongitud.value + 1
+  )
+    throw new Error(`ARCA devolvió un array inválido en ${campo}.`);
+  for (let index = 0; index < descriptorLongitud.value; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set)
+      throw new Error(`ARCA devolvió un array sin datos propios en ${campo}.`);
+  }
+  return value;
 }
 
 function registro(value: unknown, campo: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error(`ARCA devolvió inválido ${campo}.`);
+  const prototipo = Object.getPrototypeOf(value);
+  if (prototipo !== Object.prototype && prototipo !== null)
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  for (const clave of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, clave);
+    if (typeof clave !== "string" || !descriptor || !("value" in descriptor))
+      throw new Error(`ARCA devolvió un registro sin datos propios en ${campo}.`);
+  }
   return value as Record<string, unknown>;
+}
+
+function tieneDatoPropio(value: Record<string, unknown>, clave: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(value, clave);
+  return Boolean(descriptor && "value" in descriptor);
+}
+
+function codigoErrorArca(value: unknown, campo: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    Object.is(value, -0)
+  )
+    throw new Error(`ARCA devolvió inválido ${campo}.`);
+  return value;
+}
+
+function errorLanzadoEsAusencia602(value: unknown): boolean {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(value, "code");
+  return Boolean(
+    descriptor &&
+    "value" in descriptor &&
+    typeof descriptor.value === "number" &&
+    Number.isSafeInteger(descriptor.value) &&
+    descriptor.value === 602,
+  );
+}
+
+function caeArca(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{14}$/.test(value))
+    throw new Error("ARCA devolvió inválido CodAutorizacion.");
+  return value;
 }
 
 /** Construye el detalle FECAEDetRequest exclusivamente desde el snapshot fiscal congelado. */
@@ -236,27 +327,38 @@ export function crearPayloadCaeDesdeSnapshot(snapshot: SnapshotFiscalV2): Record
 /** Convierte ResultGet completo a la representación canónica usada al conciliar. */
 export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaConsultado {
   const result = registro(resultGet, "ResultGet");
+  if (result.Resultado !== "A") throw new Error("ARCA devolvió inválido ResultGet.Resultado.");
+  const cae = caeArca(result.CodAutorizacion);
   const desde = enteroArca(result.CbteDesde, "CbteDesde");
   const hasta = enteroArca(result.CbteHasta, "CbteHasta");
   if (desde !== hasta) throw new Error("ARCA devolvió CbteDesde y CbteHasta distintos.");
-  const alicuotas = comoArray(registro(result.Iva ?? {}, "Iva").AlicIva).map((raw) => {
-    const row = registro(raw, "Iva.AlicIva");
-    return {
-      id: enteroArca(row.Id, "Iva.AlicIva.Id"),
-      base: decimalArca(row.BaseImp, "Iva.AlicIva.BaseImp", 2),
-      importe: decimalArca(row.Importe, "Iva.AlicIva.Importe", 2),
-    };
-  });
-  const tributos = comoArray(registro(result.Tributos ?? {}, "Tributos").Tributo).map((raw) => {
+  const alicuotas = comoArray(registro(result.Iva ?? {}, "Iva").AlicIva, "Iva.AlicIva").map(
+    (raw) => {
+      const row = registro(raw, "Iva.AlicIva");
+      return {
+        id: enteroArca(row.Id, "Iva.AlicIva.Id"),
+        base: decimalArca(row.BaseImp, "Iva.AlicIva.BaseImp", 2),
+        importe: decimalArca(row.Importe, "Iva.AlicIva.Importe", 2),
+      };
+    },
+  );
+  const tributos = comoArray(
+    registro(result.Tributos ?? {}, "Tributos").Tributo,
+    "Tributos.Tributo",
+  ).map((raw) => {
     const row = registro(raw, "Tributos.Tributo");
     return {
       id: enteroArca(row.Id, "Tributos.Tributo.Id"),
+      descripcion: textoArca(row.Desc, "Tributos.Tributo.Desc"),
       base: decimalArca(row.BaseImp, "Tributos.Tributo.BaseImp", 2),
       alicuota: decimalArca(row.Alic, "Tributos.Tributo.Alic", 2),
       importe: decimalArca(row.Importe, "Tributos.Tributo.Importe", 2),
     };
   });
-  const asociados = comoArray(registro(result.CbtesAsoc ?? {}, "CbtesAsoc").CbteAsoc).map((raw) => {
+  const asociados = comoArray(
+    registro(result.CbtesAsoc ?? {}, "CbtesAsoc").CbteAsoc,
+    "CbtesAsoc.CbteAsoc",
+  ).map((raw) => {
     const row = registro(raw, "CbtesAsoc.CbteAsoc");
     return {
       tipo: enteroArca(row.Tipo, "CbtesAsoc.CbteAsoc.Tipo"),
@@ -272,6 +374,7 @@ export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaCo
   tributos.sort(
     (a, b) =>
       a.id - b.id ||
+      a.descripcion.localeCompare(b.descripcion) ||
       a.base.localeCompare(b.base) ||
       a.alicuota.localeCompare(b.alicuota) ||
       a.importe.localeCompare(b.importe),
@@ -288,7 +391,7 @@ export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaCo
     puntoVenta: enteroArca(result.PtoVta, "PtoVta"),
     cbteTipo: enteroArca(result.CbteTipo, "CbteTipo"),
     numero: desde,
-    cae: textoArca(result.CodAutorizacion, "CodAutorizacion", true),
+    cae,
     caeVencimiento: fechaArca(result.FchVto, "FchVto", true),
     concepto: enteroArca(result.Concepto, "Concepto"),
     docTipo: enteroArca(result.DocTipo, "DocTipo"),
@@ -402,38 +505,51 @@ export async function consultarComprobanteCompleto(
 ): Promise<ComprobanteArcaConsultado | null> {
   if (MOCK) return null;
   const arca = await buildArca(emisor, pv, supabaseAdmin);
+  let raw: unknown;
   try {
-    const raw = await conTimeout(
+    raw = await conTimeout(
       arca.genericService.call("wsfe", "FECompConsultar", {
         FeCompConsReq: { CbteNro: numero, PtoVta: pv.numero, CbteTipo: cbteTipo },
       }),
       "consultar el comprobante",
     );
-    const envelope = registro(raw, "FECompConsultarResponse");
-    const response = registro(envelope.FECompConsultarResult, "FECompConsultarResult");
-    if (!response.ResultGet) {
-      const errores = comoArray(registro(response.Errors ?? {}, "Errors").Err).map((rawError) => {
-        const error = registro(rawError, "Errors.Err");
-        return enteroArca(error.Code, "Errors.Err.Code");
-      });
-      if (errores.length === 1 && errores[0] === 602) return null;
-      throw new ArcaRespuestaIncierta("ARCA no devolvió un comprobante comparable.");
-    }
-    const result = registro(response.ResultGet, "ResultGet");
-    const resultado = typeof result.Resultado === "string" ? result.Resultado.trim() : "";
-    const cae = typeof result.CodAutorizacion === "string" ? result.CodAutorizacion.trim() : "";
-    if (!cae && resultado === "R")
-      throw new ArcaRechazoDefinitivo("ARCA informó un rechazo definitivo para el comprobante.");
-    if (!cae)
-      throw new ArcaRespuestaIncierta(
-        "ARCA devolvió una respuesta sin CAE ni rechazo estructurado.",
-      );
-    return normalizarComprobanteArca(result);
   } catch (e) {
-    if (typeof (e as { code?: unknown })?.code === "number" && (e as { code: number }).code === 602)
-      return null;
+    if (errorLanzadoEsAusencia602(e)) return null;
     throw e;
   }
+
+  const envelope = registro(raw, "FECompConsultarResponse");
+  const response = registro(envelope.FECompConsultarResult, "FECompConsultarResult");
+  const errores = tieneDatoPropio(response, "Errors")
+    ? (() => {
+        const contenedor = registro(response.Errors, "Errors");
+        if (!tieneDatoPropio(contenedor, "Err")) return [];
+        if (contenedor.Err === null || contenedor.Err === undefined)
+          throw new Error("ARCA devolvió inválido Errors.Err.");
+        return comoArray(contenedor.Err, "Errors.Err").map((rawError) => {
+          const error = registro(rawError, "Errors.Err");
+          return codigoErrorArca(error.Code, "Errors.Err.Code");
+        });
+      })()
+    : [];
+
+  if (!tieneDatoPropio(response, "ResultGet")) {
+    if (errores.length === 1 && errores[0] === 602) return null;
+    throw new ArcaRespuestaIncierta("ARCA no devolvió un comprobante comparable.");
+  }
+
+  const result = registro(response.ResultGet, "ResultGet");
+  if (errores.length > 0)
+    throw new ArcaRespuestaIncierta(
+      "ARCA devolvió un comprobante junto con errores estructurados.",
+    );
+  if (result.Resultado === "R" && result.CodAutorizacion === "")
+    throw new ArcaRechazoDefinitivo("ARCA informó un rechazo definitivo para el comprobante.");
+  if (result.Resultado !== "A")
+    throw new ArcaRespuestaIncierta("ARCA devolvió un resultado no concluyente.");
+  if (typeof result.CodAutorizacion !== "string" || !/^\d{14}$/.test(result.CodAutorizacion))
+    throw new ArcaRespuestaIncierta("ARCA devolvió una aprobación sin autorización válida.");
+  return normalizarComprobanteArca(result);
 }
 
 /** Pide el CAE a AFIP (FECAESolicitar). */

@@ -24,7 +24,9 @@ const resultGetFixture = {
   MonId: "PES",
   MonCotiz: 1,
   Iva: { AlicIva: [{ Id: 5, BaseImp: 100, Importe: 21 }] },
-  Tributos: { Tributo: [{ Id: 99, BaseImp: 100, Alic: 3, Importe: 3 }] },
+  Tributos: {
+    Tributo: [{ Id: 99, Desc: "Percepción", BaseImp: 100, Alic: 3, Importe: 3 }],
+  },
   CbtesAsoc: {
     CbteAsoc: [{ Tipo: 1, PtoVta: 5, Nro: 40, Cuit: "30714199664", CbteFch: "20260820" }],
   },
@@ -172,6 +174,161 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
 
     sdk.genericCall.mockRejectedValue(new Error("602 no existen datos / not found"));
     await expect(consultarComprobanteCompleto(...args)).rejects.toThrow(/602/);
+
+    sdk.genericCall.mockRejectedValue(Object.assign(new Error("código textual"), { code: "602" }));
+    await expect(consultarComprobanteCompleto(...args)).rejects.toThrow(/textual/);
+  });
+
+  it("no acepta Code textual 602 ni propiedades heredadas como ausencia", async () => {
+    const { consultarComprobanteCompleto } = await import("./arca");
+    const args = [
+      {
+        cuit: "30-71419966-4",
+        arca_key_enc: encryptString("PRIVATE KEY"),
+        arca_cert_enc: encryptString("CERTIFICATE"),
+      },
+      { numero: 5, modo: "PRODUCCION" } as const,
+      3,
+      42,
+      {},
+    ] as const;
+
+    sdk.genericCall.mockResolvedValue({
+      FECompConsultarResult: { Errors: { Err: { Code: "602" } } },
+    });
+    await expect(consultarComprobanteCompleto(...args)).rejects.toThrow();
+
+    const errorsHeredados = Object.create({ Err: { Code: 602 } });
+    sdk.genericCall.mockResolvedValue({
+      FECompConsultarResult: { Errors: errorsHeredados },
+    });
+    await expect(consultarComprobanteCompleto(...args)).rejects.toThrow();
+  });
+
+  it.each([null, false, 0, ""])("ResultGet presente pero %j falla cerrado", async (ResultGet) => {
+    sdk.genericCall.mockResolvedValue({
+      FECompConsultarResult: { ResultGet, Errors: { Err: { Code: 602 } } },
+    });
+    const { consultarComprobanteCompleto } = await import("./arca");
+    await expect(
+      consultarComprobanteCompleto(
+        {
+          cuit: "30-71419966-4",
+          arca_key_enc: encryptString("PRIVATE KEY"),
+          arca_cert_enc: encryptString("CERTIFICATE"),
+        },
+        { numero: 5, modo: "PRODUCCION" },
+        3,
+        42,
+        {},
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rechaza accessors del envelope sin ejecutarlos", async () => {
+    let ejecutado = false;
+    const raw = {};
+    Object.defineProperty(raw, "FECompConsultarResult", {
+      enumerable: true,
+      get() {
+        ejecutado = true;
+        return { Errors: { Err: { Code: 602 } } };
+      },
+    });
+    sdk.genericCall.mockResolvedValue(raw);
+    const { consultarComprobanteCompleto } = await import("./arca");
+    await expect(
+      consultarComprobanteCompleto(
+        {
+          cuit: "30-71419966-4",
+          arca_key_enc: encryptString("PRIVATE KEY"),
+          arca_cert_enc: encryptString("CERTIFICATE"),
+        },
+        { numero: 5, modo: "PRODUCCION" },
+        3,
+        42,
+        {},
+      ),
+    ).rejects.toThrow(/accessor|datos/i);
+    expect(ejecutado).toBe(false);
+  });
+
+  it("un getter de parsing que arroja code numérico 602 no se reclasifica como ausencia", async () => {
+    const resultGet = { ...resultGetFixture };
+    Object.defineProperty(resultGet, "PtoVta", {
+      enumerable: true,
+      get() {
+        throw Object.assign(new Error("getter de parsing"), { code: 602 });
+      },
+    });
+    sdk.genericCall.mockResolvedValue({ FECompConsultarResult: { ResultGet: resultGet } });
+    const { consultarComprobanteCompleto } = await import("./arca");
+    await expect(
+      consultarComprobanteCompleto(
+        {
+          cuit: "30-71419966-4",
+          arca_key_enc: encryptString("PRIVATE KEY"),
+          arca_cert_enc: encryptString("CERTIFICATE"),
+        },
+        { numero: 5, modo: "PRODUCCION" },
+        3,
+        42,
+        {},
+      ),
+    ).rejects.toThrow();
+  });
+
+  it.each([
+    ["R con CAE", { ResultGet: { ...resultGetFixture, Resultado: "R" } }],
+    ["Resultado ausente", { ResultGet: { ...resultGetFixture, Resultado: undefined } }],
+    ["Resultado desconocido", { ResultGet: { ...resultGetFixture, Resultado: "P" } }],
+    [
+      "A con error estructurado",
+      { ResultGet: resultGetFixture, Errors: { Err: { Code: 10016, Msg: "rechazo" } } },
+    ],
+    [
+      "R vacío mezclado con error",
+      {
+        ResultGet: { ...resultGetFixture, Resultado: "R", CodAutorizacion: "" },
+        Errors: { Err: { Code: 10016, Msg: "rechazo" } },
+      },
+    ],
+  ])("trata como incierta la contradicción de aprobación: %s", async (_caso, response) => {
+    sdk.genericCall.mockResolvedValue({ FECompConsultarResult: response });
+    const { consultarComprobanteCompleto, esErrorTransitorio } = await import("./arca");
+    const error = await consultarComprobanteCompleto(
+      {
+        cuit: "30-71419966-4",
+        arca_key_enc: encryptString("PRIVATE KEY"),
+        arca_cert_enc: encryptString("CERTIFICATE"),
+      },
+      { numero: 5, modo: "PRODUCCION" },
+      3,
+      42,
+      {},
+    ).catch((caught) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(esErrorTransitorio(error)).toBe(true);
+  });
+
+  it("acepta A exacto con CAE válido y Errors.Err vacío", async () => {
+    sdk.genericCall.mockResolvedValue({
+      FECompConsultarResult: { ResultGet: resultGetFixture, Errors: { Err: [] } },
+    });
+    const { consultarComprobanteCompleto } = await import("./arca");
+    await expect(
+      consultarComprobanteCompleto(
+        {
+          cuit: "30-71419966-4",
+          arca_key_enc: encryptString("PRIVATE KEY"),
+          arca_cert_enc: encryptString("CERTIFICATE"),
+        },
+        { numero: 5, modo: "PRODUCCION" },
+        3,
+        42,
+        {},
+      ),
+    ).resolves.toMatchObject({ cae: "74123456789012" });
   });
 
   it("mantiene timeout como incierto y un rechazo estructurado como definitivo", async () => {

@@ -33,6 +33,23 @@ check() {
   fi
 }
 
+check_sql() {
+  local name="$1" expected="$2" sql="$3"
+  local output status
+  failure_index=$((failure_index + 1))
+  output="$TMP_DIR/consulta-${failure_index}.out"
+  set +e
+  "${PSQL[@]}" -qAtc "SET ROLE service_role; $sql" >"$output" 2>&1
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name — la consulta falló"
+    sed -n '1,30p' "$output" >&2
+  else
+    check "$name" "$expected" "$(sed '/^SET$/d' "$output")"
+  fi
+}
+
 expect_fail_like() {
   local name="$1" pattern="$2" sql="$3"
   local output status
@@ -70,11 +87,12 @@ cleanup
 TMP_DIR="$(mktemp -d)"
 trap cleanup EXIT
 
-# Fixture de paridad para Task 7. El hash se deriva de esta serialización
-# canónica literal, no de la función bajo prueba. Los objetos ordenan claves
-# recursivamente y el campo raíz `hash` se excluye del digest.
-PARITY_CANONICAL='{"fechaComprobante":"2026-08-22","identidad":{"cbteTipo":1,"emisorCuit":"30900000001","modo":"PRODUCCION","numero":1,"puntoVenta":990,"simulado":false},"importeTotal":"1210.00","items":[{"cantidad":"1.00","id":"a","importe":"1210.00"}],"receptor":{"numeroDocumento":"30714199664","razonSocial":"RECEPTOR UNO","tipoDocumento":"CUIT"},"version":2}'
-PARITY_HASH='0a723c78e12741e06048660e5928d96f2e9b8da7ae65346ae4be45fd16967076'
+# Fixture neutral reutilizable por el contrato SQL y por snapshot.test.ts de
+# Task 7. La serialización/hash esperados no se derivan de la función bajo prueba.
+PARITY_FIXTURE='test/fixtures/fiscal-snapshot-parity-v2.json'
+PARITY_INPUT="$(jq -c '.input' "$PARITY_FIXTURE")"
+PARITY_CANONICAL="$(jq -r '.canonical' "$PARITY_FIXTURE")"
+PARITY_HASH="$(jq -r '.sha256' "$PARITY_FIXTURE")"
 
 SNAPSHOT=''
 SNAPSHOT_HASH=''
@@ -149,8 +167,31 @@ SELECT
   'a3000000-0000-0000-0000-000000000001',
   'T3-FISCAL-'||lpad(n::text,2,'0'),
   'VENTA','SIN_FACTURAR',1210.00
-FROM generate_series(1,16) AS n;
+FROM generate_series(1,40) AS n;
 SQL
+
+echo "== Matriz estado/fase =="
+identity_sql="afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_emisor_cuit='30900000001',afip_punto_venta=990,afip_cbte_tipo=1,afip_numero=1,afip_modo='PRODUCCION',afip_simulado=false,afip_validez='PRODUCCION',afip_fecha_comprobante='2026-08-22',afip_snapshot='$PARITY_INPUT'::jsonb,afip_snapshot_hash='$PARITY_HASH',afip_imp_total=1210.00,afip_version=2"
+expect_fail_like "PERSISTIDO no es una fase válida de EMITIENDO" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='PERSISTIDO',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000017'; ROLLBACK;"
+expect_fail_like "RESPUESTA_RECIBIDA no es una fase válida de APROBADO" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='APROBADO',afip_fase='RESPUESTA_RECIBIDA',cae='CAE-MATRIX',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000018'; ROLLBACK;"
+expect_fail_like "RESERVADO no es una fase válida de RECONCILIAR" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='RECONCILIAR',afip_fase='RESERVADO',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000019'; ROLLBACK;"
+expect_fail_like "PREFLIGHT no es una fase válida de SIN_FACTURAR" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='SIN_FACTURAR',afip_fase='PREFLIGHT',afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_version=1 WHERE id='c3000000-0000-0000-0000-000000000020'; ROLLBACK;"
+expect_fail_like "REQUEST_INICIADO no es una fase válida de ERROR_CORREGIBLE" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='ERROR_CORREGIBLE',afip_fase='REQUEST_INICIADO',$identity_sql WHERE id='c3000000-0000-0000-0000-000000000021'; ROLLBACK;"
+expect_fail_like "RESERVADO exige identidad fiscal completa y snapshot coherente" "ck_ventas_afip_estado_integridad" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase='RESERVADO',afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_snapshot='{\"version\":2}'::jsonb,afip_snapshot_hash=repeat('e',64),afip_version=2 WHERE id='c3000000-0000-0000-0000-000000000025'; ROLLBACK;"
+check_sql "la excepción legacy APROBADO versión 0 sigue siendo válida" "1" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='APROBADO',afip_fase=NULL,afip_version=0,afip_numero=9001,afip_emisor_cuit='30900000001',afip_punto_venta=990,afip_cbte_tipo=1,afip_modo='PRODUCCION',cae='CAE-LEGACY' WHERE id='c3000000-0000-0000-0000-000000000022'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000022' AND afip_estado='APROBADO'; ROLLBACK;"
+check_sql "la excepción aditiva EMITIENDO sin fase sigue siendo válida" "1" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='EMITIENDO',afip_fase=NULL,afip_claim_token='d3000000-0000-0000-0000-000000000099',afip_claimed_at=now(),afip_snapshot='$PARITY_INPUT'::jsonb,afip_snapshot_hash='$PARITY_HASH',afip_version=2 WHERE id='c3000000-0000-0000-0000-000000000023'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000023' AND afip_estado='EMITIENDO'; ROLLBACK;"
+check_sql "la excepción aditiva RECONCILIAR sin fase sigue siendo válida" "1" \
+  "BEGIN; UPDATE public.ventas SET afip_estado='RECONCILIAR',afip_fase=NULL,$identity_sql WHERE id='c3000000-0000-0000-0000-000000000024'; SELECT count(*) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000024' AND afip_estado='RECONCILIAR'; ROLLBACK;"
+
+echo
 
 echo "== Reclamo concurrente =="
 "${PSQL[@]}" >"$TMP_DIR/claim-uno.out" 2>&1 <<'SQL' &
@@ -214,7 +255,10 @@ check "el helper de hash es interno y no está otorgado a roles API" \
   "$(q "SELECT has_function_privilege('public','public.fiscal_snapshot_hash(jsonb)','execute')::text||'|'||has_function_privilege('anon','public.fiscal_snapshot_hash(jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.fiscal_snapshot_hash(jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.fiscal_snapshot_hash(jsonb)','execute')::text")"
 check "fixture canónico PostgreSQL/Task 7 tiene SHA-256 determinista" \
   "$PARITY_HASH" \
-  "$(q "SELECT public.fiscal_snapshot_hash((jsonb_build_object('hash','$PARITY_HASH')||'$PARITY_CANONICAL'::jsonb))")"
+  "$(q "SELECT public.fiscal_snapshot_hash('$PARITY_INPUT'::jsonb)")"
+check "fixture compartido conserva la serialización canónica recursiva" \
+  "$PARITY_CANONICAL" \
+  "$(q "SELECT public.fiscal_json_canonico('$PARITY_INPUT'::jsonb-'hash')")"
 check "el orden de claves JSON no altera el hash" \
   "$PARITY_HASH" \
   "$(q "SELECT public.fiscal_snapshot_hash(jsonb_build_object('version',2,'receptor',jsonb_build_object('tipoDocumento','CUIT','razonSocial','RECEPTOR UNO','numeroDocumento','30714199664'),'items',jsonb_build_array(jsonb_build_object('importe','1210.00','id','a','cantidad','1.00')),'importeTotal','1210.00','identidad',jsonb_build_object('simulado',false,'puntoVenta',990,'numero',1,'modo','PRODUCCION','emisorCuit','30900000001','cbteTipo',1),'fechaComprobante','2026-08-22','hash','$PARITY_HASH'))")"
@@ -228,6 +272,36 @@ echo
 echo "== Validación optimista, token y allowlists =="
 claim 'c3000000-0000-0000-0000-000000000015' 'd3000000-0000-0000-0000-000000000015' >/dev/null
 crear_snapshot 1 30900000015 995 1 PRODUCCION false 30714199664 'RECEPTOR STALE' 1210.00
+reserva_base="$(jq -cn \
+  --argjson snapshot "$SNAPSHOT" --arg hash "$SNAPSHOT_HASH" \
+  '{expected_version:1,snapshot:$snapshot,snapshot_hash:$hash,numero_propuesto:1,fecha_comprobante:"2026-08-22",emisor_cuit:"30900000015",punto_venta:995,cbte_tipo:1,modo:"PRODUCCION",simulado:false,validez:"PRODUCCION",ultimo_remoto:0,ultimo_local_observado:0}')"
+expect_reserva_invalida() {
+  local name="$1" filter="$2" payload
+  payload="$(jq -c "$filter" <<<"$reserva_base")"
+  expect_fail_like "$name" "RESERVAR.*(inv.lid|debe|requiere|rango)" \
+    "BEGIN; SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015','$payload'::jsonb); ROLLBACK;"
+}
+expect_reserva_invalida "RESERVAR rechaza numero_propuesto JSON null" '.numero_propuesto=null'
+expect_reserva_invalida "RESERVAR rechaza numero_propuesto string" '.numero_propuesto="1"'
+expect_reserva_invalida "RESERVAR rechaza numero_propuesto fuera de dominio" '.numero_propuesto=0'
+expect_reserva_invalida "RESERVAR rechaza punto_venta JSON null antes del advisory lock" '.punto_venta=null'
+expect_reserva_invalida "RESERVAR rechaza punto_venta fuera de rango" '.punto_venta=100000'
+expect_reserva_invalida "RESERVAR rechaza cbte_tipo JSON null antes del advisory lock" '.cbte_tipo=null'
+expect_reserva_invalida "RESERVAR rechaza cbte_tipo fuera de rango" '.cbte_tipo=10000'
+expect_reserva_invalida "RESERVAR rechaza ultimo_remoto JSON null" '.ultimo_remoto=null'
+expect_reserva_invalida "RESERVAR rechaza ultimo_local_observado JSON null" '.ultimo_local_observado=null'
+expect_reserva_invalida "RESERVAR rechaza CUIT JSON null antes del advisory lock" '.emisor_cuit=null'
+expect_reserva_invalida "RESERVAR rechaza CUIT con formato inválido" '.emisor_cuit=""'
+expect_reserva_invalida "RESERVAR rechaza modo JSON null antes del advisory lock" '.modo=null'
+expect_reserva_invalida "RESERVAR rechaza simulado JSON null antes del advisory lock" '.simulado=null'
+expect_reserva_invalida "RESERVAR rechaza validez JSON null" '.validez=null'
+expect_reserva_invalida "RESERVAR rechaza fecha_comprobante JSON null" '.fecha_comprobante=null'
+expect_reserva_invalida "RESERVAR rechaza fecha_comprobante no string" '.fecha_comprobante=20260822'
+expect_reserva_invalida "RESERVAR rechaza snapshot JSON null" '.snapshot=null'
+expect_reserva_invalida "RESERVAR rechaza identidad snapshot JSON null" '.snapshot.identidad=null'
+expect_reserva_invalida "RESERVAR rechaza scalar de identidad snapshot con tipo incorrecto" '.snapshot.identidad.puntoVenta="995"'
+expect_reserva_invalida "RESERVAR rechaza snapshot_hash JSON null" '.snapshot_hash=null'
+expect_reserva_invalida "RESERVAR rechaza snapshot_hash no string" '.snapshot_hash=123'
 expect_fail_like "expected_version obsoleto levanta error" "versi.n esperada" \
   "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015',jsonb_build_object('expected_version',0,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000015','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
 expect_fail_like "un token ajeno levanta error" "token.*no coincide" \
@@ -311,8 +385,9 @@ crear_snapshot 3 30900000001 990 1 PRODUCCION false 30714199664 'NUMERO INCORREC
 expect_fail_like "la numeración real exige ultimo_remoto + 1" "numero_propuesto.*ultimo_remoto" \
   "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',3,'fecha_comprobante','2026-08-22','emisor_cuit','30900000001','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',1,'ultimo_local_observado',1));"
 crear_snapshot 1 30900000001 990 1 PRODUCCION false 30714199664 'LOCAL ADELANTADO' 1210.00
-expect_fail_like "local adelantado a ARCA exige conciliación" "local.*adelantad.*reconciliar" \
-  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000001','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',1));"
+check_sql "local adelantado persiste bloqueo durable y señal de conciliación de secuencia" \
+  $'BLOQUEADO|PREFLIGHT||2\nRECONCILIACION_SECUENCIA_REQUERIDA|1|0' \
+  "SELECT afip_estado||'|'||afip_fase||'|'||coalesce(afip_numero::text,'')||'|'||afip_version FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000016','RESERVAR','d3000000-0000-0000-0000-000000000016',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000001','punto_venta',990,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',1)); SELECT resultado||'|'||(respuesta_resumen#>>'{diagnostico,maximo_local}')||'|'||(respuesta_resumen#>>'{diagnostico,ultimo_remoto}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000016';"
 
 crear_snapshot 1 30900000015 995 1 PRODUCCION false 30714199664 'HASH MALO' 1210.00
 expect_fail_like "la reserva no confía en un hash del cliente" "hash.*no coincide" \
@@ -329,12 +404,28 @@ q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-
 check "REQUEST_INICIADO queda durable en una conexión nueva" \
   "EMITIENDO|REQUEST_INICIADO|REQUEST_INICIADO|3" \
   "$(q "SELECT v.afip_estado||'|'||v.afip_fase||'|'||i.fase||'|'||v.afip_version FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id AND i.claim_token=v.afip_claim_token WHERE v.id='c3000000-0000-0000-0000-000000000004'")"
-expect_fail_like "evidencia enviada no se convierte ciegamente en error liberable" "inciert.*RECONCILIAR" \
-  "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','ERROR_CORREGIBLE','d3000000-0000-0000-0000-000000000004','{\"expected_version\":3,\"error_clase\":\"TIMEOUT\",\"error_codigo\":\"T1\",\"error_fase\":\"REQUEST\",\"mensaje_mascarado\":\"timeout\",\"liberar_identidad\":true}'::jsonb);"
+check_sql "evidencia enviada no se convierte ciegamente en error liberable" \
+  "RECONCILIAR|REQUEST_INICIADO|1|4|true" \
+  "BEGIN; SELECT afip_estado||'|'||afip_fase||'|'||afip_numero||'|'||afip_version||'|'||(afip_claim_token IS NOT NULL) FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','ERROR_CORREGIBLE','d3000000-0000-0000-0000-000000000004','{\"expected_version\":3,\"error_clase\":\"TIMEOUT\",\"error_codigo\":\"T1\",\"error_fase\":\"REQUEST\",\"mensaje_mascarado\":\"timeout\",\"liberar_identidad\":true}'::jsonb); ROLLBACK;"
 expect_fail_like "LIBERAR está prohibido desde REQUEST_INICIADO" "LIBERAR.*REQUEST_INICIADO" \
   "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','LIBERAR','d3000000-0000-0000-0000-000000000004','{\"expected_version\":3,\"verificacion\":{\"nunca_enviado\":true}}'::jsonb);"
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','RECONCILIAR','d3000000-0000-0000-0000-000000000004','{\"expected_version\":3,\"error_clase\":\"TRANSPORTE\",\"error_codigo\":\"TIMEOUT\",\"error_fase\":\"REQUEST_INICIADO\",\"mensaje_mascarado\":\"sin respuesta\"}'::jsonb);" >/dev/null
-q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','REENVIO_VERIFICADO','d3000000-0000-0000-0000-000000000004',jsonb_build_object('expected_version',4,'nuevo_claim_token','d3000000-0000-0000-0000-000000000044','ultimo_remoto',0,'respuesta_resumen',jsonb_build_object('ausencia_confirmada',true,'fuente','FECompConsultar'),'payload_hash','$hash_reenvio'));" >/dev/null
+expect_reenvio_invalido() {
+  local name="$1" resumen="$2" ultimo="$3"
+  local hash_sql="'$hash_reenvio'"
+  [[ "$#" -ge 4 ]] && hash_sql="$4"
+  expect_fail_like "$name" "REENVIO_VERIFICADO.*(ausencia|resumen)|ultimo_remoto|payload_hash" \
+    "BEGIN; SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','REENVIO_VERIFICADO','d3000000-0000-0000-0000-000000000004',jsonb_build_object('expected_version',4,'nuevo_claim_token','d3000000-0000-0000-0000-000000000044','ultimo_remoto',$ultimo,'respuesta_resumen','$resumen'::jsonb,'payload_hash',$hash_sql)); ROLLBACK;"
+}
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza ausencia faltante" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","observaciones":[]}' '0'
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza ausencia JSON null" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":null,"observaciones":[]}' '0'
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza ausencia string" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":"true","observaciones":[]}' '0'
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza ausencia false" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":false,"observaciones":[]}' '0'
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza ultimo_remoto JSON null" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":true,"observaciones":[]}' 'NULL'
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza ultimo_remoto string" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":true,"observaciones":[]}' "'0'"
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza payload_hash JSON null" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":true,"observaciones":[]}' '0' NULL
+expect_reenvio_invalido "REENVIO_VERIFICADO rechaza payload_hash distinto" '{"tipo":"CONSULTA_ARCA","resultado":"AUSENTE","fuente":"FECompConsultar","ausencia_confirmada":true,"observaciones":[]}' '0' "'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'"
+q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','REENVIO_VERIFICADO','d3000000-0000-0000-0000-000000000004',jsonb_build_object('expected_version',4,'nuevo_claim_token','d3000000-0000-0000-0000-000000000044','ultimo_remoto',0,'respuesta_resumen',jsonb_build_object('tipo','CONSULTA_ARCA','resultado','AUSENTE','fuente','FECompConsultar','ausencia_confirmada',true,'observaciones',jsonb_build_array()),'payload_hash','$hash_reenvio'));" >/dev/null
 identity_after="$(q "SELECT concat_ws('|',afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_fecha_comprobante,afip_imp_total,afip_snapshot::text,afip_snapshot_hash) FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000004'")"
 check "REENVIO_VERIFICADO rota claim y vuelve a RESERVADO" \
   "EMITIENDO|RESERVADO|d3000000-0000-0000-0000-000000000044|5|2" \
@@ -342,7 +433,7 @@ check "REENVIO_VERIFICADO rota claim y vuelve a RESERVADO" \
 check "el reenvío preserva emisor, PV, número, fecha, monto, receptor, snapshot y hash" \
   "$identity_before" "$identity_after"
 check "la ausencia ARCA queda auditada antes de rotar" "AUSENCIA_ARCA_VERIFICADA|true" \
-  "$(q "SELECT resultado||'|'||(respuesta_resumen->>'ausencia_confirmada') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000004' AND claim_token='d3000000-0000-0000-0000-000000000004'")"
+  "$(q "SELECT resultado||'|'||(respuesta_resumen#>>'{evidencia_externa,consulta_reenvio,ausencia_confirmada}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000004' AND claim_token='d3000000-0000-0000-0000-000000000004'")"
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000004','REQUEST_INICIADO','d3000000-0000-0000-0000-000000000044','{\"expected_version\":5}'::jsonb);" >/dev/null
 check "el reenvío verificado reutiliza la transición REQUEST normal" "REQUEST_INICIADO|6" \
   "$(q "SELECT afip_fase||'|'||afip_version FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000004'")"
@@ -353,17 +444,55 @@ claim 'c3000000-0000-0000-0000-000000000009' 'd3000000-0000-0000-0000-0000000000
 crear_snapshot 1 30900000009 999 1 PRODUCCION false 30714199664 'APROBADA' 1210.00
 reservar 'c3000000-0000-0000-0000-000000000009' 'd3000000-0000-0000-0000-000000000009' 1 1 30900000009 999 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','REQUEST_INICIADO','d3000000-0000-0000-0000-000000000009','{\"expected_version\":2}'::jsonb);" >/dev/null
-q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000009','{\"expected_version\":3,\"respuesta_resumen\":{\"resultado\":\"A\",\"rechazo_confirmado\":false}}'::jsonb);" >/dev/null
+expect_resumen_invalido() {
+  local name="$1" resumen_sql="$2"
+  expect_fail_like "$name" "respuesta_resumen.*(esquema|enmascarado|permitid|tipo|tama.o)" \
+    "BEGIN; SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000009',jsonb_build_object('expected_version',3,'respuesta_resumen',$resumen_sql)); ROLLBACK;"
+}
+resumen_aprobado="jsonb_build_object('tipo','EMISION','resultado','A','fuente','FECAESolicitar','rechazo_confirmado',false,'observaciones',jsonb_build_array())"
+expect_resumen_invalido "el resumen no puede sobrescribir lease_segundos" "$resumen_aprobado||jsonb_build_object('lease_segundos',999999)"
+expect_resumen_invalido "el resumen rechaza claves desconocidas" "$resumen_aprobado||jsonb_build_object('detalle_inocente','x')"
+expect_resumen_invalido "el resumen rechaza XML/raw bajo una clave permitida" "$resumen_aprobado||jsonb_build_object('mensaje','<soap>Authorization secret</soap>')"
+expect_resumen_invalido "el resumen rechaza secretos bajo una clave permitida" "$resumen_aprobado||jsonb_build_object('mensaje','Bearer token=abc')"
+expect_resumen_invalido "el resumen rechaza tipo incorrecto" "$resumen_aprobado||jsonb_build_object('codigo',jsonb_build_array('100'))"
+expect_resumen_invalido "el resumen limita escalares" "$resumen_aprobado||jsonb_build_object('mensaje',pg_catalog.repeat('x',513))"
+expect_resumen_invalido "el resumen exige observaciones array" "$resumen_aprobado||jsonb_build_object('observaciones','no-array')"
+expect_resumen_invalido "el resumen limita cantidad de observaciones" "$resumen_aprobado||jsonb_build_object('observaciones',(SELECT jsonb_agg(n::text) FROM generate_series(1,11) n))"
+expect_resumen_invalido "el resumen limita cada observación" "$resumen_aprobado||jsonb_build_object('observaciones',jsonb_build_array(pg_catalog.repeat('x',257)))"
+q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000009',jsonb_build_object('expected_version',3,'respuesta_resumen',$resumen_aprobado));" >/dev/null
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','APROBAR','d3000000-0000-0000-0000-000000000009','{\"expected_version\":4,\"cae\":\"CAE-T3-0001\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:00:00Z\"}'::jsonb);" >/dev/null
 check "RESPUESTA_RECIBIDA y APROBAR persisten resultado y CAE" \
   "APROBADO|PERSISTIDO|CAE-T3-0001|5|PERSISTIDO|APROBADO" \
   "$(q "SELECT v.afip_estado||'|'||v.afip_fase||'|'||v.cae||'|'||v.afip_version||'|'||i.fase||'|'||i.resultado FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000009'")"
+check "la evidencia externa no sobrescribe el control interno del lease" "300|EMISION|A" \
+  "$(q "SELECT (respuesta_resumen#>>'{control,lease_segundos}')||'|'||(respuesta_resumen#>>'{evidencia_externa,respuesta_emision,tipo}')||'|'||(respuesta_resumen#>>'{evidencia_externa,respuesta_emision,resultado}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000009'")"
 
 claim 'c3000000-0000-0000-0000-000000000010' 'd3000000-0000-0000-0000-000000000010' >/dev/null
 crear_snapshot 1 30900000010 998 1 PRODUCCION false 30714199664 'RECHAZADA' 1210.00
 reservar 'c3000000-0000-0000-0000-000000000010' 'd3000000-0000-0000-0000-000000000010' 1 1 30900000010 998 1 PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','REQUEST_INICIADO','d3000000-0000-0000-0000-000000000010','{\"expected_version\":2}'::jsonb);" >/dev/null
-q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000010','{\"expected_version\":3,\"respuesta_resumen\":{\"resultado\":\"R\",\"rechazo_confirmado\":true}}'::jsonb);" >/dev/null
+q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000010',jsonb_build_object('expected_version',3,'respuesta_resumen',jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','rechazo_confirmado',true,'observaciones',jsonb_build_array())));" >/dev/null
+check_rechazo_no_confirmado() {
+  local name="$1" evidencia_sql="$2" liberar="${3:-true}"
+  local metadata_ajena="'{}'::jsonb"
+  [[ "$#" -ge 4 ]] && metadata_ajena="$4"
+  check_sql "$name" \
+    $'RECONCILIAR|RESPUESTA_RECIBIDA|1|5\nRECONCILIAR|1|'"$SNAPSHOT_HASH"$'|true' \
+    "BEGIN; UPDATE public.emision_fiscal_intentos SET respuesta_resumen=jsonb_build_object('control',jsonb_build_object('lease_segundos',300),'evidencia_externa',jsonb_build_object('respuesta_emision',$evidencia_sql))||$metadata_ajena WHERE venta_id='c3000000-0000-0000-0000-000000000010' AND claim_token='d3000000-0000-0000-0000-000000000010'; SELECT afip_estado||'|'||afip_fase||'|'||afip_numero||'|'||afip_version FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','ERROR_CORREGIBLE','d3000000-0000-0000-0000-000000000010',jsonb_build_object('expected_version',4,'error_clase','RECHAZO','error_codigo','100','error_fase','RESPUESTA_RECIBIDA','mensaje_mascarado','rechazo no confirmado','liberar_identidad',$liberar)); SELECT resultado||'|'||numero_reservado||'|'||payload_hash||'|'||(respuesta_resumen ? 'evidencia_externa') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000010' AND claim_token='d3000000-0000-0000-0000-000000000010'; ROLLBACK;"
+}
+check_rechazo_no_confirmado "rechazo faltante se desvía a RECONCILIAR y conserva identidad" \
+  "jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','observaciones',jsonb_build_array())"
+check_rechazo_no_confirmado "rechazo JSON null se desvía a RECONCILIAR y conserva identidad" \
+  "jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','rechazo_confirmado',NULL,'observaciones',jsonb_build_array())"
+check_rechazo_no_confirmado "rechazo false se desvía a RECONCILIAR y conserva identidad" \
+  "jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','rechazo_confirmado',false,'observaciones',jsonb_build_array())"
+check_rechazo_no_confirmado "rechazo con tipo incorrecto se desvía a RECONCILIAR y conserva identidad" \
+  "jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','rechazo_confirmado','true','observaciones',jsonb_build_array())"
+check_rechazo_no_confirmado "rechazo no confirmado nunca sale de conciliación aunque no pidan liberar" \
+  "jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','rechazo_confirmado',false,'observaciones',jsonb_build_array())" false
+check_rechazo_no_confirmado "metadata top-level no puede falsear el rechazo externo" \
+  "jsonb_build_object('tipo','EMISION','resultado','R','fuente','FECAESolicitar','observaciones',jsonb_build_array())" true \
+  "jsonb_build_object('rechazo_confirmado',true,'lease_segundos',999999)"
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000010','ERROR_CORREGIBLE','d3000000-0000-0000-0000-000000000010','{\"expected_version\":4,\"error_clase\":\"RECHAZO\",\"error_codigo\":\"100\",\"error_fase\":\"RESPUESTA_RECIBIDA\",\"mensaje_mascarado\":\"rechazo validado\",\"liberar_identidad\":true}'::jsonb);" >/dev/null
 check "rechazo confirmado puede liberar identidad sin borrar auditoría" \
   "ERROR_CORREGIBLE|||||5|1|ERROR_CORREGIBLE" \
@@ -371,10 +500,29 @@ check "rechazo confirmado puede liberar identidad sin borrar auditoría" \
 
 claim 'c3000000-0000-0000-0000-000000000011' 'd3000000-0000-0000-0000-000000000011' 0 1 >/dev/null
 q "SELECT pg_sleep(1.1)" >/dev/null
+expect_liberar_invalido() {
+  local name="$1" verificacion_sql="$2" preparacion="${3:-}"
+  expect_fail_like "$name" "LIBERAR|evidencia de env.o|verificaci.n" \
+    "BEGIN; $preparacion SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000011','LIBERAR','d3000000-0000-0000-0000-000000000011',jsonb_build_object('expected_version',1,'verificacion',$verificacion_sql)); ROLLBACK;"
+}
+expect_liberar_invalido "LIBERAR rechaza nunca_enviado faltante" "jsonb_build_object('fuente','log_intento')"
+expect_liberar_invalido "LIBERAR rechaza nunca_enviado JSON null" "jsonb_build_object('nunca_enviado',NULL,'fuente','log_intento')"
+expect_liberar_invalido "LIBERAR rechaza nunca_enviado false" "jsonb_build_object('nunca_enviado',false,'fuente','log_intento')"
+expect_liberar_invalido "LIBERAR rechaza nunca_enviado string" "jsonb_build_object('nunca_enviado','true','fuente','log_intento')"
+expect_liberar_invalido "LIBERAR rechaza fuente de verificación inesperada" "jsonb_build_object('nunca_enviado',true,'fuente','otra')"
+expect_liberar_invalido "LIBERAR rechaza resultado de intento fuera de whitelist" \
+  "jsonb_build_object('nunca_enviado',true,'fuente','log_intento')" \
+  "UPDATE public.emision_fiscal_intentos SET resultado='ERROR_PREFLIGHT' WHERE venta_id='c3000000-0000-0000-0000-000000000011';"
+expect_liberar_invalido "LIBERAR rechaza combinación fase/resultado incoherente" \
+  "jsonb_build_object('nunca_enviado',true,'fuente','log_intento')" \
+  "UPDATE public.emision_fiscal_intentos SET fase='RESERVADO',resultado='RECLAMADO' WHERE venta_id='c3000000-0000-0000-0000-000000000011';"
+expect_liberar_invalido "LIBERAR rechaza toda evidencia de request" \
+  "jsonb_build_object('nunca_enviado',true,'fuente','log_intento')" \
+  "UPDATE public.emision_fiscal_intentos SET respuesta_resumen=jsonb_set(respuesta_resumen,'{evidencia_externa}',jsonb_build_object('tipo','EMISION'),true) WHERE venta_id='c3000000-0000-0000-0000-000000000011';"
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000011','LIBERAR','d3000000-0000-0000-0000-000000000011','{\"expected_version\":1,\"verificacion\":{\"nunca_enviado\":true,\"fuente\":\"log_intento\"}}'::jsonb);" >/dev/null
 check "LIBERAR exige lease vencido y evidencia nunca-enviado" \
   "ERROR_CORREGIBLE||2|LIBERADO|true" \
-  "$(q "SELECT v.afip_estado||'|'||coalesce(v.afip_claim_token::text,'')||'|'||v.afip_version||'|'||i.resultado||'|'||(i.respuesta_resumen->'verificacion'->>'nunca_enviado') FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000011'")"
+  "$(q "SELECT v.afip_estado||'|'||coalesce(v.afip_claim_token::text,'')||'|'||v.afip_version||'|'||i.resultado||'|'||(i.respuesta_resumen#>>'{verificacion_liberacion,nunca_enviado}') FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000011'")"
 
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000012','CANCELAR',NULL,'{\"expected_version\":0}'::jsonb);" >/dev/null
 check "CANCELAR sólo sin claim/request/número deja CANCELADO" "CANCELADO||1" \
@@ -384,7 +532,7 @@ claim 'c3000000-0000-0000-0000-000000000013' 'd3000000-0000-0000-0000-0000000000
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000013','BLOQUEAR','d3000000-0000-0000-0000-000000000013','{\"expected_version\":1,\"error_clase\":\"DIVERGENCIA\",\"error_codigo\":\"D1\",\"error_fase\":\"PREFLIGHT\",\"mensaje_mascarado\":\"requiere admin\",\"diferencias\":{\"receptor\":true}}'::jsonb);" >/dev/null
 check "BLOQUEAR conserva evidencia y exige revisión" \
   "BLOQUEADO|DIVERGENCIA|D1|PREFLIGHT|2|BLOQUEADO|true" \
-  "$(q "SELECT v.afip_estado||'|'||v.afip_error_clase||'|'||v.afip_error_codigo||'|'||v.afip_error_fase||'|'||v.afip_version||'|'||i.resultado||'|'||(i.respuesta_resumen->'diferencias'->>'receptor') FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000013'")"
+  "$(q "SELECT v.afip_estado||'|'||v.afip_error_clase||'|'||v.afip_error_codigo||'|'||v.afip_error_fase||'|'||v.afip_version||'|'||i.resultado||'|'||(i.respuesta_resumen#>>'{diagnostico,diferencias,receptor}') FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000013'")"
 
 echo
 echo "── resumen ──────────────────"

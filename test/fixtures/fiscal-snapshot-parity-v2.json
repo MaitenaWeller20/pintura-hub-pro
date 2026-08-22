@@ -1,0 +1,31 @@
+{
+  "input": {
+    "version": 2,
+    "hash": "0a723c78e12741e06048660e5928d96f2e9b8da7ae65346ae4be45fd16967076",
+    "identidad": {
+      "numero": 1,
+      "emisorCuit": "30900000001",
+      "puntoVenta": 990,
+      "cbteTipo": 1,
+      "modo": "PRODUCCION",
+      "simulado": false
+    },
+    "fechaComprobante": "2026-08-22",
+    "receptor": {
+      "tipoDocumento": "CUIT",
+      "numeroDocumento": "30714199664",
+      "razonSocial": "RECEPTOR UNO"
+    },
+    "importeTotal": "1210.00",
+    "items": [
+      {
+        "id": "a",
+        "cantidad": "1.00",
+        "importe": "1210.00"
+      }
+    ]
+  },
+  "canonical": "{\"fechaComprobante\":\"2026-08-22\",\"identidad\":{\"cbteTipo\":1,\"emisorCuit\":\"30900000001\",\"modo\":\"PRODUCCION\",\"numero\":1,\"puntoVenta\":990,\"simulado\":false},\"importeTotal\":\"1210.00\",\"items\":[{\"cantidad\":\"1.00\",\"id\":\"a\",\"importe\":\"1210.00\"}],\"receptor\":{\"numeroDocumento\":\"30714199664\",\"razonSocial\":\"RECEPTOR UNO\",\"tipoDocumento\":\"CUIT\"},\"version\":2}",
+  "sha256": "0a723c78e12741e06048660e5928d96f2e9b8da7ae65346ae4be45fd16967076",
+  "downstreamConsumer": "Task 7: snapshot.test.ts imports this JSON fixture verbatim"
+}

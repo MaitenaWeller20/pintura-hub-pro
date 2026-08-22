@@ -6,11 +6,10 @@
 -- identidad fiscal que después no puede reescribirse.
 -- ============================================================
 
--- Task 2 exigía snapshot para todo EMITIENDO. RECLAMAR, sin embargo, debe
--- persistir PREFLIGHT antes de construir/reservar el snapshot. Se conserva el
--- nombre del constraint y se vuelve sensible a la fase: PREFLIGHT admite el
--- claim sin identidad; desde RESERVADO el snapshot v2/hash vuelve a ser
--- obligatorio. La forma legacy usada por fixtures aditivos sigue admitida.
+-- Matriz explícita estado/fase. Las excepciones sin fase están limitadas a
+-- filas version-0 del escritor legacy y a los tres fixtures aditivos de Task 2.
+-- Desde RESERVADO, toda identidad fiscal debe estar completa y ser coherente
+-- con el snapshot que quedó congelado.
 ALTER TABLE public.ventas
   DROP CONSTRAINT ck_ventas_afip_estado_integridad;
 
@@ -28,7 +27,7 @@ ALTER TABLE public.ventas
           OR (
             afip_version >= 2
             AND afip_snapshot IS NOT NULL
-            AND afip_snapshot->>'version'='2'
+            AND afip_snapshot->>'version' IS NOT DISTINCT FROM '2'
             AND afip_snapshot_hash IS NOT NULL
             AND afip_fecha_comprobante IS NOT NULL
             AND afip_validez IS NOT NULL
@@ -42,25 +41,167 @@ ALTER TABLE public.ventas
       OR (
         afip_numero IS NOT NULL
         AND afip_snapshot IS NOT NULL
-        AND afip_snapshot->>'version'='2'
+        AND afip_snapshot->>'version' IS NOT DISTINCT FROM '2'
         AND afip_snapshot_hash IS NOT NULL
         AND afip_version >= 2
         AND NOT afip_legacy_incompleto
       )
     )
     AND (
-      afip_estado <> 'EMITIENDO'
+      -- Todo dato version-0 pertenece al escritor legacy y nunca tiene fase.
+      (afip_version=0 AND afip_fase IS NULL)
       OR (
-        afip_claim_token IS NOT NULL
-        AND afip_claimed_at IS NOT NULL
-        AND afip_version >= 1
+        afip_version >= 1
         AND (
-          (afip_fase='PREFLIGHT' AND afip_numero IS NULL)
+          -- Estados fuera del workflow durable o ya liberados.
+          (
+            afip_fase IS NULL
+            AND afip_estado IN (
+              'NO_APLICA','PENDIENTE','ERROR','SIN_FACTURAR',
+              'ERROR_CORREGIBLE','CANCELADO','BLOQUEADO'
+            )
+            AND afip_claim_token IS NULL
+            AND afip_claimed_at IS NULL
+          )
+          -- Compatibilidad aditiva exacta con los fixtures version-2 de Task 2.
           OR (
-            afip_snapshot IS NOT NULL
-            AND afip_snapshot->>'version'='2'
-            AND afip_snapshot_hash IS NOT NULL
-            AND afip_version >= 2
+            afip_fase IS NULL
+            AND afip_version = 2
+            AND (
+              (
+                afip_estado='EMITIENDO'
+                AND afip_claim_token IS NOT NULL
+                AND afip_claimed_at IS NOT NULL
+                AND afip_numero IS NULL
+                AND afip_snapshot IS NOT NULL
+                AND afip_snapshot->>'version' IS NOT DISTINCT FROM '2'
+                AND afip_snapshot_hash IS NOT NULL
+              )
+              OR afip_estado IN ('RECONCILIAR','APROBADO')
+            )
+          )
+          -- Claim adquirido, todavía sin identidad reservada.
+          OR (
+            afip_fase='PREFLIGHT'
+            AND afip_estado IN ('EMITIENDO','BLOQUEADO')
+            AND afip_claim_token IS NOT NULL
+            AND afip_claimed_at IS NOT NULL
+            AND afip_numero IS NULL
+            AND afip_emisor_cuit IS NULL
+            AND afip_punto_venta IS NULL
+            AND afip_cbte_tipo IS NULL
+            AND afip_modo IS NULL
+            AND afip_validez IS NULL
+            AND afip_fecha_comprobante IS NULL
+            AND afip_snapshot IS NULL
+            AND afip_snapshot_hash IS NULL
+            AND afip_imp_total IS NULL
+          )
+          -- Identidad congelada antes de iniciar el request.
+          OR (
+            afip_fase='RESERVADO'
+            AND afip_estado IN ('EMITIENDO','BLOQUEADO')
+            AND afip_claim_token IS NOT NULL
+            AND afip_claimed_at IS NOT NULL
+            AND afip_numero IS NOT NULL AND afip_numero>0
+            AND afip_emisor_cuit ~ '^[0-9]{11}$'
+            AND afip_punto_venta BETWEEN 1 AND 99999
+            AND afip_cbte_tipo BETWEEN 1 AND 9999
+            AND afip_modo IN ('PRODUCCION','HOMOLOGACION')
+            AND afip_validez IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
+            AND afip_fecha_comprobante IS NOT NULL
+            AND afip_imp_total IS NOT NULL
+            AND pg_catalog.jsonb_typeof(afip_snapshot) IS NOT DISTINCT FROM 'object'
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'version') IS NOT DISTINCT FROM 'number'
+            AND afip_snapshot->>'version' IS NOT DISTINCT FROM '2'
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'hash') IS NOT DISTINCT FROM 'string'
+            AND afip_snapshot_hash ~ '^[0-9a-f]{64}$'
+            AND afip_snapshot->>'hash' IS NOT DISTINCT FROM afip_snapshot_hash
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'identidad') IS NOT DISTINCT FROM 'object'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,numero}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,emisorCuit}') IS NOT DISTINCT FROM 'string'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,puntoVenta}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,cbteTipo}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,modo}') IS NOT DISTINCT FROM 'string'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,simulado}') IS NOT DISTINCT FROM 'boolean'
+            AND afip_snapshot#>>'{identidad,numero}' IS NOT DISTINCT FROM afip_numero::text
+            AND afip_snapshot#>>'{identidad,emisorCuit}' IS NOT DISTINCT FROM afip_emisor_cuit
+            AND afip_snapshot#>>'{identidad,puntoVenta}' IS NOT DISTINCT FROM afip_punto_venta::text
+            AND afip_snapshot#>>'{identidad,cbteTipo}' IS NOT DISTINCT FROM afip_cbte_tipo::text
+            AND afip_snapshot#>>'{identidad,modo}' IS NOT DISTINCT FROM afip_modo
+            AND afip_snapshot#>'{identidad,simulado}' IS NOT DISTINCT FROM pg_catalog.to_jsonb(afip_simulado)
+            AND afip_snapshot->>'fechaComprobante' IS NOT DISTINCT FROM afip_fecha_comprobante::text
+          )
+          -- Hay evidencia de request: sólo emisión, conciliación o bloqueo.
+          OR (
+            afip_fase IN ('REQUEST_INICIADO','RESPUESTA_RECIBIDA')
+            AND afip_estado IN ('EMITIENDO','RECONCILIAR','BLOQUEADO')
+            AND afip_claim_token IS NOT NULL
+            AND afip_claimed_at IS NOT NULL
+            AND afip_numero IS NOT NULL AND afip_numero>0
+            AND afip_emisor_cuit ~ '^[0-9]{11}$'
+            AND afip_punto_venta BETWEEN 1 AND 99999
+            AND afip_cbte_tipo BETWEEN 1 AND 9999
+            AND afip_modo IN ('PRODUCCION','HOMOLOGACION')
+            AND afip_validez IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
+            AND afip_fecha_comprobante IS NOT NULL
+            AND afip_imp_total IS NOT NULL
+            AND pg_catalog.jsonb_typeof(afip_snapshot) IS NOT DISTINCT FROM 'object'
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'version') IS NOT DISTINCT FROM 'number'
+            AND afip_snapshot->>'version' IS NOT DISTINCT FROM '2'
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'hash') IS NOT DISTINCT FROM 'string'
+            AND afip_snapshot_hash ~ '^[0-9a-f]{64}$'
+            AND afip_snapshot->>'hash' IS NOT DISTINCT FROM afip_snapshot_hash
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'identidad') IS NOT DISTINCT FROM 'object'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,numero}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,emisorCuit}') IS NOT DISTINCT FROM 'string'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,puntoVenta}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,cbteTipo}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,modo}') IS NOT DISTINCT FROM 'string'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,simulado}') IS NOT DISTINCT FROM 'boolean'
+            AND afip_snapshot#>>'{identidad,numero}' IS NOT DISTINCT FROM afip_numero::text
+            AND afip_snapshot#>>'{identidad,emisorCuit}' IS NOT DISTINCT FROM afip_emisor_cuit
+            AND afip_snapshot#>>'{identidad,puntoVenta}' IS NOT DISTINCT FROM afip_punto_venta::text
+            AND afip_snapshot#>>'{identidad,cbteTipo}' IS NOT DISTINCT FROM afip_cbte_tipo::text
+            AND afip_snapshot#>>'{identidad,modo}' IS NOT DISTINCT FROM afip_modo
+            AND afip_snapshot#>'{identidad,simulado}' IS NOT DISTINCT FROM pg_catalog.to_jsonb(afip_simulado)
+            AND afip_snapshot->>'fechaComprobante' IS NOT DISTINCT FROM afip_fecha_comprobante::text
+          )
+          -- Resultado autorizado ya persistido.
+          OR (
+            afip_fase='PERSISTIDO'
+            AND afip_estado='APROBADO'
+            AND afip_claim_token IS NULL
+            AND afip_claimed_at IS NULL
+            AND cae IS NOT NULL
+            AND afip_numero IS NOT NULL AND afip_numero>0
+            AND afip_emisor_cuit ~ '^[0-9]{11}$'
+            AND afip_punto_venta BETWEEN 1 AND 99999
+            AND afip_cbte_tipo BETWEEN 1 AND 9999
+            AND afip_modo IN ('PRODUCCION','HOMOLOGACION')
+            AND afip_validez IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
+            AND afip_fecha_comprobante IS NOT NULL
+            AND afip_imp_total IS NOT NULL
+            AND pg_catalog.jsonb_typeof(afip_snapshot) IS NOT DISTINCT FROM 'object'
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'version') IS NOT DISTINCT FROM 'number'
+            AND afip_snapshot->>'version' IS NOT DISTINCT FROM '2'
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'hash') IS NOT DISTINCT FROM 'string'
+            AND afip_snapshot_hash ~ '^[0-9a-f]{64}$'
+            AND afip_snapshot->>'hash' IS NOT DISTINCT FROM afip_snapshot_hash
+            AND pg_catalog.jsonb_typeof(afip_snapshot->'identidad') IS NOT DISTINCT FROM 'object'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,numero}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,emisorCuit}') IS NOT DISTINCT FROM 'string'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,puntoVenta}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,cbteTipo}') IS NOT DISTINCT FROM 'number'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,modo}') IS NOT DISTINCT FROM 'string'
+            AND pg_catalog.jsonb_typeof(afip_snapshot#>'{identidad,simulado}') IS NOT DISTINCT FROM 'boolean'
+            AND afip_snapshot#>>'{identidad,numero}' IS NOT DISTINCT FROM afip_numero::text
+            AND afip_snapshot#>>'{identidad,emisorCuit}' IS NOT DISTINCT FROM afip_emisor_cuit
+            AND afip_snapshot#>>'{identidad,puntoVenta}' IS NOT DISTINCT FROM afip_punto_venta::text
+            AND afip_snapshot#>>'{identidad,cbteTipo}' IS NOT DISTINCT FROM afip_cbte_tipo::text
+            AND afip_snapshot#>>'{identidad,modo}' IS NOT DISTINCT FROM afip_modo
+            AND afip_snapshot#>'{identidad,simulado}' IS NOT DISTINCT FROM pg_catalog.to_jsonb(afip_simulado)
+            AND afip_snapshot->>'fechaComprobante' IS NOT DISTINCT FROM afip_fecha_comprobante::text
           )
         )
       )
@@ -185,6 +326,8 @@ DECLARE
   v_max_local integer;
   v_imp_total numeric(14,2);
   v_resumen jsonb;
+  v_resumen_claves text[];
+  v_observacion jsonb;
   v_nuevo_claim uuid;
   v_liberar_identidad boolean;
 BEGIN
@@ -271,9 +414,12 @@ BEGIN
       p_accion,pg_catalog.array_to_string(v_faltantes,',');
   END IF;
 
-  IF pg_catalog.jsonb_typeof(p_payload->'expected_version')<>'number'
-     OR NOT (p_payload->>'expected_version' ~ '^(0|[1-9][0-9]*)$') THEN
+  IF pg_catalog.jsonb_typeof(p_payload->'expected_version') IS DISTINCT FROM 'number'
+     OR p_payload->>'expected_version' !~ '^(0|[1-9][0-9]*)$' THEN
     RAISE EXCEPTION 'expected_version debe ser un entero no negativo';
+  END IF;
+  IF (p_payload->>'expected_version')::numeric>2147483647 THEN
+    RAISE EXCEPTION 'expected_version excede el rango integer';
   END IF;
   v_expected := (p_payload->>'expected_version')::integer;
   IF v_expected <> v_venta.afip_version THEN
@@ -298,14 +444,14 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'El claim token ya fue usado para esta venta';
     END IF;
-    IF pg_catalog.jsonb_typeof(p_payload->'lease_segundos')<>'number'
-       OR NOT (p_payload->>'lease_segundos' ~ '^[1-9][0-9]*$') THEN
+    IF pg_catalog.jsonb_typeof(p_payload->'lease_segundos') IS DISTINCT FROM 'number'
+       OR p_payload->>'lease_segundos' !~ '^[1-9][0-9]*$' THEN
       RAISE EXCEPTION 'lease_segundos debe ser un entero positivo';
     END IF;
-    v_lease := (p_payload->>'lease_segundos')::integer;
-    IF v_lease > 86400 THEN
+    IF (p_payload->>'lease_segundos')::numeric > 86400 THEN
       RAISE EXCEPTION 'lease_segundos excede el máximo de 86400';
     END IF;
+    v_lease := (p_payload->>'lease_segundos')::integer;
 
     UPDATE public.ventas AS v
        SET afip_estado='EMITIENDO',
@@ -330,7 +476,9 @@ BEGIN
       respuesta_resumen
     ) VALUES (
       p_venta_id,p_claim_token,2,pg_catalog.repeat('0',64),'PREFLIGHT','RECLAMADO',
-      pg_catalog.jsonb_build_object('lease_segundos',v_lease)
+      pg_catalog.jsonb_build_object(
+        'control',pg_catalog.jsonb_build_object('lease_segundos',v_lease)
+      )
     );
 
     RETURN QUERY
@@ -373,7 +521,9 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'No existe el intento auditado del claim vigente';
   END IF;
-  v_lease := COALESCE((v_intento.respuesta_resumen->>'lease_segundos')::integer,0);
+  v_lease := COALESCE(
+    (v_intento.respuesta_resumen#>>'{control,lease_segundos}')::integer,0
+  );
 
   IF p_accion IN ('RESERVAR','REQUEST_INICIADO')
      AND v_venta.afip_claimed_at + pg_catalog.make_interval(secs=>v_lease)
@@ -390,23 +540,75 @@ BEGIN
 
     v_snapshot := p_payload->'snapshot';
     v_snapshot_hash := p_payload->>'snapshot_hash';
-    IF pg_catalog.jsonb_typeof(v_snapshot)<>'object'
-       OR v_snapshot->>'version'<>'2'
-       OR v_snapshot_hash IS NULL
-       OR NOT (v_snapshot_hash ~ '^[0-9a-f]{64}$')
+
+    -- Se validan presencia real, tipo JSON, dominio y rango antes de cualquier
+    -- cast o de construir la clave del advisory lock. JSON null nunca equivale
+    -- a un valor ausente aceptable.
+    IF pg_catalog.jsonb_typeof(v_snapshot) IS DISTINCT FROM 'object'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'version') IS DISTINCT FROM 'number'
+       OR v_snapshot->>'version' IS DISTINCT FROM '2'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'hash') IS DISTINCT FROM 'string'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'identidad') IS DISTINCT FROM 'object'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'fechaComprobante') IS DISTINCT FROM 'string'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'importeTotal') IS DISTINCT FROM 'string'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'receptor') IS DISTINCT FROM 'object'
+       OR pg_catalog.jsonb_typeof(v_snapshot->'items') IS DISTINCT FROM 'array' THEN
+      RAISE EXCEPTION 'RESERVAR: snapshot v2 completo requiere objeto, identidad, fecha, monto, receptor e items';
+    END IF;
+    SELECT pg_catalog.array_agg(k ORDER BY k) INTO v_desconocidas
+      FROM pg_catalog.jsonb_object_keys(v_snapshot->'identidad') AS k
+     WHERE NOT (k=ANY(ARRAY[
+       'numero','emisorCuit','puntoVenta','cbteTipo','modo','simulado'
+     ]));
+    IF v_desconocidas IS NOT NULL
+       OR pg_catalog.jsonb_typeof(v_snapshot#>'{identidad,numero}') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(v_snapshot#>'{identidad,emisorCuit}') IS DISTINCT FROM 'string'
+       OR pg_catalog.jsonb_typeof(v_snapshot#>'{identidad,puntoVenta}') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(v_snapshot#>'{identidad,cbteTipo}') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(v_snapshot#>'{identidad,modo}') IS DISTINCT FROM 'string'
+       OR pg_catalog.jsonb_typeof(v_snapshot#>'{identidad,simulado}') IS DISTINCT FROM 'boolean' THEN
+      RAISE EXCEPTION 'RESERVAR: identidad del snapshot incompleta o con tipos/claves inválidos';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_payload->'snapshot_hash') IS DISTINCT FROM 'string'
+       OR v_snapshot_hash !~ '^[0-9a-f]{64}$'
        OR v_snapshot->>'hash' IS DISTINCT FROM v_snapshot_hash THEN
-      RAISE EXCEPTION 'Snapshot v2/hash inválido o no coincidente';
+      RAISE EXCEPTION 'RESERVAR: snapshot_hash debe ser SHA-256 hex y coincidir con snapshot.hash';
     END IF;
-    IF pg_catalog.jsonb_typeof(p_payload->'simulado')<>'boolean' THEN
-      RAISE EXCEPTION 'simulado debe ser boolean';
+    IF pg_catalog.jsonb_typeof(p_payload->'numero_propuesto') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(p_payload->'punto_venta') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(p_payload->'cbte_tipo') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(p_payload->'ultimo_remoto') IS DISTINCT FROM 'number'
+       OR pg_catalog.jsonb_typeof(p_payload->'ultimo_local_observado') IS DISTINCT FROM 'number' THEN
+      RAISE EXCEPTION 'RESERVAR: número, PV, tipo y observados deben ser números JSON no nulos';
     END IF;
-    IF NOT (p_payload->>'numero_propuesto' ~ '^[1-9][0-9]*$')
-       OR NOT (p_payload->>'punto_venta' ~ '^[1-9][0-9]*$')
-       OR NOT (p_payload->>'cbte_tipo' ~ '^[1-9][0-9]*$')
-       OR NOT (p_payload->>'ultimo_remoto' ~ '^(0|[1-9][0-9]*)$')
-       OR NOT (p_payload->>'ultimo_local_observado' ~ '^(0|[1-9][0-9]*)$') THEN
-      RAISE EXCEPTION 'La identidad y los observados deben ser enteros válidos';
+    IF p_payload->>'numero_propuesto' !~ '^[1-9][0-9]*$'
+       OR p_payload->>'punto_venta' !~ '^[1-9][0-9]*$'
+       OR p_payload->>'cbte_tipo' !~ '^[1-9][0-9]*$'
+       OR p_payload->>'ultimo_remoto' !~ '^(0|[1-9][0-9]*)$'
+       OR p_payload->>'ultimo_local_observado' !~ '^(0|[1-9][0-9]*)$' THEN
+      RAISE EXCEPTION 'RESERVAR: número, PV, tipo y observados deben ser enteros canónicos';
     END IF;
+    IF (p_payload->>'numero_propuesto')::numeric > 2147483647
+       OR (p_payload->>'punto_venta')::numeric NOT BETWEEN 1 AND 99999
+       OR (p_payload->>'cbte_tipo')::numeric NOT BETWEEN 1 AND 9999
+       OR (p_payload->>'ultimo_remoto')::numeric > 2147483647
+       OR (p_payload->>'ultimo_local_observado')::numeric > 2147483647 THEN
+      RAISE EXCEPTION 'RESERVAR: número, PV, tipo u observados fuera de rango';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_payload->'emisor_cuit') IS DISTINCT FROM 'string'
+       OR p_payload->>'emisor_cuit' !~ '^[0-9]{11}$'
+       OR pg_catalog.jsonb_typeof(p_payload->'modo') IS DISTINCT FROM 'string'
+       OR p_payload->>'modo' NOT IN ('PRODUCCION','HOMOLOGACION')
+       OR pg_catalog.jsonb_typeof(p_payload->'simulado') IS DISTINCT FROM 'boolean'
+       OR pg_catalog.jsonb_typeof(p_payload->'validez') IS DISTINCT FROM 'string'
+       OR p_payload->>'validez' NOT IN ('PRODUCCION','HOMOLOGACION','SIMULADA') THEN
+      RAISE EXCEPTION 'RESERVAR: CUIT, modo, simulado y validez tienen tipo o dominio inválido';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_payload->'fecha_comprobante') IS DISTINCT FROM 'string'
+       OR p_payload->>'fecha_comprobante' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN
+      RAISE EXCEPTION 'RESERVAR: fecha_comprobante debe ser string YYYY-MM-DD';
+    END IF;
+
     v_numero := (p_payload->>'numero_propuesto')::integer;
     v_emisor_cuit := p_payload->>'emisor_cuit';
     v_punto_venta := (p_payload->>'punto_venta')::integer;
@@ -416,20 +618,17 @@ BEGIN
     v_validez := p_payload->>'validez';
     v_ultimo_remoto := (p_payload->>'ultimo_remoto')::integer;
     v_ultimo_local_observado := (p_payload->>'ultimo_local_observado')::integer;
-    IF v_emisor_cuit IS NULL OR NOT (v_emisor_cuit ~ '^[0-9]{11}$')
-       OR v_modo NOT IN ('PRODUCCION','HOMOLOGACION')
-       OR v_validez NOT IN ('PRODUCCION','HOMOLOGACION','SIMULADA')
-       OR (v_simulado AND v_validez<>'SIMULADA')
+    IF (v_simulado AND v_validez<>'SIMULADA')
        OR (NOT v_simulado AND v_validez<>v_modo) THEN
-      RAISE EXCEPTION 'Identidad fiscal CUIT/modo/simulación/validez inválida';
+      RAISE EXCEPTION 'RESERVAR: modo/simulación/validez no son coherentes';
     END IF;
     BEGIN
       v_fecha := (p_payload->>'fecha_comprobante')::date;
     EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
-      RAISE EXCEPTION 'fecha_comprobante no es una fecha válida';
+      RAISE EXCEPTION 'RESERVAR: fecha_comprobante no es una fecha válida';
     END;
     IF p_payload->>'fecha_comprobante' <> pg_catalog.to_char(v_fecha,'YYYY-MM-DD') THEN
-      RAISE EXCEPTION 'fecha_comprobante debe usar YYYY-MM-DD';
+      RAISE EXCEPTION 'RESERVAR: fecha_comprobante debe usar YYYY-MM-DD';
     END IF;
     IF v_snapshot#>>'{identidad,numero}' IS DISTINCT FROM v_numero::text
        OR v_snapshot#>>'{identidad,emisorCuit}' IS DISTINCT FROM v_emisor_cuit
@@ -438,11 +637,14 @@ BEGIN
        OR v_snapshot#>>'{identidad,modo}' IS DISTINCT FROM v_modo
        OR (v_snapshot#>'{identidad,simulado}') IS DISTINCT FROM pg_catalog.to_jsonb(v_simulado)
        OR v_snapshot->>'fechaComprobante' IS DISTINCT FROM p_payload->>'fecha_comprobante' THEN
-      RAISE EXCEPTION 'La identidad/fecha del snapshot no coincide con la reserva';
+      RAISE EXCEPTION 'RESERVAR: identidad/fecha del snapshot no coincide con la reserva';
     END IF;
     IF v_snapshot->>'importeTotal' IS NULL
        OR NOT (v_snapshot->>'importeTotal' ~ '^(0|[1-9][0-9]*)\.[0-9]{2}$') THEN
-      RAISE EXCEPTION 'importeTotal debe ser un decimal canónico con dos posiciones';
+      RAISE EXCEPTION 'RESERVAR: importeTotal debe ser decimal canónico con dos posiciones';
+    END IF;
+    IF (v_snapshot->>'importeTotal')::numeric > 999999999999.99 THEN
+      RAISE EXCEPTION 'RESERVAR: importeTotal excede el rango fiscal';
     END IF;
     v_imp_total := (v_snapshot->>'importeTotal')::numeric(14,2);
 
@@ -467,12 +669,52 @@ BEGIN
         v_ultimo_local_observado,v_max_local USING ERRCODE='40001';
     END IF;
     IF v_simulado THEN
+      IF v_max_local=2147483647 THEN
+        RAISE EXCEPTION 'RESERVAR: secuencia simulada agotada';
+      END IF;
       IF v_numero<>v_max_local+1 THEN
         RAISE EXCEPTION 'numero_propuesto simulado debe ser max_local + 1';
       END IF;
     ELSE
       IF v_max_local>v_ultimo_remoto THEN
-        RAISE EXCEPTION 'Máximo local adelantado a ARCA; reconciliar antes de reservar';
+        UPDATE public.ventas AS v
+           SET afip_estado='BLOQUEADO',
+               afip_error='La secuencia local está adelantada a ARCA',
+               afip_error_clase='SECUENCIA',
+               afip_error_codigo='LOCAL_ADELANTADO',
+               afip_error_fase='PREFLIGHT',
+               afip_ultimo_error_at=pg_catalog.clock_timestamp(),
+               afip_version=v.afip_version+1
+         WHERE v.id=p_venta_id AND v.afip_version=v_expected;
+        GET DIAGNOSTICS v_rows=ROW_COUNT;
+        IF v_rows<>1 THEN
+          RAISE EXCEPTION 'RESERVAR no persistió el bloqueo de secuencia';
+        END IF;
+        UPDATE public.emision_fiscal_intentos AS i
+           SET resultado='RECONCILIACION_SECUENCIA_REQUERIDA',
+               error_clase='SECUENCIA',error_codigo='LOCAL_ADELANTADO',
+               respuesta_resumen=pg_catalog.jsonb_set(
+                 i.respuesta_resumen,'{diagnostico}',
+                 pg_catalog.jsonb_build_object(
+                   'requiere_conciliacion_secuencia',true,
+                   'maximo_local',v_max_local,
+                   'ultimo_remoto',v_ultimo_remoto,
+                   'identidad',pg_catalog.jsonb_build_object(
+                     'emisor_cuit',v_emisor_cuit,'punto_venta',v_punto_venta,
+                     'cbte_tipo',v_cbte_tipo,'modo',v_modo,
+                     'simulado',v_simulado
+                   )
+                 ),true
+               )
+         WHERE i.id=v_intento.id;
+        RETURN QUERY
+        SELECT v.id,v.afip_estado,v.afip_fase,v.afip_claim_token,
+               v.afip_numero,v.afip_version
+          FROM public.ventas AS v WHERE v.id=p_venta_id;
+        RETURN;
+      END IF;
+      IF v_ultimo_remoto=2147483647 THEN
+        RAISE EXCEPTION 'RESERVAR: secuencia real agotada';
       END IF;
       IF v_numero<>v_ultimo_remoto+1 THEN
         RAISE EXCEPTION 'numero_propuesto debe ser ultimo_remoto + 1';
@@ -535,10 +777,56 @@ BEGIN
       RAISE EXCEPTION 'RESPUESTA_RECIBIDA sólo es válida desde REQUEST_INICIADO';
     END IF;
     v_resumen := p_payload->'respuesta_resumen';
-    IF pg_catalog.jsonb_typeof(v_resumen)<>'object'
-       OR pg_catalog.octet_length(v_resumen::text)>8192
-       OR v_resumen::text ~* '"(soap|xml|raw|request_raw|response_raw)"[[:space:]]*:' THEN
-      RAISE EXCEPTION 'respuesta_resumen debe ser un resumen JSON enmascarado';
+    IF pg_catalog.jsonb_typeof(v_resumen) IS DISTINCT FROM 'object'
+       OR pg_catalog.octet_length(v_resumen::text)>2048 THEN
+      RAISE EXCEPTION 'respuesta_resumen: esquema enmascarado inválido o demasiado grande';
+    END IF;
+    SELECT pg_catalog.array_agg(k ORDER BY k) INTO v_resumen_claves
+      FROM pg_catalog.jsonb_object_keys(v_resumen) AS k
+     WHERE NOT (k=ANY(ARRAY[
+       'tipo','resultado','fuente','codigo','mensaje',
+       'rechazo_confirmado','observaciones'
+     ]));
+    IF v_resumen_claves IS NOT NULL
+       OR NOT (v_resumen ?& ARRAY[
+         'tipo','resultado','fuente','rechazo_confirmado','observaciones'
+       ])
+       OR pg_catalog.jsonb_typeof(v_resumen->'tipo') IS DISTINCT FROM 'string'
+       OR v_resumen->>'tipo' IS DISTINCT FROM 'EMISION'
+       OR pg_catalog.jsonb_typeof(v_resumen->'resultado') IS DISTINCT FROM 'string'
+       OR v_resumen->>'resultado' NOT IN ('A','R')
+       OR pg_catalog.jsonb_typeof(v_resumen->'fuente') IS DISTINCT FROM 'string'
+       OR v_resumen->>'fuente' IS DISTINCT FROM 'FECAESolicitar'
+       OR pg_catalog.jsonb_typeof(v_resumen->'rechazo_confirmado') IS DISTINCT FROM 'boolean'
+       OR (v_resumen->>'resultado'='A'
+           AND (v_resumen->'rechazo_confirmado') IS DISTINCT FROM 'false'::jsonb)
+       OR pg_catalog.jsonb_typeof(v_resumen->'observaciones') IS DISTINCT FROM 'array'
+       OR (v_resumen ? 'codigo'
+           AND pg_catalog.jsonb_typeof(v_resumen->'codigo') IS DISTINCT FROM 'string')
+       OR (v_resumen ? 'mensaje'
+           AND pg_catalog.jsonb_typeof(v_resumen->'mensaje') IS DISTINCT FROM 'string') THEN
+      RAISE EXCEPTION 'respuesta_resumen: esquema, clave, tipo o tamaño no permitido';
+    END IF;
+    IF pg_catalog.jsonb_array_length(v_resumen->'observaciones')>10
+       OR (v_resumen ? 'codigo'
+           AND pg_catalog.char_length(v_resumen->>'codigo') NOT BETWEEN 1 AND 64)
+       OR (v_resumen ? 'mensaje'
+           AND pg_catalog.char_length(v_resumen->>'mensaje') NOT BETWEEN 1 AND 512) THEN
+      RAISE EXCEPTION 'respuesta_resumen: escalar o array supera el tamaño permitido';
+    END IF;
+    FOR v_observacion IN
+      SELECT value FROM pg_catalog.jsonb_array_elements(v_resumen->'observaciones')
+    LOOP
+      IF pg_catalog.jsonb_typeof(v_observacion) IS DISTINCT FROM 'string'
+         OR pg_catalog.char_length(v_observacion#>>'{}') NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION 'respuesta_resumen: observación con tipo o tamaño no permitido';
+      END IF;
+    END LOOP;
+    IF v_resumen::text ~* '(<[^>]*>|soap|xml|raw|authorization|bearer|token|secret|private.?key|certificate|certificado|clave|password|wsaa|ticket)' THEN
+      RAISE EXCEPTION 'respuesta_resumen: contenido raw, XML o secreto no permitido';
+    END IF;
+    IF v_intento.respuesta_resumen ? 'evidencia_externa' THEN
+      RAISE EXCEPTION 'respuesta_resumen: la evidencia externa del intento es inmutable';
     END IF;
     UPDATE public.ventas AS v
        SET afip_fase='RESPUESTA_RECIBIDA',afip_version=v.afip_version+1
@@ -549,7 +837,10 @@ BEGIN
     END IF;
     UPDATE public.emision_fiscal_intentos AS i
        SET fase='RESPUESTA_RECIBIDA',resultado='RESPUESTA_RECIBIDA',
-           respuesta_resumen=i.respuesta_resumen||v_resumen
+           respuesta_resumen=pg_catalog.jsonb_set(
+             i.respuesta_resumen,'{evidencia_externa}',
+             pg_catalog.jsonb_build_object('respuesta_emision',v_resumen),true
+           )
      WHERE i.id=v_intento.id;
 
   ELSIF p_accion='APROBAR' THEN
@@ -557,7 +848,7 @@ BEGIN
        OR v_venta.afip_fase<>'RESPUESTA_RECIBIDA'
        OR v_venta.afip_numero IS NULL
        OR v_venta.afip_snapshot IS NULL
-       OR v_venta.afip_snapshot->>'version'<>'2'
+       OR v_venta.afip_snapshot->>'version' IS DISTINCT FROM '2'
        OR v_venta.afip_snapshot_hash IS NULL
        OR v_venta.afip_fecha_comprobante IS NULL THEN
       RAISE EXCEPTION 'APROBAR exige respuesta, número, fecha y snapshot v2/hash';
@@ -612,9 +903,11 @@ BEGIN
     UPDATE public.emision_fiscal_intentos AS i
        SET resultado='RECONCILIAR',error_clase=p_payload->>'error_clase',
            error_codigo=p_payload->>'error_codigo',
-           respuesta_resumen=i.respuesta_resumen||pg_catalog.jsonb_build_object(
-             'mensaje_mascarado',p_payload->>'mensaje_mascarado',
-             'error_fase',p_payload->>'error_fase'
+           respuesta_resumen=pg_catalog.jsonb_set(
+             i.respuesta_resumen,'{diagnostico}',pg_catalog.jsonb_build_object(
+               'mensaje_mascarado',p_payload->>'mensaje_mascarado',
+               'error_fase',p_payload->>'error_fase'
+             ),true
            )
      WHERE i.id=v_intento.id;
 
@@ -626,19 +919,72 @@ BEGIN
       RAISE EXCEPTION 'REENVIO_VERIFICADO sólo es válido desde RECONCILIAR completo';
     END IF;
     v_resumen := p_payload->'respuesta_resumen';
-    IF pg_catalog.jsonb_typeof(v_resumen)<>'object'
-       OR v_resumen->>'ausencia_confirmada'<>'true'
-       OR pg_catalog.octet_length(v_resumen::text)>8192
-       OR v_resumen::text ~* '"(soap|xml|raw|request_raw|response_raw)"[[:space:]]*:' THEN
-      RAISE EXCEPTION 'REENVIO_VERIFICADO exige ausencia ARCA explícita y enmascarada';
+    IF pg_catalog.jsonb_typeof(v_resumen) IS DISTINCT FROM 'object'
+       OR pg_catalog.octet_length(v_resumen::text)>2048 THEN
+      RAISE EXCEPTION 'REENVIO_VERIFICADO: resumen de ausencia inválido';
     END IF;
-    IF NOT (p_payload->>'ultimo_remoto' ~ '^(0|[1-9][0-9]*)$')
-       OR (p_payload->>'ultimo_remoto')::integer<>v_venta.afip_numero-1 THEN
+    SELECT pg_catalog.array_agg(k ORDER BY k) INTO v_resumen_claves
+      FROM pg_catalog.jsonb_object_keys(v_resumen) AS k
+     WHERE NOT (k=ANY(ARRAY[
+       'tipo','resultado','fuente','codigo','mensaje',
+       'ausencia_confirmada','observaciones'
+     ]));
+    IF v_resumen_claves IS NOT NULL
+       OR NOT (v_resumen ?& ARRAY[
+         'tipo','resultado','fuente','ausencia_confirmada','observaciones'
+       ])
+       OR pg_catalog.jsonb_typeof(v_resumen->'tipo') IS DISTINCT FROM 'string'
+       OR v_resumen->>'tipo' IS DISTINCT FROM 'CONSULTA_ARCA'
+       OR pg_catalog.jsonb_typeof(v_resumen->'resultado') IS DISTINCT FROM 'string'
+       OR v_resumen->>'resultado' IS DISTINCT FROM 'AUSENTE'
+       OR pg_catalog.jsonb_typeof(v_resumen->'fuente') IS DISTINCT FROM 'string'
+       OR v_resumen->>'fuente' IS DISTINCT FROM 'FECompConsultar'
+       OR pg_catalog.jsonb_typeof(v_resumen->'ausencia_confirmada') IS DISTINCT FROM 'boolean'
+       OR (v_resumen->'ausencia_confirmada') IS DISTINCT FROM 'true'::jsonb
+       OR pg_catalog.jsonb_typeof(v_resumen->'observaciones') IS DISTINCT FROM 'array'
+       OR (v_resumen ? 'codigo'
+           AND pg_catalog.jsonb_typeof(v_resumen->'codigo') IS DISTINCT FROM 'string')
+       OR (v_resumen ? 'mensaje'
+           AND pg_catalog.jsonb_typeof(v_resumen->'mensaje') IS DISTINCT FROM 'string') THEN
+      RAISE EXCEPTION 'REENVIO_VERIFICADO exige ausencia ARCA literal, tipada y enmascarada';
+    END IF;
+    IF pg_catalog.jsonb_array_length(v_resumen->'observaciones')>10
+       OR (v_resumen ? 'codigo'
+           AND pg_catalog.char_length(v_resumen->>'codigo') NOT BETWEEN 1 AND 64)
+       OR (v_resumen ? 'mensaje'
+           AND pg_catalog.char_length(v_resumen->>'mensaje') NOT BETWEEN 1 AND 512) THEN
+      RAISE EXCEPTION 'REENVIO_VERIFICADO: resumen supera el tamaño permitido';
+    END IF;
+    FOR v_observacion IN
+      SELECT value FROM pg_catalog.jsonb_array_elements(v_resumen->'observaciones')
+    LOOP
+      IF pg_catalog.jsonb_typeof(v_observacion) IS DISTINCT FROM 'string'
+         OR pg_catalog.char_length(v_observacion#>>'{}') NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION 'REENVIO_VERIFICADO: observación inválida';
+      END IF;
+    END LOOP;
+    IF v_resumen::text ~* '(<[^>]*>|soap|xml|raw|authorization|bearer|token|secret|private.?key|certificate|certificado|clave|password|wsaa|ticket)' THEN
+      RAISE EXCEPTION 'REENVIO_VERIFICADO: resumen contiene raw, XML o secreto';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_payload->'ultimo_remoto') IS DISTINCT FROM 'number'
+       OR p_payload->>'ultimo_remoto' !~ '^(0|[1-9][0-9]*)$' THEN
       RAISE EXCEPTION 'ultimo_remoto debe ser exactamente numero_reservado - 1';
     END IF;
-    IF p_payload->>'payload_hash' IS DISTINCT FROM v_venta.afip_snapshot_hash
+    IF (p_payload->>'ultimo_remoto')::numeric>2147483647
+       OR (p_payload->>'ultimo_remoto')::integer IS DISTINCT FROM v_venta.afip_numero-1 THEN
+      RAISE EXCEPTION 'ultimo_remoto debe ser exactamente numero_reservado - 1';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_payload->'payload_hash') IS DISTINCT FROM 'string'
+       OR p_payload->>'payload_hash' !~ '^[0-9a-f]{64}$'
+       OR p_payload->>'payload_hash' IS DISTINCT FROM v_venta.afip_snapshot_hash
        OR p_payload->>'payload_hash' IS DISTINCT FROM v_intento.payload_hash THEN
       RAISE EXCEPTION 'payload_hash no coincide con la identidad reservada';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_payload->'nuevo_claim_token') IS DISTINCT FROM 'string' THEN
+      RAISE EXCEPTION 'nuevo_claim_token debe ser UUID string';
+    END IF;
+    IF v_intento.respuesta_resumen#>'{evidencia_externa,consulta_reenvio}' IS NOT NULL THEN
+      RAISE EXCEPTION 'REENVIO_VERIFICADO: la consulta externa ya fue auditada';
     END IF;
     BEGIN
       v_nuevo_claim := (p_payload->>'nuevo_claim_token')::uuid;
@@ -655,7 +1001,12 @@ BEGIN
 
     UPDATE public.emision_fiscal_intentos AS i
        SET resultado='AUSENCIA_ARCA_VERIFICADA',
-           respuesta_resumen=i.respuesta_resumen||v_resumen
+           respuesta_resumen=pg_catalog.jsonb_set(
+             i.respuesta_resumen,'{evidencia_externa}',
+             COALESCE(i.respuesta_resumen->'evidencia_externa','{}'::jsonb)
+               || pg_catalog.jsonb_build_object('consulta_reenvio',v_resumen),
+             true
+           )
      WHERE i.id=v_intento.id;
     INSERT INTO public.emision_fiscal_intentos (
       venta_id,claim_token,snapshot_version,payload_hash,fase,resultado,
@@ -663,7 +1014,11 @@ BEGIN
     ) VALUES (
       p_venta_id,v_nuevo_claim,2,v_venta.afip_snapshot_hash,'RESERVADO',
       'REENVIO_VERIFICADO',v_venta.afip_numero,
-      pg_catalog.jsonb_build_object('lease_segundos',GREATEST(v_lease,300))
+      pg_catalog.jsonb_build_object(
+        'control',pg_catalog.jsonb_build_object(
+          'lease_segundos',GREATEST(v_lease,300)
+        )
+      )
     );
     UPDATE public.ventas AS v
        SET afip_estado='EMITIENDO',afip_fase='RESERVADO',
@@ -681,18 +1036,13 @@ BEGIN
 
   ELSIF p_accion='ERROR_CORREGIBLE' THEN
     IF v_venta.afip_estado<>'EMITIENDO'
-       OR v_venta.afip_fase NOT IN ('PREFLIGHT','RESERVADO','RESPUESTA_RECIBIDA') THEN
-      IF v_venta.afip_fase='REQUEST_INICIADO' THEN
-        RAISE EXCEPTION 'La evidencia es incierta desde REQUEST_INICIADO; use RECONCILIAR';
-      END IF;
+       OR v_venta.afip_fase NOT IN (
+         'PREFLIGHT','RESERVADO','REQUEST_INICIADO','RESPUESTA_RECIBIDA'
+       ) THEN
       RAISE EXCEPTION 'ERROR_CORREGIBLE no es válido desde estado %, fase %',
         v_venta.afip_estado,COALESCE(v_venta.afip_fase,'NULL');
     END IF;
-    IF v_venta.afip_fase='RESPUESTA_RECIBIDA'
-       AND v_intento.respuesta_resumen->>'rechazo_confirmado'<>'true' THEN
-      RAISE EXCEPTION 'ERROR_CORREGIBLE exige rechazo confirmado después del request';
-    END IF;
-    IF pg_catalog.jsonb_typeof(p_payload->'liberar_identidad')<>'boolean'
+    IF pg_catalog.jsonb_typeof(p_payload->'liberar_identidad') IS DISTINCT FROM 'boolean'
        OR COALESCE(pg_catalog.btrim(p_payload->>'error_clase'),'')=''
        OR COALESCE(pg_catalog.btrim(p_payload->>'error_codigo'),'')=''
        OR COALESCE(pg_catalog.btrim(p_payload->>'error_fase'),'')=''
@@ -700,6 +1050,53 @@ BEGIN
       RAISE EXCEPTION 'ERROR_CORREGIBLE exige error y liberar_identidad válidos';
     END IF;
     v_liberar_identidad := (p_payload->>'liberar_identidad')::boolean;
+
+    -- Después de iniciar el request, sólo el boolean JSON literal true ya
+    -- persistido por RESPUESTA_RECIBIDA prueba un rechazo definitivo. Todo lo
+    -- demás se vuelve conciliación durable y conserva identidad/evidencia.
+    IF v_venta.afip_fase='REQUEST_INICIADO'
+       OR (
+         v_venta.afip_fase='RESPUESTA_RECIBIDA'
+         AND (
+           pg_catalog.jsonb_typeof(
+             v_intento.respuesta_resumen#>'{evidencia_externa,respuesta_emision,rechazo_confirmado}'
+           ) IS DISTINCT FROM 'boolean'
+           OR v_intento.respuesta_resumen#>'{evidencia_externa,respuesta_emision,rechazo_confirmado}'
+                IS DISTINCT FROM 'true'::jsonb
+         )
+       ) THEN
+      UPDATE public.ventas AS v
+         SET afip_estado='RECONCILIAR',
+             afip_error=p_payload->>'mensaje_mascarado',
+             afip_error_clase=p_payload->>'error_clase',
+             afip_error_codigo=p_payload->>'error_codigo',
+             afip_error_fase=p_payload->>'error_fase',
+             afip_ultimo_error_at=pg_catalog.clock_timestamp(),
+             afip_version=v.afip_version+1
+       WHERE v.id=p_venta_id AND v.afip_version=v_expected;
+      GET DIAGNOSTICS v_rows=ROW_COUNT;
+      IF v_rows<>1 THEN
+        RAISE EXCEPTION 'ERROR_CORREGIBLE no persistió la conciliación fail-closed';
+      END IF;
+      UPDATE public.emision_fiscal_intentos AS i
+         SET resultado='RECONCILIAR',error_clase=p_payload->>'error_clase',
+             error_codigo=p_payload->>'error_codigo',
+             respuesta_resumen=pg_catalog.jsonb_set(
+               i.respuesta_resumen,'{diagnostico}',pg_catalog.jsonb_build_object(
+                 'mensaje_mascarado',p_payload->>'mensaje_mascarado',
+                 'error_fase',p_payload->>'error_fase',
+                 'identidad_preservada',true,
+                 'motivo','RECHAZO_NO_CONFIRMADO'
+               ),true
+             )
+       WHERE i.id=v_intento.id;
+      RETURN QUERY
+      SELECT v.id,v.afip_estado,v.afip_fase,v.afip_claim_token,
+             v.afip_numero,v.afip_version
+        FROM public.ventas AS v WHERE v.id=p_venta_id;
+      RETURN;
+    END IF;
+
     UPDATE public.ventas AS v
        SET afip_estado='ERROR_CORREGIBLE',afip_fase=NULL,
            afip_claim_token=NULL,afip_claimed_at=NULL,
@@ -728,10 +1125,12 @@ BEGIN
     UPDATE public.emision_fiscal_intentos AS i
        SET resultado='ERROR_CORREGIBLE',error_clase=p_payload->>'error_clase',
            error_codigo=p_payload->>'error_codigo',
-           respuesta_resumen=i.respuesta_resumen||pg_catalog.jsonb_build_object(
-             'mensaje_mascarado',p_payload->>'mensaje_mascarado',
-             'error_fase',p_payload->>'error_fase',
-             'identidad_liberada',v_liberar_identidad
+           respuesta_resumen=pg_catalog.jsonb_set(
+             i.respuesta_resumen,'{diagnostico}',pg_catalog.jsonb_build_object(
+               'mensaje_mascarado',p_payload->>'mensaje_mascarado',
+               'error_fase',p_payload->>'error_fase',
+               'identidad_liberada',v_liberar_identidad
+             ),true
            )
      WHERE i.id=v_intento.id;
 
@@ -740,22 +1139,36 @@ BEGIN
        OR v_venta.afip_fase NOT IN ('PREFLIGHT','RESERVADO') THEN
       RAISE EXCEPTION 'LIBERAR está prohibido desde %',COALESCE(v_venta.afip_fase,'NULL');
     END IF;
-    IF v_intento.fase NOT IN ('PREFLIGHT','RESERVADO')
-       OR v_intento.resultado IN ('REQUEST_INICIADO','RESPUESTA_RECIBIDA','APROBADO','RECONCILIAR') THEN
+    IF NOT (
+         (v_intento.fase='PREFLIGHT' AND v_intento.resultado='RECLAMADO')
+         OR (v_intento.fase='RESERVADO' AND v_intento.resultado='RESERVADO')
+       )
+       OR v_intento.respuesta_resumen ? 'evidencia_externa' THEN
       RAISE EXCEPTION 'El intento contiene evidencia de envío y no se puede liberar';
     END IF;
     IF v_lease<=0 OR v_venta.afip_claimed_at + pg_catalog.make_interval(secs=>v_lease)
        > pg_catalog.clock_timestamp() THEN
       RAISE EXCEPTION 'El lease fiscal todavía no venció';
     END IF;
-    IF pg_catalog.jsonb_typeof(p_payload->'verificacion')<>'object'
-       OR p_payload#>>'{verificacion,nunca_enviado}'<>'true' THEN
+    v_resumen := p_payload->'verificacion';
+    IF pg_catalog.jsonb_typeof(v_resumen) IS DISTINCT FROM 'object' THEN
       RAISE EXCEPTION 'LIBERAR exige verificación explícita de nunca enviado';
+    END IF;
+    SELECT pg_catalog.array_agg(k ORDER BY k) INTO v_resumen_claves
+      FROM pg_catalog.jsonb_object_keys(v_resumen) AS k
+     WHERE NOT (k=ANY(ARRAY['nunca_enviado','fuente']));
+    IF v_resumen_claves IS NOT NULL
+       OR NOT (v_resumen ?& ARRAY['nunca_enviado','fuente'])
+       OR pg_catalog.jsonb_typeof(v_resumen->'nunca_enviado') IS DISTINCT FROM 'boolean'
+       OR v_resumen->'nunca_enviado' IS DISTINCT FROM 'true'::jsonb
+       OR pg_catalog.jsonb_typeof(v_resumen->'fuente') IS DISTINCT FROM 'string'
+       OR v_resumen->>'fuente' IS DISTINCT FROM 'log_intento' THEN
+      RAISE EXCEPTION 'LIBERAR exige verificación tipada y literal de nunca enviado';
     END IF;
     UPDATE public.emision_fiscal_intentos AS i
        SET resultado='LIBERADO',
-           respuesta_resumen=i.respuesta_resumen||pg_catalog.jsonb_build_object(
-             'verificacion',p_payload->'verificacion'
+           respuesta_resumen=pg_catalog.jsonb_set(
+             i.respuesta_resumen,'{verificacion_liberacion}',v_resumen,true
            )
      WHERE i.id=v_intento.id;
     UPDATE public.ventas AS v
@@ -801,10 +1214,12 @@ BEGIN
     UPDATE public.emision_fiscal_intentos AS i
        SET resultado='BLOQUEADO',error_clase=p_payload->>'error_clase',
            error_codigo=p_payload->>'error_codigo',
-           respuesta_resumen=i.respuesta_resumen||pg_catalog.jsonb_build_object(
-             'mensaje_mascarado',p_payload->>'mensaje_mascarado',
-             'error_fase',p_payload->>'error_fase',
-             'diferencias',p_payload->'diferencias'
+           respuesta_resumen=pg_catalog.jsonb_set(
+             i.respuesta_resumen,'{diagnostico}',pg_catalog.jsonb_build_object(
+               'mensaje_mascarado',p_payload->>'mensaje_mascarado',
+               'error_fase',p_payload->>'error_fase',
+               'diferencias',p_payload->'diferencias'
+             ),true
            )
      WHERE i.id=v_intento.id;
   END IF;

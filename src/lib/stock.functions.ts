@@ -77,7 +77,7 @@ export const editarRemito = createServerFn({ method: "POST" })
     const { error } = await supabase.rpc("editar_remito", {
       p_remito_id: data.remito_id,
       p_sucursal_destino_id: data.sucursal_destino_id,
-      p_observaciones: data.observaciones?.trim() || null,
+      p_observaciones: data.observaciones?.trim() || "",
       p_items: data.items,
     });
     if (error) throw new Error(error.message);

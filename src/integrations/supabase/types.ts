@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -730,6 +725,69 @@ export type Database = {
           },
         ]
       }
+      emision_fiscal_intentos: {
+        Row: {
+          claim_token: string
+          created_at: string
+          error_clase: string | null
+          error_codigo: string | null
+          fase: string
+          id: string
+          numero_reservado: number | null
+          payload_hash: string
+          respuesta_resumen: Json
+          resultado: string | null
+          snapshot_version: number
+          updated_at: string
+          venta_id: string
+        }
+        Insert: {
+          claim_token: string
+          created_at?: string
+          error_clase?: string | null
+          error_codigo?: string | null
+          fase: string
+          id?: string
+          numero_reservado?: number | null
+          payload_hash: string
+          respuesta_resumen?: Json
+          resultado?: string | null
+          snapshot_version: number
+          updated_at?: string
+          venta_id: string
+        }
+        Update: {
+          claim_token?: string
+          created_at?: string
+          error_clase?: string | null
+          error_codigo?: string | null
+          fase?: string
+          id?: string
+          numero_reservado?: number | null
+          payload_hash?: string
+          respuesta_resumen?: Json
+          resultado?: string | null
+          snapshot_version?: number
+          updated_at?: string
+          venta_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "emision_fiscal_intentos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "emision_fiscal_intentos_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
+        ]
+      }
       emisores: {
         Row: {
           activo: boolean
@@ -737,6 +795,11 @@ export type Database = {
           created_at: string
           cuit: string | null
           domicilio_fiscal: string | null
+          factura_a_confirmada_at: string | null
+          factura_a_confirmada_por: string | null
+          factura_a_evidencia: string | null
+          factura_a_modalidad: string
+          factura_a_revalidar_at: string | null
           id: string
           ingresos_brutos: string | null
           inicio_actividades: string | null
@@ -751,6 +814,11 @@ export type Database = {
           created_at?: string
           cuit?: string | null
           domicilio_fiscal?: string | null
+          factura_a_confirmada_at?: string | null
+          factura_a_confirmada_por?: string | null
+          factura_a_evidencia?: string | null
+          factura_a_modalidad?: string
+          factura_a_revalidar_at?: string | null
           id?: string
           ingresos_brutos?: string | null
           inicio_actividades?: string | null
@@ -765,6 +833,11 @@ export type Database = {
           created_at?: string
           cuit?: string | null
           domicilio_fiscal?: string | null
+          factura_a_confirmada_at?: string | null
+          factura_a_confirmada_por?: string | null
+          factura_a_evidencia?: string | null
+          factura_a_modalidad?: string
+          factura_a_revalidar_at?: string | null
           id?: string
           ingresos_brutos?: string | null
           inicio_actividades?: string | null
@@ -1440,6 +1513,7 @@ export type Database = {
           id: string
           nombre_completo: string | null
           permite_venta_sin_stock: boolean
+          puede_facturar: boolean
           secciones: string[] | null
           sucursal_id: string | null
           updated_at: string
@@ -1451,6 +1525,7 @@ export type Database = {
           id: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          puede_facturar?: boolean
           secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
@@ -1462,6 +1537,7 @@ export type Database = {
           id?: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          puede_facturar?: boolean
           secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
@@ -1769,6 +1845,80 @@ export type Database = {
           },
         ]
       }
+      receptores_fiscales: {
+        Row: {
+          activo: boolean
+          cliente_comercial_id: string | null
+          condicion_iva: string
+          creado_por: string
+          created_at: string
+          domicilio: string | null
+          id: string
+          numero_documento: string
+          razon_social: string
+          sucursal_id: string
+          tipo_documento: string
+          updated_at: string
+        }
+        Insert: {
+          activo?: boolean
+          cliente_comercial_id?: string | null
+          condicion_iva: string
+          creado_por: string
+          created_at?: string
+          domicilio?: string | null
+          id?: string
+          numero_documento: string
+          razon_social: string
+          sucursal_id: string
+          tipo_documento: string
+          updated_at?: string
+        }
+        Update: {
+          activo?: boolean
+          cliente_comercial_id?: string | null
+          condicion_iva?: string
+          creado_por?: string
+          created_at?: string
+          domicilio?: string | null
+          id?: string
+          numero_documento?: string
+          razon_social?: string
+          sucursal_id?: string
+          tipo_documento?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receptores_fiscales_cliente_comercial_id_fkey"
+            columns: ["cliente_comercial_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receptores_fiscales_cliente_comercial_id_fkey"
+            columns: ["cliente_comercial_id"]
+            isOneToOne: false
+            referencedRelation: "cuenta_corriente_saldos"
+            referencedColumns: ["cliente_id"]
+          },
+          {
+            foreignKeyName: "receptores_fiscales_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["sucursal_id"]
+          },
+          {
+            foreignKeyName: "receptores_fiscales_sucursal_id_fkey"
+            columns: ["sucursal_id"]
+            isOneToOne: false
+            referencedRelation: "sucursales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       remito_items: {
         Row: {
           cantidad: number
@@ -1976,6 +2126,8 @@ export type Database = {
       settings: {
         Row: {
           descuento_proveedor_porcentaje: number
+          facturacion_legacy_writer_enabled: boolean
+          facturacion_receptor_v2_enabled: boolean
           id: boolean
           markup_default_porcentaje: number
           permitir_stock_negativo: boolean
@@ -1983,6 +2135,8 @@ export type Database = {
         }
         Insert: {
           descuento_proveedor_porcentaje?: number
+          facturacion_legacy_writer_enabled?: boolean
+          facturacion_receptor_v2_enabled?: boolean
           id?: boolean
           markup_default_porcentaje?: number
           permitir_stock_negativo?: boolean
@@ -1990,6 +2144,8 @@ export type Database = {
         }
         Update: {
           descuento_proveedor_porcentaje?: number
+          facturacion_legacy_writer_enabled?: boolean
+          facturacion_receptor_v2_enabled?: boolean
           id?: boolean
           markup_default_porcentaje?: number
           permitir_stock_negativo?: boolean
@@ -2586,17 +2742,29 @@ export type Database = {
         Row: {
           afip_cbte_asoc_id: string | null
           afip_cbte_tipo: number | null
+          afip_claim_token: string | null
+          afip_claimed_at: string | null
           afip_emisor_cuit: string | null
           afip_emitido_at: string | null
           afip_error: string | null
+          afip_error_clase: string | null
+          afip_error_codigo: string | null
+          afip_error_fase: string | null
           afip_estado: string
+          afip_fase: string | null
+          afip_fecha_comprobante: string | null
           afip_imp_total: number | null
           afip_intentos: number
+          afip_legacy_incompleto: boolean
           afip_modo: string | null
           afip_numero: number | null
           afip_punto_venta: number | null
           afip_simulado: boolean
           afip_snapshot: Json | null
+          afip_snapshot_hash: string | null
+          afip_ultimo_error_at: string | null
+          afip_validez: string | null
+          afip_version: number
           cae: string | null
           cae_vencimiento: string | null
           caja_sesion_id: string | null
@@ -2625,17 +2793,29 @@ export type Database = {
         Insert: {
           afip_cbte_asoc_id?: string | null
           afip_cbte_tipo?: number | null
+          afip_claim_token?: string | null
+          afip_claimed_at?: string | null
           afip_emisor_cuit?: string | null
           afip_emitido_at?: string | null
           afip_error?: string | null
+          afip_error_clase?: string | null
+          afip_error_codigo?: string | null
+          afip_error_fase?: string | null
           afip_estado?: string
+          afip_fase?: string | null
+          afip_fecha_comprobante?: string | null
           afip_imp_total?: number | null
           afip_intentos?: number
+          afip_legacy_incompleto?: boolean
           afip_modo?: string | null
           afip_numero?: number | null
           afip_punto_venta?: number | null
           afip_simulado?: boolean
           afip_snapshot?: Json | null
+          afip_snapshot_hash?: string | null
+          afip_ultimo_error_at?: string | null
+          afip_validez?: string | null
+          afip_version?: number
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -2664,17 +2844,29 @@ export type Database = {
         Update: {
           afip_cbte_asoc_id?: string | null
           afip_cbte_tipo?: number | null
+          afip_claim_token?: string | null
+          afip_claimed_at?: string | null
           afip_emisor_cuit?: string | null
           afip_emitido_at?: string | null
           afip_error?: string | null
+          afip_error_clase?: string | null
+          afip_error_codigo?: string | null
+          afip_error_fase?: string | null
           afip_estado?: string
+          afip_fase?: string | null
+          afip_fecha_comprobante?: string | null
           afip_imp_total?: number | null
           afip_intentos?: number
+          afip_legacy_incompleto?: boolean
           afip_modo?: string | null
           afip_numero?: number | null
           afip_punto_venta?: number | null
           afip_simulado?: boolean
           afip_snapshot?: Json | null
+          afip_snapshot_hash?: string | null
+          afip_ultimo_error_at?: string | null
+          afip_validez?: string | null
+          afip_version?: number
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -2975,6 +3167,10 @@ export type Database = {
         Args: { p_ingreso_id: string; p_items: Json }
         Returns: undefined
       }
+      administrar_puede_facturar: {
+        Args: { p_profile_id: string; p_puede_facturar: boolean }
+        Returns: undefined
+      }
       ajustar_stock: {
         Args: {
           p_motivo: string
@@ -3015,6 +3211,13 @@ export type Database = {
         }[]
       }
       aprobar_remito: { Args: { p_remito_id: string }; Returns: undefined }
+      backfill_cola_fiscal: {
+        Args: { p_aplicar?: boolean }
+        Returns: {
+          cantidad: number
+          estado_destino: string
+        }[]
+      }
       buscar_productos_similares: {
         Args: { p_codigo?: string; p_limite?: number; p_texto: string }
         Returns: {
@@ -3102,6 +3305,20 @@ export type Database = {
           p_pagos?: Json
           p_presupuesto_id: string
           p_tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
+      convertir_presupuesto_en_venta_neutral: {
+        Args: {
+          p_cliente_id: string
+          p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
+          p_idempotency_key?: string
+          p_pagos?: Json
+          p_presupuesto_id: string
         }
         Returns: {
           es_cta_cte: boolean
@@ -3208,6 +3425,10 @@ export type Database = {
         }[]
       }
       current_sucursal_id: { Args: never; Returns: string }
+      desactivar_receptor_fiscal: {
+        Args: { p_receptor_id: string }
+        Returns: undefined
+      }
       editar_presupuesto: {
         Args: {
           p_cliente_id?: string
@@ -3227,7 +3448,7 @@ export type Database = {
       editar_remito: {
         Args: {
           p_items: Json
-          p_observaciones: string | null
+          p_observaciones: string
           p_remito_id: string
           p_sucursal_destino_id: string
         }
@@ -3244,6 +3465,8 @@ export type Database = {
         }
         Returns: undefined
       }
+      fiscal_json_canonico: { Args: { p_value: Json }; Returns: string }
+      fiscal_snapshot_hash: { Args: { p_snapshot: Json }; Returns: string }
       guardar_extraccion_ingreso: {
         Args: {
           p_archivo_path?: string
@@ -3285,6 +3508,7 @@ export type Database = {
         Returns: boolean
       }
       proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
+      puede_facturar: { Args: { _uid?: string }; Returns: boolean }
       puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
       rechazar_remito: {
         Args: { p_motivo?: string; p_remito_id: string }
@@ -3333,18 +3557,26 @@ export type Database = {
         }
         Returns: string
       }
-      resetear_transaccional_conservando: {
-        Args: {
-          p_confirmar?: boolean
-          p_dias: string[]
-          p_revertir_stock?: boolean
-        }
-        Returns: Json
-      }
       resolver_cliente_obra: { Args: { p_nombre: string }; Returns: string }
       restaurar_productos: { Args: { p_ids: string[] }; Returns: number }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      transicionar_emision_fiscal: {
+        Args: {
+          p_accion: string
+          p_claim_token: string
+          p_payload?: Json
+          p_venta_id: string
+        }
+        Returns: {
+          afip_claim_token: string
+          afip_estado: string
+          afip_fase: string
+          afip_numero: number
+          afip_version: number
+          venta_id: string
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "empleado"
@@ -3380,6 +3612,7 @@ export type Database = {
         | "FAC_INTERNA_CTA_CTE"
         | "REMITO_OBRA"
         | "FACTURA_C"
+        | "VENTA"
       tipo_movimiento_stock:
         | "VENTA"
         | "AJUSTE"
@@ -3557,6 +3790,7 @@ export const Constants = {
         "FAC_INTERNA_CTA_CTE",
         "REMITO_OBRA",
         "FACTURA_C",
+        "VENTA",
       ],
       tipo_movimiento_stock: [
         "VENTA",

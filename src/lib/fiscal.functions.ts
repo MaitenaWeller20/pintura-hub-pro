@@ -34,7 +34,12 @@ import {
 import { diasDesdeHoyAr, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "./fiscal/fecha";
 import { qrAfipDataUrl } from "./fiscal/qr";
 import { cargarContextoFiscal } from "./fiscal/contexto.server";
-import { crearSnapshotFiscal, identidadReservaCoincide } from "./fiscal/snapshot";
+import {
+  crearSnapshotFiscal,
+  identidadReservaCoincide,
+  resolverReceptorFiscalLegacy,
+  type ReceptorDeclaradoLegacy,
+} from "./fiscal/snapshot";
 
 // Ventana de gracia del claim anti doble-submit: si una emisión de la MISMA venta
 // se reservó hace menos que esto, un segundo request no puede re-reservar (se
@@ -129,9 +134,19 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     const condReceptor: CondicionIva = venta.cliente?.tipo
       ? (CONDICION_IVA_CLIENTE[venta.cliente.tipo] ?? "CONSUMIDOR_FINAL")
       : "CONSUMIDOR_FINAL";
+    const cuitCliente = venta.cliente?.cuit_dni ?? null;
+    const receptorVivo: ReceptorDeclaradoLegacy = {
+      razon_social: venta.cliente?.razon_social ?? null,
+      cuit_dni: cuitCliente,
+      doc_tipo: docTipoAfip(cuitCliente),
+      doc_nro: docNroAfip(cuitCliente),
+      condicion_iva: condReceptor,
+      domicilio: venta.cliente?.direccion ?? null,
+    };
 
     let letra: Letra;
     let cbtesAsoc: Array<{ tipo: number; ptoVta: number; nro: number }> | undefined;
+    let snapshotOriginal: unknown | null = null;
 
     if (venta.tipo_comprobante === "NOTA_CREDITO" || venta.tipo_comprobante === "NOTA_DEBITO") {
       // Una nota hereda la letra del comprobante que rectifica, y tiene que
@@ -139,7 +154,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       const { data: orig } = await supabase
         .from("ventas")
         .select(
-          "tipo_comprobante, afip_emisor_cuit, afip_cbte_tipo, afip_punto_venta, afip_numero, cae",
+          "tipo_comprobante, afip_emisor_cuit, afip_cbte_tipo, afip_punto_venta, afip_numero, cae, afip_snapshot",
         )
         .eq("id", venta.afip_cbte_asoc_id ?? "")
         .maybeSingle();
@@ -152,9 +167,10 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       if (orig.afip_emisor_cuit !== emisor.cuit) {
         throw new Error("La nota no puede asociarse a un comprobante emitido por otro CUIT.");
       }
-      // La letra de la NC sale del comprobante REALMENTE emitido (afip_cbte_tipo),
-      // no del tipo_comprobante comercial.
+      // Letra y receptor salen del comprobante REALMENTE emitido. Si existe
+      // snapshot v1 no se relee la identidad viva para reconstruir la nota.
       letra = letraDeCbteTipo(orig.afip_cbte_tipo);
+      snapshotOriginal = orig.afip_snapshot;
       cbtesAsoc = [
         { tipo: orig.afip_cbte_tipo!, ptoVta: orig.afip_punto_venta!, nro: orig.afip_numero! },
       ];
@@ -164,18 +180,22 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       letra = determinarLetra(emisor.condicion_iva, condReceptor);
     }
 
-    const cuitCliente = venta.cliente?.cuit_dni ?? null;
-
-    // La condición declarada es la condición real del receptor. No hay downgrade
-    // ni reinterpretación silenciosa a Consumidor Final.
-    const condReceptorEfectiva: CondicionIva = condReceptor;
+    const receptorEfectivo = resolverReceptorFiscalLegacy({
+      tipoComprobante: venta.tipo_comprobante,
+      letra,
+      receptorVivo,
+      snapshotOriginal,
+    });
 
     // Factura A exige DocTipo 80 = CUIT VÁLIDO (con dígito verificador). Un CUIT
     // de 11 dígitos con verificador mal (o un CUIL cargado como CUIT) pasaba el
     // chequeo de longitud y AFIP lo rechazaba con un 10013/10016 críptico,
     // quemando un viaje y dejando un número reservado. Se valida acá, antes de ir
-    // a AFIP, con un mensaje accionable que ofrece la salida por Factura B.
-    if (letra === "A" && (docTipoAfip(cuitCliente) !== 80 || !cuitValido(cuitCliente))) {
+    // a AFIP, sin ofrecer un downgrade fiscal.
+    if (
+      letra === "A" &&
+      (receptorEfectivo.doc_tipo !== 80 || !cuitValido(receptorEfectivo.cuit_dni))
+    ) {
       throw new Error(
         "Para Factura A el receptor necesita un CUIT válido. Corregí su identidad fiscal antes de emitir.",
       );
@@ -208,16 +228,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
     // emitido tiene que seguir imprimiéndose igual que el que se entregó.
     const snapshot = crearSnapshotFiscal({
       emisor: emisorImpreso,
-      receptor: {
-        razon_social: venta.cliente?.razon_social ?? null,
-        cuit_dni: cuitCliente,
-        doc_tipo: docTipoAfip(cuitCliente),
-        doc_nro: docNroAfip(cuitCliente),
-        // La condición REALMENTE declarada, que puede no ser la de la ficha:
-        // un RI al que se le emite B va como Consumidor Final.
-        condicion_iva: condReceptorEfectiva,
-        domicilio: venta.cliente?.direccion ?? null,
-      },
+      receptor: receptorEfectivo,
       condicion_venta: venta.condicion_venta ?? null,
       totales,
       // La fecha que se le declara a AFIP. El QR se arma con ESTA, no con
@@ -436,13 +447,13 @@ export const emitirComprobante = createServerFn({ method: "POST" })
           cbteTipo,
           numero,
           fecha: new Date(venta.fecha),
-          docTipo: docTipoAfip(cuitCliente),
-          docNro: docNroAfip(cuitCliente),
+          docTipo: receptorEfectivo.doc_tipo,
+          docNro: receptorEfectivo.doc_nro,
           neto: totales.neto,
           iva: totales.iva,
           tributos: totales.tributos,
           total: totales.total,
-          condicionIvaReceptorId: condicionIvaReceptorId(condReceptorEfectiva),
+          condicionIvaReceptorId: condicionIvaReceptorId(receptorEfectivo.condicion_iva),
           alicuotas: totales.alicuotas,
           comprobantesAsociados: cbtesAsoc,
         },

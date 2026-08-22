@@ -48,6 +48,10 @@ describe("documento fiscal explícito del receptor", () => {
     expect(() => documentoFiscalArca("CUIT", "30-71234567-8")).toThrow(/CUIT.*válido/i);
   });
 
+  it("rechaza el CUIT trivial 00000000000 aunque cierre el módulo 11", () => {
+    expect(() => documentoFiscalArca("CUIT", "00000000000")).toThrow(/CUIT.*válido/i);
+  });
+
   it("exige exactamente once dígitos para CUIL y CDI, y siete u ocho para DNI", () => {
     expect(() => documentoFiscalArca("CUIL", "2012345678")).toThrow(/CUIL.*11/i);
     expect(() => documentoFiscalArca("CDI", "501234567890")).toThrow(/CDI.*11/i);

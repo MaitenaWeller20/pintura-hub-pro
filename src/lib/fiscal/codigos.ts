@@ -261,6 +261,7 @@ export function docNroAfip(cuitDni: string | null | undefined): number {
 export function cuitValido(valor: string | null | undefined): boolean {
   const limpio = (valor ?? "").replace(/\D/g, "");
   if (limpio.length !== 11) return false;
+  if (limpio === "00000000000") return false;
   const coef = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
   let suma = 0;
   for (let i = 0; i < 10; i++) suma += Number(limpio[i]) * coef[i];

@@ -14,6 +14,13 @@ import {
   evaluarPermisoFiscal,
   type LecturasPermisoFiscal,
 } from "./fiscal/permiso.server";
+import {
+  ErrorImpresionFiscal,
+  prepararDatosFiscalesImpresos,
+  prepararDatosFiscalesLegacyMarcados,
+  type DatosFiscalesPreparados,
+} from "./fiscal/impresion";
+import type { QrAfipInput } from "./fiscal/qr";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -408,11 +415,81 @@ export const previsualizarEmisionFiscal = createServerFn({ method: "POST" })
     });
   });
 
-/** API temporal de lectura/PDF; Task 10 la reemplaza. No participa del writer v2. */
+export async function resolverDatosFiscalesComprobanteDesdeFila(
+  filaInput: unknown,
+  deps: {
+    cargarLegacy(): Promise<unknown>;
+    generarQr(input: QrAfipInput): Promise<string>;
+  },
+): Promise<DatosFiscalesPreparados | null> {
+  if (typeof filaInput !== "object" || filaInput === null || Array.isArray(filaInput)) {
+    throw new ErrorImpresionFiscal(
+      "COMPROBANTE_FISCAL_INCONSISTENTE",
+      "No se pudo leer la evidencia fiscal del comprobante.",
+    );
+  }
+  const fila = filaInput as Record<string, unknown>;
+
+  if (!fila.cae) {
+    if (fila.afip_estado === "APROBADO") {
+      throw new ErrorImpresionFiscal(
+        "COMPROBANTE_FISCAL_INCONSISTENTE",
+        "El comprobante figura aprobado pero no conserva CAE.",
+      );
+    }
+    return null;
+  }
+
+  let preparado: DatosFiscalesPreparados;
+  if (fila.afip_legacy_incompleto === true) {
+    const datosHistoricos = await deps.cargarLegacy();
+    if (!datosHistoricos) {
+      throw new ErrorImpresionFiscal(
+        "COMPROBANTE_FISCAL_INCONSISTENTE",
+        "No se pudieron materializar los datos del comprobante histórico.",
+      );
+    }
+    preparado = prepararDatosFiscalesLegacyMarcados({ fila, datosHistoricos });
+  } else {
+    preparado = prepararDatosFiscalesImpresos(fila);
+  }
+
+  const qr = await deps.generarQr(preparado.qrInput);
+  if (typeof qr !== "string" || !/^data:image\/png;base64,\S+$/.test(qr)) {
+    throw new ErrorImpresionFiscal(
+      "QR_FISCAL_OBLIGATORIO",
+      "No se obtuvo el QR obligatorio del comprobante fiscal.",
+    );
+  }
+  return { ...preparado, qr };
+}
+
+/** Lectura user-bound y fail-closed para PDF fiscal. No participa del writer v2. */
 export const datosFiscalesComprobante = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => legacyInputSchema.parse(value))
   .handler(async ({ data, context }) => {
-    const { datosFiscalesComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
-    return datosFiscalesComprobanteLegacy({ data, context });
+    const { data: venta, error } = await context.supabase
+      .from("ventas")
+      .select(
+        "id,afip_estado,afip_fase,afip_version,afip_legacy_incompleto,afip_snapshot,afip_snapshot_hash,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,cae,cae_vencimiento",
+      )
+      .eq("id", data.venta_id)
+      .maybeSingle();
+    if (error || !venta) {
+      throw new ErrorImpresionFiscal(
+        "COMPROBANTE_FISCAL_INCONSISTENTE",
+        "No se pudo leer el comprobante fiscal autorizado.",
+        error ? { cause: error } : undefined,
+      );
+    }
+
+    const { qrAfipDataUrlObligatorio } = await import("./fiscal/qr");
+    return resolverDatosFiscalesComprobanteDesdeFila(venta, {
+      generarQr: qrAfipDataUrlObligatorio,
+      async cargarLegacy() {
+        const { datosFiscalesComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
+        return datosFiscalesComprobanteLegacy({ data, context });
+      },
+    });
   });

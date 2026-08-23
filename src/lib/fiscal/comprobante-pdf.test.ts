@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { generarComprobantePdf, numeroFiscal, type DatosFiscalesImpresos } from "./comprobante-pdf";
+import { generarComprobantePdf, numeroFiscal } from "./comprobante-pdf";
 import { porcentajeDeIvaId, requiereLeyendaTransparencia, tituloDeCbteTipo } from "./codigos";
+import {
+  ErrorImpresionFiscal,
+  LEYENDA_CREDITO_FISCAL_MONOTRIBUTO,
+  type DatosFiscalesImpresos,
+} from "./impresion";
 
 /**
  * El PDF es el papel que ve el cliente y que mira el contador. Lo que se
@@ -17,7 +22,30 @@ function textoDelPdf(doc: ReturnType<typeof generarComprobantePdf>["doc"]): stri
   for (const b of bytes) s += String.fromCharCode(b);
   // Los strings de un PDF van como (texto) Tj / TJ. Con esto alcanza para
   // comprobar presencia de campos.
-  return s.replace(/\\(\d{3})/g, (_m, o) => String.fromCharCode(parseInt(o, 8)));
+  const decoded = s
+    .replace(/\\(\d{3})/g, (_m, o) => String.fromCharCode(parseInt(o, 8)))
+    .replace(/\\([()\\])/g, "$1")
+    .replace(/\u00a0/g, " ")
+    .replace(/\x97/g, "—");
+  const textos = [...decoded.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)].map((match) =>
+    match[1].replace(/\\([()\\])/g, "$1"),
+  );
+  // Se conserva el stream para las coordenadas Td y se agrega una lectura
+  // corrida: jsPDF parte las leyendas largas en varios Tj aunque visualmente
+  // sean una sola oración.
+  return `${decoded}\n${textos.join(" ")}`;
+}
+
+function textosPorPagina(doc: ReturnType<typeof generarComprobantePdf>["doc"]): string[] {
+  const paginas = (doc.internal as unknown as { pages: string[][] }).pages;
+  return paginas.slice(1).map((operadores) =>
+    operadores
+      .join("\n")
+      .replace(/\\(\d{3})/g, (_m, octal) => String.fromCharCode(parseInt(octal, 8)))
+      .replace(/\\([()\\])/g, "$1")
+      .replace(/\u00a0/g, " ")
+      .replace(/\x97/g, "—"),
+  );
 }
 
 const venta = {
@@ -45,7 +73,12 @@ const items = [
   },
 ];
 
+const QR_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAklEQVR4AewaftIAAAMaSURBVOXBW6qlWBQAwUxx/lPOrgUtbET7eB9FfxghED9QMVQ+qXhKZVR8ovJdGy+38XI7i4qnVFYVQ+VQcUVlVHyHyqhYVTylMjZebueCyp2KKypnKquKlcqh4orKV6ncqVhtvNzOL6k4UxkVT6msKv6mjZfb+WUqd1TuqIyKlcqo+Bs2Xm7j5XYuVHyVyqg4qAyVVcVQOVQMlZ+qeGrj5XYWKn9DxVB5qmKonKmMipXKV2283F7xGyq+quKg8l9U7lR818bL7SqHiqEyKu6orCruqIyKoTIqPqk4U7miMirOVEbFUBkbLycQJxVD5aziisqouKMyKu6ojIqVyqFipbKquKOy2ni5jZfbeaDioPKUyqpiqPyEylMqq4qhMjZebq84qKwqhsqh4orKJyqjYqgcKobKJxVDZVQMlaFyVrGqGBsvt/NFKquKOxVPqTylMiqGyqriE5Wx8XI7F1RGxVnFSmWl8n+p+ERltfFyu8pZxScqo2KlcqgYKqNiqIyKg8qoGCqj4qziuyqGyth4uY2XE4hvqBgqq4qDypWKoXKoGCqjYqjcqRgqq4qnNl5u54GKg8pQGRVD5axiqDxVcaXioHKl4imVsfFy9gc3VO5UfKIyKobKJxVDZVQMlbOKobKqOFO5svFyAvFBxZnKqmKoHCquqIyKg8qqYqVyqBgqo+KOyqhYqYyNl7M/+EDlrOKnVA4VV1Q+qRgqo+KpjZfbeDmBOKkYKr+pYqjcqbii8hMVQ2VUjI2Xsz/4BSqfVAyVUXFQWVUMlVFxUBkVV1TuVAyVsfFyu8pPVKwqzlSGyqi4UzFUnlIZFWcV/2Xj5XYWFU+prCqGylnFSmVUnKmMiqEyVO5UPKUyKsbGy+1cULlT8VTFSuVOxZWKoXKm8onKqLiy8XIbL7fzF6mMilFxR2VUrFRGxUFlVTFU7qiMiqEyNl5u55eojIqDylC5UvEdFVcqhsqhYqWy2ng5gfhXxVMqo2KlcqgYKqPijsqq4o7KqFip3Km4svFyOwuV71IZFXdU7lQMlZXKHZVVxVA5VFxRGRsv9w+XWOO73oYUWAAAAABJRU5ErkJggg==";
+
 const fiscalBase: DatosFiscalesImpresos = {
+  origen: "SNAPSHOT_V2",
+  advertencia: null,
   emisor: {
     razon_social: "CasaForma SRL",
     nombre_fantasia: "CasaForma",
@@ -54,6 +87,7 @@ const fiscalBase: DatosFiscalesImpresos = {
     condicion_iva: "RESPONSABLE_INSCRIPTO",
     ingresos_brutos: "901-123456-7",
     inicio_actividades: "2019-03-15",
+    telefono: null,
   },
   receptor: {
     razon_social: "Juan Pérez",
@@ -63,8 +97,11 @@ const fiscalBase: DatosFiscalesImpresos = {
     domicilio: "Belgrano 500",
   },
   condicion_venta: "CONTADO",
+  lineas: items,
   totales: {
     neto: 1000,
+    exento: 0,
+    no_gravado: 0,
     iva: 210,
     tributos: 0,
     total: 1210,
@@ -72,11 +109,29 @@ const fiscalBase: DatosFiscalesImpresos = {
   },
   cae: "75123456789012",
   cae_vencimiento: "2026-08-20",
+  fecha: "2026-08-22",
   punto_venta: 1,
   numero: 42,
   cbte_tipo: 6,
   modo: "PRODUCCION",
-  qr: null,
+  simulado: false,
+  validez: "PRODUCCION",
+  iva_contenido: "210.00",
+  otros_impuestos_nacionales_indirectos: "17.00",
+  qrInput: {
+    fecha: "2026-08-22",
+    cuit: "30712345678",
+    ptoVta: 1,
+    tipoCmp: 6,
+    nroCmp: 42,
+    importe: "1210.00",
+    moneda: "PES",
+    ctz: "1.000000",
+    tipoDocRec: 80,
+    nroDocRec: "20123456789",
+    codAut: "75123456789012",
+  },
+  qr: QR_PNG,
 };
 
 describe("numeración fiscal impresa", () => {
@@ -124,9 +179,37 @@ describe("comprobante impreso — los campos obligatorios", () => {
     expect(texto).toContain("Vto. CAE: 20/08/2026");
   });
 
+  it("imprime la fecha fiscal congelada y no la fecha comercial vieja", () => {
+    expect(texto).toContain("Fecha de emisión: 22/08/2026");
+    expect(texto).not.toContain("10/08/2026");
+  });
+
+  it("el bloque fiscal usa al receptor congelado y nunca al comprador comercial", () => {
+    expect(texto).toContain("Juan Pérez");
+    expect(texto).not.toContain("Pinturerías del Sur SRL");
+  });
+
   // Ley 27.743 / RG 5614: obligatoria en B y C a consumidor final.
   it("incluye la leyenda de Transparencia Fiscal en una B a consumidor final", () => {
-    expect(texto).toContain("Transparencia Fiscal");
+    expect(texto).toContain("Régimen de Transparencia Fiscal al Consumidor (Ley N° 27.743)");
+    expect(texto).toContain("IVA Contenido: $ 210,00");
+    expect(texto).toContain("Otros Impuestos Nacionales Indirectos: $ 17,00");
+  });
+});
+
+describe("leyenda de crédito fiscal Ley 27.618", () => {
+  it.each([1, 2, 3])("la imprime completa para CbteTipo A %s a monotributo", (cbteTipo) => {
+    const { doc } = generarComprobantePdf(venta, items, {
+      ...fiscalBase,
+      cbte_tipo: cbteTipo,
+      receptor: {
+        ...fiscalBase.receptor,
+        razon_social: "Receptor monotributista",
+        condicion_iva: "MONOTRIBUTO",
+      },
+    });
+
+    expect(textoDelPdf(doc)).toContain(LEYENDA_CREDITO_FISCAL_MONOTRIBUTO);
   });
 });
 
@@ -164,7 +247,15 @@ describe("factura C (emisor monotributista)", () => {
     ...fiscalBase,
     cbte_tipo: 11,
     emisor: { ...fiscalBase.emisor!, condicion_iva: "MONOTRIBUTO" },
-    totales: { neto: 1210, iva: 0, tributos: 0, total: 1210, alicuotas: [] },
+    totales: {
+      neto: 1210,
+      exento: 0,
+      no_gravado: 0,
+      iva: 0,
+      tributos: 0,
+      total: 1210,
+      alicuotas: [],
+    },
   };
   const { doc } = generarComprobantePdf(
     { ...venta, tipo_comprobante: "FACTURA_C" },
@@ -208,7 +299,7 @@ describe("comprobantes largos", () => {
     codigo: `IT-${String(n).padStart(3, "0")}`,
     descripcion: `Producto de prueba número ${n}`,
   }));
-  const { doc } = generarComprobantePdf(venta, muchos, fiscalBase);
+  const { doc } = generarComprobantePdf(venta, muchos, { ...fiscalBase, lineas: muchos });
   const texto = textoDelPdf(doc);
 
   it("pasa a más de una página", () => {
@@ -233,7 +324,7 @@ describe("comprobantes largos", () => {
     const ALTO_A4_PT = 841.89;
     for (let n = 1; n <= 60; n++) {
       const lista = Array.from({ length: n }, (_, k) => ({ ...items[0], codigo: `IT-${k}` }));
-      const { doc: d } = generarComprobantePdf(venta, lista, fiscalBase);
+      const { doc: d } = generarComprobantePdf(venta, lista, { ...fiscalBase, lineas: lista });
       const ys = [...textoDelPdf(d).matchAll(/([\d.-]+) ([\d.-]+) Td/g)].map((m) => Number(m[2]));
       expect(ys.length, `con ${n} ítems no se dibujó nada`).toBeGreaterThan(20);
       expect(Math.min(...ys), `con ${n} ítems algo quedó por debajo del pie`).toBeGreaterThan(0);
@@ -241,6 +332,38 @@ describe("comprobantes largos", () => {
         ALTO_A4_PT,
       );
     }
+  });
+
+  it.each([1, 20, 60])("con %s ítems conserva todas las páginas en A4", (cantidad) => {
+    const lista = Array.from({ length: cantidad }, (_, k) => ({
+      ...items[0],
+      codigo: `A4-${k}`,
+    }));
+    const { doc: d } = generarComprobantePdf(venta, lista, { ...fiscalBase, lineas: lista });
+
+    for (let pagina = 1; pagina <= d.getNumberOfPages(); pagina += 1) {
+      d.setPage(pagina);
+      expect(d.internal.pageSize.getWidth()).toBeCloseTo(210, 1);
+      expect(d.internal.pageSize.getHeight()).toBeCloseTo(297, 1);
+    }
+    const contenido = textoDelPdf(d);
+    expect(contenido).toContain("CAE N°: 75123456789012");
+    expect(contenido).toContain("Otros Impuestos Nacionales Indirectos: $ 17,00");
+    if (cantidad === 60) expect(d.getNumberOfPages()).toBeGreaterThan(1);
+  });
+
+  it("no deja líneas de transparencia huérfanas del bloque CAE con 20 ítems", () => {
+    const lista = Array.from({ length: 20 }, (_, k) => ({
+      ...items[0],
+      codigo: `PAG-${k}`,
+    }));
+    const { doc: d } = generarComprobantePdf(venta, lista, { ...fiscalBase, lineas: lista });
+    const paginaTransparencia = textosPorPagina(d).find((pagina) =>
+      pagina.includes("IVA Contenido"),
+    );
+
+    expect(paginaTransparencia).toBeDefined();
+    expect(paginaTransparencia).toContain("CAE N°: 75123456789012");
   });
 });
 
@@ -268,12 +391,61 @@ describe("líneas congeladas al emitir", () => {
 });
 
 describe("comprobante simulado", () => {
-  const { doc } = generarComprobantePdf(venta, items, { ...fiscalBase, simulado: true });
+  const { doc } = generarComprobantePdf(venta, items, {
+    ...fiscalBase,
+    simulado: true,
+    validez: "SIMULADA",
+  });
   const texto = textoDelPdf(doc);
 
   // Que nadie confunda un CAE de mock con uno real, ni en pantalla ni en papel.
   it("lo dice en la cara", () => {
-    expect(texto).toContain("SIMULADO");
+    expect(texto).toContain("SIN VALIDEZ FISCAL — COMPROBANTE SIMULADO");
+  });
+});
+
+describe("comprobante de homologación", () => {
+  it("queda marcado inequívocamente como no legal", () => {
+    const { doc } = generarComprobantePdf(venta, items, {
+      ...fiscalBase,
+      modo: "HOMOLOGACION",
+      validez: "HOMOLOGACION",
+    });
+
+    expect(textoDelPdf(doc)).toContain("SIN VALIDEZ FISCAL — HOMOLOGACIÓN");
+  });
+});
+
+describe("defensas del renderer fiscal", () => {
+  it("un CAE sin QR falla cerrado y nunca imprime como autorizado", () => {
+    expect(() =>
+      generarComprobantePdf(venta, items, { ...fiscalBase, qr: undefined }),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "ErrorImpresionFiscal",
+        codigo: "QR_FISCAL_OBLIGATORIO",
+      }),
+    );
+    expect(ErrorImpresionFiscal).toBeDefined();
+  });
+
+  it("v2 nunca cae al nombre vivo de la sucursal si el emisor congelado está corrupto", () => {
+    expect(() =>
+      generarComprobantePdf({ ...venta, sucursal: { nombre: "SUCURSAL VIVA PROHIBIDA" } }, items, {
+        ...fiscalBase,
+        emisor: { ...fiscalBase.emisor, razon_social: null },
+      }),
+    ).toThrowError(expect.objectContaining({ codigo: "SNAPSHOT_FISCAL_INVALIDO" }));
+  });
+
+  it("la rama legacy muestra su advertencia imborrable", () => {
+    const { doc } = generarComprobantePdf(venta, items, {
+      ...fiscalBase,
+      origen: "LEGACY_INCOMPLETO",
+      advertencia: "HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS",
+    });
+
+    expect(textoDelPdf(doc)).toContain("HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS");
   });
 });
 

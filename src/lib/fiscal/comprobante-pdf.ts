@@ -11,6 +11,20 @@ import {
   TIPOS_C,
   type CondicionIva,
 } from "./codigos";
+import {
+  ErrorImpresionFiscal,
+  LEYENDA_CREDITO_FISCAL_MONOTRIBUTO,
+  type DatosFiscalesPreparados,
+  type ItemComprobante,
+} from "./impresion";
+
+export type {
+  DatosFiscalesImpresos,
+  DatosFiscalesImpresosLegacy,
+  EmisorImpreso,
+  ItemComprobante,
+  ReceptorImpreso,
+} from "./impresion";
 
 /**
  * El comprobante impreso.
@@ -33,60 +47,6 @@ import {
  *      el papel de una NC va en positivo: es lo que se le declaró a AFIP y lo que
  *      espera ver cualquiera que la lea.
  */
-
-export interface ItemComprobante {
-  codigo?: string | null;
-  descripcion?: string | null;
-  cantidad: number | string;
-  precio_unitario_sin_iva: number | string;
-  descuento_porcentaje?: number | string | null;
-  iva_porcentaje?: number | string | null;
-  subtotal_con_iva: number | string;
-}
-
-export interface EmisorImpreso {
-  razon_social?: string | null;
-  nombre_fantasia?: string | null;
-  cuit?: string | null;
-  domicilio_fiscal?: string | null;
-  condicion_iva?: CondicionIva | null;
-  ingresos_brutos?: string | null;
-  inicio_actividades?: string | null;
-}
-
-export interface ReceptorImpreso {
-  razon_social?: string | null;
-  cuit_dni?: string | null;
-  doc_tipo?: number | null;
-  condicion_iva?: CondicionIva | null;
-  domicilio?: string | null;
-}
-
-export interface DatosFiscalesImpresos {
-  emisor: EmisorImpreso | null;
-  receptor: ReceptorImpreso;
-  condicion_venta?: string | null;
-  totales?: {
-    neto: number;
-    iva: number;
-    tributos: number;
-    total: number;
-    alicuotas: Array<{ Id: number; BaseImp: number; Importe: number }>;
-  } | null;
-  /** Las líneas tal como se declararon a AFIP. Si están, mandan sobre venta_items. */
-  lineas?: ItemComprobante[] | null;
-  /** La fecha congelada que se le declaró a AFIP. */
-  fecha?: string | null;
-  cae: string;
-  cae_vencimiento?: string | null;
-  punto_venta: number;
-  numero: number;
-  cbte_tipo: number;
-  modo?: string | null;
-  simulado?: boolean;
-  sin_snapshot?: boolean;
-  qr?: string | null;
-}
 
 export interface VentaImpresa {
   numero_comprobante?: string | null;
@@ -148,8 +108,28 @@ const condicionVentaLabel = (c: string | null | undefined) =>
 export function generarComprobantePdf(
   venta: VentaImpresa,
   items: ItemComprobante[],
-  fiscal: DatosFiscalesImpresos | null,
+  fiscal: DatosFiscalesPreparados | null,
 ): { doc: jsPDF; nombre: string } {
+  if (fiscal?.cae && !fiscal.qr) {
+    throw new ErrorImpresionFiscal(
+      "QR_FISCAL_OBLIGATORIO",
+      "El comprobante tiene CAE pero no tiene el QR fiscal obligatorio.",
+    );
+  }
+  if (fiscal?.origen === "SNAPSHOT_V2") {
+    if (
+      !fiscal.emisor ||
+      typeof fiscal.emisor.razon_social !== "string" ||
+      fiscal.emisor.razon_social.trim() === "" ||
+      !fiscal.totales ||
+      !fiscal.lineas
+    ) {
+      throw new ErrorImpresionFiscal(
+        "SNAPSHOT_FISCAL_INVALIDO",
+        "El modelo de impresión v2 está incompleto.",
+      );
+    }
+  }
   const doc = new jsPDF();
   const esC = fiscal ? TIPOS_C.has(fiscal.cbte_tipo) : false;
   const info = fiscal ? CBTE_INFO[fiscal.cbte_tipo] : null;
@@ -157,7 +137,12 @@ export function generarComprobantePdf(
 
   // Las líneas congeladas al emitir ganan sobre las de la base: una reimpresión
   // tiene que salir idéntica al original entregado.
-  const lineas = fiscal?.lineas?.length ? fiscal.lineas : items;
+  const lineas =
+    fiscal?.origen === "SNAPSHOT_V2"
+      ? fiscal.lineas
+      : fiscal?.lineas?.length
+        ? fiscal.lineas
+        : items;
 
   /**
    * Reserva `alto` mm antes de dibujar un bloque. autoTable pagina la tabla sola,
@@ -198,12 +183,16 @@ export function generarComprobantePdf(
   }
 
   const em = fiscal?.emisor ?? null;
+  const razonSocialEmisor =
+    fiscal?.origen === "SNAPSHOT_V2"
+      ? fiscal.emisor.razon_social!
+      : (em?.razon_social ?? venta.sucursal?.nombre ?? "Comprobante");
 
   // --- Emisor (columna izquierda)
   let y = yBox + 6;
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
-  doc.text(em?.razon_social ?? venta.sucursal?.nombre ?? "Comprobante", MARGEN + 3, y, {
+  doc.text(razonSocialEmisor, MARGEN + 3, y, {
     maxWidth: MEDIO - MARGEN - 14,
   });
   doc.setFont("helvetica", "normal");
@@ -252,7 +241,11 @@ export function generarComprobantePdf(
   yd += 6;
   doc.text(`N°: ${numeroMostrar}`, X_DERECHA, yd);
   yd += 4;
-  doc.text(`Fecha de emisión: ${fmtDateTime(venta.fecha)}`, X_DERECHA, yd);
+  doc.text(
+    `Fecha de emisión: ${fiscal ? fmtFechaSola(fiscal.fecha) : fmtDateTime(venta.fecha)}`,
+    X_DERECHA,
+    yd,
+  );
   yd += 4;
   if (fiscal) {
     doc.text(`Punto de venta: ${String(fiscal.punto_venta).padStart(5, "0")}`, X_DERECHA, yd);
@@ -272,8 +265,10 @@ export function generarComprobantePdf(
   const yRec = yBox + hBox + 5;
   doc.rect(MARGEN, yRec, DERECHA - MARGEN, 20);
   const rec = fiscal?.receptor;
-  const nombreRec = rec?.razon_social ?? venta.cliente?.razon_social ?? "Consumidor Final";
-  const docRec = rec?.cuit_dni ?? venta.cliente?.cuit_dni ?? null;
+  const nombreRec = fiscal
+    ? (rec?.razon_social ?? "Receptor fiscal no informado")
+    : (venta.cliente?.razon_social ?? "Consumidor Final");
+  const docRec = fiscal ? (rec?.cuit_dni ?? null) : (venta.cliente?.cuit_dni ?? null);
   const etiqueta = etiquetaDoc(rec?.doc_tipo);
 
   doc.setFontSize(7.5);
@@ -291,7 +286,7 @@ export function generarComprobantePdf(
     MARGEN + 3,
     yr,
   );
-  const condVenta = condicionVentaLabel(fiscal?.condicion_venta ?? venta.condicion_venta);
+  const condVenta = condicionVentaLabel(fiscal ? fiscal.condicion_venta : venta.condicion_venta);
   if (condVenta) doc.text(`Condición de venta: ${condVenta}`, X_DERECHA, yr);
   yr += 4.5;
   if (rec?.domicilio) doc.text(`Domicilio: ${rec.domicilio}`, MARGEN + 3, yr, { maxWidth: 170 });
@@ -365,14 +360,78 @@ export function generarComprobantePdf(
   linea("TOTAL", money(t?.total ?? venta.total), true);
   doc.setFontSize(8);
 
+  // ----------------------------------------------------------- leyendas a reservar
+  // Se calculan antes del bloque CAE porque ambos forman un único pie fiscal.
+  // Si no entran juntos, pasan juntos a la página siguiente: nunca dejamos dos
+  // renglones obligatorios huérfanos en una hoja casi vacía.
+  const leyendas: string[] = [];
+  if (
+    fiscal &&
+    [1, 2, 3].includes(fiscal.cbte_tipo) &&
+    fiscal.receptor.condicion_iva === "MONOTRIBUTO"
+  ) {
+    leyendas.push(LEYENDA_CREDITO_FISCAL_MONOTRIBUTO);
+  }
+  if (
+    fiscal &&
+    requiereLeyendaTransparencia(fiscal.cbte_tipo, fiscal.receptor?.condicion_iva ?? null)
+  ) {
+    if (
+      fiscal.origen === "SNAPSHOT_V2" &&
+      (fiscal.iva_contenido == null || fiscal.otros_impuestos_nacionales_indirectos == null)
+    ) {
+      throw new ErrorImpresionFiscal(
+        "SNAPSHOT_FISCAL_INVALIDO",
+        "El snapshot no contiene los importes de transparencia fiscal.",
+      );
+    }
+    leyendas.push("Régimen de Transparencia Fiscal al Consumidor (Ley N° 27.743)");
+    leyendas.push(`IVA Contenido: ${money(fiscal.iva_contenido)}`);
+    leyendas.push(
+      `Otros Impuestos Nacionales Indirectos: ${money(
+        fiscal.otros_impuestos_nacionales_indirectos,
+      )}`,
+    );
+  }
+  const marcaSinValidez =
+    fiscal?.validez === "SIMULADA"
+      ? "SIN VALIDEZ FISCAL — COMPROBANTE SIMULADO"
+      : fiscal?.validez === "HOMOLOGACION"
+        ? "SIN VALIDEZ FISCAL — HOMOLOGACIÓN"
+        : null;
+  if (marcaSinValidez) {
+    leyendas.push(marcaSinValidez);
+  }
+  if (fiscal?.origen === "LEGACY_INCOMPLETO") {
+    leyendas.push(fiscal.advertencia);
+  }
+  if (!fiscal) {
+    leyendas.push("Documento interno — no es un comprobante fiscal y no se declaró a AFIP.");
+  }
+
+  doc.setFontSize(7);
+  const leyendasPartidas = leyendas.map((leyenda) =>
+    doc.splitTextToSize(leyenda, DERECHA - MARGEN),
+  );
+  const altoLeyendas = leyendasPartidas.reduce(
+    (total, lineasLeyenda) => total + lineasLeyenda.length * 3.4 + 1.5,
+    0,
+  );
+  doc.setFontSize(8);
+
   // ------------------------------------------------------------------ CAE / QR
   if (fiscal?.cae) {
-    // El bloque mide 28mm de QR. Es el que NO puede faltar en el papel.
-    yt = asegurarEspacio(yt + 4, 30);
-    if (fiscal.qr) doc.addImage(fiscal.qr, "PNG", MARGEN, yt, 28, 28);
+    // El bloque mide 28mm de QR. Se reserva junto con sus leyendas para que el
+    // pie fiscal sea una unidad visual y ninguna obligación quede huérfana.
+    yt = asegurarEspacio(yt + 4, 30 + (leyendasPartidas.length ? 2 + altoLeyendas : 0));
+    doc.addImage(fiscal.qr!, "PNG", MARGEN, yt, 28, 28);
     const xc = MARGEN + 32;
     doc.setFont("helvetica", "bold");
-    doc.text("Comprobante Autorizado", xc, yt + 5);
+    doc.text(
+      fiscal.validez === "PRODUCCION" ? "Comprobante Autorizado" : "Comprobante de prueba",
+      xc,
+      yt + 5,
+    );
     doc.setFont("helvetica", "normal");
     doc.text(`CAE N°: ${fiscal.cae}`, xc, yt + 10);
     doc.text(`Vto. CAE: ${fmtFechaSola(fiscal.cae_vencimiento)}`, xc, yt + 15);
@@ -380,39 +439,11 @@ export function generarComprobantePdf(
   }
 
   // ------------------------------------------------------------------ leyendas
-  const leyendas: string[] = [];
-  if (
-    fiscal &&
-    requiereLeyendaTransparencia(fiscal.cbte_tipo, fiscal.receptor?.condicion_iva ?? null)
-  ) {
-    const ivaContenido = abs(fiscal.totales?.iva ?? venta.iva_total);
-    leyendas.push(
-      `Régimen de Transparencia Fiscal al Consumidor (Ley 27.743). IVA contenido: ${fmtMoney(ivaContenido)}.`,
-    );
-  }
-  if (fiscal?.simulado) {
-    leyendas.push(
-      "COMPROBANTE SIMULADO — generado en modo de prueba, no se declaró a AFIP y no tiene validez legal.",
-    );
-  } else if (fiscal?.modo === "HOMOLOGACION") {
-    leyendas.push("Comprobante emitido en homologación (prueba) — sin validez fiscal.");
-  }
-  if (fiscal?.sin_snapshot) {
-    leyendas.push(
-      "Reimpresión: este comprobante se emitió antes de que se guardaran los datos fiscales congelados, " +
-        "así que el encabezado refleja los datos actuales del emisor y del cliente.",
-    );
-  }
-  if (!fiscal) {
-    leyendas.push("Documento interno — no es un comprobante fiscal y no se declaró a AFIP.");
-  }
-
-  if (leyendas.length) {
+  if (leyendasPartidas.length) {
     yt += 2;
     doc.setFontSize(7);
     doc.setTextColor(90);
-    for (const l of leyendas) {
-      const partido = doc.splitTextToSize(l, DERECHA - MARGEN);
+    for (const partido of leyendasPartidas) {
       // Cada leyenda se mide antes de escribirla: la de Transparencia Fiscal es
       // obligatoria y cortarla al pie de la hoja no es una opción.
       yt = asegurarEspacio(yt, partido.length * 3.4 + 1.5);
@@ -420,6 +451,22 @@ export function generarComprobantePdf(
       yt += partido.length * 3.4 + 1.5;
     }
     doc.setTextColor(0);
+  }
+
+  // La marca de no validez se repite en todas las páginas y no queda relegada a
+  // una nota al pie que pueda confundirse con un comprobante legal.
+  if (marcaSinValidez) {
+    const paginaActual = doc.getCurrentPageInfo().pageNumber;
+    for (let pagina = 1; pagina <= doc.getNumberOfPages(); pagina += 1) {
+      doc.setPage(pagina);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(190, 0, 0);
+      doc.text(marcaSinValidez, ANCHO / 2, 10, { align: "center" });
+    }
+    doc.setPage(paginaActual);
+    doc.setTextColor(0);
+    doc.setFont("helvetica", "normal");
   }
 
   return { doc, nombre: `${numeroMostrar || "comprobante"}.pdf` };

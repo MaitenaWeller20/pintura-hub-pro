@@ -10,7 +10,13 @@ import {
   DialogoEmisionFiscal,
   type ContextoDialogoEmision,
 } from "@/components/fiscal/dialogo-emision-fiscal";
-import type { PreviewEmisionFiscal } from "@/components/fiscal/resumen-emision-fiscal";
+import {
+  parsePreviewEmisionFiscalAutoritativa,
+  parseRespuestaConfirmacionFiscal,
+  parseResultadoConciliacionFiscal,
+  parseResultadoLiberacionFiscal,
+  type ResultadoEmisionFiscalUi,
+} from "@/components/fiscal/dialogo-emision-contract";
 import { Button } from "@/components/ui/button";
 import {
   listarColaFiscal,
@@ -18,6 +24,7 @@ import {
   type ColaFiscalFila,
 } from "@/lib/fiscal/cola.functions";
 import {
+  accionesColaHabilitadas,
   actualizarBusquedaCola,
   cerrarResultadoCola,
   debeRefrescarCola,
@@ -66,30 +73,6 @@ function esMantenimiento(value: unknown): value is { estado: "MANTENIMIENTO"; me
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   return row.estado === "MANTENIMIENTO" && typeof row.mensaje === "string";
-}
-
-function estadoResultado(value: unknown): string | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  return typeof (value as Record<string, unknown>).estado === "string"
-    ? ((value as Record<string, unknown>).estado as string)
-    : null;
-}
-
-function previewFiscal(value: unknown): PreviewEmisionFiscal {
-  if (esMantenimiento(value)) throw new Error(value.mensaje);
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("ARCA no devolvió una previsualización fiscal válida.");
-  }
-  const row = value as Record<string, unknown>;
-  if (
-    typeof row.huella_confirmacion !== "string" ||
-    typeof row.total !== "string" ||
-    typeof row.receptor !== "object" ||
-    row.receptor === null
-  ) {
-    throw new Error("La previsualización fiscal está incompleta.");
-  }
-  return value as PreviewEmisionFiscal;
 }
 
 function receptorHeredado(row: ColaFiscalFila): ReceptorHeredadoVista | null {
@@ -159,11 +142,10 @@ function accionFila(row: ColaFiscalFila, esAdmin: boolean): string {
   }
 }
 
-function resultadoDespuesDeEmitir(value: unknown): ResultadoColaFiscal | null {
-  const estado = estadoResultado(value);
-  if (estado === "APROBADO") return "factura_aprobada";
-  if (estado === "EN_CURSO") return "venta_creada_factura_pendiente";
-  if (estado === "RECONCILIAR" || estado === "BLOQUEADO") {
+function resultadoDespuesDeEmitir(value: ResultadoEmisionFiscalUi): ResultadoColaFiscal | null {
+  if (value.estado === "APROBADO") return "factura_aprobada";
+  if (value.estado === "EN_CURSO") return "venta_creada_factura_pendiente";
+  if (value.estado === "RECONCILIAR" || value.estado === "BLOQUEADO") {
     return "venta_creada_requiere_revision";
   }
   return null;
@@ -286,10 +268,16 @@ function ColaFiscalPage() {
   });
 
   const filas = cola.data?.filas ?? [];
+  const accionesHabilitadas = accionesColaHabilitadas({
+    isPlaceholderData: cola.isPlaceholderData,
+    isFetching: cola.isFetching,
+  });
   const filaResultado = search.venta
     ? filas.find((fila) => fila.venta_id === search.venta)
     : undefined;
-  const tabAutoritativo = resolverTabAutoritativo(search.tab, search.venta, filas);
+  const tabAutoritativo = accionesHabilitadas
+    ? resolverTabAutoritativo(search.tab, search.venta, filas)
+    : search.tab;
 
   useEffect(() => {
     if (tabAutoritativo === search.tab) return;
@@ -301,16 +289,17 @@ function ColaFiscalPage() {
 
   const accion = useMutation({
     mutationFn: async ({ row, nombre }: { row: ColaFiscalFila; nombre: string }) => {
-      let resultado: unknown;
       if (nombre === "Verificar con ARCA") {
-        resultado = await reconciliar({ data: { venta_id: row.venta_id } });
-      } else if (nombre === "Liberar claim verificado") {
-        resultado = await liberar({ data: { venta_id: row.venta_id } });
-      } else {
-        throw new Error("La acción fiscal seleccionada no está habilitada en esta tarea.");
+        const respuesta = await reconciliar({ data: { venta_id: row.venta_id } });
+        if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+        return parseResultadoConciliacionFiscal(respuesta);
       }
-      if (esMantenimiento(resultado)) throw new Error(resultado.mensaje);
-      return resultado;
+      if (nombre === "Liberar claim verificado") {
+        const respuesta = await liberar({ data: { venta_id: row.venta_id } });
+        if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+        return parseResultadoLiberacionFiscal(respuesta);
+      }
+      throw new Error("La acción fiscal seleccionada no está habilitada en esta tarea.");
     },
     onMutate: () => {
       setErrorAccion(null);
@@ -321,7 +310,7 @@ function ColaFiscalPage() {
       setMensajeAccion(
         variables.nombre === "Liberar claim verificado"
           ? "El claim verificado fue liberado."
-          : estadoResultado(result) === "APROBADO"
+          : result.estado === "APROBADO"
             ? "ARCA confirmó y recuperó el comprobante."
             : "La verificación fiscal terminó; revisá el estado actualizado.",
       );
@@ -416,10 +405,12 @@ function ColaFiscalPage() {
         esAdmin={esAdmin}
         loading={cola.isLoading}
         updating={cola.isFetching && !cola.isLoading}
+        accionesHabilitadas={accionesHabilitadas}
         accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
         error={cola.error ? mensajeError(cola.error, "No se pudo cargar la cola fiscal.") : null}
         onRetry={() => void cola.refetch()}
         onAccion={(row, nombre) => {
+          if (!accionesHabilitadas) return;
           setErrorAccion(null);
           setMensajeAccion(null);
           if (nombre === "Facturar" || nombre === "Corregir/reintentar") {
@@ -441,7 +432,7 @@ function ColaFiscalPage() {
             type="button"
             variant="outline"
             className="min-h-11"
-            disabled={search.page <= 1 || cola.isLoading}
+            disabled={search.page <= 1 || cola.isLoading || !accionesHabilitadas}
             onClick={() => void cambiarSearch({ page: search.page - 1 })}
           >
             <ChevronLeft /> Anterior
@@ -450,7 +441,9 @@ function ColaFiscalPage() {
             type="button"
             variant="outline"
             className="min-h-11"
-            disabled={search.page >= (cola.data?.paginas ?? 0) || cola.isLoading}
+            disabled={
+              search.page >= (cola.data?.paginas ?? 0) || cola.isLoading || !accionesHabilitadas
+            }
             onClick={() => void cambiarSearch({ page: search.page + 1 })}
           >
             Siguiente <ChevronRight />
@@ -458,7 +451,7 @@ function ColaFiscalPage() {
         </div>
       </div>
 
-      {seleccionada ? (
+      {seleccionada && accionesHabilitadas ? (
         <DialogoEmisionFiscal
           open
           contexto={contextoDialogo(seleccionada)}
@@ -474,7 +467,10 @@ function ColaFiscalPage() {
                 venta_id: seleccionada.venta_id,
                 receptor,
               },
-            }).then(previewFiscal)
+            }).then((respuesta) => {
+              if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+              return parsePreviewEmisionFiscalAutoritativa(respuesta);
+            })
           }
           onConfirmar={async ({ receptor, confirmaVentaAntigua }) => {
             const resultado = await emitir({
@@ -485,15 +481,12 @@ function ColaFiscalPage() {
               },
             });
             if (esMantenimiento(resultado)) throw new Error(resultado.mensaje);
-            if (estadoResultado(resultado) === "ERROR_CORREGIBLE") {
-              const mensaje =
-                typeof resultado === "object" && resultado !== null && "mensaje" in resultado
-                  ? String(resultado.mensaje)
-                  : "La emisión requiere corregir datos antes de reintentar.";
+            const respuesta = parseRespuestaConfirmacionFiscal(resultado);
+            if (respuesta.estado === "ERROR_CORREGIBLE") {
               await queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
-              throw new Error(mensaje);
+              throw new Error(respuesta.mensaje);
             }
-            return resultado;
+            return respuesta;
           }}
           onCompletada={(resultado) => {
             const resultadoUrl = resultadoDespuesDeEmitir(resultado);

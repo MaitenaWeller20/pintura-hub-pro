@@ -8,6 +8,11 @@ import {
   type ContextoColaFiscal,
   type LecturasContextoColaFiscal,
 } from "./permiso.server";
+import {
+  cargarFlagsFacturacionDesdeSupabase,
+  decidirEscritorFiscal,
+  type FlagsFacturacion,
+} from "./feature.server";
 
 const tabs = ["pendientes", "revisar", "emitidas", "historial"] as const;
 const estadosCola = [
@@ -206,12 +211,20 @@ export type ReceptorFiscalFavorito = z.infer<typeof favoritoSchema>;
 type ContextoAutorizado = ContextoColaFiscal;
 
 export type DependenciasColaFiscal = {
+  cargarFlags(): Promise<FlagsFacturacion>;
   autorizar(userId: string): Promise<ContextoAutorizado>;
   consultarCola(args: ColaFiscalRpcArgs): Promise<unknown>;
   listarFavoritos(args: { sucursalId: string | null }): Promise<unknown>;
   guardarFavoritoDesdeVenta(ventaId: string): Promise<unknown>;
   desactivarFavorito(id: string): Promise<void>;
 };
+
+async function exigirRolloutV2(deps: DependenciasColaFiscal): Promise<void> {
+  const escritor = decidirEscritorFiscal(await deps.cargarFlags(), "V2");
+  if (escritor !== "V2") {
+    throw new Error("La cola fiscal v2 no está habilitada de forma exclusiva.");
+  }
+}
 
 function proyeccionSegura<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
@@ -225,6 +238,7 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
   return {
     async listarColaFiscal(userId: string, rawInput: unknown) {
       const input = colaFiscalQuerySchema.parse(rawInput);
+      await exigirRolloutV2(deps);
       const contexto = await deps.autorizar(userId);
       const sucursalId = contexto.esAdmin ? input.sucursal_id : (contexto.sucursalId ?? undefined);
       const respuesta = proyeccionSegura(
@@ -261,6 +275,7 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
 
     async listarReceptoresFiscales(userId: string, rawInput: unknown) {
       const input = listarFavoritosInputSchema.parse(rawInput);
+      await exigirRolloutV2(deps);
       const contexto = await deps.autorizar(userId);
       const sucursalId = contexto.esAdmin ? (input.sucursal_id ?? null) : contexto.sucursalId;
       return proyeccionSegura(favoritosSchema, await deps.listarFavoritos({ sucursalId }));
@@ -268,12 +283,14 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
 
     async guardarReceptorFiscal(userId: string, rawInput: unknown) {
       const input = guardarFavoritoInputSchema.parse(rawInput);
+      await exigirRolloutV2(deps);
       await deps.autorizar(userId);
       return proyeccionSegura(favoritoSchema, await deps.guardarFavoritoDesdeVenta(input.venta_id));
     },
 
     async desactivarReceptorFiscal(userId: string, rawInput: unknown) {
       const input = desactivarFavoritoInputSchema.parse(rawInput);
+      await exigirRolloutV2(deps);
       await deps.autorizar(userId);
       await deps.desactivarFavorito(input.receptor_id);
     },
@@ -331,6 +348,7 @@ function dependenciasSupabase(supabase: SupabaseClient<Database>): DependenciasC
     "id,sucursal_id,cliente_comercial_id,tipo_documento,numero_documento,razon_social,condicion_iva,domicilio";
 
   return {
+    cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(supabase as never),
     autorizar: (userId) =>
       autorizarContextoColaFiscal({ userId, lecturas: lecturasContexto(supabase) }),
     async consultarCola(args) {

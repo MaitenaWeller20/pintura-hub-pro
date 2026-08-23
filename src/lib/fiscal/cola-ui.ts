@@ -140,6 +140,14 @@ export function debeRefrescarCola(
   return filas.some((fila) => fila.afip_estado === "EMITIENDO" && !fila.claim_vencido);
 }
 
+/** `isFetching` también cubre polling; sólo placeholder significa datos de otra clave. */
+export function accionesColaHabilitadas(input: {
+  isPlaceholderData: boolean;
+  isFetching: boolean;
+}): boolean {
+  return !input.isPlaceholderData;
+}
+
 export function presentarResultadoCola(
   resultado: ResultadoColaFiscal,
   requiereAdministrador: boolean,

@@ -1,27 +1,9 @@
 import { AlertTriangle, ArrowDown, ReceiptText } from "lucide-react";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
-import type { ReceptorFiscalConfirmado } from "@/lib/fiscal/receptor";
+import type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
 
-export type PreviewEmisionFiscal = {
-  venta_id?: string;
-  fecha_comercial: string;
-  fecha_fiscal: string;
-  total: string;
-  pagado: string;
-  saldo: string;
-  receptor: ReceptorFiscalConfirmado;
-  letra: "A" | "B" | "C";
-  razon_letra: string;
-  emisor_cuit: string;
-  punto_venta: number;
-  modo: "PRODUCCION" | "HOMOLOGACION";
-  cbte_tipo: number;
-  demora_dias: number;
-  advertencia_demora: string | null;
-  confirmacion_factura_a_permitida: boolean;
-  huella_confirmacion: string;
-};
+export type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
 
 function fechaArgentina(value: string): string {
   const [year, month, day] = value.slice(0, 10).split("-");

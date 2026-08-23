@@ -64,6 +64,7 @@ export function ColaFiscalTabla({
   esAdmin,
   loading,
   updating,
+  accionesHabilitadas,
   accionPendienteId,
   error,
   onRetry,
@@ -73,6 +74,7 @@ export function ColaFiscalTabla({
   esAdmin: boolean;
   loading: boolean;
   updating: boolean;
+  accionesHabilitadas: boolean;
   accionPendienteId?: string | null;
   error?: string | null;
   onRetry(): void;
@@ -81,6 +83,7 @@ export function ColaFiscalTabla({
   return (
     <section
       aria-labelledby="cola-tabla-titulo"
+      aria-busy={!accionesHabilitadas || updating}
       className="rounded-xl border border-border bg-card shadow-card"
     >
       <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border px-4 py-2">
@@ -213,7 +216,7 @@ export function ColaFiscalTabla({
                         size="sm"
                         variant={accion === "Facturar" ? "default" : "outline"}
                         className="min-h-11"
-                        disabled={!accionable || accionPendienteId != null}
+                        disabled={!accionesHabilitadas || !accionable || accionPendienteId != null}
                         onClick={() => onAccion(row, accion)}
                       >
                         {procesando || ejecutandoAccion ? (

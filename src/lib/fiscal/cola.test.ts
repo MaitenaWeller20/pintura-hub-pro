@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- los dobles aíslan únicamente el borde Supabase */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   colaFiscalQuerySchema,
   crearServicioColaFiscal,
   type ColaFiscalRpcArgs,
 } from "./cola.functions";
+import { leerFlagsFacturacion } from "./feature.server";
 import { crearSnapshotFiscalV2 } from "./snapshot";
 
 const UUID = {
@@ -73,6 +74,132 @@ function rpcPage(filas: unknown[] = [safeRow]) {
   ];
 }
 
+const FLAGS_V2 = [
+  {
+    id: true,
+    facturacion_receptor_v2_enabled: true,
+    facturacion_legacy_writer_enabled: false,
+  },
+];
+
+describe("rollout autoritativo de la cola fiscal", () => {
+  const flagsInvalidos = [
+    ["fila ausente", []],
+    [
+      "tipo inválido",
+      [
+        {
+          id: true,
+          facturacion_receptor_v2_enabled: "true",
+          facturacion_legacy_writer_enabled: false,
+        },
+      ],
+    ],
+    [
+      "ambos escritores activos",
+      [
+        {
+          id: true,
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: true,
+        },
+      ],
+    ],
+    [
+      "sólo legacy",
+      [
+        {
+          id: true,
+          facturacion_receptor_v2_enabled: false,
+          facturacion_legacy_writer_enabled: true,
+        },
+      ],
+    ],
+    [
+      "mantenimiento",
+      [
+        {
+          id: true,
+          facturacion_receptor_v2_enabled: false,
+          facturacion_legacy_writer_enabled: false,
+        },
+      ],
+    ],
+  ] as const;
+
+  const operaciones = [
+    {
+      nombre: "listar cola",
+      ejecutar: (servicio: ReturnType<typeof crearServicioColaFiscal>) =>
+        servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    },
+    {
+      nombre: "listar favoritos",
+      ejecutar: (servicio: ReturnType<typeof crearServicioColaFiscal>) =>
+        servicio.listarReceptoresFiscales(UUID.user, {}),
+    },
+    {
+      nombre: "guardar favorito",
+      ejecutar: (servicio: ReturnType<typeof crearServicioColaFiscal>) =>
+        servicio.guardarReceptorFiscal(UUID.user, { venta_id: UUID.sale }),
+    },
+    {
+      nombre: "desactivar favorito",
+      ejecutar: (servicio: ReturnType<typeof crearServicioColaFiscal>) =>
+        servicio.desactivarReceptorFiscal(UUID.user, { receptor_id: UUID.favorite }),
+    },
+  ] as const;
+
+  const casosRollout = operaciones.flatMap((operacion) =>
+    flagsInvalidos.map(([configuracion, rawFlags]) => ({ operacion, configuracion, rawFlags })),
+  );
+
+  it.each(casosRollout)(
+    "$operacion.nombre rechaza $configuracion antes de consultar o mutar datos",
+    async ({ operacion, rawFlags }) => {
+      const autorizar = vi.fn(async () => ({
+        userId: UUID.user,
+        esAdmin: true,
+        sucursalId: null,
+      }));
+      const consultarCola = vi.fn(async () => rpcPage());
+      const listarFavoritos = vi.fn(async () => []);
+      const guardarFavoritoDesdeVenta = vi.fn(async () => safeRow);
+      const desactivarFavorito = vi.fn(async () => undefined);
+      const servicio = crearServicioColaFiscal({
+        cargarFlags: () => leerFlagsFacturacion(async () => rawFlags),
+        autorizar,
+        consultarCola,
+        listarFavoritos,
+        guardarFavoritoDesdeVenta,
+        desactivarFavorito,
+      } as never);
+
+      await expect(operacion.ejecutar(servicio)).rejects.toThrow();
+      expect(autorizar).not.toHaveBeenCalled();
+      expect(consultarCola).not.toHaveBeenCalled();
+      expect(listarFavoritos).not.toHaveBeenCalled();
+      expect(guardarFavoritoDesdeVenta).not.toHaveBeenCalled();
+      expect(desactivarFavorito).not.toHaveBeenCalled();
+    },
+  );
+
+  it("permite operar únicamente con v2 activo y legacy apagado", async () => {
+    const consultarCola = vi.fn(async () => rpcPage());
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola,
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => safeRow,
+      desactivarFavorito: async () => undefined,
+    } as never);
+
+    await servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 });
+    expect(consultarCola).toHaveBeenCalledOnce();
+  });
+});
+
 describe("contrato de consulta de la cola fiscal", () => {
   it.each([
     [{ tab: "pendientes", page: 1, pageSize: 101 }, /100/],
@@ -87,6 +214,7 @@ describe("contrato de consulta de la cola fiscal", () => {
   it("fuerza la sucursal activa del empleado y delega página/conteos a una sola RPC", async () => {
     const recibidos: ColaFiscalRpcArgs[] = [];
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
       consultarCola: async (args) => {
         recibidos.push(args);
@@ -131,6 +259,7 @@ describe("contrato de consulta de la cola fiscal", () => {
   it("permite al admin filtrar cualquier sucursal y conserva búsqueda exacta antigua", async () => {
     let recibidos: ColaFiscalRpcArgs | null = null;
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
       consultarCola: async (args) => {
         recibidos = args;
@@ -172,6 +301,7 @@ describe("contrato de consulta de la cola fiscal", () => {
 
   it("rechaza cualquier campo secreto agregado por error a la proyección RPC", async () => {
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
       consultarCola: async () => rpcPage([{ ...safeRow, afip_snapshot_hash: "no-debe-salir" }]),
       listarFavoritos: async () => [],
@@ -193,6 +323,7 @@ describe("contrato de consulta de la cola fiscal", () => {
       factura_a_evidencia: "secreto",
     } as any;
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
       consultarCola: async () => respuesta,
       listarFavoritos: async () => [],
@@ -211,6 +342,7 @@ describe("contrato de consulta de la cola fiscal", () => {
 describe("favoritos fiscales user-bound", () => {
   it("lista sólo la proyección reutilizable activa en una consulta", async () => {
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
       consultarCola: async () => rpcPage(),
       listarFavoritos: async ({ sucursalId }) => [
@@ -248,6 +380,7 @@ describe("favoritos fiscales user-bound", () => {
   it("guarda por una única RPC autoritativa y sólo envía el UUID de la venta", async () => {
     const ventas: string[] = [];
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
       consultarCola: async () => rpcPage(),
       listarFavoritos: async () => [],
@@ -276,6 +409,7 @@ describe("favoritos fiscales user-bound", () => {
   it("desactiva por UUID estricto y deja la idempotencia a la RPC autorizada", async () => {
     const desactivados: string[] = [];
     const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
       autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
       consultarCola: async () => rpcPage(),
       listarFavoritos: async () => [],

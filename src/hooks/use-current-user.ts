@@ -35,6 +35,21 @@ export interface ProfileWithRole {
   facturacionLegacyHabilitada: boolean;
 }
 
+/** Prioridad canónica: cualquier asignación admin domina, sin depender del orden de PostgREST. */
+export function resolverRolEfectivo(
+  roles: readonly unknown[] | null | undefined,
+): "admin" | "empleado" | null {
+  if (!Array.isArray(roles)) return null;
+  let esEmpleado = false;
+  for (const value of roles) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const role = (value as Record<string, unknown>).role;
+    if (role === "admin") return "admin";
+    if (role === "empleado") esEmpleado = true;
+  }
+  return esEmpleado ? "empleado" : null;
+}
+
 export function resolverEstadoFiscalUsuario(input: {
   isAdmin: boolean;
   puedeFacturarPerfil: boolean;
@@ -57,6 +72,24 @@ export function resolverEstadoFiscalUsuario(input: {
   };
 }
 
+export function resolverAccesoFiscalUsuario(input: {
+  roles: readonly unknown[] | null | undefined;
+  puedeFacturarPerfil: boolean;
+  settings: unknown;
+}) {
+  const role = resolverRolEfectivo(input.roles);
+  const isAdmin = role === "admin";
+  return {
+    role,
+    isAdmin,
+    ...resolverEstadoFiscalUsuario({
+      isAdmin,
+      puedeFacturarPerfil: input.puedeFacturarPerfil,
+      settings: input.settings,
+    }),
+  };
+}
+
 /** Lectura corta para `beforeLoad`; ante flags inválidos la cola falla cerrado. */
 export async function cargarAccesoFiscalActual() {
   const { data: auth, error: authError } = await supabase.auth.getUser();
@@ -70,15 +103,14 @@ export async function cargarAccesoFiscalActual() {
         .select("id,facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
         .eq("id", true),
     ]);
-  const isAdmin = roles?.some((row) => row.role === "admin") ?? false;
+  const acceso = resolverAccesoFiscalUsuario({
+    roles,
+    puedeFacturarPerfil: profile?.puede_facturar === true,
+    settings: settingsError ? [] : settings,
+  });
   return {
     user: auth.user,
-    isAdmin,
-    ...resolverEstadoFiscalUsuario({
-      isAdmin,
-      puedeFacturarPerfil: profile?.puede_facturar === true,
-      settings: settingsError ? [] : settings,
-    }),
+    ...acceso,
   };
 }
 
@@ -134,9 +166,8 @@ export function useCurrentUser() {
           .maybeSingle();
         sucursal = s ?? null;
       }
-      const role = (roles?.[0]?.role ?? null) as "admin" | "empleado" | null;
-      const fiscal = resolverEstadoFiscalUsuario({
-        isAdmin: role === "admin",
+      const fiscal = resolverAccesoFiscalUsuario({
+        roles,
         puedeFacturarPerfil: prof?.puede_facturar === true,
         settings: errorSettings ? [] : settings,
       });
@@ -153,9 +184,7 @@ export function useCurrentUser() {
           secciones: prof?.secciones ?? null,
           sucursal,
           sucursalesHabilitadas,
-          role,
-          isAdmin: role === "admin",
-          puedeVenderSinStock: role === "admin" || prof?.permite_venta_sin_stock === true,
+          puedeVenderSinStock: fiscal.isAdmin || prof?.permite_venta_sin_stock === true,
           ...fiscal,
         });
         setLoading(false);

@@ -19,10 +19,21 @@ import {
 import { ResumenEmisionFiscal, type PreviewEmisionFiscal } from "./resumen-emision-fiscal";
 import {
   cambiarReceptorConfirmacion,
+  crearControlSolicitudPreview,
   crearEstadoConfirmacionFiscal,
+  esSolicitudPreviewActual,
+  finalizarSolicitudPreview,
+  iniciarSolicitudPreview,
+  invalidarSolicitudPreview,
   registrarPreviewConfirmacion,
   registrarReconfirmacion,
 } from "./dialogo-emision-state";
+import {
+  despacharRespuestaConfirmacionFiscal,
+  parsePreviewEmisionFiscal,
+  type RespuestaReconfirmacion,
+  type ResultadoEmisionFiscalUi,
+} from "./dialogo-emision-contract";
 
 export type ContextoDialogoEmision = {
   comprador: { razonSocial: string; documento: string | null };
@@ -35,33 +46,6 @@ export type ContextoDialogoEmision = {
   tipoComprobante: string;
   receptorHeredado?: ReceptorHeredadoVista | null;
 };
-
-type RespuestaReconfirmacion = {
-  estado: "RECONFIRMACION_REQUERIDA";
-  mensaje: string;
-  huella_confirmacion: string;
-  confirmacion_autoritativa: {
-    importe: string;
-    emisorCuit: string;
-    puntoVenta: number;
-    modo: "PRODUCCION" | "HOMOLOGACION";
-    letra: "A" | "B" | "C";
-    cbteTipo: number;
-    fechaFiscal: string;
-    receptor: PreviewEmisionFiscal["receptor"];
-  };
-};
-
-function esReconfirmacion(value: unknown): value is RespuestaReconfirmacion {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  return (
-    row.estado === "RECONFIRMACION_REQUERIDA" &&
-    typeof row.huella_confirmacion === "string" &&
-    typeof row.confirmacion_autoritativa === "object" &&
-    row.confirmacion_autoritativa !== null
-  );
-}
 
 function selectorListo(
   value: ReceptorFormulario,
@@ -88,11 +72,28 @@ function previewReconfirmada(
   respuesta: RespuestaReconfirmacion,
 ): PreviewEmisionFiscal {
   const autoritativa = respuesta.confirmacion_autoritativa;
+  if (anterior.autoritativo) {
+    return {
+      ...anterior,
+      total: autoritativa.importe,
+      // La respuesta autoritativa sólo confirma el importe fiscal. No se deriva
+      // un saldo en el navegador: el servidor lo volverá a presentar al emitir.
+      saldo: anterior.saldo,
+      fecha_fiscal: autoritativa.fechaFiscal,
+      receptor: autoritativa.receptor,
+      letra: autoritativa.letra,
+      razon_letra: `La condición ${autoritativa.receptor.condicionIva} determina letra ${autoritativa.letra}.`,
+      emisor_cuit: autoritativa.emisorCuit,
+      punto_venta: autoritativa.puntoVenta,
+      modo: autoritativa.modo,
+      cbte_tipo: autoritativa.cbteTipo,
+      confirmacion_autoritativa: autoritativa,
+      huella_confirmacion: respuesta.huella_confirmacion,
+    };
+  }
   return {
     ...anterior,
     total: autoritativa.importe,
-    // La respuesta autoritativa sólo confirma el importe fiscal. No se deriva
-    // un saldo en el navegador: el servidor lo volverá a presentar al emitir.
     saldo: anterior.saldo,
     fecha_fiscal: autoritativa.fechaFiscal,
     receptor: autoritativa.receptor,
@@ -101,8 +102,15 @@ function previewReconfirmada(
     emisor_cuit: autoritativa.emisorCuit,
     punto_venta: autoritativa.puntoVenta,
     modo: autoritativa.modo,
-    cbte_tipo: autoritativa.cbteTipo,
     huella_confirmacion: respuesta.huella_confirmacion,
+    confirmacion_provisional: {
+      importe: autoritativa.importe,
+      emisor_cuit: autoritativa.emisorCuit,
+      punto_venta: autoritativa.puntoVenta,
+      modo: autoritativa.modo,
+      letra: autoritativa.letra,
+      receptor: autoritativa.receptor,
+    },
   };
 }
 
@@ -121,13 +129,13 @@ export function DialogoEmisionFiscal({
   favoritos: ReceptorFiscalFavorito[];
   returnFocusRef?: RefObject<HTMLElement | null>;
   onOpenChange(open: boolean): void;
-  onPrevisualizar(receptor: SelectorReceptorFiscal): Promise<PreviewEmisionFiscal>;
+  onPrevisualizar(receptor: SelectorReceptorFiscal): Promise<unknown>;
   onConfirmar(input: {
     receptor: SelectorReceptorFiscal;
     confirmaVentaAntigua: boolean;
     huellaConfirmacion: string;
   }): Promise<unknown>;
-  onCompletada?(result: unknown): void;
+  onCompletada?(result: ResultadoEmisionFiscalUi): void;
 }) {
   const esNota =
     contexto.tipoComprobante === "NOTA_CREDITO" || contexto.tipoComprobante === "NOTA_DEBITO";
@@ -142,7 +150,7 @@ export function DialogoEmisionFiscal({
   const [emitiendo, setEmitiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initialFocusRef = useRef<HTMLInputElement>(null);
-  const revisionRef = useRef(0);
+  const previewControlRef = useRef(crearControlSolicitudPreview());
   const emitiendoRef = useRef(false);
 
   const reiniciar = () => {
@@ -150,8 +158,9 @@ export function DialogoEmisionFiscal({
     setConfirmacion(crearEstadoConfirmacionFiscal());
     setPreview(null);
     setConfirmaVentaAntigua(false);
+    setPrevisualizando(false);
     setError(null);
-    revisionRef.current += 1;
+    invalidarSolicitudPreview(previewControlRef.current);
   };
 
   const cerrar = () => {
@@ -161,30 +170,37 @@ export function DialogoEmisionFiscal({
   };
 
   const cambiarReceptor = (siguiente: ReceptorFormulario) => {
-    revisionRef.current += 1;
+    invalidarSolicitudPreview(previewControlRef.current);
+    setPrevisualizando(false);
     setReceptor(siguiente);
-    setConfirmacion(cambiarReceptorConfirmacion(confirmacion));
+    setConfirmacion((actual) => cambiarReceptorConfirmacion(actual));
     setPreview(null);
     setConfirmaVentaAntigua(false);
     setError(null);
   };
 
   const preparar = async () => {
-    const revision = revisionRef.current;
+    const token = iniciarSolicitudPreview(previewControlRef.current);
+    if (token === null) return;
     setPrevisualizando(true);
     setError(null);
     try {
       const selector = selectorListo(receptor, confirmacion.confirmaDatosManuales);
-      const resultado = await onPrevisualizar(selector);
-      if (revision !== revisionRef.current) return;
+      const resultado = parsePreviewEmisionFiscal(await onPrevisualizar(selector));
+      if (!esSolicitudPreviewActual(previewControlRef.current, token)) return;
       setPreview(resultado);
-      setConfirmacion(registrarPreviewConfirmacion(confirmacion, resultado.huella_confirmacion));
+      setConfirmacion((actual) =>
+        registrarPreviewConfirmacion(actual, resultado.huella_confirmacion),
+      );
     } catch (cause) {
-      if (revision === revisionRef.current) {
+      if (esSolicitudPreviewActual(previewControlRef.current, token)) {
         setError(cause instanceof Error ? cause.message : "No se pudo revisar la emisión fiscal.");
       }
     } finally {
-      if (revision === revisionRef.current) setPrevisualizando(false);
+      if (esSolicitudPreviewActual(previewControlRef.current, token)) {
+        setPrevisualizando(false);
+      }
+      finalizarSolicitudPreview(previewControlRef.current, token);
     }
   };
 
@@ -195,21 +211,26 @@ export function DialogoEmisionFiscal({
     setError(null);
     try {
       const selector = selectorListo(receptor, confirmacion.confirmaDatosManuales);
-      const resultado = await onConfirmar({
+      const respuesta = await onConfirmar({
         receptor: selector,
         confirmaVentaAntigua,
         huellaConfirmacion: confirmacion.huellaConfirmacion,
       });
-      if (esReconfirmacion(resultado)) {
-        setPreview(previewReconfirmada(preview, resultado));
-        setConfirmacion(registrarReconfirmacion(confirmacion, resultado.huella_confirmacion));
-        setConfirmaVentaAntigua(false);
-        setError(resultado.mensaje);
-        return;
-      }
-      onCompletada?.(resultado);
-      reiniciar();
-      onOpenChange(false);
+      despacharRespuestaConfirmacionFiscal(respuesta, {
+        onReconfirmacion(resultado) {
+          setPreview(previewReconfirmada(preview, resultado));
+          setConfirmacion((actual) =>
+            registrarReconfirmacion(actual, resultado.huella_confirmacion),
+          );
+          setConfirmaVentaAntigua(false);
+          setError(resultado.mensaje);
+        },
+        onCompletada(resultado) {
+          onCompletada?.(resultado);
+          reiniciar();
+          onOpenChange(false);
+        },
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo emitir el comprobante.");
     } finally {

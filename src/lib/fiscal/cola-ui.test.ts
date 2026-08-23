@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   actualizarBusquedaCola,
+  accionesColaHabilitadas,
   cerrarResultadoCola,
   debeRefrescarCola,
   normalizarBusquedaCola,
@@ -274,6 +275,12 @@ describe("URL de la cola fiscal", () => {
 });
 
 describe("actualización y resultado autoritativos", () => {
+  it("inmoviliza placeholder de otra clave pero no un polling de la clave actual", () => {
+    expect(accionesColaHabilitadas({ isPlaceholderData: true, isFetching: true })).toBe(false);
+    expect(accionesColaHabilitadas({ isPlaceholderData: false, isFetching: true })).toBe(true);
+    expect(accionesColaHabilitadas({ isPlaceholderData: false, isFetching: false })).toBe(true);
+  });
+
   it("corrige una pestaña obsoleta sólo para la venta exacta devuelta por servidor", () => {
     expect(
       resolverTabAutoritativo("pendientes", VENTA, [{ venta_id: VENTA, tab: "revisar" }]),

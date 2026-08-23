@@ -209,6 +209,10 @@ class ToggleCasDouble {
         this.estado.authBloqueado = banDuration !== "none";
         return { error: null };
       },
+      leerAuthBloqueado: async () => ({
+        bloqueado: this.estado.authBloqueado,
+        error: null,
+      }),
       generarOperacionId: () => {
         const id = this.ids.shift();
         if (!id) throw new Error("Falta id de reconciliación en el doble");
@@ -512,6 +516,84 @@ describe("toggleUsuarioActivo", () => {
       perfilActivo: true,
       authBloqueado: false,
     });
+  });
+
+  it("relee el CAS tras timeouts finales y un retry supersedido repara Auth al deseo vigente", async () => {
+    const doble = new ToggleCasDouble();
+    doble.ids = [
+      OP_RECONCILIAR,
+      "10000000-0000-4000-8000-000000000006",
+    ];
+    doble.estado.perfilActivo = false;
+    doble.estado.activoDeseado = false;
+    doble.estado.authBloqueado = true;
+
+    let liberarAltaVieja!: () => void;
+    let avisarAltaVieja!: () => void;
+    const altaViejaEnAuth = new Promise<void>((resolve) => {
+      avisarAltaVieja = resolve;
+    });
+    const altaViejaPuedeEscribir = new Promise<void>((resolve) => {
+      liberarAltaVieja = resolve;
+    });
+    doble.antesDeAuth = async (banDuration) => {
+      if (banDuration === "none" && doble.authCalls.length === 1) {
+        avisarAltaVieja();
+        await altaViejaPuedeEscribir;
+      }
+    };
+
+    const operaciones = doble.operaciones();
+    const finalizarReal = operaciones.finalizar;
+    operaciones.finalizar = async (...args) => {
+      await finalizarReal(...args);
+      throw new Error("timeout posterior al COMMIT final");
+    };
+
+    const altaVieja = ejecutarToggleUsuarioActivo(
+      { user_id: EMPLEADO, activo: true, operacion_id: OP_ALTA },
+      operaciones,
+    );
+    await altaViejaEnAuth;
+
+    // La baja nueva escribe Auth y estabiliza el deseo opuesto, pero pierde las
+    // dos respuestas de finalizar. El estado DB ya está confirmado.
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+        operaciones,
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(doble.estado).toMatchObject({
+      activoDeseado: false,
+      pendiente: false,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+
+    // La escritura vieja aterriza después y también pierde ambas respuestas.
+    // Antes del fix dejaba DB=false estable pero Auth abierto.
+    liberarAltaVieja();
+    await expect(altaVieja).rejects.toThrow(/reemplazada.*estado más reciente/i);
+    expect(doble.estado).toMatchObject({
+      activoDeseado: false,
+      pendiente: false,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+
+    // Un retry histórico nunca puede confiar sólo en profile/desired: vuelve a
+    // imponer el bloqueo vigente antes de informar que fue supersedido.
+    doble.estado.authBloqueado = false;
+    operaciones.finalizar = finalizarReal;
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: true, operacion_id: OP_ALTA },
+        operaciones,
+      ),
+    ).rejects.toThrow(/reemplazada.*estado más reciente/i);
+    expect(doble.estado.authBloqueado).toBe(true);
+    expect(doble.authCalls.at(-1)).toBe("876000h");
   });
 
   it("agota el churn de versiones en estado fail-closed y exige reintento", async () => {

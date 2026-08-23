@@ -216,6 +216,9 @@ export type OperacionesToggleUsuario = {
     userId: string,
     banDuration: "none" | "876000h",
   ): Promise<{ error: ErrorOperacionUsuario }>;
+  leerAuthBloqueado(
+    userId: string,
+  ): Promise<{ bloqueado: boolean | null; error: ErrorOperacionUsuario }>;
   generarOperacionId(): string;
 };
 
@@ -319,77 +322,95 @@ export async function ejecutarToggleUsuarioActivo(
     );
   };
 
-  const iniciar = await rpcConReintento(
+  const leerAuthBloqueadoValidado = async (): Promise<boolean> => {
+    let ultimoError: unknown = null;
+    for (let intento = 0; intento < 2; intento += 1) {
+      try {
+        const { bloqueado, error } = await operaciones.leerAuthBloqueado(input.user_id);
+        if (!error && typeof bloqueado === "boolean") return bloqueado;
+        ultimoError = error;
+      } catch (error) {
+        ultimoError = error;
+      }
+    }
+    throw new Error(
+      mensajeErrorUsuario(ultimoError, "No se pudo verificar el bloqueo actual del usuario"),
+    );
+  };
+
+  let estado = await rpcConReintento(
     () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
     "No se pudo iniciar el cambio de acceso",
   );
-  if (iniciar.supersedida) {
-    // El cierre fail-safe usa una operación interna más nueva, pero preserva
-    // el desired más nuevo. Un retry con una clave anterior debe drenar esa
-    // reconciliación pendiente incluso si otro cambio invirtió la intención;
-    // después se informa superseded, sin afirmar que ganó el pedido viejo.
-    if (!iniciar.pendiente) {
-      if (iniciar.activoActual !== iniciar.activoDeseado) {
-        throw new Error("El acceso resuelto no coincide con la intención vigente");
-      }
-      if (iniciar.activoDeseado === input.activo) return { ok: true };
-      throw new Error(
-        "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
-      );
-    }
-  } else if (
-    iniciar.operacionId !== input.operacion_id ||
-    iniciar.activoDeseado !== input.activo
+  if (
+    !estado.supersedida &&
+    (estado.operacionId !== input.operacion_id || estado.activoDeseado !== input.activo)
   ) {
     throw new Error("La transición de acceso no coincide con la operación solicitada");
   }
-  if (!iniciar.pendiente) {
-    // Reintento posterior a una respuesta perdida: la misma operación ya quedó
-    // estable y no se vuelve a tocar Auth.
-    return { ok: true };
-  }
 
-  await actualizarAuthValidado(iniciar.activoDeseado ? "none" : "876000h");
-  let final = await rpcConReintento(
-    () => operaciones.finalizar(input.user_id, iniciar.version, iniciar.operacionId),
-    "No se pudo finalizar el cambio de acceso",
-  );
-  if (final.aplicada) {
-    if (final.activoDeseado === input.activo) return { ok: true };
-    throw new Error(
-      "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
-    );
-  }
+  // Estado DB y estado Auth forman un único protocolo aunque GoTrue sea una
+  // llamada externa. Toda respuesta estable se contrasta con Auth; si difiere,
+  // primero se reclama una versión CAS que vuelve a cerrar el perfil y recién
+  // después se repara Auth. Así un retry histórico tampoco confía sólo en
+  // `profiles.activo` ni puede dejar un usuario abierto con desired=false.
+  let escriturasAuth = 0;
+  for (let paso = 0; paso < 24 && escriturasAuth < 9; paso += 1) {
+    if (!estado.pendiente) {
+      if (estado.activoActual !== estado.activoDeseado) {
+        throw new Error("El acceso resuelto no coincide con la intención vigente");
+      }
+      const authBloqueado = await leerAuthBloqueadoValidado();
+      if (authBloqueado === !estado.activoDeseado) {
+        if (estado.activoDeseado === input.activo) return { ok: true };
+        throw new Error(
+          "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
+        );
+      }
 
-  // Ya se tocó Auth con una intención vieja. Reparar siempre la versión que
-  // devolvió el CAS, incluso cuando todavía está pendiente: el caller más
-  // nuevo puede estar pausado entre su escritura en GoTrue y el COMMIT DB.
-  // Cada escritura externa se confirma con version+operacion; si entretanto
-  // apareció una versión posterior, se repite con esa intención y nunca se
-  // vuelve a imponer el pedido original.
-  let reconciliada = false;
-  for (let intento = 0; intento < 8; intento += 1) {
-    if (!final.pendiente) {
       const reconciliacionId = operaciones.generarOperacionId();
-      final = await rpcConReintento(
-        () => operaciones.reclamarReconciliacion(input.user_id, final.version, reconciliacionId),
+      estado = await rpcConReintento(
+        () =>
+          operaciones.reclamarReconciliacion(
+            input.user_id,
+            estado.version,
+            reconciliacionId,
+          ),
         "No se pudo reconciliar el cambio de acceso más reciente",
       );
       continue;
     }
 
-    await actualizarAuthValidado(final.activoDeseado ? "none" : "876000h");
-    final = await rpcConReintento(
-      () => operaciones.finalizar(input.user_id, final.version, final.operacionId),
-      "No se pudo confirmar la reconciliación del acceso",
-    );
-    if (final.aplicada) {
-      reconciliada = true;
-      break;
+    const intentado = estado;
+    await actualizarAuthValidado(intentado.activoDeseado ? "none" : "876000h");
+    escriturasAuth += 1;
+    try {
+      estado = await rpcConReintento(
+        () =>
+          operaciones.finalizar(input.user_id, intentado.version, intentado.operacionId),
+        "No se pudo finalizar el cambio de acceso",
+      );
+    } catch (errorFinalizar) {
+      // `finalizar` pudo hacer COMMIT y perder ambas respuestas. Releer la RPC
+      // idempotente original devuelve el CAS vigente sin crear otra intención.
+      // Si sigue exactamente el mismo pending, el perfil ya está fail-closed y
+      // se conserva el error real. Si avanzó, el loop repara el desired actual.
+      const observado = await rpcConReintento(
+        () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
+        "No se pudo consultar el estado vigente después de finalizar",
+      );
+      if (
+        observado.pendiente &&
+        observado.version === intentado.version &&
+        observado.operacionId === intentado.operacionId
+      ) {
+        throw errorFinalizar;
+      }
+      estado = observado;
     }
   }
 
-  if (!reconciliada) {
+  {
     // Con churn sostenido no se adivina un ganador ni se espera para siempre.
     // La primitiva fail-safe toma el desired vigente bajo lock, crea una
     // reconciliación más nueva y deja profile=false/pending. El administrador
@@ -397,11 +418,11 @@ export async function ejecutarToggleUsuarioActivo(
     let cerrada = false;
     for (let intento = 0; intento < 3 && !cerrada; intento += 1) {
       const cierreId = operaciones.generarOperacionId();
-      final = await rpcConReintento(
+      estado = await rpcConReintento(
         () => operaciones.forzarCierreFailSafe(input.user_id, cierreId),
         "No se pudo cerrar el acceso después de cambios concurrentes",
       );
-      cerrada = final.forzada && final.pendiente && !final.activoActual;
+      cerrada = estado.forzada && estado.pendiente && !estado.activoActual;
     }
     if (!cerrada) {
       throw new Error(
@@ -412,11 +433,6 @@ export async function ejecutarToggleUsuarioActivo(
       "La operación fue reemplazada varias veces. El acceso quedó cerrado y pendiente; reintentá la misma acción para reconciliarlo.",
     );
   }
-
-  if (final.activoDeseado === input.activo) return { ok: true };
-  throw new Error(
-    "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
-  );
 }
 
 export const toggleUsuarioActivo = createServerFn({ method: "POST" })
@@ -469,6 +485,19 @@ export const toggleUsuarioActivo = createServerFn({ method: "POST" })
           ban_duration: banDuration,
         });
         return { error };
+      },
+      async leerAuthBloqueado(targetUserId) {
+        const { data, error } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+        const bannedUntil = data.user?.banned_until;
+        return {
+          bloqueado:
+            !error && typeof bannedUntil === "string"
+              ? Date.parse(bannedUntil) > Date.now()
+              : error
+                ? null
+                : false,
+          error,
+        };
       },
       generarOperacionId: () => crypto.randomUUID(),
     });

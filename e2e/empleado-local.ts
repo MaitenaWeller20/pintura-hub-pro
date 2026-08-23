@@ -1,3 +1,9 @@
+import {
+  exigirSesionesCajaPropiasSinReferencias,
+  type ReferenciasCajaFixture,
+  type SesionCajaFixture,
+} from "./fixtures/limpieza-caja";
+
 export const EMAIL_EMPLEADO_E2E = "empleado@local.test";
 export const EMAIL_ADMIN_E2E = "admin@local.test";
 const CODIGOS_SUCURSALES_E2E = ["OHIGGINS", "GENERALPAZ"] as const;
@@ -91,50 +97,55 @@ async function prepararUsuarioLocalE2E(
 
   const limpiar: LimpiarEmpleadoLocalE2E = async () => {
     if (limpiado) return;
-    limpiado = true;
-    if (!usuarioId) return;
+    if (!usuarioId) {
+      limpiado = true;
+      return;
+    }
 
-    const errores: unknown[] = [];
-    const intentar = async (accion: () => Promise<void>) => {
-      try {
-        await accion();
-      } catch (error) {
-        errores.push(error);
+    let etapa = "inicio";
+    try {
+      // La auditoría de cajas va antes de cualquier otra mutación: si el
+      // usuario cerró una caja ajena o su caja conserva referencias
+      // comerciales, el teardown se detiene sin borrar roles, perfil ni Auth.
+      if (usuarioCreado) {
+        etapa = "auditoría y limpieza de cajas propias";
+        await repositorio.limpiarReferenciasUsuarioCreado(usuarioId);
       }
-    };
 
-    // La base no deja quitar la sucursal activa. Primero se la despeja, después
-    // se retiran exactamente las relaciones agregadas y recién al final se
-    // restaura el valor original. Ese orden también cubre un fixture previo
-    // inconsistente cuya sucursal activa todavía no tenía relación: restaurarla
-    // antes del DELETE volvería a bloquear la limpieza.
-    if (sucursalesAgregadas.length > 0) {
-      await intentar(() => repositorio.actualizarSucursalPerfil(usuarioId!, null));
-    }
-    for (const sucursalId of [...sucursalesAgregadas].reverse()) {
-      await intentar(() => repositorio.quitarSucursal(usuarioId!, sucursalId));
-    }
-    if (sucursalPerfilAnterior !== undefined) {
-      await intentar(() =>
-        repositorio.actualizarSucursalPerfil(usuarioId!, sucursalPerfilAnterior ?? null),
-      );
-    }
-    if (rolAgregado) {
-      await intentar(() => repositorio.quitarRol(usuarioId!, configuracion.rol));
-    }
-    if (usuarioCreado) {
-      await intentar(() => repositorio.limpiarReferenciasUsuarioCreado(usuarioId!));
-    }
-    if (perfilCreado) await intentar(() => repositorio.eliminarPerfil(usuarioId!));
-    if (usuarioCreado) await intentar(() => repositorio.eliminarUsuario(usuarioId!));
-
-    if (errores.length > 0) {
-      const detalle = errores
-        .map((error) => (error instanceof Error ? error.message : String(error)))
-        .join(" | ");
+      // La base no deja quitar la sucursal activa. Primero se la despeja,
+      // después se retiran exactamente las relaciones agregadas y recién al
+      // final se restaura el valor original. Todos estos pasos son idempotentes
+      // en el adaptador HTTP para que una falla posterior se pueda reintentar.
+      if (sucursalesAgregadas.length > 0) {
+        etapa = "despeje de sucursal activa";
+        await repositorio.actualizarSucursalPerfil(usuarioId, null);
+      }
+      for (const sucursalId of [...sucursalesAgregadas].reverse()) {
+        etapa = `retiro de sucursal ${sucursalId}`;
+        await repositorio.quitarSucursal(usuarioId, sucursalId);
+      }
+      if (sucursalPerfilAnterior !== undefined) {
+        etapa = "restauración de sucursal original";
+        await repositorio.actualizarSucursalPerfil(usuarioId, sucursalPerfilAnterior ?? null);
+      }
+      if (rolAgregado) {
+        etapa = `retiro del rol ${configuracion.rol}`;
+        await repositorio.quitarRol(usuarioId, configuracion.rol);
+      }
+      if (perfilCreado) {
+        etapa = "eliminación del perfil creado";
+        await repositorio.eliminarPerfil(usuarioId);
+      }
+      if (usuarioCreado) {
+        etapa = "eliminación del usuario Auth creado";
+        await repositorio.eliminarUsuario(usuarioId);
+      }
+      limpiado = true;
+    } catch (error) {
+      const detalle = error instanceof Error ? error.message : String(error);
       throw new AggregateError(
-        errores,
-        `No se pudo limpiar por completo el empleado local E2E: ${detalle}`,
+        [error],
+        `No se pudo completar el cleanup local E2E en ${etapa}. Puede reintentarse sin repetir el bootstrap: ${detalle}`,
       );
     }
   };
@@ -245,7 +256,12 @@ export function crearRepositorioEmpleadoLocalHttp(
   if (!serviceRoleValue) throw new Error("Falta SUPABASE_SERVICE_ROLE_KEY local para el E2E.");
   const serviceRole: string = serviceRoleValue;
 
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    estadosIdempotentes: readonly number[] = [],
+  ): Promise<T> {
     const respuesta = await fetchImpl(`${baseUrl}${path}`, {
       method,
       headers: {
@@ -256,10 +272,51 @@ export function crearRepositorioEmpleadoLocalHttp(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const texto = await respuesta.text();
+    if (estadosIdempotentes.includes(respuesta.status)) return undefined as T;
     if (!respuesta.ok) {
       throw new Error(`${method} ${path} -> ${respuesta.status}: ${texto.slice(0, 300)}`);
     }
     return (texto ? JSON.parse(texto) : undefined) as T;
+  }
+
+  async function listarSesionesCajaVinculadas(usuarioId: string): Promise<SesionCajaFixture[]> {
+    return request<SesionCajaFixture[]>(
+      "GET",
+      `/rest/v1/caja_sesiones?${parametros({
+        select: "id,abierta_por,cerrada_por",
+        or: `(abierta_por.eq.${usuarioId},cerrada_por.eq.${usuarioId})`,
+      })}`,
+    );
+  }
+
+  async function contarReferenciasCaja(sesionId: string): Promise<ReferenciasCajaFixture> {
+    const contar = async (tabla: keyof ReferenciasCajaFixture) =>
+      (
+        await request<Array<{ id: string }>>(
+          "GET",
+          `/rest/v1/${tabla}?${parametros({
+            select: "id",
+            caja_sesion_id: `eq.${sesionId}`,
+          })}`,
+        )
+      ).length;
+    const [ventas, venta_pagos, caja_movimientos, cobranzas_cta_cte, compras, proveedor_pagos] =
+      await Promise.all([
+        contar("ventas"),
+        contar("venta_pagos"),
+        contar("caja_movimientos"),
+        contar("cobranzas_cta_cte"),
+        contar("compras"),
+        contar("proveedor_pagos"),
+      ]);
+    return {
+      ventas,
+      venta_pagos,
+      caja_movimientos,
+      cobranzas_cta_cte,
+      compras,
+      proveedor_pagos,
+    };
   }
 
   return {
@@ -357,21 +414,46 @@ export function crearRepositorioEmpleadoLocalHttp(
     },
     async limpiarReferenciasUsuarioCreado(usuarioId) {
       // Una venta/NC puede abrir automáticamente una caja para el usuario de
-      // bootstrap. Sólo se limpian cajas del usuario creado por esta corrida;
-      // cualquier referencia RESTRICT hace fallar el DELETE en vez de esconder
-      // un residuo comercial. Los usuarios preexistentes nunca pasan por acá.
+      // bootstrap. Se localizan también las que sólo cerró para detectar y
+      // preservar cajas ajenas. Todas las referencias se auditan antes del
+      // único DELETE; así una FK comercial no deja un cleanup parcial.
+      const sesiones = await listarSesionesCajaVinculadas(usuarioId);
+      const referenciasPorSesion: Record<string, ReferenciasCajaFixture> = {};
+      await Promise.all(
+        sesiones.map(async (sesion) => {
+          referenciasPorSesion[sesion.id] = await contarReferenciasCaja(sesion.id);
+        }),
+      );
+      const ids = exigirSesionesCajaPropiasSinReferencias(
+        sesiones,
+        new Set([usuarioId]),
+        referenciasPorSesion,
+      );
+      if (ids.length === 0) return;
       await request(
         "DELETE",
         `/rest/v1/caja_sesiones?${parametros({
-          or: `(abierta_por.eq.${usuarioId},cerrada_por.eq.${usuarioId})`,
+          id: `in.(${ids.join(",")})`,
+          abierta_por: `eq.${usuarioId}`,
         })}`,
       );
+      const restantes = await listarSesionesCajaVinculadas(usuarioId);
+      if (restantes.length > 0) {
+        throw new Error(
+          `El cleanup dejó ${restantes.length} caja(s) vinculada(s) al usuario E2E ${usuarioId}.`,
+        );
+      }
     },
     async eliminarPerfil(usuarioId) {
       await request("DELETE", `/rest/v1/profiles?${parametros({ id: `eq.${usuarioId}` })}`);
     },
     async eliminarUsuario(usuarioId) {
-      await request("DELETE", `/auth/v1/admin/users/${encodeURIComponent(usuarioId)}`);
+      await request(
+        "DELETE",
+        `/auth/v1/admin/users/${encodeURIComponent(usuarioId)}`,
+        undefined,
+        [404],
+      );
     },
   };
 }

@@ -352,25 +352,60 @@ describe("actualización y resultado autoritativos", () => {
     ).toBeNull();
   });
 
-  it("conserva el diálogo durante polling de la misma clave y lo cierra si A desaparece", () => {
-    type Fila = { venta_id: string };
+  it("conserva el diálogo pero reemplaza la fila capturada durante polling same-key", () => {
+    type Fila = {
+      venta_id: string;
+      afip_estado: string;
+      receptor_razon_social: string;
+      emisor_cuit: string;
+      afip_punto_venta: number;
+    };
     type Seleccion = { fila: Fila; huellaConsulta: string };
 
+    const filaVieja: Fila = {
+      venta_id: VENTA,
+      afip_estado: "SIN_FACTURAR",
+      receptor_razon_social: "Receptor anterior",
+      emisor_cuit: "30714199664",
+      afip_punto_venta: 5,
+    };
+    const filaActual: Fila = {
+      venta_id: VENTA,
+      afip_estado: "ERROR_CORREGIBLE",
+      receptor_razon_social: "Receptor autoritativo",
+      emisor_cuit: "30717322467",
+      afip_punto_venta: 8,
+    };
     const seleccion: Seleccion = {
-      fila: { venta_id: VENTA },
+      fila: filaVieja,
       huellaConsulta: "clave-estable",
     };
+    const vigente = resolverSeleccionColaFiscal({
+      seleccion,
+      huellaConsulta: "clave-estable",
+      isPlaceholderData: false,
+      filas: [filaActual],
+    });
+    expect(vigente).not.toBeNull();
+    expect(vigente?.huellaConsulta).toBe("clave-estable");
+    expect(vigente?.fila).toBe(filaActual);
+    expect(vigente?.fila).toMatchObject({
+      afip_estado: "ERROR_CORREGIBLE",
+      receptor_razon_social: "Receptor autoritativo",
+      emisor_cuit: "30717322467",
+      afip_punto_venta: 8,
+    });
     expect(
       resolverSeleccionColaFiscal({
-        seleccion,
+        seleccion: vigente,
         huellaConsulta: "clave-estable",
         isPlaceholderData: false,
-        filas: [{ venta_id: VENTA }],
+        filas: [filaActual],
       }),
-    ).toBe(seleccion);
+    ).toBe(vigente);
     expect(
       resolverSeleccionColaFiscal({
-        seleccion,
+        seleccion: vigente,
         huellaConsulta: "clave-estable",
         isPlaceholderData: false,
         filas: [],

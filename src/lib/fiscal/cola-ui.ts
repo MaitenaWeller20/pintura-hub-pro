@@ -190,9 +190,11 @@ export function resolverSeleccionColaFiscal<T extends { venta_id: string }>(inpu
   ) {
     return null;
   }
-  return input.filas.some((fila) => fila.venta_id === input.seleccion?.fila.venta_id)
-    ? input.seleccion
-    : null;
+  const ventaId = input.seleccion.fila.venta_id;
+  const filaActual = input.filas.find((fila) => fila.venta_id === ventaId);
+  if (!filaActual) return null;
+  if (filaActual === input.seleccion.fila) return input.seleccion;
+  return { ...input.seleccion, fila: filaActual };
 }
 
 export function presentarResultadoCola(

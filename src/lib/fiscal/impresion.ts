@@ -160,9 +160,27 @@ function fechaLegacy(value: unknown): string {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return fechaCanonica(value, "legacy");
   }
+
   if (typeof value === "string") {
-    const timestamp = new Date(value);
-    if (Number.isFinite(timestamp.getTime())) return fmtFechaIsoAr(timestamp);
+    const partes =
+      /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(
+        value,
+      );
+    if (partes) {
+      const [, fecha, hora, minuto, segundo, horaOffset, minutoOffset] = partes;
+      fechaCanonica(fecha, "legacy");
+
+      const componentesValidos =
+        Number(hora) <= 23 &&
+        Number(minuto) <= 59 &&
+        Number(segundo) <= 59 &&
+        (horaOffset === undefined || Number(horaOffset) <= 23) &&
+        (minutoOffset === undefined || Number(minutoOffset) <= 59);
+      if (componentesValidos) {
+        const timestamp = new Date(value);
+        if (Number.isFinite(timestamp.getTime())) return fmtFechaIsoAr(timestamp);
+      }
+    }
   }
   fallar(
     "COMPROBANTE_FISCAL_INCONSISTENTE",

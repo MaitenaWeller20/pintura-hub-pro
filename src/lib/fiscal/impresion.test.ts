@@ -295,6 +295,7 @@ describe("fallback histórico marcado", () => {
   it.each([
     ["timestamp UTC de madrugada", "2020-02-04T01:30:00.000Z", "2020-02-03"],
     ["timestamp UTC diurno", "2020-02-04T15:30:00.000Z", "2020-02-04"],
+    ["timestamp con offset explícito", "2020-02-04T01:30:00+03:00", "2020-02-03"],
     ["fecha canónica", "2020-02-04", "2020-02-04"],
   ])("convierte %s al día fiscal de Córdoba", (_caso, fecha, esperada) => {
     const { afip_fecha_comprobante: _fechaFiscal, ...filaSinFechaFiscal } = filaLegacy;
@@ -306,6 +307,27 @@ describe("fallback histórico marcado", () => {
 
     expect(preparado.fecha).toBe(esperada);
     expect(preparado.qrInput.fecha).toBe(esperada);
+  });
+
+  it.each([
+    ["fecha ambigua", "02/04/2020"],
+    ["día inexistente", "2020-02-30T01:30:00Z"],
+    ["timestamp sin zona", "2020-02-04T01:30:00"],
+    ["hora fuera de rango", "2020-02-04T24:00:00Z"],
+    ["minuto fuera de rango", "2020-02-04T23:60:00Z"],
+    ["segundo fuera de rango", "2020-02-04T23:59:60Z"],
+    ["hora de offset fuera de rango", "2020-02-04T01:30:00+24:00"],
+    ["minuto de offset fuera de rango", "2020-02-04T01:30:00+03:60"],
+    ["timestamp sin segundos", "2020-02-04T01:30Z"],
+  ])("rechaza %s en una fecha fiscal legacy: %s", (_caso, fecha) => {
+    const { afip_fecha_comprobante: _fechaFiscal, ...filaSinFechaFiscal } = filaLegacy;
+
+    expect(() =>
+      prepararDatosFiscalesLegacyMarcados({
+        fila: filaSinFechaFiscal,
+        datosHistoricos: { ...datosHistoricos, fecha },
+      }),
+    ).toThrowError(expect.objectContaining({ codigo: "COMPROBANTE_FISCAL_INCONSISTENTE" }));
   });
 });
 

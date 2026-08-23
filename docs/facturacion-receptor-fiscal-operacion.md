@@ -1,7 +1,9 @@
 # Venta y facturación con receptor fiscal
 
-**Actualizado:** 2026-08-23  
-**Uso:** operación diaria de ventas y cola fiscal.  
+**Actualizado:** 2026-08-23
+
+**Uso:** operación diaria de ventas y cola fiscal.
+
 **Rutas:** `/ventas/nueva`, `/facturacion/cola` y, sólo para administración,
 `/facturacion/configuracion`.
 
@@ -52,11 +54,11 @@ Para los emisores actuales, que son Responsables Inscriptos, el sistema calcula 
 la letra según la condición real del receptor:
 
 | Condición del receptor | Letra |
-|---|---|
-| Responsable Inscripto | A |
-| Monotributista | A |
-| Exento | B |
-| Consumidor final | B |
+| ---------------------- | ----- |
+| Responsable Inscripto  | A     |
+| Monotributista         | A     |
+| Exento                 | B     |
+| Consumidor final       | B     |
 
 La factura A exige CUIT válido. No se permite bajar manualmente una operación que corresponde a A
 a una factura B. Para consumidor final, el sistema aplica además las reglas vigentes de
@@ -90,16 +92,16 @@ venta, no volver a cobrar y no emitir otra factura a ciegas.**
 
 En `/facturacion/cola` hay cuatro pestañas:
 
-| Estado | Pestaña | Qué hacer |
-|---|---|---|
-| Sin facturar | Pendientes | **Facturar** y confirmar receptor y resumen |
-| Emisión reciente | Pendientes | Esperar y refrescar; no repetir |
-| Error corregible | A revisar | Corregir los datos y **Corregir/reintentar** |
-| Resultado incierto o número reservado | A revisar | Administrador: **Verificar con ARCA** |
-| Claim vencido sin número | A revisar | Administrador: liberar sólo después de verificar que no se envió |
-| Bloqueado o incidente legado | A revisar | Resolución administrativa; no forzar emisión |
-| Aprobado | Emitidas | **Ver/descargar** y controlar CAE |
-| Cancelado | Historial | Consultar; no emitir |
+| Estado                                | Pestaña    | Qué hacer                                                        |
+| ------------------------------------- | ---------- | ---------------------------------------------------------------- |
+| Sin facturar                          | Pendientes | **Facturar** y confirmar receptor y resumen                      |
+| Emisión reciente                      | Pendientes | Esperar y refrescar; no repetir                                  |
+| Error corregible                      | A revisar  | Corregir los datos y **Corregir/reintentar**                     |
+| Resultado incierto o número reservado | A revisar  | Administrador: **Verificar con ARCA**                            |
+| Claim vencido sin número              | A revisar  | Administrador: liberar sólo después de verificar que no se envió |
+| Bloqueado o incidente legado          | A revisar  | Resolución administrativa; no forzar emisión                     |
+| Aprobado                              | Emitidas   | **Ver/descargar** y controlar CAE                                |
+| Cancelado                             | Historial  | Consultar; no emitir                                             |
 
 Un empleado fiscal trabaja sólo con su sucursal. Los casos **Requiere administrador**, conciliación,
 identidad dudosa, bloqueo o emisión vencida no se resuelven repitiendo el botón.
@@ -116,11 +118,19 @@ informada** sólo si corresponde. No retrodatamos ni inventamos una fecha para q
 ## 7. Producción, homologación y simulación
 
 - **Producción:** comprobante legal ante ARCA.
-- **Homologación:** entorno de prueba de ARCA; no es un comprobante legal.
-- **Simulada:** no hubo llamada a ARCA; cualquier CAE mostrado es de prueba y no tiene validez.
+- **Homologación:** entorno real de prueba de ARCA; el sistema sí contacta ARCA, pero no genera un
+  comprobante legal de producción.
+- **Simulada:** no hubo llamada a ARCA; cualquier CAE mostrado es una fixture local y no tiene
+  validez.
 
 El resumen y la cola muestran el ambiente. Nunca entregar como factura legal un comprobante marcado
 **Homologación** o **Simulada**.
+
+La simulación existe exclusivamente en los runners locales cuando se cumplen juntas
+`NODE_ENV=test`, una marca de runner de prueba y `INVOICING_MOCK_MODE=true`. La variable
+`INVOICING_MOCK_MODE=true` aislada en un deploy normal no activa esa simulación y no evita una
+llamada real. Nunca usarla como interruptor de emergencia. En un despliegue normal, incluso una
+prueba configurada como homologación contacta la homologación real de ARCA.
 
 ## 8. Conciliación: nunca reemitir a ciegas
 
@@ -151,10 +161,46 @@ facturacion_receptor_v2_enabled=false
 facturacion_legacy_writer_enabled=true
 ```
 
-Si durante una habilitación controlada hay que volver atrás, se usa la bandera prevista para frenar
-el circuito nuevo y se conserva toda la evidencia para diagnóstico. **Nunca** reescribir historial
-Git, borrar ventas o intentos, eliminar CAE, renumerar ni reemitir comprobantes a ciegas.
+### Ventana de compatibilidad de remitos
+
+El paquete de migraciones no puede instalarse de corrido mientras haya navegadores o instancias
+anteriores atendiendo operaciones. La incompatibilidad empieza en
+`20260822161644_venta_fiscal_atomica.sql` (#4): vuelve `next_comprobante_numero` owner-only y revoca
+su ejecución a `authenticated`, mientras el frontend anterior todavía reserva e inserta el remito
+por separado. `20260823143000_crear_remito_atomico.sql` (#16) agrega una RPC atómica de cuatro
+argumentos, pero la #17 la reemplaza por la firma idempotente de cinco argumentos, cierra los
+`INSERT/UPDATE/DELETE` directos de `remitos` y `remito_items`, y restaura el helper de numeración
+exclusivamente a `service_role` por compatibilidad temporal con el escritor fiscal legado. La #16
+no constituye una ventana de convivencia; el cliente actual requiere el contrato final de la #17.
+
+La instalación manual debe detenerse antes de la #4 y entrar en una ventana de mantenimiento real:
+impedir nuevas escrituras comerciales, drenar requests y transacciones de todas las instancias
+anteriores, aplicar #4 a #20 en orden, desplegar el cliente compatible con autorización separada y
+mantener el bloqueo hasta comprobarlo y drenar las instancias viejas. Si no se puede demostrar el
+mantenimiento o el drenaje, se aborta. No se expone el helper a `authenticated` como atajo; el
+permiso transitorio de `service_role` se retira sólo junto con el escritor fiscal legado, en un gate
+posterior.
+
+### Corte fiscal y rollback
+
+El corte fiscal posterior empieza con ambos escritores apagados, vuelve a drenar y recién entonces
+permite comparar el dry-run estable y aplicar el backfill futuro revisado. Ese backfill y la retirada
+del escritor legado no forman parte de esta entrega.
+
+La vuelta atrás inmediata y segura es exactamente:
+
+```text
+facturacion_receptor_v2_enabled=false
+facturacion_legacy_writer_enabled=false
+```
+
+Se mantiene la aplicación en mantenimiento, se conserva toda la evidencia y se corrige hacia
+adelante. **Nunca** reactivar a ciegas el escritor legado, reescribir historial Git, borrar ventas o
+intentos, eliminar CAE, renumerar ni reemitir comprobantes inciertos.
 
 Antes de cualquier corte, registrar migraciones y checksums, valor de banderas, evidencia de A por
 emisor, conteos de cola, pruebas y responsable de cada seguimiento. Las migraciones de Supabase son
 manuales y sólo las aplica el usuario autorizado; no habilitar v2 ni desplegar desde esta tarea.
+
+El checklist controlado está en
+[Task 14: checklist de rollout](./facturacion-receptor-fiscal-rollout-checklist.md).

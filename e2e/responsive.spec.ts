@@ -1,4 +1,9 @@
 import { test, expect, ingresar, RUTAS } from "./apoyo";
+import {
+  limpiarFixturesFiscales,
+  prepararFixturesFiscales,
+  type FixtureFiscal,
+} from "./fixtures/fiscal";
 
 /**
  * Que la app se pueda usar en un celular.
@@ -15,7 +20,15 @@ import { test, expect, ingresar, RUTAS } from "./apoyo";
  *   · que los diálogos entren enteros y sus botones se puedan tocar.
  */
 
+let fixture: FixtureFiscal;
+
 test.describe("se puede usar en pantalla chica", () => {
+  test.beforeAll(async () => {
+    fixture = await prepararFixturesFiscales();
+  });
+  test.afterAll(async () => {
+    await limpiarFixturesFiscales();
+  });
   test.beforeEach(async ({ page }) => {
     await ingresar(page);
   });
@@ -44,6 +57,7 @@ test.describe("se puede usar en pantalla chica", () => {
       "/cuentas-corrientes",
       "/pagos-proveedores",
       "/usuarios",
+      "/facturacion/cola",
     ];
     const recortadas: string[] = [];
     for (const ruta of conTabla) {
@@ -105,5 +119,18 @@ test.describe("se puede usar en pantalla chica", () => {
     await expect(boton).toBeVisible();
     await boton.click();
     await expect(page.getByRole("link", { name: /ventas/i }).first()).toBeVisible();
+  });
+
+  test("el diálogo fiscal queda contenido en móvil", async ({ page }) => {
+    await page.goto(`/facturacion/cola?venta=${fixture.ventaPendienteId}`);
+    await page.getByRole("button", { name: "Facturar" }).click();
+    const dialogo = page.getByTestId("dialogo-emision-fiscal");
+    await expect(dialogo).toBeVisible();
+    const caja = (await dialogo.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(caja.x).toBeGreaterThanOrEqual(-1);
+    expect(caja.x + caja.width).toBeLessThanOrEqual(viewport.width + 1);
+    expect(caja.y).toBeGreaterThanOrEqual(-1);
+    expect(caja.y + caja.height).toBeLessThanOrEqual(viewport.height + 1);
   });
 });

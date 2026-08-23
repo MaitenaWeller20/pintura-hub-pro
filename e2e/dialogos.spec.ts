@@ -1,4 +1,9 @@
 import { test, expect, ingresar } from "./apoyo";
+import {
+  limpiarFixturesFiscales,
+  prepararFixturesFiscales,
+  type FixtureFiscal,
+} from "./fixtures/fiscal";
 
 /**
  * Los diálogos tienen que ser usables en una pantalla baja.
@@ -17,7 +22,15 @@ const DIALOGOS = [
   { ruta: "/usuarios", abrir: /^Nuevo$/, titulo: /nuevo usuario/i },
 ] as const;
 
+let fixture: FixtureFiscal;
+
 test.describe("diálogos en pantalla baja", () => {
+  test.beforeAll(async () => {
+    fixture = await prepararFixturesFiscales();
+  });
+  test.afterAll(async () => {
+    await limpiarFixturesFiscales();
+  });
   test.beforeEach(async ({ page }) => {
     await ingresar(page);
   });
@@ -79,8 +92,7 @@ test.describe("diálogos en pantalla baja", () => {
     await page.getByRole("button", { name: /^Nuevo remito$/ }).click();
 
     const dialogo = page.getByRole("dialog");
-    await dialogo.getByTestId("remito-buscar-producto").fill("ar");
-    await page.waitForTimeout(1500);
+    await dialogo.getByTestId("remito-buscar-producto").fill("T13-E2E-PROD");
 
     const caja = (await dialogo.boundingBox())!;
     const alto = page.viewportSize()!.height;
@@ -88,7 +100,7 @@ test.describe("diálogos en pantalla baja", () => {
     expect(caja.y + caja.height, "el diálogo se sale por abajo").toBeLessThanOrEqual(alto + 1);
 
     // Los resultados tienen que quedar DENTRO del ancho del diálogo.
-    const primerResultado = dialogo.locator("button", { hasText: /^\d{3}/ }).first();
+    const primerResultado = dialogo.getByRole("button", { name: /T13-E2E-PROD/ });
     await expect(primerResultado).toBeVisible();
     const rb = (await primerResultado.boundingBox())!;
     expect(rb.x, "el resultado arranca antes del diálogo").toBeGreaterThanOrEqual(caja.x - 1);
@@ -99,5 +111,43 @@ test.describe("diálogos en pantalla baja", () => {
     // Y elegirlo lo agrega a la tabla.
     await primerResultado.click();
     await expect(dialogo.locator("tbody tr")).toHaveCount(1);
+  });
+
+  test("facturación: el selector fiscal entra, hace scroll y Escape devuelve el foco", async ({
+    page,
+  }) => {
+    await page.goto(`/facturacion/cola?venta=${fixture.ventaPendienteId}`);
+    const abrir = page.getByRole("button", { name: "Facturar" });
+    await abrir.click();
+    const dialogo = page.getByTestId("dialogo-emision-fiscal");
+    await expect(dialogo).toBeVisible();
+    await dialogo.getByText("Otro receptor", { exact: true }).click();
+
+    const caja = await dialogo.boundingBox();
+    const viewport = page.viewportSize()!;
+    expect(caja).not.toBeNull();
+    expect(caja!.x).toBeGreaterThanOrEqual(-1);
+    expect(caja!.x + caja!.width).toBeLessThanOrEqual(viewport.width + 1);
+    expect(caja!.y).toBeGreaterThanOrEqual(-1);
+    expect(caja!.y + caja!.height).toBeLessThanOrEqual(viewport.height + 1);
+    const scrollFiscal = dialogo.getByTestId("dialogo-emision-scroll");
+    await expect(scrollFiscal).toHaveCount(1);
+    const metricasScroll = await scrollFiscal.evaluate((elemento) => {
+      const estilo = getComputedStyle(elemento);
+      elemento.scrollTop = elemento.scrollHeight;
+      return {
+        overflowY: estilo.overflowY,
+        scrollTop: elemento.scrollTop,
+        scrollHeight: elemento.scrollHeight,
+        clientHeight: elemento.clientHeight,
+      };
+    });
+    expect(metricasScroll.overflowY).toMatch(/auto|scroll/);
+    expect(metricasScroll.scrollHeight).toBeGreaterThan(metricasScroll.clientHeight);
+    expect(metricasScroll.scrollTop).toBeGreaterThan(0);
+
+    await page.keyboard.press("Escape");
+    await expect(dialogo).not.toBeVisible();
+    await expect(abrir).toBeFocused();
   });
 });

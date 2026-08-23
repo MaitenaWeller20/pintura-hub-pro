@@ -7,6 +7,10 @@ import { test as base, expect, type Locator, type Page } from "@playwright/test"
 export const USUARIOS = {
   admin: { email: "admin@local.test", password: "admin1234" },
   empleado: { email: "empleado@local.test", password: "empleado1234" },
+  sinCapacidad: {
+    email: "t13-sin-capacidad@local.test",
+    password: "t13-sin-capacidad-1234",
+  },
 } as const;
 
 /** Todas las pantallas detrás del login. La lista es el inventario a cubrir. */
@@ -34,6 +38,8 @@ export const RUTAS = [
   "/arqueo",
   "/reportes",
   "/facturacion",
+  "/facturacion/cola",
+  "/facturacion/configuracion",
   "/usuarios",
 ] as const;
 

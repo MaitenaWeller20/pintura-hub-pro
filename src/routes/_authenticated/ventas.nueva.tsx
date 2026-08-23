@@ -28,15 +28,28 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { NumberInput } from "@/components/ui/number-input";
-import { fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
+import { fmtMoney, tipoComprobanteLabel } from "@/lib/format";
 import { filtroNombreODocumento, fmtDocumento } from "@/lib/documento";
 import { ordenarProductosPorRelevancia, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
-import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2, Search } from "lucide-react";
+import { Trash2, ArrowLeft, AlertTriangle, Loader2, Search, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearVenta } from "@/lib/ventas.functions";
 import { calcTotalesComprobante } from "@/lib/ventas-totales";
 import { round2 } from "@/lib/fiscal/iva";
+import { EditorPagos, type PagoVentaEditable } from "@/components/ventas/editor-pagos";
+import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
+import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
+import { emitirComprobantePostBorrador, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
+import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
+import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
+import {
+  confirmarCierreFiscalInmediato,
+  crearControlCreacionVenta,
+  opcionesCierreVenta,
+  registrarVentaSinFactura,
+  resultadoColaDespuesDeEmision,
+} from "@/lib/ventas-ui";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
@@ -61,13 +74,6 @@ interface ItemRow {
   // de lista, para que la nota espeje la factura y no el precio de hoy.
   desde_factura?: boolean;
 }
-interface PagoRow {
-  id: string;
-  forma_pago: string;
-  monto: number;
-  detalle: Record<string, any>;
-}
-
 // Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja).
 // R2.a: la "Factura interna" YA NO está acá — es un documento interno de contado.
 const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA"]);
@@ -76,6 +82,9 @@ function NuevaVenta() {
   const { data: cu } = useCurrentUser();
   const navigate = useNavigate();
   const crear = useServerFn(crearVenta);
+  const previsualizarFiscal = useServerFn(previsualizarEmisionFiscal);
+  const emitirPostBorrador = useServerFn(emitirComprobantePostBorrador);
+  const listarFavoritos = useServerFn(listarReceptoresFiscales);
 
   const [sucursalId, setSucursalId] = useState<string>("");
   const [clienteId, setClienteId] = useState<string>("");
@@ -89,9 +98,13 @@ function NuevaVenta() {
   const [recargoPct, setRecargoPct] = useState<number | null>(null);
   const [recargoMonto, setRecargoMonto] = useState<number | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
-  const [pagos, setPagos] = useState<PagoRow[]>([]);
+  const [pagos, setPagos] = useState<PagoVentaEditable[]>([]);
   const [prodQuery, setProdQuery] = useState("");
   const [showCli, setShowCli] = useState(false);
+  const [dialogoFiscalAbierto, setDialogoFiscalAbierto] = useState(false);
+  const controlCreacionRef = useRef(crearControlCreacionVenta());
+  const botonFacturarRef = useRef<HTMLButtonElement>(null);
+  const navegacionFiscalRef = useRef(false);
   // Una key estable por vida del formulario: reintentar el mismo submit no duplica
   // la venta. Si el submit falla por validación, la venta no se creó y el reintento
   // procede normal; sólo hace short-circuit cuando la venta realmente quedó guardada.
@@ -121,6 +134,17 @@ function NuevaVenta() {
 
   const effSucursal = sucursalId || cu?.sucursal?.id || "";
 
+  const cierreVenta = useMemo(
+    () =>
+      opcionesCierreVenta({
+        facturacionV2Habilitada: cu?.facturacionV2Habilitada ?? false,
+        facturacionLegacyHabilitada: cu?.facturacionLegacyHabilitada ?? false,
+        puedeFacturar: cu?.puedeFacturar ?? false,
+        tipoComprobante: tipoComp,
+      }),
+    [cu?.facturacionLegacyHabilitada, cu?.facturacionV2Habilitada, cu?.puedeFacturar, tipoComp],
+  );
+
   const { data: clientes = [] } = useQuery({
     queryKey: ["clientes-search", clienteQuery],
     queryFn: async () => {
@@ -138,6 +162,13 @@ function NuevaVenta() {
     () => clientes.find((c: any) => c.id === clienteId),
     [clientes, clienteId],
   );
+
+  const { data: favoritosFiscales = [] } = useQuery({
+    queryKey: ["receptores-fiscales", effSucursal],
+    enabled:
+      dialogoFiscalAbierto && !!effSucursal && !!cu?.facturacionV2Habilitada && !!cu?.puedeFacturar,
+    queryFn: () => listarFavoritos({ data: { sucursal_id: effSucursal } }),
+  });
 
   // Traemos TODOS los productos activos una sola vez y filtramos en el cliente:
   // así el picker muestra la lista completa apenas se abre y filtra al instante
@@ -271,9 +302,14 @@ function NuevaVenta() {
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
   const esNotaDebito = tipoComp === "NOTA_DEBITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
-  const esFiscal = ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO", "NOTA_DEBITO"].includes(
-    tipoComp,
-  );
+  const esFiscal = [
+    "VENTA",
+    "FACTURA_A",
+    "FACTURA_B",
+    "FACTURA_C",
+    "NOTA_CREDITO",
+    "NOTA_DEBITO",
+  ].includes(tipoComp);
   // Coherencia comprobante ↔ condición IVA: Factura A sólo a Responsable Inscripto.
   const comboInvalido =
     tipoComp === "FACTURA_A" && !!clienteSel && clienteSel.tipo !== "RESPONSABLE_INSCRIPTO";
@@ -390,16 +426,25 @@ function NuevaVenta() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoComp]);
 
-  // El comprobante por defecto tiene que reflejar la letra que le corresponde al
-  // cliente: a un Responsable Inscripto le corresponde Factura A. El default global
-  // es FACTURA_B (caso mostrador / consumidor final), así que al elegir un cliente
-  // RI lo pasamos a A. Emitir B a un RI queda como una decisión EXPLÍCITA (el
-  // operador cambia el selector a mano), nunca por omisión.
+  // En v2 la venta ordinaria es neutral: la letra se decide recién con el
+  // receptor fiscal confirmado. El selector A/B queda sólo durante el drain legacy.
   useEffect(() => {
     if (esNota) return; // no tocar el tipo de una nota de crédito/débito
+    const positivo = ["VENTA", "FACTURA_A", "FACTURA_B", "FACTURA_C"].includes(tipoComp);
+    if (!positivo) return;
+    if (cu?.facturacionV2Habilitada) {
+      if (tipoComp !== "VENTA") setTipoComp("VENTA");
+      return;
+    }
+    if (!cu?.facturacionLegacyHabilitada) {
+      if (tipoComp !== "VENTA") setTipoComp("VENTA");
+      return;
+    }
     // Emisor Monotributo -> la factura es siempre C (no existe A/B para él).
     if (emisorMonotributo) {
-      if (tipoComp === "FACTURA_A" || tipoComp === "FACTURA_B") setTipoComp("FACTURA_C");
+      if (tipoComp === "VENTA" || tipoComp === "FACTURA_A" || tipoComp === "FACTURA_B") {
+        setTipoComp("FACTURA_C");
+      }
       return;
     }
     // Emisor Responsable Inscripto: la letra depende del cliente. Si venías de un
@@ -411,8 +456,14 @@ function NuevaVenta() {
     const esRI = clienteSel?.tipo === "RESPONSABLE_INSCRIPTO";
     if (esRI && tipoComp === "FACTURA_B") setTipoComp("FACTURA_A");
     else if (!esRI && tipoComp === "FACTURA_A") setTipoComp("FACTURA_B");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clienteSel?.tipo, emisorMonotributo]);
+  }, [
+    clienteSel?.tipo,
+    cu?.facturacionLegacyHabilitada,
+    cu?.facturacionV2Habilitada,
+    emisorMonotributo,
+    esNota,
+    tipoComp,
+  ]);
 
   // R2.a: si se elige Factura interna con una condición de cuenta corriente
   // heredada de otro tipo, la reseteamos a contado (la Factura interna no va a Cta Cte).
@@ -420,90 +471,83 @@ function NuevaVenta() {
     if (esFacInterna && condVenta === "CTA_CTE") setCondVenta("CONTADO");
   }, [esFacInterna, condVenta]);
 
-  const addPago = () =>
-    setPagos((p) => [
-      ...p,
-      {
-        id: crypto.randomUUID(),
-        forma_pago: "EFECTIVO",
-        // Por defecto, lo que falta cubrir. En una nota de crédito el saldo es
-        // negativo (es una devolución), así que precargamos el importe a devolver:
-        // el signo lo pone la base, el cajero siempre tipea un número positivo.
-        monto: Math.abs(Math.min(0, totales.saldo)) || Math.max(0, totales.saldo),
-        detalle: {},
-      },
-    ]);
-  const updPago = (id: string, k: string, v: any) =>
-    setPagos((p) => p.map((x) => (x.id === id ? { ...x, [k]: v } : x)));
-  const updPagoDet = (id: string, k: string, v: any) =>
-    setPagos((p) => p.map((x) => (x.id === id ? { ...x, detalle: { ...x.detalle, [k]: v } } : x)));
-  const rmPago = (id: string) => setPagos((p) => p.filter((x) => x.id !== id));
-
-  const m = useMutation({
-    mutationFn: async () =>
-      crear({
-        data: {
-          sucursal_id: effSucursal,
-          // En un remito de obra va nulo a propósito: la ficha la resuelve
-          // `crear_venta` desde el nombre de la obra.
-          cliente_id: clienteId || null,
-          tipo_comprobante: tipoComp as any,
-          condicion_venta: esCtaCte ? "CTA_CTE" : condVenta,
-          percepciones: Number(percepciones || 0),
-          observaciones,
-          nombre_obra: esRemitoObra ? nombreObra : null,
-          cbte_asoc_id: esNota ? cbteAsocId || null : null,
-          idempotency_key: idempotencyKey,
-          // R5: la Nota de Débito manda UNA línea de concepto libre (el recargo). El
-          // resto de los comprobantes manda la grilla de productos.
-          items: esNotaDebito
-            ? [
-                {
-                  producto_id: null,
-                  descripcion: `Recargo/interés s/ ${facturaSel?.numero_comprobante ?? ""}`.trim(),
-                  cantidad: 1,
-                  precio_unitario_sin_iva: recargoNeto,
-                  iva_porcentaje: 21,
-                  descuento_porcentaje: 0,
-                },
-              ]
-            : items.map((it) => {
-                // Un campo de precio vacío (null) NO es "precio 0": es "usá el de lista".
-                // Sólo mandamos el precio cuando el cajero tipeó un valor distinto al de
-                // catálogo. Si no, el servidor lo resuelve solo.
-                const precioTipeado =
-                  it.precio_unitario_sin_iva === null || it.precio_unitario_sin_iva === undefined
-                    ? null
-                    : Number(it.precio_unitario_sin_iva);
-                // Un ítem precargado de la factura (NC) SIEMPRE manda su precio histórico,
-                // aunque coincida con el de catálogo: la nota debe espejar la factura. El
-                // forzado sólo aplica MIENTRAS sea una nota (defensa por si quedara un ítem
-                // precargado tras cambiar de tipo; el efecto de arriba igual los limpia).
-                const pisado =
-                  precioTipeado !== null &&
-                  ((esNota && it.desde_factura) ||
-                    Math.abs(precioTipeado - Number(it.precio_lista || 0)) > 0.005);
-                return {
-                  producto_id: it.producto_id,
-                  cantidad: Number(it.cantidad || 0),
-                  descuento_porcentaje: Number(it.descuento_porcentaje || 0),
-                  ...(pisado ? { precio_unitario_sin_iva: precioTipeado } : {}),
-                };
-              }),
-          pagos: pagos
-            .filter((p) => Number(p.monto || 0) > 0)
-            .map((p) => ({
-              forma_pago: p.forma_pago as any,
-              monto: Number(p.monto),
-              detalle: p.detalle,
-            })),
+  // Un único adaptador alimenta tanto la preview de BORRADOR como crear_venta.
+  // Así no se puede confirmar un precio y persistir otro por una divergencia local.
+  const itemsPayload = esNotaDebito
+    ? [
+        {
+          producto_id: null,
+          descripcion: `Recargo/interés s/ ${facturaSel?.numero_comprobante ?? ""}`.trim(),
+          cantidad: 1,
+          precio_unitario_sin_iva: recargoNeto,
+          iva_porcentaje: 21,
+          descuento_porcentaje: 0,
         },
-      }),
-    onSuccess: (r: any) => {
+      ]
+    : items.map((item) => {
+        const precioTipeado =
+          item.precio_unitario_sin_iva === null || item.precio_unitario_sin_iva === undefined
+            ? null
+            : Number(item.precio_unitario_sin_iva);
+        const precioPisado =
+          precioTipeado !== null &&
+          ((esNota && item.desde_factura) ||
+            Math.abs(precioTipeado - Number(item.precio_lista || 0)) > 0.005);
+        return {
+          producto_id: item.producto_id,
+          cantidad: Number(item.cantidad || 0),
+          descuento_porcentaje: Number(item.descuento_porcentaje || 0),
+          ...(precioPisado ? { precio_unitario_sin_iva: precioTipeado } : {}),
+        };
+      });
+  const pagosPayload = pagos
+    .filter((pago) => Number(pago.monto || 0) > 0)
+    .map((pago) => ({
+      forma_pago: pago.forma_pago,
+      monto: Number(pago.monto),
+      detalle: pago.detalle,
+    }));
+
+  const crearVentaPersistida = (claveIdempotencia: string) =>
+    crear({
+      data: {
+        sucursal_id: effSucursal,
+        // En un remito de obra va nulo a propósito: la ficha la resuelve
+        // `crear_venta` desde el nombre de la obra.
+        cliente_id: clienteId || null,
+        tipo_comprobante: cierreVenta.tipoPersistido as any,
+        condicion_venta: esCtaCte ? "CTA_CTE" : condVenta,
+        percepciones: Number(percepciones || 0),
+        observaciones,
+        nombre_obra: esRemitoObra ? nombreObra : null,
+        cbte_asoc_id: esNota ? cbteAsocId || null : null,
+        idempotency_key: claveIdempotencia,
+        items: itemsPayload,
+        pagos: pagosPayload,
+      },
+    });
+
+  const guardar = useMutation({
+    mutationFn: async (
+      accion: "REGISTRAR_SIN_FACTURAR" | "REGISTRAR_LEGACY" | "REGISTRAR_UNICO",
+    ) => {
+      if (accion === "REGISTRAR_SIN_FACTURAR") {
+        const resultado = await registrarVentaSinFactura(
+          controlCreacionRef.current,
+          idempotencyKey,
+          crearVentaPersistida,
+        );
+        return { accion, venta: { id: resultado.ventaId }, href: resultado.href };
+      }
+      return { accion, venta: await crearVentaPersistida(idempotencyKey), href: null };
+    },
+    onSuccess: (resultado) => {
+      const r = resultado.venta;
       toast.success(
-        `${tipoComprobanteLabel[tipoComp] ?? tipoComp} ${r.numero} registrado${r.cta_cte ? " (Cta Cte)" : ""}`,
+        `${tipoComprobanteLabel[cierreVenta.tipoPersistido] ?? cierreVenta.tipoPersistido}${"numero" in r ? ` ${r.numero}` : ""} registrado${"cta_cte" in r && r.cta_cte ? " (Cta Cte)" : ""}`,
       );
-      navigate({ to: "/ventas" });
+      if (resultado.href) window.location.assign(resultado.href);
+      else navigate({ to: "/ventas" });
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -550,6 +594,7 @@ function NuevaVenta() {
     Math.abs(totales.pagado) < 0.01;
 
   const canSave =
+    !cierreVenta.bloqueado &&
     !frenaPorStock &&
     !!effSucursal &&
     // En un remito de obra no se elige cliente: las obras no se cargan como
@@ -576,6 +621,19 @@ function NuevaVenta() {
       esNotaDebito ||
       Math.abs(totales.total) < 0.01 ||
       Math.abs(totales.pagado) >= 0.01);
+
+  const navegarACola = (
+    ventaId: string,
+    resultado:
+      | "venta_creada_factura_pendiente"
+      | "venta_creada_requiere_revision"
+      | "factura_aprobada",
+  ) => {
+    navegacionFiscalRef.current = true;
+    window.location.assign(
+      `/facturacion/cola?venta=${encodeURIComponent(ventaId)}&resultado=${resultado}`,
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -612,6 +670,18 @@ function NuevaVenta() {
           </p>
         </SectionCard>
       )}
+      {cierreVenta.explicacion ? (
+        <SectionCard>
+          <div
+            className={`flex items-start gap-2 text-sm ${
+              cierreVenta.bloqueado ? "text-destructive" : "text-muted-foreground"
+            }`}
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p>{cierreVenta.explicacion}</p>
+          </div>
+        </SectionCard>
+      ) : null}
       <PageHeader
         title="Nuevo comprobante"
         actions={
@@ -619,9 +689,37 @@ function NuevaVenta() {
             <Button variant="outline" size="sm" onClick={() => navigate({ to: "/ventas" })}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Volver
             </Button>
-            <Button onClick={() => m.mutate()} disabled={!canSave || m.isPending}>
-              {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Guardar
-            </Button>
+            {cierreVenta.acciones.map((accion) =>
+              accion.id === "REGISTRAR_Y_FACTURAR" ? (
+                <Button
+                  key={accion.id}
+                  ref={botonFacturarRef}
+                  onClick={() => setDialogoFiscalAbierto(true)}
+                  disabled={!canSave || guardar.isPending}
+                  data-testid="registrar-y-facturar"
+                >
+                  <ReceiptText className="mr-1 h-4 w-4" /> {accion.etiqueta}
+                </Button>
+              ) : (
+                <Button
+                  key={accion.id}
+                  variant={accion.id === "REGISTRAR_SIN_FACTURAR" ? "outline" : "default"}
+                  onClick={() => guardar.mutate(accion.id)}
+                  disabled={!canSave || guardar.isPending}
+                  data-testid={
+                    accion.id === "REGISTRAR_SIN_FACTURAR"
+                      ? "registrar-sin-facturar"
+                      : "guardar-venta"
+                  }
+                >
+                  {guardar.isPending && guardar.variables === accion.id ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : null}
+                  {accion.etiqueta}
+                </Button>
+              ),
+            )}
+            {cierreVenta.bloqueado ? <Button disabled>Facturación en mantenimiento</Button> : null}
           </>
         }
       />
@@ -649,13 +747,15 @@ function NuevaVenta() {
               )}
             </div>
             <div>
-              <Label>Tipo comprobante *</Label>
+              <Label htmlFor="tipo-comprobante">Tipo comprobante *</Label>
               <Select value={tipoComp} onValueChange={(v) => setTipoComp(v)}>
-                <SelectTrigger>
+                <SelectTrigger id="tipo-comprobante">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {emisorMonotributo ? (
+                  {cu?.facturacionV2Habilitada || !cu?.facturacionLegacyHabilitada ? (
+                    <SelectItem value="VENTA">Venta</SelectItem>
+                  ) : emisorMonotributo ? (
                     <SelectItem value="FACTURA_C">Factura C</SelectItem>
                   ) : (
                     <>
@@ -1088,124 +1188,15 @@ function NuevaVenta() {
 
       {!esCtaCte && (
         <SectionCard className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm">Formas de pago</h3>
-            <Button size="sm" variant="outline" onClick={addPago}>
-              <Plus className="h-4 w-4 mr-1" /> Agregar pago
-            </Button>
-          </div>
-          {pagos.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              {esCtaCte
-                ? "En cuenta corriente no se cobra ahora: queda como deuda del cliente."
-                : "Sin pagos. Al contado hay que cobrar algo, aunque sea una parte; si se lo lleva sin pagar nada, poné cuenta corriente."}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {pagos.map((p) => (
-                <div
-                  key={p.id}
-                  className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-2 border border-border rounded"
-                >
-                  <div className="col-span-3">
-                    <Label className="text-xs">Forma</Label>
-                    <Select
-                      value={p.forma_pago}
-                      onValueChange={(v) => updPago(p.id, "forma_pago", v)}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(formaPagoLabel)
-                          .filter(([k]) => k !== "CTA_CTE")
-                          .map(([k, l]) => (
-                            <SelectItem key={k} value={k}>
-                              {l}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="col-span-2">
-                    <Label className="text-xs">Monto</Label>
-                    <NumberInput
-                      className="h-9"
-                      value={p.monto}
-                      onValueChange={(v) => updPago(p.id, "monto", v ?? 0)}
-                    />
-                  </div>
-                  <div className="col-span-6 grid grid-cols-2 gap-2">
-                    {p.forma_pago === "TRANSFERENCIA" && (
-                      <div className="col-span-2">
-                        <Label className="text-xs">Banco / Cuenta</Label>
-                        <Input
-                          className="h-9"
-                          value={p.detalle.banco ?? ""}
-                          onChange={(e) => updPagoDet(p.id, "banco", e.target.value)}
-                        />
-                      </div>
-                    )}
-                    {(p.forma_pago === "TARJETA_DEBITO" || p.forma_pago === "TARJETA_CREDITO") && (
-                      <div className="col-span-2">
-                        <Label className="text-xs">Tarjeta</Label>
-                        <Input
-                          className="h-9"
-                          placeholder="Visa, Naranja…"
-                          value={p.detalle.tarjeta ?? ""}
-                          onChange={(e) => updPagoDet(p.id, "tarjeta", e.target.value)}
-                        />
-                      </div>
-                    )}
-                    {p.forma_pago === "CHEQUE" && (
-                      <>
-                        <div>
-                          <Label className="text-xs">Banco</Label>
-                          <Input
-                            className="h-9"
-                            value={p.detalle.banco ?? ""}
-                            onChange={(e) => updPagoDet(p.id, "banco", e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Nro cheque</Label>
-                          <Input
-                            className="h-9"
-                            value={p.detalle.numero ?? ""}
-                            onChange={(e) => updPagoDet(p.id, "numero", e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Firmante (Nombre y Apellido)</Label>
-                          <Input
-                            className="h-9"
-                            value={p.detalle.firmante ?? ""}
-                            onChange={(e) => updPagoDet(p.id, "firmante", e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Fecha cobro</Label>
-                          <Input
-                            type="date"
-                            className="h-9"
-                            value={p.detalle.fecha_cobro ?? ""}
-                            onChange={(e) => updPagoDet(p.id, "fecha_cobro", e.target.value)}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <div className="col-span-1 flex justify-end">
-                    <Button size="sm" variant="ghost" onClick={() => rmPago(p.id)}>
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <EditorPagos pagos={pagos} saldo={totales.saldo} onChange={setPagos} />
         </SectionCard>
       )}
+
+      <ResumenCierreVenta
+        total={totales.total}
+        pagadoAhora={esCtaCte ? 0 : totales.pagado}
+        esCtaCte={esCtaCte}
+      />
 
       <SectionCard>
         <Label>Observaciones</Label>
@@ -1216,6 +1207,126 @@ function NuevaVenta() {
           className="mt-1"
         />
       </SectionCard>
+
+      {dialogoFiscalAbierto && clienteId && cierreVenta.tipoPersistido === "VENTA" ? (
+        <DialogoEmisionFiscal
+          open
+          contexto={{
+            comprador: {
+              razonSocial: clienteSel?.razon_social ?? "Cliente seleccionado",
+              documento: clienteSel?.cuit_dni ? fmtDocumento(clienteSel.cuit_dni) : null,
+            },
+            emisor: { razonSocial: "Emisor de la sucursal", cuit: "a confirmar" },
+            sucursal: {
+              nombre:
+                sucs.find((sucursal: any) => sucursal.id === effSucursal)?.nombre ??
+                cu?.sucursal?.nombre ??
+                "Sucursal seleccionada",
+              puntoVenta: null,
+              modo: null,
+            },
+            tipoComprobante: "VENTA",
+          }}
+          favoritos={favoritosFiscales}
+          returnFocusRef={botonFacturarRef}
+          onOpenChange={(open) => {
+            setDialogoFiscalAbierto(open);
+            const ventaId = controlCreacionRef.current.ventaId;
+            if (!open && ventaId && !navegacionFiscalRef.current) {
+              navegarACola(ventaId, "venta_creada_factura_pendiente");
+            }
+          }}
+          onPrevisualizar={(receptor: SelectorReceptorFiscal) =>
+            previsualizarFiscal({
+              data: {
+                origen: "BORRADOR",
+                sucursal_id: effSucursal,
+                cliente_id: clienteId,
+                fecha_comercial: new Date().toISOString(),
+                items: items.map((item) => ({
+                  producto_id: item.producto_id,
+                  cantidad: Number(item.cantidad || 0),
+                  descuento_porcentaje: Number(item.descuento_porcentaje || 0),
+                  ...(item.precio_unitario_sin_iva == null
+                    ? {}
+                    : { precio_unitario_sin_iva: Number(item.precio_unitario_sin_iva) }),
+                })),
+                pagos: pagosPayload,
+                percepciones: Number(percepciones || 0),
+                receptor,
+              },
+            })
+          }
+          onConfirmar={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
+            try {
+              const respuesta = await confirmarCierreFiscalInmediato(
+                {
+                  control: controlCreacionRef.current,
+                  idempotencyKey,
+                  receptor,
+                  confirmaVentaAntigua,
+                  huellaConfirmacion,
+                },
+                {
+                  async crearVenta(clave) {
+                    try {
+                      return await crearVentaPersistida(clave);
+                    } catch (cause) {
+                      const detalle = cause instanceof Error ? cause.message : "Error desconocido";
+                      throw new Error(`Venta no creada. ${detalle}`);
+                    }
+                  },
+                  emitirPostBorrador: (input) =>
+                    emitirPostBorrador({
+                      data: {
+                        venta_id: input.ventaId,
+                        receptor: input.receptor,
+                        confirma_venta_antigua: input.confirmaVentaAntigua,
+                        huella_confirmacion_provisional: input.huellaConfirmacion,
+                      },
+                    }),
+                },
+              );
+              if (
+                typeof respuesta === "object" &&
+                respuesta !== null &&
+                "estado" in respuesta &&
+                respuesta.estado === "MANTENIMIENTO"
+              ) {
+                return {
+                  estado: "ERROR_CORREGIBLE" as const,
+                  mensaje:
+                    "La venta quedó registrada y la emisión está en mantenimiento. No repitas la venta ni el cobro.",
+                };
+              }
+              return respuesta;
+            } catch (cause) {
+              if (!controlCreacionRef.current.ventaId) throw cause;
+              return {
+                estado: "RECONCILIAR" as const,
+                mensaje:
+                  "La venta quedó registrada, pero no se pudo confirmar la respuesta fiscal. No repitas la venta ni el cobro.",
+              };
+            }
+          }}
+          onCompletada={(resultado) => {
+            const ventaId = controlCreacionRef.current.ventaId;
+            if (!ventaId) {
+              toast.error("La emisión respondió sin identificar la venta persistida.");
+              return;
+            }
+            const resultadoCola = resultadoColaDespuesDeEmision(resultado.estado);
+            if (resultado.estado === "APROBADO") {
+              toast.success(`Factura aprobada. CAE ${resultado.cae}.`);
+            } else {
+              toast.warning("La venta quedó registrada. No repitas la venta ni el cobro.", {
+                duration: 12_000,
+              });
+            }
+            navegarACola(ventaId, resultadoCola);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

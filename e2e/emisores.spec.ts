@@ -1,4 +1,5 @@
 import { test, expect, ingresar, campo } from "./apoyo";
+import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fiscal";
 
 /**
  * Los datos que salen en el encabezado de los impresos.
@@ -9,9 +10,15 @@ import { test, expect, ingresar, campo } from "./apoyo";
  * personas jurídicas distintas, una por local.
  */
 
+test.beforeAll(async () => {
+  await prepararFixturesFiscales();
+});
+test.afterAll(async () => {
+  await limpiarFixturesFiscales();
+});
 test.beforeEach(async ({ page }) => {
   await ingresar(page);
-  await page.goto("/facturacion");
+  await page.goto("/facturacion/configuracion");
   await page.getByText(/identidad fiscal e impresos/i).waitFor({ timeout: 20_000 });
 });
 

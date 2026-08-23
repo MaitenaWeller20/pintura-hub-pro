@@ -126,6 +126,21 @@ type RpcFiscalNoGenerada = {
   ): PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 };
 
+/**
+ * PostgREST expone la contención determinista de RECLAMAR como 409. El
+ * prefijo forma parte del contrato porque PT409 también se usa para una
+ * secuencia obsoleta, que debe seguir el camino de recuperación de RESERVAR.
+ * 40001 queda aceptado temporalmente para nodos que aún ejecuten la función
+ * anterior durante un rollout.
+ */
+export function esConflictoClaimFiscalServer(error: unknown): boolean {
+  const value = error as { code?: string; message?: string } | null;
+  if (value?.code === "40001") return true;
+  return (
+    value?.code === "PT409" && (value.message ?? "").startsWith("EMISION_FISCAL_VERSION_CONFLICT")
+  );
+}
+
 type PreparacionInterna = {
   lectura: LecturaVentaFiscalExacta;
   contexto: ContextoFiscal;
@@ -697,6 +712,29 @@ async function direccionSucursal(admin: SupabaseLike, sucursalId: string): Promi
   return data.direccion;
 }
 
+export async function observarUltimoNumeroFiscalLocal(
+  admin: SupabaseLike,
+  identidad: Pick<
+    PreparacionEmisionFiscal,
+    "emisorCuit" | "puntoVenta" | "cbteTipo" | "modo" | "simulado"
+  >,
+): Promise<number> {
+  const { data, error } = await admin
+    .from("ventas")
+    .select("afip_numero")
+    .eq("afip_emisor_cuit", identidad.emisorCuit)
+    .eq("afip_punto_venta", identidad.puntoVenta)
+    .eq("afip_cbte_tipo", identidad.cbteTipo)
+    .eq("afip_modo", identidad.modo)
+    .eq("afip_simulado", identidad.simulado)
+    .not("afip_numero", "is", null)
+    .order("afip_numero", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`No se pudo observar la secuencia local: ${error.message}.`);
+  return Number(data?.afip_numero ?? 0);
+}
+
 export function crearDependenciasEmisionFiscalServer(input: {
   admin: SupabaseLike;
   usuario: SupabaseLike;
@@ -870,23 +908,10 @@ export function crearDependenciasEmisionFiscalServer(input: {
         if (!ultimo) throw new Error("ARCA omitió el último comprobante que informó autorizado.");
         ultimaFechaRemota = ultimo.fecha;
       }
-      const { data, error } = await admin
-        .from("ventas")
-        .select("afip_numero")
-        .eq("afip_emisor_cuit", preparacion.emisorCuit)
-        .eq("afip_punto_venta", preparacion.puntoVenta)
-        .eq("afip_cbte_tipo", preparacion.cbteTipo)
-        .eq("afip_modo", preparacion.modo)
-        .eq("afip_simulado", preparacion.simulado)
-        .not("cae", "is", null)
-        .order("afip_numero", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw new Error(`No se pudo observar la secuencia local: ${error.message}.`);
       return {
         ultimoRemoto,
         ultimaFechaRemota,
-        ultimoLocal: Number(data?.afip_numero ?? 0),
+        ultimoLocal: await observarUltimoNumeroFiscalLocal(admin, preparacion),
       };
     },
     validarFechaFiscal: (fecha, ultima) => validarCorrelatividadFechaFiscal(fecha, ultima),
@@ -995,11 +1020,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
       }
     },
     esConflictoClaim(error) {
-      const value = error as { code?: string; message?: string };
-      return (
-        value?.code === "40001" ||
-        /RECLAMAR|expected_version|claim.*vigente|versi.n.*obsolet/i.test(value?.message ?? "")
-      );
+      return esConflictoClaimFiscalServer(error);
     },
     async consultarComprobanteCompleto(reserva) {
       const contexto = await contextoReserva(reserva);
@@ -1069,6 +1090,28 @@ export async function liberarClaimFiscalVerificado(input: {
   return { estado: "LIBERADO" };
 }
 
+/**
+ * El snapshot necesita el id numérico de condición IVA para ARCA, pero el
+ * contrato público del selector confirma sólo datos del receptor. Proyectar
+ * campo por campo evita que una NC herede y filtre metadata interna.
+ */
+export function proyectarReceptorFiscalConfirmado(
+  receptor: ReceptorFiscalConfirmado & { condicionIvaReceptorId?: unknown },
+): ReceptorFiscalConfirmado {
+  return {
+    razonSocial: receptor.razonSocial,
+    domicilio: receptor.domicilio,
+    tipoDocumento: receptor.tipoDocumento,
+    numeroDocumento: receptor.numeroDocumento,
+    docTipoArca: receptor.docTipoArca,
+    docNroArca: receptor.docNroArca,
+    condicionIva: receptor.condicionIva,
+    origen: receptor.origen,
+    origenId: receptor.origenId,
+    verificadoArcaAt: receptor.verificadoArcaAt,
+  };
+}
+
 export async function previsualizarVentaFiscalExistente(input: {
   ventaId: string;
   receptor: SelectorReceptorFiscal;
@@ -1087,6 +1130,7 @@ export async function previsualizarVentaFiscalExistente(input: {
   });
   const lectura = await leerVentaExacta(input.admin, input.ventaId);
   const vista = deps.obtenerVistaPreparacion(input.ventaId);
+  const receptorVisible = proyectarReceptorFiscalConfirmado(vista.receptor);
   const demoraDias = diasDesdeHoyAr(new Date(lectura.venta.fechaComercial));
   const confirmacionAutoritativa: ConfirmacionFiscalPostBorrador = {
     version: 1,
@@ -1097,7 +1141,7 @@ export async function previsualizarVentaFiscalExistente(input: {
     letra: vista.letra,
     cbteTipo: preparacion.cbteTipo,
     fechaFiscal: preparacion.fechaComprobante,
-    receptor: vista.receptor,
+    receptor: receptorVisible,
   };
   return {
     autoritativo: true,
@@ -1108,7 +1152,7 @@ export async function previsualizarVentaFiscalExistente(input: {
     pagado: lectura.venta.totalPagado,
     saldo: lectura.venta.saldo,
     comprador: lectura.venta.clienteId,
-    receptor: vista.receptor,
+    receptor: receptorVisible,
     letra: vista.letra,
     razon_letra: `La condición ${vista.receptor.condicionIva} determina letra ${vista.letra}.`,
     emisor_cuit: preparacion.emisorCuit,

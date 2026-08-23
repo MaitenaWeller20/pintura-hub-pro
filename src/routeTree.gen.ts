@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as ApiE2eFingerprintRouteImport } from './routes/api.e2e-fingerprint'
 import { Route as AuthenticatedUsuariosRouteImport } from './routes/_authenticated/usuarios'
 import { Route as AuthenticatedStockRouteImport } from './routes/_authenticated/stock'
 import { Route as AuthenticatedReportesRouteImport } from './routes/_authenticated/reportes'
@@ -55,6 +56,11 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const ApiE2eFingerprintRoute = ApiE2eFingerprintRouteImport.update({
+  id: '/api/e2e-fingerprint',
+  path: '/api/e2e-fingerprint',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedUsuariosRoute = AuthenticatedUsuariosRouteImport.update({
   id: '/usuarios',
@@ -238,6 +244,7 @@ export interface FileRoutesByFullPath {
   '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
   '/usuarios': typeof AuthenticatedUsuariosRoute
+  '/api/e2e-fingerprint': typeof ApiE2eFingerprintRoute
   '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
   '/facturacion/cola': typeof AuthenticatedFacturacionColaRoute
   '/facturacion/configuracion': typeof AuthenticatedFacturacionConfiguracionRoute
@@ -269,6 +276,7 @@ export interface FileRoutesByTo {
   '/reportes': typeof AuthenticatedReportesRoute
   '/stock': typeof AuthenticatedStockRoute
   '/usuarios': typeof AuthenticatedUsuariosRoute
+  '/api/e2e-fingerprint': typeof ApiE2eFingerprintRoute
   '/': typeof AuthenticatedIndexRoute
   '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
   '/facturacion/cola': typeof AuthenticatedFacturacionColaRoute
@@ -304,6 +312,7 @@ export interface FileRoutesById {
   '/_authenticated/reportes': typeof AuthenticatedReportesRoute
   '/_authenticated/stock': typeof AuthenticatedStockRoute
   '/_authenticated/usuarios': typeof AuthenticatedUsuariosRoute
+  '/api/e2e-fingerprint': typeof ApiE2eFingerprintRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/compras/nueva': typeof AuthenticatedComprasNuevaRoute
   '/_authenticated/facturacion/cola': typeof AuthenticatedFacturacionColaRoute
@@ -340,6 +349,7 @@ export interface FileRouteTypes {
     | '/reportes'
     | '/stock'
     | '/usuarios'
+    | '/api/e2e-fingerprint'
     | '/compras/nueva'
     | '/facturacion/cola'
     | '/facturacion/configuracion'
@@ -371,6 +381,7 @@ export interface FileRouteTypes {
     | '/reportes'
     | '/stock'
     | '/usuarios'
+    | '/api/e2e-fingerprint'
     | '/'
     | '/compras/nueva'
     | '/facturacion/cola'
@@ -405,6 +416,7 @@ export interface FileRouteTypes {
     | '/_authenticated/reportes'
     | '/_authenticated/stock'
     | '/_authenticated/usuarios'
+    | '/api/e2e-fingerprint'
     | '/_authenticated/'
     | '/_authenticated/compras/nueva'
     | '/_authenticated/facturacion/cola'
@@ -427,6 +439,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiE2eFingerprintRoute: typeof ApiE2eFingerprintRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -451,6 +464,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/api/e2e-fingerprint': {
+      id: '/api/e2e-fingerprint'
+      path: '/api/e2e-fingerprint'
+      fullPath: '/api/e2e-fingerprint'
+      preLoaderRoute: typeof ApiE2eFingerprintRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/usuarios': {
       id: '/_authenticated/usuarios'
@@ -747,6 +767,7 @@ const AuthenticatedRouteRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiE2eFingerprintRoute: ApiE2eFingerprintRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

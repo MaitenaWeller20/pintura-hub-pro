@@ -478,9 +478,21 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
       );
     }
 
-    const { qrAfipDataUrlObligatorio } = await import("./fiscal/qr");
+    const [{ qrAfipDataUrlObligatorio }, { escenarioMockFiscalActual }] = await Promise.all([
+      import("./fiscal/qr"),
+      import("./fiscal/mock-scenario.server"),
+    ]);
+    const generarQr =
+      escenarioMockFiscalActual() === "QR_ERROR"
+        ? async () => {
+            throw new ErrorImpresionFiscal(
+              "QR_FISCAL_OBLIGATORIO",
+              "El escenario de prueba impidió generar el QR fiscal obligatorio.",
+            );
+          }
+        : qrAfipDataUrlObligatorio;
     return resolverDatosFiscalesComprobanteDesdeFila(venta, {
-      generarQr: qrAfipDataUrlObligatorio,
+      generarQr,
       async cargarLegacy() {
         const { datosFiscalesComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
         return datosFiscalesComprobanteLegacy({ data, context });

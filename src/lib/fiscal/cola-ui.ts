@@ -120,6 +120,11 @@ export function actualizarBusquedaCola(
   return normalizarBusquedaCola(siguiente);
 }
 
+export function crearActualizadorBusquedaCola(cambios: Partial<BusquedaColaFiscal>) {
+  return (actual: Record<string, unknown>): BusquedaColaFiscal =>
+    actualizarBusquedaCola(normalizarBusquedaCola(actual), cambios);
+}
+
 export function cerrarResultadoCola(actual: BusquedaColaFiscal): BusquedaColaFiscal {
   const { resultado: _resultado, ...resto } = actual;
   return resto;

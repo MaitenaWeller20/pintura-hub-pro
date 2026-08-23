@@ -514,9 +514,39 @@ describe("ejecutarEmisionFiscal", () => {
     expect(doble.faseActual).toBe("REQUEST_INICIADO");
   });
 
-  it("dos submits con receptores distintos dejan un claim, una preparación y una llamada ARCA", async () => {
+  it("una barrera de dos submits deja APROBADO + EN_CURSO y una sola llamada ARCA", async () => {
     const doble = new FiscalDouble();
     const deps = doble.deps();
+    const transicionar = deps.transicionar;
+    let reclamosEnBarrera = 0;
+    let abrirBarrera!: () => void;
+    const barrera = new Promise<void>((resolve) => {
+      abrirBarrera = resolve;
+    });
+    deps.transicionar = async (input) => {
+      if (input.accion === "RECLAMAR") {
+        reclamosEnBarrera += 1;
+        if (reclamosEnBarrera === 2) abrirBarrera();
+        await barrera;
+      }
+      try {
+        return await transicionar(input);
+      } catch (error) {
+        if (input.accion !== "RECLAMAR") throw error;
+        const conflicto = new Error(
+          "EMISION_FISCAL_VERSION_CONFLICT: versión esperada 0 no coincide con versión fiscal 1",
+        ) as Error & { code: string };
+        conflicto.code = "PT409";
+        throw conflicto;
+      }
+    };
+    deps.esConflictoClaim = (error) => {
+      const value = error as { code?: string; message?: string };
+      return (
+        value.code === "PT409" &&
+        (value.message ?? "").startsWith("EMISION_FISCAL_VERSION_CONFLICT")
+      );
+    };
 
     const [primero, segundo] = await Promise.all([
       ejecutarEmisionFiscal(
@@ -538,6 +568,7 @@ describe("ejecutarEmisionFiscal", () => {
     ]);
 
     expect([primero.estado, segundo.estado].sort()).toEqual(["APROBADO", "EN_CURSO"]);
+    expect(reclamosEnBarrera).toBe(2);
     expect(doble.calls.filter((call) => call.accion === "RECLAMAR")).toHaveLength(2);
     expect(doble.receptoresPreparados).toHaveLength(1);
     expect(doble.payloadsCae).toHaveLength(1);

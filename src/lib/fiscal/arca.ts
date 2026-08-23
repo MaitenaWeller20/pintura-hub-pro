@@ -4,6 +4,11 @@ import { TIPOS_C, CONCEPTO_PRODUCTOS } from "./codigos";
 import { SupabaseTicketStorage } from "./ticket-storage";
 import type { AlicuotaAfip } from "./iva";
 import type { SnapshotFiscalV2 } from "./snapshot";
+import {
+  entornoHabilitaMockFiscal,
+  entornoMockFiscalDelProceso,
+  escenarioMockFiscalActual,
+} from "./mock-scenario.server";
 
 /**
  * Cliente de AFIP/ARCA (WSAA + WSFEv1) sobre @arcasdk/core.
@@ -19,7 +24,9 @@ import type { SnapshotFiscalV2 } from "./snapshot";
 // que quedó en el limbo.
 const TIMEOUT_MS = 25_000;
 
-export const MOCK = process.env.INVOICING_MOCK_MODE === "true";
+const entornoMockAlCargarArca = entornoMockFiscalDelProceso();
+export const MOCK =
+  typeof window === "undefined" && entornoHabilitaMockFiscal(entornoMockAlCargarArca);
 
 export interface EmisorFiscal {
   cuit: string;
@@ -60,6 +67,21 @@ class AfipTimeout extends Error {
 
 class ArcaRespuestaIncierta extends Error {
   override name = "ArcaRespuestaIncierta";
+}
+
+function aplicarEscenarioSolicitudMock(): void {
+  const escenario = escenarioMockFiscalActual();
+  if (escenario === "RECHAZO_DEFINITIVO") {
+    throw new ArcaRechazoDefinitivo(
+      "ARCA informó un rechazo fiscal definitivo en el escenario de prueba.",
+      "MOCK_RECHAZO_DEFINITIVO",
+    );
+  }
+  if (escenario === "TIMEOUT_POST_REQUEST") {
+    throw new AfipTimeout(
+      "El escenario de prueba simuló un timeout después de iniciar la solicitud fiscal.",
+    );
+  }
 }
 
 export class ArcaRechazoDefinitivo extends Error {
@@ -733,6 +755,7 @@ export async function solicitarCae(
   supabaseAdmin: unknown,
 ): Promise<RespuestaCae> {
   if (MOCK) {
+    aplicarEscenarioSolicitudMock();
     // CAE simulado, determinístico, de 14 dígitos. Permite operar y demostrar el
     // flujo completo mientras el trámite del certificado con AFIP está en curso.
     // NO tiene validez legal.
@@ -831,6 +854,7 @@ export async function solicitarCaeConPayload(
   supabaseAdmin: unknown,
 ): Promise<RespuestaCae> {
   if (MOCK) {
+    aplicarEscenarioSolicitudMock();
     const semilla = `${emisor.cuit}${pv.numero}${String(payload.CbteTipo)}${numero}`;
     let hash = 0;
     for (const caracter of semilla) hash = (hash * 31 + caracter.charCodeAt(0)) >>> 0;

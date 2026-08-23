@@ -26,7 +26,12 @@ const AR_TZ = "America/Argentina/Buenos_Aires";
 export const fmtDate = (d: string | Date | null | undefined) => {
   if (!d) return "";
   const dt = typeof d === "string" ? new Date(d) : d;
-  return dt.toLocaleDateString("es-AR", { timeZone: AR_TZ, day: "2-digit", month: "2-digit", year: "numeric" });
+  return dt.toLocaleDateString("es-AR", {
+    timeZone: AR_TZ,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 };
 
 export const fmtDateTime = (d: string | Date | null | undefined) => {
@@ -34,8 +39,11 @@ export const fmtDateTime = (d: string | Date | null | undefined) => {
   const dt = typeof d === "string" ? new Date(d) : d;
   return dt.toLocaleString("es-AR", {
     timeZone: AR_TZ,
-    day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 };
 
@@ -50,6 +58,7 @@ export const formaPagoLabel: Record<string, string> = {
 };
 
 export const tipoComprobanteLabel: Record<string, string> = {
+  VENTA: "Venta",
   FACTURA_A: "Factura A",
   FACTURA_B: "Factura B",
   NOTA_CREDITO: "Nota de Crédito",

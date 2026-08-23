@@ -12,10 +12,11 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:fiscal-rest": "bash scripts/test-conflictos-emision-rest.sh",
     "typecheck": "tsc --noEmit",
     "build:vercel": "NITRO_PRESET=vercel vite build",
-    "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui"
+    "e2e": "NODE_ENV=test INVOICING_MOCK_TEST_RUNNER=playwright INVOICING_MOCK_MODE=true INVOICING_MOCK_SCENARIO=${INVOICING_MOCK_SCENARIO:-OK} bash scripts/e2e-local.sh",
+    "e2e:ui": "NODE_ENV=test INVOICING_MOCK_TEST_RUNNER=playwright INVOICING_MOCK_MODE=true INVOICING_MOCK_SCENARIO=${INVOICING_MOCK_SCENARIO:-OK} bash scripts/e2e-local.sh --ui"
   },
   "dependencies": {
     "@arcasdk/core": "2.0.0",

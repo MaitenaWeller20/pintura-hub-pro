@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   actualizarBusquedaCola,
+  crearActualizadorBusquedaCola,
   accionesColaHabilitadas,
   cerrarResultadoCola,
   debeRefrescarCola,
@@ -260,6 +261,24 @@ describe("URL de la cola fiscal", () => {
       page: 1,
       documento: "30714199664",
       estado: "APROBADO",
+    });
+  });
+
+  it("aplica el cambio sobre el search vigente y conserva el resultado de otra navegación", () => {
+    const actualizarTab = crearActualizadorBusquedaCola({ tab: "emitidas" });
+
+    expect(
+      actualizarTab({
+        tab: "pendientes",
+        page: 1,
+        venta: VENTA,
+        resultado: "factura_aprobada",
+      }),
+    ).toEqual({
+      tab: "emitidas",
+      page: 1,
+      venta: VENTA,
+      resultado: "factura_aprobada",
     });
   });
 

@@ -4,11 +4,120 @@ import {
   construirPreviewBorradorFiscalProvisional,
   construirSnapshotFiscalDesdeLectura,
   crearHuellaConfirmacionFiscal,
+  esConflictoClaimFiscalServer,
   emitirPostBorradorConHuella,
+  observarUltimoNumeroFiscalLocal,
+  proyectarReceptorFiscalConfirmado,
   type ConfirmacionFiscalPostBorrador,
 } from "./emision.server";
 import type { ReservaFiscalPersistida } from "./emision";
 import { validarSnapshotFiscalV2 } from "./snapshot";
+
+describe("clasificación de contención fiscal REST", () => {
+  it("acepta PT409 sólo con el prefijo estable de versión", () => {
+    expect(
+      esConflictoClaimFiscalServer({
+        code: "PT409",
+        message: "EMISION_FISCAL_VERSION_CONFLICT: esperada 0, vigente 1",
+      }),
+    ).toBe(true);
+    expect(
+      esConflictoClaimFiscalServer({
+        code: "PT409",
+        message: "EMISION_FISCAL_SECUENCIA_OBSOLETA: observado 0, vigente 1",
+      }),
+    ).toBe(false);
+    expect(esConflictoClaimFiscalServer({ code: "PT409", message: "otro conflicto" })).toBe(false);
+    expect(
+      esConflictoClaimFiscalServer({
+        code: "P0001",
+        message: "expected_version quedó obsoleto",
+      }),
+    ).toBe(false);
+  });
+
+  it("mantiene compatibilidad temporal con 40001 durante el rollout", () => {
+    expect(esConflictoClaimFiscalServer({ code: "40001", message: "legacy" })).toBe(true);
+  });
+});
+
+describe("secuencia fiscal local autoritativa", () => {
+  it("incluye una identidad reservada sin CAE y excluye números nulos", async () => {
+    const filtrosNot: Array<[string, string, null]> = [];
+    const consulta = {
+      eq() {
+        return this;
+      },
+      not(campo: string, operador: string, valor: null) {
+        filtrosNot.push([campo, operador, valor]);
+        return this;
+      },
+      order() {
+        return this;
+      },
+      limit() {
+        return this;
+      },
+      async maybeSingle() {
+        return { data: { afip_numero: 913000 }, error: null };
+      },
+    };
+    const admin = {
+      from(tabla: string) {
+        expect(tabla).toBe("ventas");
+        return {
+          select(columnas: string) {
+            expect(columnas).toBe("afip_numero");
+            return consulta;
+          },
+        };
+      },
+    };
+
+    const numero = await observarUltimoNumeroFiscalLocal(admin as never, {
+      emisorCuit: "30717322467",
+      puntoVenta: 1,
+      cbteTipo: 6,
+      modo: "HOMOLOGACION",
+      simulado: true,
+    });
+
+    expect(numero).toBe(913000);
+    expect(filtrosNot).toEqual([["afip_numero", "is", null]]);
+  });
+});
+
+describe("frontera pública de la preview", () => {
+  it("una NC no filtra condicionIvaReceptorId desde el snapshot original", () => {
+    const receptor = proyectarReceptorFiscalConfirmado({
+      razonSocial: "Receptor original",
+      domicilio: "Domicilio",
+      tipoDocumento: "CUIT",
+      numeroDocumento: "30714199664",
+      docTipoArca: 80,
+      docNroArca: "30714199664",
+      condicionIva: "RESPONSABLE_INSCRIPTO",
+      origen: "MANUAL",
+      origenId: null,
+      verificadoArcaAt: null,
+      condicionIvaReceptorId: 1,
+    });
+
+    expect(receptor).toEqual({
+      razonSocial: "Receptor original",
+      domicilio: "Domicilio",
+      tipoDocumento: "CUIT",
+      numeroDocumento: "30714199664",
+      docTipoArca: 80,
+      docNroArca: "30714199664",
+      condicionIva: "RESPONSABLE_INSCRIPTO",
+      origen: "MANUAL",
+      origenId: null,
+      verificadoArcaAt: null,
+    });
+    expect(receptor).not.toHaveProperty("condicionIvaReceptorId");
+  });
+});
 
 function preparacion(percepciones = "0.00") {
   return {

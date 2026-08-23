@@ -1576,16 +1576,16 @@ Run RED with mock mode and a local database; expected failures are missing butto
 - enforce `INVOICING_MOCK_MODE=true` in every browser/server test process.
 
 ```bash
-INVOICING_MOCK_MODE=true INVOICING_MOCK_SCENARIO=OK npx playwright test \
+npm run e2e -- \
   e2e/venta-fiscal.spec.ts \
   e2e/facturacion-cola.spec.ts \
   e2e/presupuestos-facturacion.spec.ts \
   e2e/usuarios.spec.ts \
   e2e/facturacion-multiemisor.spec.ts
-INVOICING_MOCK_MODE=true INVOICING_MOCK_SCENARIO=TIMEOUT_POST_REQUEST \
-  npx playwright test e2e/venta-fiscal.spec.ts -g "resultado parcial"
-INVOICING_MOCK_MODE=true INVOICING_MOCK_SCENARIO=QR_ERROR \
-  npx playwright test e2e/venta-fiscal.spec.ts -g "bloquea PDF sin QR"
+INVOICING_MOCK_SCENARIO=TIMEOUT_POST_REQUEST \
+  npm run e2e -- e2e/venta-fiscal.spec.ts -g "resultado parcial"
+INVOICING_MOCK_SCENARIO=QR_ERROR \
+  npm run e2e -- e2e/venta-fiscal.spec.ts -g "bloquea PDF sin QR"
 ```
 
 Expected: all selected browser stories pass and no request reaches ARCA production.
@@ -1649,7 +1649,7 @@ Expected: clean reset, no ambiguous overload, exact grants/RLS, and all contract
 npm test
 npm run typecheck
 INVOICING_MOCK_MODE=true npm run build:vercel
-INVOICING_MOCK_MODE=true npx playwright test
+npm run e2e
 ```
 
 Expected: unit/integration/E2E/typecheck/build all exit 0. Search artifacts/logs to prove no private key, certificate, ticket or raw SOAP was serialized.

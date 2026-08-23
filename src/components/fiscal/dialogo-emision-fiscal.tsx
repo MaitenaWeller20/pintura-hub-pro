@@ -260,7 +260,8 @@ export function DialogoEmisionFiscal({
       }}
     >
       <DialogContent
-        className="max-w-3xl p-0"
+        className="max-h-[calc(100dvh-1rem)] max-w-3xl overflow-hidden p-0"
+        data-testid="dialogo-emision-fiscal"
         closeDisabled={emitiendo}
         hideClose={emitiendo}
         onOpenAutoFocus={(event) => {
@@ -285,7 +286,10 @@ export function DialogoEmisionFiscal({
           </DialogHeader>
         </div>
 
-        <div className="space-y-5 px-4 sm:px-6">
+        <div
+          className="max-h-[calc(100dvh-12rem)] space-y-5 overflow-y-auto px-4 sm:px-6"
+          data-testid="dialogo-emision-scroll"
+        >
           <section className="grid gap-3 rounded-xl border border-border bg-muted/20 p-4 sm:grid-cols-2">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">

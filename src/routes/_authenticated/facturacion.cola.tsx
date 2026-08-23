@@ -27,6 +27,7 @@ import {
   accionesColaHabilitadas,
   actualizarBusquedaCola,
   cerrarResultadoCola,
+  crearActualizadorBusquedaCola,
   debeRefrescarCola,
   huellaConsultaCola,
   normalizarBusquedaCola,
@@ -297,7 +298,7 @@ function ColaFiscalPage() {
   useEffect(() => {
     if (tabAutoritativo === search.tab) return;
     void navigate({
-      search: actualizarBusquedaCola(search, { tab: tabAutoritativo }),
+      search: crearActualizadorBusquedaCola({ tab: tabAutoritativo }),
       replace: true,
     });
   }, [navigate, search, tabAutoritativo]);
@@ -424,12 +425,12 @@ function ColaFiscalPage() {
         accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
         error={cola.error ? mensajeError(cola.error, "No se pudo cargar la cola fiscal.") : null}
         onRetry={() => void cola.refetch()}
-        onAccion={(row, nombre) => {
+        onAccion={(row, nombre, disparador) => {
           if (!accionesHabilitadas) return;
           setErrorAccion(null);
           setMensajeAccion(null);
           if (nombre === "Facturar" || nombre === "Corregir/reintentar") {
-            returnFocusRef.current = document.activeElement as HTMLButtonElement | null;
+            returnFocusRef.current = disparador;
             setSeleccion({ fila: row, huellaConsulta });
             return;
           }
@@ -510,7 +511,7 @@ function ColaFiscalPage() {
             void queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
             if (resultadoUrl) {
               void navigate({
-                search: actualizarBusquedaCola(search, {
+                search: crearActualizadorBusquedaCola({
                   venta: ventaId,
                   resultado: resultadoUrl,
                 }),

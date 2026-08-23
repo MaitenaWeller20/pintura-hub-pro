@@ -78,7 +78,7 @@ export function ColaFiscalTabla({
   accionPendienteId?: string | null;
   error?: string | null;
   onRetry(): void;
-  onAccion(row: ColaFiscalFila, accion: string): void;
+  onAccion(row: ColaFiscalFila, accion: string, disparador: HTMLButtonElement): void;
 }) {
   return (
     <section
@@ -217,7 +217,7 @@ export function ColaFiscalTabla({
                         variant={accion === "Facturar" ? "default" : "outline"}
                         className="min-h-11"
                         disabled={!accionesHabilitadas || !accionable || accionPendienteId != null}
-                        onClick={() => onAccion(row, accion)}
+                        onClick={(event) => onAccion(row, accion, event.currentTarget)}
                       >
                         {procesando || ejecutandoAccion ? (
                           <Loader2 className="animate-spin" />

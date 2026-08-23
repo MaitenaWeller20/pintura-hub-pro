@@ -1,11 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { test, expect, ingresar, campo } from "./apoyo";
+import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fiscal";
 
 /**
  * Un test por cada cosa que reportó la clienta, para que si alguna se rompe de
  * nuevo se sepa antes de que lo note ella.
  */
 
+test.describe.configure({ mode: "serial" });
+test.beforeAll(async () => {
+  await prepararFixturesFiscales();
+});
+test.afterAll(async () => {
+  await limpiarFixturesFiscales();
+});
 test.beforeEach(async ({ page }) => {
   await ingresar(page);
 });
@@ -131,7 +139,7 @@ test("ventas: un remito de obra se guarda sin elegir cliente", async ({ page }) 
   // Tipo de comprobante = Remito de Obra
   await page
     .getByRole("combobox")
-    .filter({ hasText: /factura b/i })
+    .filter({ hasText: /^venta$/i })
     .click();
   await page.getByRole("option", { name: /remito de obra/i }).click();
 

@@ -14,6 +14,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import {
+  cargarFlagsFacturacionDesdeSupabase,
+  decidirEscritorFiscal,
+  type FlagsFacturacion,
+} from "./fiscal/feature.server";
 
 const itemSchema = z
   .object({
@@ -49,13 +54,14 @@ const pagoSchema = z.object({
   detalle: z.record(z.string(), z.any()).default({}),
 });
 
-const ventaSchema = z.object({
+export const ventaInputSchema = z.object({
   sucursal_id: z.string().uuid(),
   // Nulo sólo en un remito de obra: ahí la obra ES el cliente y `crear_venta`
   // resuelve (o crea) su ficha a partir de `nombre_obra`. Para cualquier otro
   // comprobante la RPC rechaza el nulo, que es la barrera que vale.
   cliente_id: z.string().uuid().optional().nullable(),
   tipo_comprobante: z.enum([
+    "VENTA",
     "FACTURA_A",
     "FACTURA_B",
     "FACTURA_C",
@@ -85,7 +91,7 @@ const ventaSchema = z.object({
 
 export const crearVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => ventaSchema.parse(d))
+  .inputValidator((d: unknown) => ventaInputSchema.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
@@ -118,6 +124,109 @@ export const crearVenta = createServerFn({ method: "POST" })
       cta_cte: row.es_cta_cte as boolean,
     };
   });
+
+const conversionBaseSchema = z.object({
+  presupuesto_id: z.string().uuid(),
+  cliente_id: z.string().uuid(),
+  condicion_venta: z.enum(["CONTADO", "CTA_CTE"]),
+  pagos: z.array(pagoSchema).default([]),
+  idempotency_key: z.string().uuid(),
+});
+
+export const conversionPresupuestoInputSchema = z.discriminatedUnion("entrada", [
+  conversionBaseSchema.extend({ entrada: z.literal("V2") }).strict(),
+  conversionBaseSchema
+    .extend({
+      entrada: z.literal("LEGACY"),
+      tipo_comprobante: z.enum(["FACTURA_A", "FACTURA_B"]),
+    })
+    .strict(),
+]);
+
+export type ConversionPresupuestoInput = z.infer<typeof conversionPresupuestoInputSchema>;
+export type ConversionPresupuestoResultado = {
+  id: string;
+  numero: string;
+  cta_cte: boolean;
+};
+
+const mantenimientoConversion = () => ({
+  estado: "MANTENIMIENTO" as const,
+  mensaje: "La facturación está temporalmente en mantenimiento. No se convirtió el presupuesto.",
+});
+
+export async function ejecutarConversionPresupuestoSegunFlags(
+  input: ConversionPresupuestoInput,
+  deps: {
+    cargarFlags(): Promise<FlagsFacturacion>;
+    convertirNeutral(
+      input: Extract<ConversionPresupuestoInput, { entrada: "V2" }>,
+    ): Promise<ConversionPresupuestoResultado>;
+    convertirLegacy(
+      input: Extract<ConversionPresupuestoInput, { entrada: "LEGACY" }>,
+    ): Promise<ConversionPresupuestoResultado>;
+  },
+): Promise<ConversionPresupuestoResultado | ReturnType<typeof mantenimientoConversion>> {
+  const escritor = decidirEscritorFiscal(await deps.cargarFlags(), input.entrada);
+  if (escritor === "MANTENIMIENTO") return mantenimientoConversion();
+  if (input.entrada === "V2") return deps.convertirNeutral(input);
+  return deps.convertirLegacy(input);
+}
+
+function normalizarConversion(value: unknown): ConversionPresupuestoResultado {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (typeof row !== "object" || row === null || Array.isArray(row)) {
+    throw new Error("El servidor no devolvió la venta convertida.");
+  }
+  const record = row as Record<string, unknown>;
+  if (
+    typeof record.venta_id !== "string" ||
+    typeof record.numero !== "string" ||
+    typeof record.es_cta_cte !== "boolean"
+  ) {
+    throw new Error("El servidor devolvió una conversión incompleta.");
+  }
+  return { id: record.venta_id, numero: record.numero, cta_cte: record.es_cta_cte };
+}
+
+/** Fence server-side: flags autoritativos antes de cualquier RPC comercial. */
+export const convertirPresupuestoEnVenta = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => conversionPresupuestoInputSchema.parse(value))
+  .handler(async ({ data, context }) =>
+    ejecutarConversionPresupuestoSegunFlags(data, {
+      cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
+      async convertirNeutral(input) {
+        const { data: result, error } = await context.supabase.rpc(
+          "convertir_presupuesto_en_venta_neutral",
+          {
+            p_presupuesto_id: input.presupuesto_id,
+            p_cliente_id: input.cliente_id,
+            p_condicion_venta: input.condicion_venta,
+            p_pagos: input.pagos,
+            p_idempotency_key: input.idempotency_key,
+          },
+        );
+        if (error) throw new Error(error.message);
+        return normalizarConversion(result);
+      },
+      async convertirLegacy(input) {
+        const { data: result, error } = await context.supabase.rpc(
+          "convertir_presupuesto_en_venta",
+          {
+            p_presupuesto_id: input.presupuesto_id,
+            p_cliente_id: input.cliente_id,
+            p_tipo_comprobante: input.tipo_comprobante,
+            p_condicion_venta: input.condicion_venta,
+            p_pagos: input.pagos,
+            p_idempotency_key: input.idempotency_key,
+          },
+        );
+        if (error) throw new Error(error.message);
+        return normalizarConversion(result);
+      },
+    }),
+  );
 
 export const anularVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

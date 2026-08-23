@@ -370,12 +370,19 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
       cae: "74123456789012",
       caeFchVto: "20260901",
     });
+    const payloadExacto = {
+      CbteTipo: 1,
+      Concepto: 1,
+      DocTipo: 80,
+      DocNro: 30714199664,
+      CbteFch: "20260822",
+    };
     const solicitar = async () => {
       const { solicitarCaeConPayload } = await import("./arca");
       return solicitarCaeConPayload(
         emisor(),
         { numero: 5, modo: "PRODUCCION" },
-        { CbteTipo: 1 },
+        payloadExacto,
         42,
         {},
       );
@@ -485,6 +492,93 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
         expect(esErrorTransitorio(error)).toBe(true);
       },
     );
+
+    it.each([
+      [
+        "Concepto distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].Concepto = 2;
+        },
+      ],
+      [
+        "DocTipo distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].DocTipo = 96;
+        },
+      ],
+      [
+        "DocNro distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].DocNro = 30714199665;
+        },
+      ],
+      [
+        "CbteFch distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].CbteFch = "20260823";
+        },
+      ],
+      [
+        "Concepto ausente",
+        (r: ReturnType<typeof respuestaA>) => {
+          delete (r.response.FeDetResp.FECAEDetResponse[0] as { Concepto?: number }).Concepto;
+        },
+      ],
+      [
+        "DocTipo ausente",
+        (r: ReturnType<typeof respuestaA>) => {
+          delete (r.response.FeDetResp.FECAEDetResponse[0] as { DocTipo?: number }).DocTipo;
+        },
+      ],
+      [
+        "DocNro ausente",
+        (r: ReturnType<typeof respuestaA>) => {
+          delete (r.response.FeDetResp.FECAEDetResponse[0] as { DocNro?: number }).DocNro;
+        },
+      ],
+      [
+        "CbteFch ausente",
+        (r: ReturnType<typeof respuestaA>) => {
+          delete (r.response.FeDetResp.FECAEDetResponse[0] as { CbteFch?: string }).CbteFch;
+        },
+      ],
+      [
+        "Concepto inválido",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].Concepto = -1;
+        },
+      ],
+      [
+        "DocTipo inválido",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].DocTipo = 80.5;
+        },
+      ],
+      [
+        "DocNro inválido",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].DocNro = "30-71419966-4" as never;
+        },
+      ],
+      [
+        "CbteFch inválido",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].CbteFch = "20260230";
+        },
+      ],
+    ])("clasifica como incierta una identidad de detalle no exacta: %s", async (_caso, mutar) => {
+      const raw = respuestaA();
+      mutar(raw);
+      sdk.createVoucher.mockResolvedValue(raw);
+      const { ArcaRechazoDefinitivo, esErrorTransitorio } = await import("./arca");
+
+      const error = await solicitar().catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({ name: "ArcaRespuestaIncierta" });
+      expect(error).not.toBeInstanceOf(ArcaRechazoDefinitivo);
+      expect(esErrorTransitorio(error)).toBe(true);
+    });
 
     it("sólo R coherente con CAE vacío es rechazo definitivo y conserva códigos seguros", async () => {
       const raw = respuestaA();

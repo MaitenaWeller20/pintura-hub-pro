@@ -343,6 +343,28 @@ describe("ejecutarEmisionFiscal", () => {
     expect(doble.payloadsCae).toHaveLength(1);
   });
 
+  it("una identidad de detalle ARCA incierta conserva la reserva y termina en RECONCILIAR", async () => {
+    const doble = new FiscalDouble();
+    const respuestaIncierta = new Error("ARCA devolvió un detalle con identidad distinta.");
+    respuestaIncierta.name = "ArcaRespuestaIncierta";
+    doble.throwSolicitud = respuestaIncierta;
+
+    const result = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        confirmaVentaAntigua: false,
+      },
+      doble.deps(),
+    );
+
+    expect(result.estado).toBe("RECONCILIAR");
+    expect(acciones(doble)).toEqual(["RECLAMAR", "RESERVAR", "REQUEST_INICIADO", "RECONCILIAR"]);
+    expect(acciones(doble)).not.toContain("ERROR_CORREGIBLE");
+    expect(doble.claim).not.toBeNull();
+    expect(doble.numero).toBe(1);
+  });
+
   it("un fallo al mapear el snapshot después de REQUEST_INICIADO también concilia", async () => {
     const doble = new FiscalDouble();
     doble.throwPayload = new Error("snapshot no mapeable");

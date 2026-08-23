@@ -338,6 +338,26 @@ type ResultadoSolicitudCaeClasificado =
   | { resultado: "APROBADA"; cae: string; vencimiento: Date }
   | { resultado: "RECHAZADA"; codigo: string; mensaje: string };
 
+type IdentidadDetalleSolicitudCae = {
+  concepto: number;
+  docTipo: number;
+  docNro: number;
+  fechaComprobante: string;
+};
+
+function identidadDetalleDesdePayload(
+  payload: Record<string, unknown>,
+): IdentidadDetalleSolicitudCae {
+  const fechaComprobante = fechaArca(payload.CbteFch, "CbteFch");
+  if (fechaComprobante === null) throw new Error("El payload CAE omitió CbteFch.");
+  return {
+    concepto: enteroArca(payload.Concepto, "Concepto"),
+    docTipo: enteroArca(payload.DocTipo, "DocTipo"),
+    docNro: enteroArca(payload.DocNro, "DocNro"),
+    fechaComprobante,
+  };
+}
+
 function clasificarSolicitudCae(
   raw: unknown,
   esperado: {
@@ -345,7 +365,7 @@ function clasificarSolicitudCae(
     puntoVenta: number;
     cbteTipo: number;
     numero: number;
-  },
+  } & IdentidadDetalleSolicitudCae,
 ): ResultadoSolicitudCaeClasificado {
   try {
     const salidaSdk = registro(raw, "CreateVoucherResult");
@@ -377,10 +397,14 @@ function clasificarSolicitudCae(
     }
     const detalle = registro(detalles[0], "FeDetResp.FECAEDetResponse[0]");
     if (
+      enteroArca(detalle.Concepto, "FECAEDetResponse.Concepto") !== esperado.concepto ||
+      enteroArca(detalle.DocTipo, "FECAEDetResponse.DocTipo") !== esperado.docTipo ||
+      enteroArca(detalle.DocNro, "FECAEDetResponse.DocNro") !== esperado.docNro ||
       enteroArca(detalle.CbteDesde, "FECAEDetResponse.CbteDesde") !== esperado.numero ||
-      enteroArca(detalle.CbteHasta, "FECAEDetResponse.CbteHasta") !== esperado.numero
+      enteroArca(detalle.CbteHasta, "FECAEDetResponse.CbteHasta") !== esperado.numero ||
+      fechaArca(detalle.CbteFch, "FECAEDetResponse.CbteFch") !== esperado.fechaComprobante
     ) {
-      throw new ArcaRespuestaIncierta("ARCA devolvió un detalle con número distinto.");
+      throw new ArcaRespuestaIncierta("ARCA devolvió un detalle con identidad distinta.");
     }
 
     const resultadoCabecera = cabecera.Resultado;
@@ -775,6 +799,7 @@ export async function solicitarCae(
     }));
   }
 
+  const identidadDetalle = identidadDetalleDesdePayload(payload);
   const result = await conTimeout(
     arca.electronicBillingService.createVoucher(payload as never),
     "solicitar el CAE",
@@ -785,6 +810,7 @@ export async function solicitarCae(
     puntoVenta: pv.numero,
     cbteTipo: d.cbteTipo,
     numero: d.numero,
+    ...identidadDetalle,
   });
   if (clasificada.resultado === "RECHAZADA") {
     throw new ArcaRechazoDefinitivo(clasificada.mensaje, clasificada.codigo);
@@ -814,6 +840,7 @@ export async function solicitarCaeConPayload(
     return { cae, vencimiento, modo: pv.modo };
   }
 
+  const identidadDetalle = identidadDetalleDesdePayload(payload);
   const arca = await buildArca(emisor, pv, supabaseAdmin);
   const result = await conTimeout(
     arca.electronicBillingService.createVoucher(payload as never),
@@ -825,6 +852,7 @@ export async function solicitarCaeConPayload(
     puntoVenta: pv.numero,
     cbteTipo,
     numero,
+    ...identidadDetalle,
   });
   if (respuesta.resultado === "RECHAZADA") {
     throw new ArcaRechazoDefinitivo(respuesta.mensaje, respuesta.codigo);

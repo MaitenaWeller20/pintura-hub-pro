@@ -326,6 +326,13 @@ describe("fechas fiscales en hora de Argentina", () => {
     expect(parseFechaAfip("")).toBeNull();
     expect(parseFechaAfip(null)).toBeNull();
   });
+
+  it.each(["20260230", "00000101", "20261301", "20260010"])(
+    "rechaza la fecha calendario AFIP inválida %s sin hacer rollover",
+    (fecha) => {
+      expect(parseFechaAfip(fecha)).toBeNull();
+    },
+  );
 });
 
 describe("ventana de ±5 días de AFIP (Concepto=1, productos)", () => {
@@ -464,24 +471,22 @@ describe("QR de AFIP (RG 4892)", () => {
 });
 
 describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
-  it("extrae las Observaciones por comprobante con su código", () => {
+  it("extrae sólo códigos validados y reemplaza Msg por una clasificación genérica", () => {
     // Forma real de FECAESolicitarResult cuando AFIP observa un comprobante.
     const response = {
       FeDetResp: {
         FECAEDetResponse: [
           {
             Observaciones: {
-              Obs: [
-                { Code: 10016, Msg: "El CondicionIVAReceptorId no se corresponde con el DocTipo" },
-              ],
+              Obs: [{ Code: 10016, Msg: "CUIT 30-71419966-4 monto $999 secret=abc" }],
             },
           },
         ],
       },
     };
-    expect(detalleRechazoAfip(response)).toBe(
-      "[10016] El CondicionIVAReceptorId no se corresponde con el DocTipo",
-    );
+    const detalle = detalleRechazoAfip(response);
+    expect(detalle).toBe("ARCA informó un rechazo fiscal (códigos: 10016).");
+    expect(detalle).not.toMatch(/30-71419966-4|999|secret|abc/i);
   });
 
   it("extrae los Errors de nivel request y junta varios motivos", () => {
@@ -492,7 +497,7 @@ describe("motivo del rechazo de AFIP (detalleRechazoAfip)", () => {
       },
     };
     expect(detalleRechazoAfip(response)).toBe(
-      "[10013] DocTipo debe ser 80 (CUIT) · [15] Campo X inválido",
+      "ARCA informó un rechazo fiscal (códigos: 15, 10013).",
     );
   });
 

@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   cargarFlagsFacturacionDesdeSupabase,
   decidirEscritorFiscal,
+  type FlagsFacturacion,
   type TipoEntradaFiscal,
 } from "./fiscal/feature.server";
 import {
@@ -41,6 +42,11 @@ const v2InputSchema = z
   })
   .strict();
 const emitirInputSchema = z.union([legacyInputSchema, v2InputSchema]);
+export const postBorradorInputSchema = v2InputSchema
+  .extend({
+    huella_confirmacion_provisional: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict();
 
 const itemBorradorSchema = z
   .object({
@@ -154,6 +160,22 @@ const mantenimiento = () => ({
   mensaje: "La escritura fiscal está temporalmente en mantenimiento.",
 });
 
+export async function ejecutarFachadaEmisionPostBorrador<T>(
+  _input: z.infer<typeof postBorradorInputSchema>,
+  deps: {
+    asegurarAutenticacion(): Promise<unknown>;
+    autorizar(): Promise<unknown>;
+    cargarFlags(): Promise<FlagsFacturacion>;
+    ejecutar(): Promise<T>;
+  },
+): Promise<T | ReturnType<typeof mantenimiento>> {
+  await deps.asegurarAutenticacion();
+  await deps.autorizar();
+  const escritor = decidirEscritorFiscal(await deps.cargarFlags(), "V2");
+  if (escritor === "MANTENIMIENTO") return mantenimiento();
+  return deps.ejecutar();
+}
+
 /** Facade único: auth -> permiso user-bound -> flags -> import server-only -> writer exacto. */
 export const emitirComprobante = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -199,6 +221,74 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       deps,
     );
   });
+
+/**
+ * Camino dedicado para una venta que acaba de nacer desde un borrador. La
+ * huella no autoriza: auth, permiso y flags se verifican primero; recién luego
+ * se compara una preview autoritativa y, si coincide, se delega al mismo motor.
+ */
+export const emitirComprobantePostBorrador = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => postBorradorInputSchema.parse(value))
+  .handler(async ({ data, context }) =>
+    ejecutarFachadaEmisionPostBorrador(data, {
+      async asegurarAutenticacion() {
+        if (!context.userId) throw new Error("La emisión fiscal exige una sesión autenticada.");
+      },
+      autorizar: () =>
+        autorizarVenta(context, {
+          ventaId: data.venta_id,
+          accion: "EMITIR",
+          confirmaVentaAntigua: data.confirma_venta_antigua,
+        }),
+      cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
+      async ejecutar() {
+        const [
+          { supabaseAdmin },
+          { ejecutarEmisionFiscal },
+          {
+            crearDependenciasEmisionFiscalServer,
+            emitirPostBorradorConHuella,
+            previsualizarVentaFiscalExistente,
+          },
+        ] = await Promise.all([
+          import("@/integrations/supabase/client.server"),
+          import("./fiscal/emision"),
+          import("./fiscal/emision.server"),
+        ]);
+        return emitirPostBorradorConHuella(
+          {
+            ventaId: data.venta_id,
+            receptor: data.receptor,
+            confirmaVentaAntigua: data.confirma_venta_antigua,
+            huellaProvisional: data.huella_confirmacion_provisional,
+          },
+          {
+            previsualizarVenta: () =>
+              previsualizarVentaFiscalExistente({
+                ventaId: data.venta_id,
+                receptor: data.receptor,
+                admin: supabaseAdmin,
+                usuario: context.supabase,
+              }),
+            emitir: () =>
+              ejecutarEmisionFiscal(
+                {
+                  ventaId: data.venta_id,
+                  receptor: data.receptor,
+                  confirmaVentaAntigua: data.confirma_venta_antigua,
+                },
+                crearDependenciasEmisionFiscalServer({
+                  admin: supabaseAdmin,
+                  usuario: context.supabase,
+                  ventaIdAutorizada: data.venta_id,
+                }),
+              ),
+          },
+        );
+      },
+    }),
+  );
 
 export const reconciliarComprobante = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

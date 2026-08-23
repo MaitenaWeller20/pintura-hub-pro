@@ -34,6 +34,7 @@ const resultGetFixture = {
 
 const sdk = vi.hoisted(() => ({
   genericCall: vi.fn(),
+  createVoucher: vi.fn(),
   getLastVoucher: vi.fn(async () => ({ cbteNro: 42 })),
   contexts: [] as Array<{ ticketPath?: string; ticketStorage?: unknown }>,
 }));
@@ -43,6 +44,7 @@ vi.mock("@arcasdk/core", () => ({
     genericService = { call: sdk.genericCall };
     electronicBillingService = {
       getLastVoucher: sdk.getLastVoucher,
+      createVoucher: sdk.createVoucher,
     };
 
     constructor(context: { ticketPath?: string; ticketStorage?: unknown }) {
@@ -63,6 +65,7 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
     delete process.env.INVOICING_MOCK_MODE;
     vi.resetModules();
     sdk.genericCall.mockReset();
+    sdk.createVoucher.mockReset();
     sdk.getLastVoucher.mockClear();
     sdk.contexts.length = 0;
   });
@@ -329,6 +332,192 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
         {},
       ),
     ).resolves.toMatchObject({ cae: "74123456789012" });
+  });
+
+  describe("clasificación estricta de FECAESolicitar", () => {
+    const emisor = () => ({
+      cuit: "30-71419966-4",
+      arca_key_enc: encryptString("PRIVATE KEY"),
+      arca_cert_enc: encryptString("CERTIFICATE"),
+    });
+    const detalle = {
+      Concepto: 1,
+      DocTipo: 80,
+      DocNro: 30714199664,
+      CbteDesde: 42,
+      CbteHasta: 42,
+      CbteFch: "20260822",
+      Resultado: "A",
+      CAE: "74123456789012",
+      CAEFchVto: "20260901",
+      Observaciones: { Obs: [] },
+    };
+    const cabecera = {
+      Cuit: 30714199664,
+      PtoVta: 5,
+      CbteTipo: 1,
+      FchProceso: "20260822150000",
+      CantReg: 1,
+      Resultado: "A",
+      Reproceso: "N",
+    };
+    const respuestaA = () => ({
+      response: {
+        FeCabResp: { ...cabecera },
+        FeDetResp: { FECAEDetResponse: [{ ...detalle }] },
+        Errors: { Err: [] as Array<{ Code: number; Msg?: string }> },
+      },
+      cae: "74123456789012",
+      caeFchVto: "20260901",
+    });
+    const solicitar = async () => {
+      const { solicitarCaeConPayload } = await import("./arca");
+      return solicitarCaeConPayload(
+        emisor(),
+        { numero: 5, modo: "PRODUCCION" },
+        { CbteTipo: 1 },
+        42,
+        {},
+      );
+    };
+
+    it("aprueba sólo A coherente, un detalle exacto, CAE canónico y fecha calendario", async () => {
+      sdk.createVoucher.mockResolvedValue(respuestaA());
+
+      await expect(solicitar()).resolves.toEqual({
+        cae: "74123456789012",
+        vencimiento: new Date("2026-09-01T12:00:00.000Z"),
+        modo: "PRODUCCION",
+      });
+    });
+
+    it.each([
+      [
+        "A con Errors",
+        (r: ReturnType<typeof respuestaA>) =>
+          (r.response.Errors.Err = [{ Code: 10013, Msg: "rechazo" }]),
+      ],
+      [
+        "R con CAE",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeCabResp.Resultado = "R";
+          r.response.FeDetResp.FECAEDetResponse[0].Resultado = "R";
+        },
+      ],
+      [
+        "Resultado ausente",
+        (r: ReturnType<typeof respuestaA>) => {
+          (r.response.FeDetResp.FECAEDetResponse[0] as { Resultado?: string }).Resultado =
+            undefined;
+        },
+      ],
+      [
+        "Resultado desconocido",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeCabResp.Resultado = "P";
+          r.response.FeDetResp.FECAEDetResponse[0].Resultado = "P";
+        },
+      ],
+      [
+        "CAE ausente sin R",
+        (r: ReturnType<typeof respuestaA>) => {
+          (r.response.FeDetResp.FECAEDetResponse[0] as { CAE?: string }).CAE = undefined;
+          r.cae = "";
+        },
+      ],
+      [
+        "CAE malformado",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].CAE = "7412";
+          r.cae = "7412";
+        },
+      ],
+      [
+        "dos detalles",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse.push({ ...detalle });
+        },
+      ],
+      [
+        "PV distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeCabResp.PtoVta = 6;
+        },
+      ],
+      [
+        "tipo distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeCabResp.CbteTipo = 6;
+        },
+      ],
+      [
+        "número distinto",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].CbteDesde = 43;
+          r.response.FeDetResp.FECAEDetResponse[0].CbteHasta = 43;
+        },
+      ],
+      [
+        "fecha imposible",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].CAEFchVto = "20260230";
+          r.caeFchVto = "20260230";
+        },
+      ],
+      [
+        "año cero",
+        (r: ReturnType<typeof respuestaA>) => {
+          r.response.FeDetResp.FECAEDetResponse[0].CAEFchVto = "00000101";
+          r.caeFchVto = "00000101";
+        },
+      ],
+    ])(
+      "clasifica como incierta la respuesta contradictoria o malformada: %s",
+      async (_caso, mutar) => {
+        const raw = respuestaA();
+        mutar(raw);
+        sdk.createVoucher.mockResolvedValue(raw);
+        const { esErrorTransitorio } = await import("./arca");
+
+        const error = await solicitar().catch((caught) => caught);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(esErrorTransitorio(error)).toBe(true);
+      },
+    );
+
+    it("sólo R coherente con CAE vacío es rechazo definitivo y conserva códigos seguros", async () => {
+      const raw = respuestaA();
+      raw.response.FeCabResp.Resultado = "R";
+      raw.response.FeDetResp.FECAEDetResponse[0] = {
+        ...detalle,
+        Resultado: "R",
+        CAE: "",
+        CAEFchVto: "",
+        Observaciones: {
+          Obs: { Code: 10016, Msg: "CUIT 30-71419966-4 monto $999 secreto=abc" } as never,
+        },
+      };
+      raw.cae = "";
+      raw.caeFchVto = "";
+      sdk.createVoucher.mockResolvedValue(raw);
+      const { ArcaRechazoDefinitivo } = await import("./arca");
+
+      const error = await solicitar().catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(ArcaRechazoDefinitivo);
+      expect(error.codigo).toBe("10016");
+      expect(error.message).toMatch(/rechazo fiscal.*10016/i);
+      expect(error.message).not.toMatch(/30-71419966-4|999|secreto|abc/i);
+    });
+
+    it("acepta la forma singleton del detalle que expone SOAP además de arrays", async () => {
+      const raw = respuestaA();
+      raw.response.FeDetResp.FECAEDetResponse = raw.response.FeDetResp.FECAEDetResponse[0] as never;
+      sdk.createVoucher.mockResolvedValue(raw);
+
+      await expect(solicitar()).resolves.toMatchObject({ cae: "74123456789012" });
+    });
   });
 
   it("mantiene timeout como incierto y un rechazo estructurado como definitivo", async () => {

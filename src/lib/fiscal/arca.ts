@@ -286,6 +286,142 @@ function caeArca(value: unknown): string {
   return value;
 }
 
+function codigosColeccion(contenedorRaw: unknown, clave: string, campo: string): number[] {
+  const contenedor = registro(contenedorRaw, campo);
+  if (!tieneDatoPropio(contenedor, clave)) return [];
+  const coleccion = contenedor[clave];
+  if (coleccion === null || coleccion === undefined) {
+    throw new Error(`ARCA devolvió inválido ${campo}.${clave}.`);
+  }
+  return comoArray(coleccion, `${campo}.${clave}`).map((raw, index) => {
+    const fila = registro(raw, `${campo}.${clave}[${index}]`);
+    return codigoErrorArca(fila.Code, `${campo}.${clave}[${index}].Code`);
+  });
+}
+
+function codigosRespuestaSolicitud(response: Record<string, unknown>): number[] {
+  const codigos: number[] = [];
+  if (tieneDatoPropio(response, "Errors")) {
+    codigos.push(...codigosColeccion(response.Errors, "Err", "Errors"));
+  }
+  if (tieneDatoPropio(response, "FeDetResp")) {
+    const detalleContenedor = registro(response.FeDetResp, "FeDetResp");
+    if (tieneDatoPropio(detalleContenedor, "FECAEDetResponse")) {
+      const detalles = comoArray(detalleContenedor.FECAEDetResponse, "FeDetResp.FECAEDetResponse");
+      for (const [index, raw] of detalles.entries()) {
+        const detalle = registro(raw, `FeDetResp.FECAEDetResponse[${index}]`);
+        if (!tieneDatoPropio(detalle, "Observaciones")) continue;
+        const observaciones = registro(
+          detalle.Observaciones,
+          `FeDetResp.FECAEDetResponse[${index}].Observaciones`,
+        );
+        codigos.push(
+          ...codigosColeccion(
+            observaciones,
+            "Obs",
+            `FeDetResp.FECAEDetResponse[${index}].Observaciones`,
+          ),
+        );
+      }
+    }
+  }
+  return [...new Set(codigos)].sort((a, b) => a - b);
+}
+
+function mensajeRechazoSeguro(codigos: number[]): string {
+  return codigos.length > 0
+    ? `ARCA informó un rechazo fiscal (códigos: ${codigos.join(", ")}).`
+    : "ARCA informó un rechazo fiscal. Revisá los datos fiscales antes de reintentar.";
+}
+
+type ResultadoSolicitudCaeClasificado =
+  | { resultado: "APROBADA"; cae: string; vencimiento: Date }
+  | { resultado: "RECHAZADA"; codigo: string; mensaje: string };
+
+function clasificarSolicitudCae(
+  raw: unknown,
+  esperado: {
+    emisorCuit: string;
+    puntoVenta: number;
+    cbteTipo: number;
+    numero: number;
+  },
+): ResultadoSolicitudCaeClasificado {
+  try {
+    const salidaSdk = registro(raw, "CreateVoucherResult");
+    const response = registro(salidaSdk.response, "FECAESolicitarResult");
+    const errores = tieneDatoPropio(response, "Errors")
+      ? codigosColeccion(response.Errors, "Err", "Errors")
+      : [];
+    if (errores.length > 0) {
+      throw new ArcaRespuestaIncierta(
+        "ARCA devolvió errores estructurados junto con un resultado de emisión.",
+      );
+    }
+
+    const cabecera = registro(response.FeCabResp, "FeCabResp");
+    const emisorEsperado = enteroArca(esperado.emisorCuit.replace(/\D/g, ""), "emisorCuit");
+    if (
+      enteroArca(cabecera.Cuit, "FeCabResp.Cuit") !== emisorEsperado ||
+      enteroArca(cabecera.PtoVta, "FeCabResp.PtoVta") !== esperado.puntoVenta ||
+      enteroArca(cabecera.CbteTipo, "FeCabResp.CbteTipo") !== esperado.cbteTipo ||
+      enteroArca(cabecera.CantReg, "FeCabResp.CantReg") !== 1
+    ) {
+      throw new ArcaRespuestaIncierta("ARCA devolvió una cabecera con identidad distinta.");
+    }
+
+    const detalleContenedor = registro(response.FeDetResp, "FeDetResp");
+    const detalles = comoArray(detalleContenedor.FECAEDetResponse, "FeDetResp.FECAEDetResponse");
+    if (detalles.length !== 1) {
+      throw new ArcaRespuestaIncierta("ARCA no devolvió exactamente un detalle de emisión.");
+    }
+    const detalle = registro(detalles[0], "FeDetResp.FECAEDetResponse[0]");
+    if (
+      enteroArca(detalle.CbteDesde, "FECAEDetResponse.CbteDesde") !== esperado.numero ||
+      enteroArca(detalle.CbteHasta, "FECAEDetResponse.CbteHasta") !== esperado.numero
+    ) {
+      throw new ArcaRespuestaIncierta("ARCA devolvió un detalle con número distinto.");
+    }
+
+    const resultadoCabecera = cabecera.Resultado;
+    const resultadoDetalle = detalle.Resultado;
+    if (
+      (resultadoCabecera !== "A" && resultadoCabecera !== "R") ||
+      resultadoDetalle !== resultadoCabecera
+    ) {
+      throw new ArcaRespuestaIncierta("ARCA devolvió resultados ausentes o contradictorios.");
+    }
+
+    if (resultadoDetalle === "A") {
+      const cae = caeArca(detalle.CAE);
+      const fechaRaw = detalle.CAEFchVto;
+      const vencimiento = typeof fechaRaw === "string" ? parseFechaAfip(fechaRaw) : null;
+      if (vencimiento === null || salidaSdk.cae !== cae || salidaSdk.caeFchVto !== fechaRaw) {
+        throw new ArcaRespuestaIncierta("ARCA devolvió una aprobación inconsistente.");
+      }
+      return { resultado: "APROBADA", cae, vencimiento };
+    }
+
+    if (
+      detalle.CAE !== "" ||
+      (detalle.CAEFchVto !== undefined && detalle.CAEFchVto !== null && detalle.CAEFchVto !== "") ||
+      salidaSdk.cae !== "" ||
+      salidaSdk.caeFchVto !== ""
+    ) {
+      throw new ArcaRespuestaIncierta("ARCA devolvió un rechazo contradictorio.");
+    }
+    const codigos = codigosRespuestaSolicitud(response);
+    return {
+      resultado: "RECHAZADA",
+      codigo: codigos[0]?.toString() ?? "RECHAZO_ARCA",
+      mensaje: mensajeRechazoSeguro(codigos),
+    };
+  } catch (error) {
+    if (error instanceof ArcaRespuestaIncierta) throw error;
+    throw new ArcaRespuestaIncierta("ARCA devolvió una respuesta de emisión no comparable.");
+  }
+}
+
 /** Construye el detalle FECAEDetRequest exclusivamente desde el snapshot fiscal congelado. */
 export function crearPayloadCaeDesdeSnapshot(snapshot: SnapshotFiscalV2): Record<string, unknown> {
   const payload: Record<string, unknown> = {
@@ -644,25 +780,16 @@ export async function solicitarCae(
     "solicitar el CAE",
   );
 
-  const r = result as { cae?: string; caeFchVto?: string; response?: unknown };
-
-  // EL CHEQUE MÁS IMPORTANTE DEL ARCHIVO: cuando AFIP RECHAZA un comprobante, el
-  // SDK igual resuelve bien, pero con cae vacío. Sin esto guardaríamos una
-  // factura "válida" sin CAE.
-  if (!r.cae || String(r.cae).trim() === "") {
-    // El motivo NO está en el primer nivel del resultado (el SDK expone
-    // { response, cae, caeFchVto }): está en `response` (FECAESolicitarResult).
-    // Antes leíamos r.observaciones ?? r.errores —claves inexistentes—, así que
-    // TODO rechazo caía al mensaje genérico y se perdía el código de AFIP.
-    const detalle = detalleRechazoAfip(r.response);
-    throw new Error(
-      detalle
-        ? `AFIP no autorizó el comprobante: ${detalle}`
-        : "AFIP no autorizó el comprobante. Revisá los datos fiscales e intentá de nuevo.",
-    );
+  const clasificada = clasificarSolicitudCae(result, {
+    emisorCuit: emisor.cuit,
+    puntoVenta: pv.numero,
+    cbteTipo: d.cbteTipo,
+    numero: d.numero,
+  });
+  if (clasificada.resultado === "RECHAZADA") {
+    throw new ArcaRechazoDefinitivo(clasificada.mensaje, clasificada.codigo);
   }
-
-  return { cae: String(r.cae), vencimiento: parseFechaAfip(r.caeFchVto), modo: pv.modo };
+  return { cae: clasificada.cae, vencimiento: clasificada.vencimiento, modo: pv.modo };
 }
 
 /**
@@ -692,18 +819,19 @@ export async function solicitarCaeConPayload(
     arca.electronicBillingService.createVoucher(payload as never),
     "solicitar el CAE",
   );
-  const respuesta = result as { cae?: unknown; caeFchVto?: string; response?: unknown };
-  if (typeof respuesta.cae !== "string" || !/^\d{14}$/.test(respuesta.cae)) {
-    const detalle = detalleRechazoAfip(respuesta.response);
-    throw new ArcaRechazoDefinitivo(
-      detalle
-        ? `ARCA no autorizó el comprobante: ${detalle}`
-        : "ARCA no autorizó el comprobante. Revisá los datos fiscales e intentá de nuevo.",
-    );
+  const cbteTipo = enteroArca(payload.CbteTipo, "CbteTipo");
+  const respuesta = clasificarSolicitudCae(result, {
+    emisorCuit: emisor.cuit,
+    puntoVenta: pv.numero,
+    cbteTipo,
+    numero,
+  });
+  if (respuesta.resultado === "RECHAZADA") {
+    throw new ArcaRechazoDefinitivo(respuesta.mensaje, respuesta.codigo);
   }
   return {
     cae: respuesta.cae,
-    vencimiento: parseFechaAfip(respuesta.caeFchVto),
+    vencimiento: respuesta.vencimiento,
     modo: pv.modo,
   };
 }
@@ -712,28 +840,15 @@ export async function solicitarCaeConPayload(
  * Arma el motivo legible del rechazo de AFIP desde la respuesta cruda de
  * FECAESolicitar. Junta los errores de nivel request (`Errors.Err[]`) y las
  * observaciones por comprobante (`FeDetResp.FECAEDetResponse[].Observaciones.Obs[]`),
- * cada uno como "[código] mensaje". No se dumpea la respuesta cruda: trae el
- * CUIT/documento del receptor y no queremos filtrarlo en logs ni en el toast.
+ * Sólo conserva códigos numéricos validados. `Msg` es contenido no confiable y
+ * puede incluir documentos, importes o secretos: nunca se concatena ni persiste.
  */
 export function detalleRechazoAfip(response: unknown): string {
-  const r = response as
-    | {
-        FeDetResp?: {
-          FECAEDetResponse?: Array<{
-            Observaciones?: { Obs?: Array<{ Code?: number; Msg?: string }> };
-          }>;
-        };
-        Errors?: { Err?: Array<{ Code?: number; Msg?: string }> };
-      }
-    | null
-    | undefined;
-  const partes: string[] = [];
-  const push = (c?: number, m?: string) => {
-    const msg = (m ?? "").trim();
-    if (msg) partes.push(c != null ? `[${c}] ${msg}` : msg);
-  };
-  for (const e of r?.Errors?.Err ?? []) push(e?.Code, e?.Msg);
-  for (const det of r?.FeDetResp?.FECAEDetResponse ?? [])
-    for (const o of det?.Observaciones?.Obs ?? []) push(o?.Code, o?.Msg);
-  return partes.join(" · ");
+  try {
+    const registroRespuesta = registro(response, "FECAESolicitarResult");
+    const codigos = codigosRespuestaSolicitud(registroRespuesta);
+    return codigos.length > 0 ? mensajeRechazoSeguro(codigos) : "";
+  } catch {
+    return "";
+  }
 }

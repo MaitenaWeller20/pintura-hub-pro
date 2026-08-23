@@ -9,8 +9,8 @@ suite("motor fiscal contra Supabase local", () => {
   const ids = {
     user: "a9000000-0000-4000-8000-000000000001",
     client: "b9000000-0000-4000-8000-000000000001",
-    sales: [1, 2, 3, 4].map((n) => `c9000000-0000-4000-8000-${String(n).padStart(12, "0")}`),
-    items: [1, 2, 3, 4].map((n) => `d9000000-0000-4000-8000-${String(n).padStart(12, "0")}`),
+    sales: [1, 2, 3, 4, 5].map((n) => `c9000000-0000-4000-8000-${String(n).padStart(12, "0")}`),
+    items: [1, 2, 3, 4, 5].map((n) => `d9000000-0000-4000-8000-${String(n).padStart(12, "0")}`),
   };
   let sql: any;
   let supabase: any;
@@ -245,6 +245,21 @@ suite("motor fiscal contra Supabase local", () => {
       validarFechaFiscal: () => undefined,
       crearSnapshot: async ({ numero }: any) => snapshot(ventaId, itemId, numero, puntoVenta),
       transicionar: transition,
+      async cargarEstadoPersistido() {
+        const { data, error } = await supabase.rpc("leer_venta_fiscal_exacta", {
+          p_venta_id: ventaId,
+        });
+        if (error) throw error;
+        const row = data.venta;
+        return {
+          venta_id: row.id,
+          afip_estado: row.afipEstado,
+          afip_fase: row.afipFase,
+          afip_claim_token: row.afipClaimToken,
+          afip_numero: row.afipNumero,
+          afip_version: row.afipVersion,
+        };
+      },
       async cargarReservaPersistida() {
         const { data, error } = await supabase.rpc("leer_venta_fiscal_exacta", {
           p_venta_id: ventaId,
@@ -371,5 +386,42 @@ suite("motor fiscal contra Supabase local", () => {
     const [sale] =
       await sql`select afip_estado,afip_version from public.ventas where id=${ids.sales[3]}`;
     expect(sale).toMatchObject({ afip_estado: "SIN_FACTURAR", afip_version: 0 });
+  });
+
+  it("recupera contra la RPC real un commit de RESPUESTA_RECIBIDA cuya respuesta se perdió", async () => {
+    const runtime = deps(ids.sales[4], ids.items[4], 904, ["OK"]);
+    const transicionarReal = runtime.dependencies.transicionar;
+    let perderRespuesta = true;
+    runtime.dependencies.transicionar = async (input: any) => {
+      const persistido = await transicionarReal(input);
+      if (input.accion === "RESPUESTA_RECIBIDA" && perderRespuesta) {
+        perderRespuesta = false;
+        throw new Error("conexión perdida después del commit");
+      }
+      return persistido;
+    };
+
+    const result = await ejecutarEmisionFiscal(
+      {
+        ventaId: ids.sales[4],
+        receptor: { origen: "CLIENTE_COMERCIAL" },
+        confirmaVentaAntigua: false,
+      },
+      runtime.dependencies,
+    );
+
+    expect(result).toMatchObject({ estado: "APROBADO", cae: "74123456789012", numero: 1 });
+    expect(runtime.arcaCalls()).toBe(1);
+    const [sale] = await sql`
+      select afip_estado,afip_fase,afip_version,cae
+        from public.ventas
+       where id=${ids.sales[4]}
+    `;
+    expect(sale).toMatchObject({
+      afip_estado: "APROBADO",
+      afip_fase: "PERSISTIDO",
+      afip_version: 5,
+      cae: "74123456789012",
+    });
   });
 });

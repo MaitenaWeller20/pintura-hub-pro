@@ -108,6 +108,7 @@ export type DependenciasEmisionFiscal = {
     claimToken: string | null;
     payload: Record<string, unknown>;
   }): Promise<EstadoTransicionFiscal>;
+  cargarEstadoPersistido(ventaId: string): Promise<EstadoTransicionFiscal>;
   cargarReservaPersistida(ventaId: string): Promise<ReservaFiscalPersistida>;
   cargarEstadoParaLiberar?(ventaId: string): Promise<{
     claimToken: string;
@@ -163,26 +164,86 @@ function errorEnmascarado(fase: string, codigo: string, mensaje: string, expecte
   };
 }
 
+function coincideIdentidad(
+  estado: EstadoTransicionFiscal,
+  claimToken: string,
+  numero?: number,
+): boolean {
+  return (
+    estado.afip_claim_token === claimToken &&
+    (numero === undefined || estado.afip_numero === numero)
+  );
+}
+
+function esFase(
+  estado: EstadoTransicionFiscal,
+  afipEstado: string,
+  afipFase: string,
+  claimToken: string,
+  numero?: number,
+): boolean {
+  return (
+    estado.afip_estado === afipEstado &&
+    estado.afip_fase === afipFase &&
+    coincideIdentidad(estado, claimToken, numero)
+  );
+}
+
+function esAprobado(estado: EstadoTransicionFiscal, numero: number): boolean {
+  return (
+    estado.afip_estado === "APROBADO" &&
+    estado.afip_fase === "PERSISTIDO" &&
+    estado.afip_claim_token === null &&
+    estado.afip_numero === numero
+  );
+}
+
+async function recargarEstado(
+  ventaId: string,
+  deps: DependenciasEmisionFiscal,
+): Promise<EstadoTransicionFiscal> {
+  const estado = await deps.cargarEstadoPersistido(ventaId);
+  if (
+    estado.venta_id !== ventaId ||
+    !Number.isSafeInteger(estado.afip_version) ||
+    estado.afip_version < 0
+  ) {
+    throw new Error("La recarga fiscal autoritativa devolvió un estado inválido.");
+  }
+  return estado;
+}
+
 async function marcarPreflightCorregible(
   ventaId: string,
   claimToken: string,
   version: number,
   deps: DependenciasEmisionFiscal,
 ): Promise<ResultadoEmisionFiscal> {
-  await deps.transicionar({
-    ventaId,
-    accion: "ERROR_CORREGIBLE",
-    claimToken,
-    payload: {
-      ...errorEnmascarado(
-        "PREFLIGHT",
-        "PREFLIGHT_FALLIDO",
-        "La preparación fiscal falló antes de iniciar el request.",
-        version,
-      ),
-      liberar_identidad: true,
-    },
-  });
+  try {
+    await deps.transicionar({
+      ventaId,
+      accion: "ERROR_CORREGIBLE",
+      claimToken,
+      payload: {
+        ...errorEnmascarado(
+          "PREFLIGHT",
+          "PREFLIGHT_FALLIDO",
+          "La preparación fiscal falló antes de iniciar el request.",
+          version,
+        ),
+        liberar_identidad: true,
+      },
+    });
+  } catch (error) {
+    const persistido = await recargarEstado(ventaId, deps);
+    if (
+      persistido.afip_estado !== "ERROR_CORREGIBLE" ||
+      persistido.afip_claim_token !== null ||
+      persistido.afip_numero !== null
+    ) {
+      throw error;
+    }
+  }
   return {
     estado: "ERROR_CORREGIBLE",
     mensaje: "La preparación fiscal falló antes de iniciar el request.",
@@ -195,17 +256,44 @@ async function marcarReconciliacion(
   deps: DependenciasEmisionFiscal,
   codigo: string,
 ): Promise<ResultadoEmisionFiscal> {
-  await deps.transicionar({
-    ventaId: reserva.ventaId,
-    accion: "RECONCILIAR",
-    claimToken: reserva.claimToken,
-    payload: errorEnmascarado(
-      "REQUEST_INICIADO",
-      codigo,
-      "La respuesta fiscal es incierta y requiere conciliación.",
-      version,
-    ),
-  });
+  const intentar = (expectedVersion: number) =>
+    deps.transicionar({
+      ventaId: reserva.ventaId,
+      accion: "RECONCILIAR",
+      claimToken: reserva.claimToken,
+      payload: errorEnmascarado(
+        "REQUEST_INICIADO",
+        codigo,
+        "La respuesta fiscal es incierta y requiere conciliación.",
+        expectedVersion,
+      ),
+    });
+  try {
+    await intentar(version);
+  } catch (primerError) {
+    let persistido = await recargarEstado(reserva.ventaId, deps);
+    const yaConciliable = () =>
+      persistido.afip_estado === "RECONCILIAR" &&
+      (persistido.afip_fase === "REQUEST_INICIADO" ||
+        persistido.afip_fase === "RESPUESTA_RECIBIDA") &&
+      coincideIdentidad(persistido, reserva.claimToken, reserva.numero);
+    if (!yaConciliable()) {
+      if (
+        persistido.afip_estado !== "EMITIENDO" ||
+        (persistido.afip_fase !== "REQUEST_INICIADO" &&
+          persistido.afip_fase !== "RESPUESTA_RECIBIDA") ||
+        !coincideIdentidad(persistido, reserva.claimToken, reserva.numero)
+      ) {
+        throw primerError;
+      }
+      try {
+        await intentar(persistido.afip_version);
+      } catch (segundoError) {
+        persistido = await recargarEstado(reserva.ventaId, deps);
+        if (!yaConciliable()) throw segundoError;
+      }
+    }
+  }
   return {
     estado: "RECONCILIAR",
     mensaje: "La respuesta fiscal es incierta y requiere conciliación.",
@@ -264,42 +352,75 @@ async function procesarRequestCae(
   if (respuesta.resultado === "RECHAZADA") {
     let versionPersistida = estadoRequest.afip_version;
     try {
-      const estadoRespuesta = await deps.transicionar({
-        ventaId: reserva.ventaId,
-        accion: "RESPUESTA_RECIBIDA",
-        claimToken: reserva.claimToken,
-        payload: {
-          expected_version: versionPersistida,
-          respuesta_resumen: {
-            tipo: "EMISION",
-            resultado: "R",
-            fuente: "FECAESolicitar",
-            rechazo_confirmado: true,
-            codigo: respuesta.codigo,
-            mensaje: respuesta.mensajeMascarado,
-            observaciones: [],
+      let estadoRespuesta: EstadoTransicionFiscal;
+      try {
+        estadoRespuesta = await deps.transicionar({
+          ventaId: reserva.ventaId,
+          accion: "RESPUESTA_RECIBIDA",
+          claimToken: reserva.claimToken,
+          payload: {
+            expected_version: versionPersistida,
+            respuesta_resumen: {
+              tipo: "EMISION",
+              resultado: "R",
+              fuente: "FECAESolicitar",
+              rechazo_confirmado: true,
+              codigo: respuesta.codigo,
+              mensaje: respuesta.mensajeMascarado,
+              observaciones: [],
+            },
           },
-        },
-      });
+        });
+      } catch (error) {
+        const persistido = await recargarEstado(reserva.ventaId, deps);
+        if (
+          !esFase(persistido, "EMITIENDO", "RESPUESTA_RECIBIDA", reserva.claimToken, reserva.numero)
+        ) {
+          return marcarReconciliacion(
+            reserva,
+            persistido.afip_version,
+            deps,
+            "PERSISTENCIA_RECHAZO",
+          );
+        }
+        estadoRespuesta = persistido;
+      }
       versionPersistida = estadoRespuesta.afip_version;
-      await deps.transicionar({
-        ventaId: reserva.ventaId,
-        accion: "ERROR_CORREGIBLE",
-        claimToken: reserva.claimToken,
-        payload: {
-          ...errorEnmascarado(
-            "RESPUESTA_RECIBIDA",
-            respuesta.codigo,
-            respuesta.mensajeMascarado,
-            versionPersistida,
-          ),
-          error_clase: "RECHAZO",
-          liberar_identidad: true,
-        },
-      });
+      try {
+        await deps.transicionar({
+          ventaId: reserva.ventaId,
+          accion: "ERROR_CORREGIBLE",
+          claimToken: reserva.claimToken,
+          payload: {
+            ...errorEnmascarado(
+              "RESPUESTA_RECIBIDA",
+              respuesta.codigo,
+              respuesta.mensajeMascarado,
+              versionPersistida,
+            ),
+            error_clase: "RECHAZO",
+            liberar_identidad: true,
+          },
+        });
+      } catch (error) {
+        const persistido = await recargarEstado(reserva.ventaId, deps);
+        if (
+          persistido.afip_estado !== "ERROR_CORREGIBLE" ||
+          persistido.afip_claim_token !== null ||
+          persistido.afip_numero !== null
+        ) {
+          return marcarReconciliacion(
+            reserva,
+            persistido.afip_version,
+            deps,
+            "PERSISTENCIA_RECHAZO",
+          );
+        }
+      }
       return { estado: "ERROR_CORREGIBLE", mensaje: respuesta.mensajeMascarado };
     } catch {
-      return marcarReconciliacion(reserva, versionPersistida, deps, "PERSISTENCIA_RECHAZO");
+      const persistido = await recargarEstado(reserva.ventaId, deps);
+      return marcarReconciliacion(reserva, persistido.afip_version, deps, "PERSISTENCIA_RECHAZO");
     }
   }
 
@@ -325,28 +446,35 @@ async function procesarRequestCae(
       },
     });
   } catch {
-    return marcarReconciliacion(
-      reserva,
-      estadoRequest.afip_version,
-      deps,
-      "PERSISTENCIA_RESPUESTA",
-    );
+    const persistido = await recargarEstado(reserva.ventaId, deps);
+    if (esFase(persistido, "EMITIENDO", "RESPUESTA_RECIBIDA", reserva.claimToken, reserva.numero)) {
+      estadoRespuesta = persistido;
+    } else if (esAprobado(persistido, reserva.numero)) {
+      estadoRespuesta = persistido;
+    } else {
+      return marcarReconciliacion(reserva, persistido.afip_version, deps, "PERSISTENCIA_RESPUESTA");
+    }
   }
 
-  try {
-    await deps.transicionar({
-      ventaId: reserva.ventaId,
-      accion: "APROBAR",
-      claimToken: reserva.claimToken,
-      payload: {
-        expected_version: estadoRespuesta.afip_version,
-        cae: respuesta.cae,
-        cae_vencimiento: respuesta.vencimiento,
-        emitido_at: deps.ahoraIso(),
-      },
-    });
-  } catch {
-    return marcarReconciliacion(reserva, estadoRespuesta.afip_version, deps, "PERSISTENCIA_CAE");
+  if (!esAprobado(estadoRespuesta, reserva.numero)) {
+    try {
+      await deps.transicionar({
+        ventaId: reserva.ventaId,
+        accion: "APROBAR",
+        claimToken: reserva.claimToken,
+        payload: {
+          expected_version: estadoRespuesta.afip_version,
+          cae: respuesta.cae,
+          cae_vencimiento: respuesta.vencimiento,
+          emitido_at: deps.ahoraIso(),
+        },
+      });
+    } catch {
+      const persistido = await recargarEstado(reserva.ventaId, deps);
+      if (!esAprobado(persistido, reserva.numero)) {
+        return marcarReconciliacion(reserva, persistido.afip_version, deps, "PERSISTENCIA_CAE");
+      }
+    }
   }
 
   const advertencias = inputOriginal ? await guardarFavoritoSinOcultarCae(inputOriginal, deps) : [];
@@ -396,10 +524,20 @@ export async function ejecutarEmisionFiscal(
       },
     });
   } catch (error) {
-    if (deps.esConflictoClaim(error)) {
-      return { estado: "EN_CURSO", mensaje: "Ya existe una emisión fiscal en curso." };
+    let persistido: EstadoTransicionFiscal | null = null;
+    try {
+      persistido = await recargarEstado(input.ventaId, deps);
+    } catch {
+      // Si ni siquiera puede releerse la fuente autoritativa, se conserva la
+      // clasificación original del conflicto en vez de asumir un commit.
     }
-    throw error;
+    if (persistido && esFase(persistido, "EMITIENDO", "PREFLIGHT", claimToken)) {
+      estado = persistido;
+    } else if (deps.esConflictoClaim(error)) {
+      return { estado: "EN_CURSO", mensaje: "Ya existe una emisión fiscal en curso." };
+    } else {
+      throw error;
+    }
   }
 
   let preparacion: PreparacionEmisionFiscal;
@@ -412,7 +550,8 @@ export async function ejecutarEmisionFiscal(
     secuencia = await deps.consultarSecuencia(preparacion);
     deps.validarFechaFiscal(preparacion.fechaComprobante, secuencia.ultimaFechaRemota);
   } catch {
-    return marcarPreflightCorregible(input.ventaId, claimToken, estado.afip_version, deps);
+    const persistido = await recargarEstado(input.ventaId, deps);
+    return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
   }
 
   const numero = preparacion.simulado ? secuencia.ultimoLocal + 1 : secuencia.ultimoRemoto + 1;
@@ -443,7 +582,14 @@ export async function ejecutarEmisionFiscal(
       },
     });
   } catch {
-    return marcarPreflightCorregible(input.ventaId, claimToken, estado.afip_version, deps);
+    const persistido = await recargarEstado(input.ventaId, deps);
+    if (esFase(persistido, "EMITIENDO", "RESERVADO", claimToken, numero)) {
+      estado = persistido;
+    } else if (persistido.afip_estado === "BLOQUEADO") {
+      return { estado: "BLOQUEADO", diferencias: ["secuencia"] };
+    } else {
+      return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
+    }
   }
   if (estado.afip_estado === "BLOQUEADO") {
     return { estado: "BLOQUEADO", diferencias: ["secuencia"] };
@@ -452,14 +598,44 @@ export async function ejecutarEmisionFiscal(
   let reserva: ReservaFiscalPersistida;
   try {
     reserva = reservaConEstado(await deps.cargarReservaPersistida(input.ventaId), estado);
-    estado = await deps.transicionar({
-      ventaId: input.ventaId,
-      accion: "REQUEST_INICIADO",
-      claimToken: reserva.claimToken,
-      payload: { expected_version: estado.afip_version },
-    });
+    try {
+      estado = await deps.transicionar({
+        ventaId: input.ventaId,
+        accion: "REQUEST_INICIADO",
+        claimToken: reserva.claimToken,
+        payload: { expected_version: estado.afip_version },
+      });
+    } catch (primerError) {
+      let persistido = await recargarEstado(input.ventaId, deps);
+      if (
+        !esFase(persistido, "EMITIENDO", "REQUEST_INICIADO", reserva.claimToken, reserva.numero)
+      ) {
+        if (!esFase(persistido, "EMITIENDO", "RESERVADO", reserva.claimToken, reserva.numero)) {
+          throw primerError;
+        }
+        try {
+          estado = await deps.transicionar({
+            ventaId: input.ventaId,
+            accion: "REQUEST_INICIADO",
+            claimToken: reserva.claimToken,
+            payload: { expected_version: persistido.afip_version },
+          });
+        } catch (segundoError) {
+          persistido = await recargarEstado(input.ventaId, deps);
+          if (
+            !esFase(persistido, "EMITIENDO", "REQUEST_INICIADO", reserva.claimToken, reserva.numero)
+          ) {
+            throw segundoError;
+          }
+          estado = persistido;
+        }
+      } else {
+        estado = persistido;
+      }
+    }
   } catch {
-    return marcarPreflightCorregible(input.ventaId, claimToken, estado.afip_version, deps);
+    const persistido = await recargarEstado(input.ventaId, deps);
+    return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
   }
   return procesarRequestCae(reserva, estado, deps, input);
 }
@@ -469,7 +645,17 @@ export async function ejecutarConciliacionFiscal(
   deps: DependenciasEmisionFiscal,
 ): Promise<ResultadoEmisionFiscal> {
   await deps.autorizarConciliacion(input);
-  const reserva = await deps.cargarReservaPersistida(input.ventaId);
+  let reserva = await deps.cargarReservaPersistida(input.ventaId);
+  const estadoInicial = await recargarEstado(input.ventaId, deps);
+  if (
+    estadoInicial.afip_estado === "EMITIENDO" &&
+    (estadoInicial.afip_fase === "REQUEST_INICIADO" ||
+      estadoInicial.afip_fase === "RESPUESTA_RECIBIDA") &&
+    coincideIdentidad(estadoInicial, reserva.claimToken, reserva.numero)
+  ) {
+    await marcarReconciliacion(reserva, estadoInicial.afip_version, deps, "CONCILIACION_MANUAL");
+    reserva = await deps.cargarReservaPersistida(input.ventaId);
+  }
   const remoto = await deps.consultarComprobanteCompleto(reserva);
   const ultimoRemoto =
     remoto === null ? await deps.consultarUltimoAutorizado(reserva) : reserva.numero;
@@ -482,18 +668,23 @@ export async function ejecutarConciliacionFiscal(
   });
 
   if (decision.accion === "RECUPERAR_CAE") {
-    await deps.transicionar({
-      ventaId: input.ventaId,
-      accion: "RECUPERAR_CAE",
-      claimToken: reserva.claimToken,
-      payload: {
-        expected_version: reserva.afipVersion,
-        cae: decision.cae,
-        cae_vencimiento: decision.vencimiento,
-        payload_hash: reserva.payloadHash,
-        respuesta_resumen: RESUMEN_COINCIDENCIA,
-      },
-    });
+    try {
+      await deps.transicionar({
+        ventaId: input.ventaId,
+        accion: "RECUPERAR_CAE",
+        claimToken: reserva.claimToken,
+        payload: {
+          expected_version: reserva.afipVersion,
+          cae: decision.cae,
+          cae_vencimiento: decision.vencimiento,
+          payload_hash: reserva.payloadHash,
+          respuesta_resumen: RESUMEN_COINCIDENCIA,
+        },
+      });
+    } catch (error) {
+      const persistido = await recargarEstado(input.ventaId, deps);
+      if (!esAprobado(persistido, reserva.numero)) throw error;
+    }
     return {
       estado: "APROBADO",
       cae: decision.cae,
@@ -505,43 +696,74 @@ export async function ejecutarConciliacionFiscal(
 
   if (decision.accion === "BLOQUEAR") {
     const campos = [...new Set(decision.diferencias)].sort();
-    await deps.transicionar({
-      ventaId: input.ventaId,
-      accion: "BLOQUEAR",
-      claimToken: reserva.claimToken,
-      payload: {
-        ...errorEnmascarado(
-          "CONCILIACION",
-          "DIVERGENCIA_ARCA",
-          "La consulta ARCA no coincide con la identidad fiscal reservada.",
-          reserva.afipVersion,
-        ),
-        error_clase: "DIVERGENCIA",
-        diferencias: { campos },
-      },
-    });
+    try {
+      await deps.transicionar({
+        ventaId: input.ventaId,
+        accion: "BLOQUEAR",
+        claimToken: reserva.claimToken,
+        payload: {
+          ...errorEnmascarado(
+            "CONCILIACION",
+            "DIVERGENCIA_ARCA",
+            "La consulta ARCA no coincide con la identidad fiscal reservada.",
+            reserva.afipVersion,
+          ),
+          error_clase: "DIVERGENCIA",
+          diferencias: { campos },
+        },
+      });
+    } catch (error) {
+      const persistido = await recargarEstado(input.ventaId, deps);
+      if (persistido.afip_estado !== "BLOQUEADO") throw error;
+    }
     return { estado: "BLOQUEADO", diferencias: campos };
   }
 
   const nuevoClaim = deps.generarClaimToken();
-  const estadoReenvio = await deps.transicionar({
-    ventaId: input.ventaId,
-    accion: "REENVIO_VERIFICADO",
-    claimToken: reserva.claimToken,
-    payload: {
-      expected_version: reserva.afipVersion,
-      nuevo_claim_token: nuevoClaim,
-      ultimo_remoto: ultimoRemoto,
-      respuesta_resumen: RESUMEN_AUSENCIA,
-      payload_hash: reserva.payloadHash,
-    },
-  });
+  let estadoReenvio: EstadoTransicionFiscal;
+  try {
+    estadoReenvio = await deps.transicionar({
+      ventaId: input.ventaId,
+      accion: "REENVIO_VERIFICADO",
+      claimToken: reserva.claimToken,
+      payload: {
+        expected_version: reserva.afipVersion,
+        nuevo_claim_token: nuevoClaim,
+        ultimo_remoto: ultimoRemoto,
+        respuesta_resumen: RESUMEN_AUSENCIA,
+        payload_hash: reserva.payloadHash,
+      },
+    });
+  } catch (error) {
+    const persistido = await recargarEstado(input.ventaId, deps);
+    if (!esFase(persistido, "EMITIENDO", "RESERVADO", nuevoClaim, reserva.numero)) {
+      throw error;
+    }
+    estadoReenvio = persistido;
+  }
   const reservaReenvio = reservaConEstado(reserva, estadoReenvio);
-  const estadoRequest = await deps.transicionar({
-    ventaId: input.ventaId,
-    accion: "REQUEST_INICIADO",
-    claimToken: reservaReenvio.claimToken,
-    payload: { expected_version: estadoReenvio.afip_version },
-  });
+  let estadoRequest: EstadoTransicionFiscal;
+  try {
+    estadoRequest = await deps.transicionar({
+      ventaId: input.ventaId,
+      accion: "REQUEST_INICIADO",
+      claimToken: reservaReenvio.claimToken,
+      payload: { expected_version: estadoReenvio.afip_version },
+    });
+  } catch (error) {
+    const persistido = await recargarEstado(input.ventaId, deps);
+    if (
+      !esFase(
+        persistido,
+        "EMITIENDO",
+        "REQUEST_INICIADO",
+        reservaReenvio.claimToken,
+        reservaReenvio.numero,
+      )
+    ) {
+      throw error;
+    }
+    estadoRequest = persistido;
+  }
   return procesarRequestCae(reservaReenvio, estadoRequest, deps, null);
 }

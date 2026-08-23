@@ -25,6 +25,7 @@ import {
   type EstadoTransicionFiscal,
   type PreparacionEmisionFiscal,
   type ReservaFiscalPersistida,
+  type ResultadoEmisionFiscal,
 } from "./emision";
 import { diasDesdeHoyAr, fechaFiscalHoyAr, validarCorrelatividadFechaFiscal } from "./fecha";
 import { decidirConciliacion } from "./reconciliacion";
@@ -36,6 +37,7 @@ import {
 import type { ReceptorFiscalConfirmado, SelectorReceptorFiscal } from "./receptor";
 import {
   crearSnapshotFiscalV2,
+  sha256HexUtf8,
   validarSnapshotFiscalV2,
   type SnapshotFiscalV2,
   type SnapshotFiscalV2Input,
@@ -176,6 +178,160 @@ export type EntradaPreviewBorradorFiscal = {
   receptor: SelectorReceptorFiscal;
 };
 
+export type ConfirmacionFiscalPostBorrador = {
+  version: 1;
+  importe: string;
+  emisorCuit: string;
+  puntoVenta: number;
+  modo: "PRODUCCION" | "HOMOLOGACION";
+  letra: Letra;
+  cbteTipo: number;
+  fechaFiscal: string;
+  receptor: ReceptorFiscalConfirmado;
+};
+
+function copiarConfirmacionFiscal(
+  confirmacion: ConfirmacionFiscalPostBorrador,
+): ConfirmacionFiscalPostBorrador {
+  return {
+    version: 1,
+    importe: confirmacion.importe,
+    emisorCuit: confirmacion.emisorCuit,
+    puntoVenta: confirmacion.puntoVenta,
+    modo: confirmacion.modo,
+    letra: confirmacion.letra,
+    cbteTipo: confirmacion.cbteTipo,
+    fechaFiscal: confirmacion.fechaFiscal,
+    receptor: {
+      razonSocial: confirmacion.receptor.razonSocial,
+      domicilio: confirmacion.receptor.domicilio,
+      tipoDocumento: confirmacion.receptor.tipoDocumento,
+      numeroDocumento: confirmacion.receptor.numeroDocumento,
+      docTipoArca: confirmacion.receptor.docTipoArca,
+      docNroArca: confirmacion.receptor.docNroArca,
+      condicionIva: confirmacion.receptor.condicionIva,
+      origen: confirmacion.receptor.origen,
+      origenId: confirmacion.receptor.origenId,
+      verificadoArcaAt: confirmacion.receptor.verificadoArcaAt,
+    },
+  };
+}
+
+export function crearHuellaConfirmacionFiscal(
+  confirmacion: ConfirmacionFiscalPostBorrador,
+): string {
+  return sha256HexUtf8(JSON.stringify(copiarConfirmacionFiscal(confirmacion)));
+}
+
+export async function emitirPostBorradorConHuella(
+  input: {
+    ventaId: string;
+    receptor: SelectorReceptorFiscal;
+    confirmaVentaAntigua: boolean;
+    huellaProvisional: string;
+  },
+  deps: {
+    previsualizarVenta(): Promise<{
+      huella_confirmacion: string;
+      confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
+    }>;
+    emitir(): Promise<ResultadoEmisionFiscal>;
+  },
+): Promise<
+  | ResultadoEmisionFiscal
+  | {
+      estado: "RECONFIRMACION_REQUERIDA";
+      mensaje: string;
+      huella_confirmacion: string;
+      confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
+    }
+> {
+  if (!/^[0-9a-f]{64}$/.test(input.huellaProvisional)) {
+    throw new Error("La huella provisional no es un SHA-256 canónico.");
+  }
+  const preview = await deps.previsualizarVenta();
+  const huellaRecalculada = crearHuellaConfirmacionFiscal(preview.confirmacion_autoritativa);
+  if (
+    preview.huella_confirmacion !== huellaRecalculada ||
+    input.huellaProvisional !== huellaRecalculada
+  ) {
+    return {
+      estado: "RECONFIRMACION_REQUERIDA",
+      mensaje:
+        "La venta persistida difiere de la confirmación provisional; revisá la preview autoritativa antes de emitir.",
+      huella_confirmacion: huellaRecalculada,
+      confirmacion_autoritativa: copiarConfirmacionFiscal(preview.confirmacion_autoritativa),
+    };
+  }
+  return deps.emitir();
+}
+
+export type LecturasContextoArcaCongelado = {
+  cargarEmisor(id: string): Promise<{ id: string; cuit: string | null } | null>;
+  cargarCredencial(
+    emisorId: string,
+    ambiente: "PRODUCCION" | "HOMOLOGACION",
+  ): Promise<{
+    emisorId: string;
+    ambiente: "PRODUCCION" | "HOMOLOGACION";
+    arcaKeyEnc: string | null;
+    arcaCertEnc: string | null;
+  } | null>;
+};
+
+/**
+ * Después de RESERVAR, la sucursal y su PV vivos dejan de ser autoridad. La
+ * credencial se busca por el emisor copiado al Snapshot v2 y se combina sólo
+ * con PV/tipo/número/modo de la identidad persistida.
+ */
+export async function cargarContextoArcaCongelado(
+  reserva: ReservaFiscalPersistida,
+  lecturas: LecturasContextoArcaCongelado,
+) {
+  const snapshot = validarSnapshotFiscalV2(reserva.snapshot);
+  if (
+    snapshot.venta.id !== reserva.ventaId ||
+    snapshot.hash !== reserva.payloadHash ||
+    snapshot.identidad.emisorCuit !== reserva.emisorCuit ||
+    snapshot.identidad.puntoVenta !== reserva.puntoVenta ||
+    snapshot.identidad.cbteTipo !== reserva.cbteTipo ||
+    snapshot.identidad.numero !== reserva.numero ||
+    snapshot.identidad.modo !== reserva.modo
+  ) {
+    throw new Error("La reserva no coincide con la identidad fiscal congelada.");
+  }
+
+  const emisor = await lecturas.cargarEmisor(snapshot.emisor.id);
+  if (!emisor || emisor.id !== snapshot.emisor.id) {
+    throw new Error("No existe el emisor fiscal congelado en el Snapshot.");
+  }
+  if (emisor.cuit !== snapshot.emisor.cuit || emisor.cuit !== snapshot.identidad.emisorCuit) {
+    throw new Error("El CUIT del emisor congelado no coincide con el Snapshot.");
+  }
+
+  const credencial = await lecturas.cargarCredencial(emisor.id, snapshot.identidad.modo);
+  if (
+    !credencial ||
+    credencial.emisorId !== emisor.id ||
+    credencial.ambiente !== snapshot.identidad.modo ||
+    !credencial.arcaKeyEnc ||
+    !credencial.arcaCertEnc
+  ) {
+    throw new Error("Falta la credencial del emisor y ambiente congelados.");
+  }
+
+  return {
+    emisor: {
+      cuit: emisor.cuit,
+      arca_key_enc: credencial.arcaKeyEnc,
+      arca_cert_enc: credencial.arcaCertEnc,
+    },
+    pv: { numero: snapshot.identidad.puntoVenta, modo: snapshot.identidad.modo },
+    cbteTipo: snapshot.identidad.cbteTipo,
+    numero: snapshot.identidad.numero,
+  };
+}
+
 function centavos(value: string): bigint {
   const [entero, fraccion] = value.split(".");
   return BigInt(entero) * 100n + BigInt(fraccion);
@@ -304,6 +460,17 @@ export async function construirPreviewBorradorFiscalProvisional(
   const demoraDias = Math.max(0, diasDesdeHoyAr(new Date(input.fechaComercial), ahora));
   const confirmacionFacturaA = facturaAPermitida(letra, contexto, ahora);
   const totalTexto = decimalDosProvisional(total);
+  const confirmacionFingerprint: ConfirmacionFiscalPostBorrador = {
+    version: 1,
+    importe: totalTexto,
+    emisorCuit: contexto.emisor.cuit,
+    puntoVenta: contexto.pv.numero,
+    modo: contexto.pv.modo,
+    letra,
+    cbteTipo: cbteTipoAfip("VENTA", letra),
+    fechaFiscal,
+    receptor,
+  };
 
   return {
     autoritativo: false as const,
@@ -326,6 +493,7 @@ export async function construirPreviewBorradorFiscalProvisional(
     pagado: decimalDosProvisional(pagado),
     saldo: decimalDosProvisional(saldo),
     confirmacion_factura_a_permitida: confirmacionFacturaA,
+    huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacionFingerprint),
     confirmacion_provisional: {
       importe: totalTexto,
       emisor_cuit: contexto.emisor.cuit,
@@ -596,20 +764,36 @@ export function crearDependenciasEmisionFiscalServer(input: {
   }
 
   async function contextoReserva(reserva: ReservaFiscalPersistida) {
-    const existente = preparaciones.get(reserva.ventaId);
-    if (existente) return existente.contexto;
-    const { lectura, contexto } = await contextoParaVenta(reserva.ventaId);
-    if (
-      contexto.emisor.cuit !== reserva.emisorCuit ||
-      contexto.pv.numero !== reserva.puntoVenta ||
-      contexto.pv.modo !== reserva.modo
-    ) {
-      throw new Error("El contexto vivo no coincide con la identidad fiscal reservada.");
-    }
-    if (lectura.venta.afipCbteTipo !== reserva.cbteTipo) {
-      throw new Error("El tipo fiscal vivo no coincide con la reserva.");
-    }
-    return contexto;
+    return cargarContextoArcaCongelado(reserva, {
+      async cargarEmisor(id) {
+        const { data, error } = await admin
+          .from("emisores")
+          .select("id,cuit")
+          .eq("id", id)
+          .maybeSingle();
+        if (error) throw new Error(`No se pudo cargar el emisor congelado: ${error.message}.`);
+        return data ? { id: data.id, cuit: data.cuit } : null;
+      },
+      async cargarCredencial(emisorId, ambiente) {
+        const { data, error } = await admin
+          .from("credenciales_arca")
+          .select("emisor_id,ambiente,arca_key_enc,arca_cert_enc")
+          .eq("emisor_id", emisorId)
+          .eq("ambiente", ambiente)
+          .maybeSingle();
+        if (error) throw new Error(`No se pudo cargar la credencial congelada: ${error.message}.`);
+        if (!data) return null;
+        if (data.ambiente !== "PRODUCCION" && data.ambiente !== "HOMOLOGACION") {
+          throw new Error("La credencial congelada tiene un ambiente inválido.");
+        }
+        return {
+          emisorId: data.emisor_id,
+          ambiente: data.ambiente,
+          arcaKeyEnc: data.arca_key_enc,
+          arcaCertEnc: data.arca_cert_enc,
+        };
+      },
+    });
   }
 
   return {
@@ -767,6 +951,17 @@ export function crearDependenciasEmisionFiscalServer(input: {
       }
       return estadoDesdeRpc(data);
     },
+    async cargarEstadoPersistido(ventaId) {
+      const lectura = await leerVentaExacta(admin, ventaId);
+      return {
+        venta_id: lectura.venta.id,
+        afip_estado: lectura.venta.afipEstado,
+        afip_fase: lectura.venta.afipFase,
+        afip_claim_token: lectura.venta.afipClaimToken,
+        afip_numero: lectura.venta.afipNumero,
+        afip_version: lectura.venta.afipVersion,
+      };
+    },
     async cargarReservaPersistida(ventaId) {
       const lectura = await leerVentaExacta(admin, ventaId);
       const snapshot = validarSnapshotFiscalV2(lectura.venta.afipSnapshot);
@@ -813,9 +1008,9 @@ export function crearDependenciasEmisionFiscalServer(input: {
       try {
         const respuesta = await solicitarCaeConPayload(
           contexto.emisor,
-          { numero: reserva.puntoVenta, modo: reserva.modo },
+          contexto.pv,
           payload as Record<string, unknown>,
-          reserva.numero,
+          contexto.numero,
           admin,
         );
         return {
@@ -845,20 +1040,15 @@ export function crearDependenciasEmisionFiscalServer(input: {
       const contexto = await contextoReserva(reserva);
       return consultarComprobanteCompleto(
         contexto.emisor,
-        { numero: reserva.puntoVenta, modo: reserva.modo },
-        reserva.cbteTipo,
-        reserva.numero,
+        contexto.pv,
+        contexto.cbteTipo,
+        contexto.numero,
         admin,
       );
     },
     async consultarUltimoAutorizado(reserva) {
       const contexto = await contextoReserva(reserva);
-      return ultimoAutorizado(
-        contexto.emisor,
-        { numero: reserva.puntoVenta, modo: reserva.modo },
-        reserva.cbteTipo,
-        admin,
-      );
+      return ultimoAutorizado(contexto.emisor, contexto.pv, contexto.cbteTipo, admin);
     },
     decidirConciliacion({ snapshot, remoto, ultimoRemoto, numeroReservado, payloadHash }) {
       return decidirConciliacion({
@@ -933,6 +1123,17 @@ export async function previsualizarVentaFiscalExistente(input: {
   const lectura = await leerVentaExacta(input.admin, input.ventaId);
   const vista = deps.obtenerVistaPreparacion(input.ventaId);
   const demoraDias = diasDesdeHoyAr(new Date(lectura.venta.fechaComercial));
+  const confirmacionAutoritativa: ConfirmacionFiscalPostBorrador = {
+    version: 1,
+    importe: lectura.venta.total,
+    emisorCuit: preparacion.emisorCuit,
+    puntoVenta: preparacion.puntoVenta,
+    modo: preparacion.modo,
+    letra: vista.letra,
+    cbteTipo: preparacion.cbteTipo,
+    fechaFiscal: preparacion.fechaComprobante,
+    receptor: vista.receptor,
+  };
   return {
     autoritativo: true,
     venta_id: input.ventaId,
@@ -955,6 +1156,8 @@ export async function previsualizarVentaFiscalExistente(input: {
         ? "La venta comercial tiene más de cinco días; un administrador debe confirmar la emisión con fecha fiscal actual."
         : null,
     confirmacion_factura_a_permitida: facturaAPermitida(vista.letra, vista.contexto),
+    confirmacion_autoritativa: copiarConfirmacionFiscal(confirmacionAutoritativa),
+    huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
   };
 }
 

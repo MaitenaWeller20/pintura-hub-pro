@@ -152,7 +152,17 @@ export function parseFechaAfip(s: string | null | undefined): Date | null {
   const year = Number(s.slice(0, 4));
   const month = Number(s.slice(4, 6));
   const day = Number(s.slice(6, 8));
+  if (year === 0 || month < 1 || month > 12 || day < 1 || day > 31) return null;
   // Mediodía UTC: cae en el mismo día calendario en cualquier huso de Argentina,
   // así que la fecha no se corre al convertirla.
-  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const fecha = new Date(Date.UTC(2000, month - 1, day, 12, 0, 0));
+  fecha.setUTCFullYear(year);
+  if (
+    fecha.getUTCFullYear() !== year ||
+    fecha.getUTCMonth() !== month - 1 ||
+    fecha.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return fecha;
 }

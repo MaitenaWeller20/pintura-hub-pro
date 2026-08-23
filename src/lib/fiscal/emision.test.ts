@@ -85,10 +85,17 @@ class FiscalDouble {
   throwSolicitud: unknown | null = null;
   throwPayload: unknown | null = null;
   throwTransitionOnce: AccionTransicionFiscal | null = null;
+  commitThenThrowOnce: AccionTransicionFiscal | null = null;
   preparedSnapshot: SnapshotFiscalV2 | null = null;
   nextClaim = 1;
+  estadoActual = "SIN_FACTURAR";
+  faseActual: string | null = null;
+  reloads = 0;
 
-  estado(estado = "EMITIENDO", fase: string | null = null): EstadoTransicionFiscal {
+  estado(
+    estado = this.estadoActual,
+    fase: string | null = this.faseActual,
+  ): EstadoTransicionFiscal {
     return {
       venta_id: "71000000-0000-4000-8000-000000000001",
       afip_estado: estado,
@@ -97,6 +104,21 @@ class FiscalDouble {
       afip_numero: this.numero,
       afip_version: this.version,
     };
+  }
+
+  confirmarTransicion(
+    accion: AccionTransicionFiscal,
+    estado: string,
+    fase: string | null,
+  ): EstadoTransicionFiscal {
+    this.estadoActual = estado;
+    this.faseActual = fase;
+    const persistido = this.estado();
+    if (this.commitThenThrowOnce === accion) {
+      this.commitThenThrowOnce = null;
+      throw new Error(`respuesta perdida ${accion}`);
+    }
+    return persistido;
   }
 
   reserva(): ReservaFiscalPersistida {
@@ -180,7 +202,7 @@ class FiscalDouble {
           }
           this.claim = claimToken;
           this.version += 1;
-          return this.estado("EMITIENDO", "PREFLIGHT");
+          return this.confirmarTransicion(accion, "EMITIENDO", "PREFLIGHT");
         }
         if (claimToken !== this.claim) throw new Error("TOKEN_INCORRECTO");
         if (accion === "RESERVAR") {
@@ -188,42 +210,46 @@ class FiscalDouble {
           this.persistedSnapshot = structuredClone(payload.snapshot as SnapshotFiscalV2);
           this.ultimoLocal = Math.max(this.ultimoLocal, this.numero);
           this.version += 1;
-          return this.estado("EMITIENDO", "RESERVADO");
+          return this.confirmarTransicion(accion, "EMITIENDO", "RESERVADO");
         }
         if (accion === "REQUEST_INICIADO") {
           this.version += 1;
-          return this.estado("EMITIENDO", "REQUEST_INICIADO");
+          return this.confirmarTransicion(accion, "EMITIENDO", "REQUEST_INICIADO");
         }
         if (accion === "RESPUESTA_RECIBIDA") {
           this.version += 1;
-          return this.estado("EMITIENDO", "RESPUESTA_RECIBIDA");
+          return this.confirmarTransicion(accion, "EMITIENDO", "RESPUESTA_RECIBIDA");
         }
         if (accion === "APROBAR" || accion === "RECUPERAR_CAE") {
           this.version += 1;
           this.claim = null;
-          return this.estado("APROBADO", "PERSISTIDO");
+          return this.confirmarTransicion(accion, "APROBADO", "PERSISTIDO");
         }
         if (accion === "REENVIO_VERIFICADO") {
           this.claim = payload.nuevo_claim_token as string;
           this.version += 1;
-          return this.estado("EMITIENDO", "RESERVADO");
+          return this.confirmarTransicion(accion, "EMITIENDO", "RESERVADO");
         }
         if (accion === "RECONCILIAR") {
           this.version += 1;
-          return this.estado("RECONCILIAR", "REQUEST_INICIADO");
+          return this.confirmarTransicion(accion, "RECONCILIAR", "REQUEST_INICIADO");
         }
         if (accion === "BLOQUEAR") {
           this.version += 1;
-          return this.estado("BLOQUEADO", "REQUEST_INICIADO");
+          return this.confirmarTransicion(accion, "BLOQUEADO", "REQUEST_INICIADO");
         }
         if (accion === "ERROR_CORREGIBLE" || accion === "LIBERAR") {
           this.version += 1;
           this.claim = null;
           this.numero = null;
           this.persistedSnapshot = null;
-          return this.estado("ERROR_CORREGIBLE", null);
+          return this.confirmarTransicion(accion, "ERROR_CORREGIBLE", null);
         }
         throw new Error(`acción doble no implementada: ${accion}`);
+      },
+      cargarEstadoPersistido: async () => {
+        this.reloads += 1;
+        return this.estado();
       },
       cargarReservaPersistida: async () => this.reserva(),
       crearPayloadCae: (reserved) => {
@@ -422,6 +448,50 @@ describe("ejecutarEmisionFiscal", () => {
     ]);
   });
 
+  it.each(["RECLAMAR", "RESERVAR", "REQUEST_INICIADO", "RESPUESTA_RECIBIDA", "APROBAR"] as const)(
+    "recupera el commit cuya respuesta se perdió en %s sin repetir la llamada CAE",
+    async (accion) => {
+      const doble = new FiscalDouble();
+      doble.commitThenThrowOnce = accion;
+
+      const result = await ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: MANUAL_A,
+          confirmaVentaAntigua: false,
+        },
+        doble.deps(),
+      );
+
+      expect(result).toMatchObject({ estado: "APROBADO", cae: "74123456789012", numero: 1 });
+      expect(doble.calls.filter((call) => call.accion === accion)).toHaveLength(1);
+      expect(doble.payloadsCae).toHaveLength(1);
+      expect(doble.reloads).toBeGreaterThan(0);
+      expect(doble.estadoActual).toBe("APROBADO");
+    },
+  );
+
+  it("relee un RECONCILIAR confirmado cuya respuesta se perdió y no deja EMITIENDO varado", async () => {
+    const doble = new FiscalDouble();
+    doble.throwSolicitud = new Error("timeout luego de enviar");
+    doble.commitThenThrowOnce = "RECONCILIAR";
+
+    const result = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        confirmaVentaAntigua: false,
+      },
+      doble.deps(),
+    );
+
+    expect(result.estado).toBe("RECONCILIAR");
+    expect(doble.calls.filter((call) => call.accion === "RECONCILIAR")).toHaveLength(1);
+    expect(doble.payloadsCae).toHaveLength(1);
+    expect(doble.estadoActual).toBe("RECONCILIAR");
+    expect(doble.faseActual).toBe("REQUEST_INICIADO");
+  });
+
   it("dos submits con receptores distintos dejan un claim, una preparación y una llamada ARCA", async () => {
     const doble = new FiscalDouble();
     const deps = doble.deps();
@@ -587,6 +657,8 @@ describe("ejecutarConciliacionFiscal", () => {
     doble.claim = "81000000-0000-4000-8000-000000000099";
     doble.numero = 7;
     doble.persistedSnapshot = snapshot(7);
+    doble.estadoActual = "RECONCILIAR";
+    doble.faseActual = "REQUEST_INICIADO";
   }
 
   it("un remoto exacto usa la transición dedicada RECUPERAR_CAE", async () => {
@@ -674,5 +746,24 @@ describe("ejecutarConciliacionFiscal", () => {
     expect(doble.payloadsCae[0].reserva.numero).toBe(7);
     expect(doble.payloadsCae[0].reserva.snapshot).toEqual(frozen);
     expect(doble.payloadsCae[0].payload).toMatchObject({ numero: 7, hash: frozen.hash });
+  });
+
+  it("continúa un REENVIO_VERIFICADO confirmado cuya respuesta se perdió sin duplicar CAE", async () => {
+    const doble = new FiscalDouble();
+    reconciliable(doble);
+    doble.remote = null;
+    doble.ultimoRemoto = 6;
+    doble.decision = { accion: "REENVIAR_MISMO_NUMERO" };
+    doble.commitThenThrowOnce = "REENVIO_VERIFICADO";
+
+    const result = await ejecutarConciliacionFiscal(
+      { ventaId: "71000000-0000-4000-8000-000000000001" },
+      doble.deps(),
+    );
+
+    expect(result).toMatchObject({ estado: "APROBADO", numero: 7 });
+    expect(doble.calls.filter((call) => call.accion === "REENVIO_VERIFICADO")).toHaveLength(1);
+    expect(doble.payloadsCae).toHaveLength(1);
+    expect(doble.reloads).toBeGreaterThan(0);
   });
 });

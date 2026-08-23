@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  cargarContextoArcaCongelado,
   construirPreviewBorradorFiscalProvisional,
   construirSnapshotFiscalDesdeLectura,
+  crearHuellaConfirmacionFiscal,
+  emitirPostBorradorConHuella,
+  type ConfirmacionFiscalPostBorrador,
 } from "./emision.server";
+import type { ReservaFiscalPersistida } from "./emision";
 import { validarSnapshotFiscalV2 } from "./snapshot";
 
 function preparacion(percepciones = "0.00") {
@@ -133,6 +138,108 @@ describe("Snapshot desde lectura PostgreSQL exacta", () => {
   });
 });
 
+function reservaCongelada(): ReservaFiscalPersistida {
+  const frozen = construirSnapshotFiscalDesdeLectura({
+    preparacion: preparacion() as never,
+    numero: 42,
+    fechaComprobante: "2026-08-22",
+  });
+  return {
+    ventaId: frozen.venta.id,
+    claimToken: "81000000-0000-4000-8000-000000000001",
+    afipVersion: 4,
+    numero: frozen.identidad.numero,
+    snapshot: frozen,
+    payloadHash: frozen.hash,
+    emisorCuit: frozen.identidad.emisorCuit,
+    puntoVenta: frozen.identidad.puntoVenta,
+    cbteTipo: frozen.identidad.cbteTipo,
+    modo: frozen.identidad.modo,
+  };
+}
+
+describe("credencial ARCA congelada después de reservar", () => {
+  it("ignora la asignación viva editada y carga por snapshot.emisor.id + modo congelado", async () => {
+    const reserva = reservaCongelada();
+    const lecturas: string[] = [];
+
+    const contexto = await cargarContextoArcaCongelado(reserva, {
+      cargarEmisor: async (id) => {
+        lecturas.push(`emisor:${id}`);
+        return { id, cuit: "30714199664" };
+      },
+      cargarCredencial: async (emisorId, modo) => {
+        lecturas.push(`credencial:${emisorId}:${modo}`);
+        return {
+          emisorId,
+          ambiente: modo,
+          arcaKeyEnc: "key-congelada",
+          arcaCertEnc: "cert-congelado",
+        };
+      },
+    });
+
+    expect(lecturas).toEqual([
+      "emisor:71000000-0000-4000-8000-000000000201",
+      "credencial:71000000-0000-4000-8000-000000000201:HOMOLOGACION",
+    ]);
+    expect(contexto).toEqual({
+      emisor: {
+        cuit: "30714199664",
+        arca_key_enc: "key-congelada",
+        arca_cert_enc: "cert-congelado",
+      },
+      pv: { numero: 5, modo: "HOMOLOGACION" },
+      cbteTipo: 6,
+      numero: 42,
+    });
+  });
+
+  it.each([
+    ["emisor faltante", async () => null, async () => null],
+    [
+      "CUIT del emisor distinto",
+      async (id: string) => ({ id, cuit: "30717322467" }),
+      async () => null,
+    ],
+    ["credencial faltante", async (id: string) => ({ id, cuit: "30714199664" }), async () => null],
+    [
+      "credencial de otro ambiente",
+      async (id: string) => ({ id, cuit: "30714199664" }),
+      async (emisorId: string) => ({
+        emisorId,
+        ambiente: "PRODUCCION" as const,
+        arcaKeyEnc: "key",
+        arcaCertEnc: "cert",
+      }),
+    ],
+  ])("falla cerrado ante %s", async (_caso, cargarEmisor, cargarCredencial) => {
+    await expect(
+      cargarContextoArcaCongelado(reservaCongelada(), {
+        cargarEmisor,
+        cargarCredencial,
+      } as never),
+    ).rejects.toThrow(/emisor|CUIT|credencial|ambiente/i);
+  });
+
+  it("rechaza una reserva cuya PV/tipo/número no coincide con el snapshot", async () => {
+    const reserva = reservaCongelada();
+    reserva.puntoVenta = 99;
+
+    await expect(
+      cargarContextoArcaCongelado(reserva, {
+        cargarEmisor: async (id) => ({ id, cuit: "30714199664" }),
+        cargarCredencial: async (emisorId, ambiente) => ({
+          emisorId,
+          ambiente,
+          arcaKeyEnc: "key",
+          arcaCertEnc: "cert",
+        }),
+      }),
+    ).rejects.toThrow(/identidad.*congelada|reserva/i);
+  });
+});
+
 describe("preview provisional de borrador", () => {
   it("resuelve catálogo/receptor/contexto y devuelve todos los campos sin escribir", async () => {
     const resultado = await construirPreviewBorradorFiscalProvisional(
@@ -232,4 +339,136 @@ describe("preview provisional de borrador", () => {
       ),
     ).rejects.toThrow(/producto.*activo/i);
   });
+});
+
+const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
+  version: 1,
+  importe: "0.20",
+  emisorCuit: "30714199664",
+  puntoVenta: 5,
+  modo: "HOMOLOGACION",
+  letra: "B",
+  cbteTipo: 6,
+  fechaFiscal: "2026-08-22",
+  receptor: {
+    razonSocial: "Consumidor Final",
+    domicilio: null,
+    tipoDocumento: "SIN_IDENTIFICAR",
+    numeroDocumento: null,
+    docTipoArca: 99,
+    docNroArca: "0",
+    condicionIva: "CONSUMIDOR_FINAL",
+    origen: "CLIENTE_COMERCIAL",
+    origenId: null,
+    verificadoArcaAt: null,
+  },
+};
+
+function confirmacionesDistintas(): Array<[string, ConfirmacionFiscalPostBorrador]> {
+  const cambiar = (
+    nombre: string,
+    mutar: (confirmacion: ConfirmacionFiscalPostBorrador) => void,
+  ): [string, ConfirmacionFiscalPostBorrador] => {
+    const confirmacion = structuredClone(CONFIRMACION_BASE);
+    mutar(confirmacion);
+    return [nombre, confirmacion];
+  };
+  return [
+    cambiar("importe", (c) => (c.importe = "0.21")),
+    cambiar("emisor CUIT", (c) => (c.emisorCuit = "30717322467")),
+    cambiar("punto de venta", (c) => (c.puntoVenta = 6)),
+    cambiar("modo", (c) => (c.modo = "PRODUCCION")),
+    cambiar("letra", (c) => (c.letra = "A")),
+    cambiar("CbteTipo", (c) => (c.cbteTipo = 1)),
+    cambiar("fecha fiscal", (c) => (c.fechaFiscal = "2026-08-23")),
+    cambiar("receptor.razonSocial", (c) => (c.receptor.razonSocial = "Otro receptor")),
+    cambiar("receptor.domicilio", (c) => (c.receptor.domicilio = "Otra calle")),
+    cambiar("receptor.tipoDocumento", (c) => (c.receptor.tipoDocumento = "DNI")),
+    cambiar("receptor.numeroDocumento", (c) => (c.receptor.numeroDocumento = "30111222")),
+    cambiar("receptor.docTipoArca", (c) => (c.receptor.docTipoArca = 96)),
+    cambiar("receptor.docNroArca", (c) => (c.receptor.docNroArca = "30111222")),
+    cambiar("receptor.condicionIva", (c) => (c.receptor.condicionIva = "EXENTO")),
+    cambiar("receptor.origen", (c) => (c.receptor.origen = "MANUAL")),
+    cambiar("receptor.origenId", (c) => (c.receptor.origenId = "receptor-1")),
+    cambiar("receptor.verificadoArcaAt", (c) => (c.receptor.verificadoArcaAt = "2026-08-22")),
+  ];
+}
+
+describe("handshake post-creación del borrador", () => {
+  it("produce SHA-256 canónico de la tupla completa", () => {
+    expect(crearHuellaConfirmacionFiscal(CONFIRMACION_BASE)).toBe(
+      "9df51a2cdbd04aaa392561b214a01a6b8c200ba1762608f23c7fadb111848979",
+    );
+  });
+
+  it.each(confirmacionesDistintas())("cambia la huella si cambia %s", (_campo, confirmacion) => {
+    expect(crearHuellaConfirmacionFiscal(confirmacion)).not.toBe(
+      crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+    );
+  });
+
+  it("emite por el motor normal sólo cuando la preview autoritativa coincide exactamente", async () => {
+    let emisiones = 0;
+    const resultado = await emitirPostBorradorConHuella(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: { origen: "CLIENTE_COMERCIAL" },
+        confirmaVentaAntigua: false,
+        huellaProvisional: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+      },
+      {
+        previsualizarVenta: async () => ({
+          huella_confirmacion: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+          confirmacion_autoritativa: CONFIRMACION_BASE,
+        }),
+        emitir: async () => {
+          emisiones += 1;
+          return {
+            estado: "APROBADO" as const,
+            cae: "74123456789012",
+            numero: 1,
+            recuperado: false,
+            advertencias: [],
+          };
+        },
+      },
+    );
+
+    expect(resultado.estado).toBe("APROBADO");
+    expect(emisiones).toBe(1);
+  });
+
+  it.each(confirmacionesDistintas())(
+    "exige reconfirmación y deja cero claims/red si la venta persistida cambia %s",
+    async (_campo, autoritativa) => {
+      let claims = 0;
+      let red = 0;
+      const resultado = await emitirPostBorradorConHuella(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: { origen: "CLIENTE_COMERCIAL" },
+          confirmaVentaAntigua: false,
+          huellaProvisional: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+        },
+        {
+          previsualizarVenta: async () => ({
+            huella_confirmacion: crearHuellaConfirmacionFiscal(autoritativa),
+            confirmacion_autoritativa: autoritativa,
+          }),
+          emitir: async () => {
+            claims += 1;
+            red += 1;
+            throw new Error("no debe emitir");
+          },
+        },
+      );
+
+      expect(resultado).toMatchObject({
+        estado: "RECONFIRMACION_REQUERIDA",
+        huella_confirmacion: crearHuellaConfirmacionFiscal(autoritativa),
+      });
+      expect(claims).toBe(0);
+      expect(red).toBe(0);
+    },
+  );
 });

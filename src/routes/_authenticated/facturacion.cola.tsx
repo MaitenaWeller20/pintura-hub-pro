@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { StatusPill } from "@/components/app/status-pill";
 import { ColaFiscalFiltros } from "@/components/fiscal/cola-fiscal-filtros";
 import { ColaFiscalTabla } from "@/components/fiscal/cola-fiscal-tabla";
@@ -306,7 +306,8 @@ function ColaFiscalPage() {
         .select("*, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)")
         .eq("id", detalleSeleccionado.ventaId)
         .single();
-      if (error || !data) throw new Error("No se pudo cargar el detalle de la venta.");
+      if (error) throw new Error(error.message || "No se pudo cargar el detalle de la venta.");
+      if (!data) throw new Error("No se pudo cargar el detalle de la venta.");
       return data as unknown as VentaDetalle;
     },
   });
@@ -360,6 +361,11 @@ function ColaFiscalPage() {
   const cambiarSearch = (cambios: Partial<BusquedaColaFiscal>, replace = false) =>
     navigate({ search: actualizarBusquedaCola(search, cambios), replace });
 
+  const cerrarDetalle = () => {
+    setDetalleSeleccionado(null);
+    returnFocusRef.current?.focus();
+  };
+
   return (
     <div className="space-y-4">
       <section className="rounded-xl border border-border bg-card p-4 shadow-card">
@@ -383,7 +389,16 @@ function ColaFiscalPage() {
 
       <div aria-live="polite">
         {errorAccion ? <p className="text-sm font-medium text-destructive">{errorAccion}</p> : null}
-        {detalleVenta.error ? (
+        {detalleSeleccionado && detalleVenta.isFetching && !detalleVenta.data ? (
+          <div
+            className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-3"
+            role="status"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            <p className="text-sm text-muted-foreground">Cargando detalle de la venta…</p>
+          </div>
+        ) : null}
+        {detalleVenta.error && !detalleVenta.isFetching ? (
           <div
             className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/35 bg-destructive/5 p-3"
             role="alert"
@@ -399,7 +414,7 @@ function ColaFiscalPage() {
             >
               Reintentar detalle
             </Button>
-            <Button type="button" variant="ghost" onClick={() => setDetalleSeleccionado(null)}>
+            <Button type="button" variant="ghost" onClick={cerrarDetalle}>
               Cerrar detalle
             </Button>
           </div>
@@ -580,7 +595,7 @@ function ColaFiscalPage() {
           venta={detalleVenta.data ?? null}
           permitirDescarga={detalleSeleccionado.permitirDescarga}
           returnFocusRef={returnFocusRef}
-          onClose={() => setDetalleSeleccionado(null)}
+          onClose={cerrarDetalle}
         />
       ) : null}
     </div>

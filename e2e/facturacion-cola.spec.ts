@@ -139,6 +139,62 @@ test("APROBADO abre detalle fiscal descargable y restaura el foco al salir", asy
   await expect(abrir).toBeFocused();
 });
 
+test("un fallo de cabecera muestra progreso, permite reintentar y cerrar con foco restaurado", async ({
+  page,
+}) => {
+  await ingresar(page, "fiscalAdmin");
+  let bloquearCabecera = true;
+  let demorarPrimera = true;
+  let liberarCabecera: (() => void) | undefined;
+  await page.route(/\/rest\/v1\/ventas\?/, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("id") !== `eq.${fixture.ventaAprobadaId}`) {
+      await route.continue();
+      return;
+    }
+    if (demorarPrimera) {
+      demorarPrimera = false;
+      await new Promise<void>((resolve) => {
+        liberarCabecera = resolve;
+      });
+    }
+    if (bloquearCabecera) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "T13_E2E",
+          message: "CABECERA_E2E_INDISPONIBLE",
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto(`/facturacion/cola?tab=emitidas&venta=${fixture.ventaAprobadaId}`);
+  const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  const abrir = fila.getByRole("button", { name: "Ver/descargar" });
+  await abrir.click();
+  await expect(page.getByRole("status")).toContainText("Cargando detalle de la venta");
+  expect(liberarCabecera).toBeDefined();
+  liberarCabecera?.();
+
+  const error = page.getByRole("alert").filter({ hasText: "CABECERA_E2E_INDISPONIBLE" });
+  await expect(error).toBeVisible();
+  await expect(error.getByRole("button", { name: "Reintentar detalle" })).toBeVisible();
+  await error.getByRole("button", { name: "Cerrar detalle" }).click();
+  await expect(error).not.toBeVisible();
+  await expect(abrir).toBeFocused();
+
+  await abrir.click();
+  const segundoError = page.getByRole("alert").filter({ hasText: "CABECERA_E2E_INDISPONIBLE" });
+  await expect(segundoError).toBeVisible();
+  bloquearCabecera = false;
+  await segundoError.getByRole("button", { name: "Reintentar detalle" }).click();
+  await expect(page.getByTestId("dialogo-detalle-venta")).toBeVisible();
+});
+
 test("un detalle incompleto bloquea el PDF y permite reintentar o cerrar desde la cola", async ({
   page,
 }) => {

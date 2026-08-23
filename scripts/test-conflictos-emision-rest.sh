@@ -13,6 +13,10 @@ VENTA_SECUENCIA_DOS="c3130000-0000-4000-8000-000000000003"
 VENTA_REAL_UNO="c3130000-0000-4000-8000-000000000004"
 VENTA_REAL_DOS="c3130000-0000-4000-8000-000000000005"
 VENTA_REAL_DIVERGENCIA="c3130000-0000-4000-8000-000000000006"
+VENTA_TOCTOU_APROBADA_UNO="c3130000-0000-4000-8000-000000000007"
+VENTA_TOCTOU_APROBADA_DOS="c3130000-0000-4000-8000-000000000008"
+VENTA_TOCTOU_LIBERADA_UNO="c3130000-0000-4000-8000-000000000009"
+VENTA_TOCTOU_LIBERADA_DOS="c3130000-0000-4000-8000-000000000010"
 USUARIO_ID="a3130000-0000-4000-8000-000000000001"
 CLIENTE_ID="b3130000-0000-4000-8000-000000000001"
 TOKEN_RACE_UNO="d3130000-0000-4000-8000-000000000001"
@@ -23,21 +27,33 @@ TOKEN_REAL_UNO="d3130000-0000-4000-8000-000000000005"
 TOKEN_REAL_DOS="d3130000-0000-4000-8000-000000000006"
 TOKEN_REAL_DOS_REINTENTO="d3130000-0000-4000-8000-000000000007"
 TOKEN_REAL_DIVERGENCIA="d3130000-0000-4000-8000-000000000008"
+TOKEN_TOCTOU_APROBADA_UNO="d3130000-0000-4000-8000-000000000009"
+TOKEN_TOCTOU_APROBADA_DOS="d3130000-0000-4000-8000-000000000010"
+TOKEN_TOCTOU_LIBERADA_UNO="d3130000-0000-4000-8000-000000000012"
+TOKEN_TOCTOU_LIBERADA_DOS="d3130000-0000-4000-8000-000000000013"
 
 q() { "${PSQL[@]}" -qAtc "$1"; }
 q_sr() { "${PSQL[@]}" -qAtc "SET ROLE service_role; $1"; }
 
 limpiar_sql() {
   "${PSQL[@]}" >/dev/null <<SQL
+SELECT pg_catalog.pg_terminate_backend(pid)
+  FROM pg_catalog.pg_stat_activity
+ WHERE application_name LIKE 't13_toctou_%'
+   AND pid<>pg_catalog.pg_backend_pid();
 DELETE FROM public.emision_fiscal_intentos
  WHERE venta_id IN (
    '$VENTA_RACE','$VENTA_SECUENCIA_UNO','$VENTA_SECUENCIA_DOS',
-   '$VENTA_REAL_UNO','$VENTA_REAL_DOS','$VENTA_REAL_DIVERGENCIA'
+   '$VENTA_REAL_UNO','$VENTA_REAL_DOS','$VENTA_REAL_DIVERGENCIA',
+   '$VENTA_TOCTOU_APROBADA_UNO','$VENTA_TOCTOU_APROBADA_DOS',
+   '$VENTA_TOCTOU_LIBERADA_UNO','$VENTA_TOCTOU_LIBERADA_DOS'
  );
 DELETE FROM public.ventas
  WHERE id IN (
    '$VENTA_RACE','$VENTA_SECUENCIA_UNO','$VENTA_SECUENCIA_DOS',
-   '$VENTA_REAL_UNO','$VENTA_REAL_DOS','$VENTA_REAL_DIVERGENCIA'
+   '$VENTA_REAL_UNO','$VENTA_REAL_DOS','$VENTA_REAL_DIVERGENCIA',
+   '$VENTA_TOCTOU_APROBADA_UNO','$VENTA_TOCTOU_APROBADA_DOS',
+   '$VENTA_TOCTOU_LIBERADA_UNO','$VENTA_TOCTOU_LIBERADA_DOS'
  );
 DELETE FROM public.clientes WHERE id='$CLIENTE_ID';
 DELETE FROM auth.users WHERE id='$USUARIO_ID';
@@ -48,6 +64,15 @@ cleanup() {
   local previo=$?
   trap - EXIT
   set +e
+  exec 8>&-
+  if [[ -n "${SESION_A_PID:-}" ]]; then
+    kill "$SESION_A_PID" 2>/dev/null
+    wait "$SESION_A_PID" 2>/dev/null
+  fi
+  if [[ -n "${POST_CONCURRENTE_PID:-}" ]]; then
+    kill "$POST_CONCURRENTE_PID" 2>/dev/null
+    wait "$POST_CONCURRENTE_PID" 2>/dev/null
+  fi
   limpiar_sql
   local limpieza=$?
   rm -r "$TMP_DIR"
@@ -115,6 +140,49 @@ assert_rapido() {
   echo "✓ $nombre (${segundos}s)"
 }
 
+SESION_A_PID=""
+POST_CONCURRENTE_PID=""
+
+abrir_sesion_a() {
+  local nombre="$1"
+  mkfifo "$TMP_DIR/${nombre}.in"
+  "${PSQL[@]}" -qAt <"$TMP_DIR/${nombre}.in" \
+    >"$TMP_DIR/${nombre}.out" 2>"$TMP_DIR/${nombre}.err" &
+  SESION_A_PID=$!
+  exec 8>"$TMP_DIR/${nombre}.in"
+}
+
+esperar_condicion_db() {
+  local nombre="$1" consulta="$2" esperado="$3"
+  local deadline=$((SECONDS + 10)) obtenido
+  while true; do
+    obtenido="$(q "$consulta")"
+    if [[ "$obtenido" == "$esperado" ]]; then
+      echo "✓ $nombre"
+      return
+    fi
+    if (( SECONDS >= deadline )); then
+      echo "✗ $nombre: esperaba '$esperado', obtuvo '$obtenido'" >&2
+      q "SELECT concat_ws('|',application_name,state,coalesce(wait_event_type,''),coalesce(wait_event,''))
+           FROM pg_catalog.pg_stat_activity
+          WHERE application_name LIKE 't13_toctou_%'
+          ORDER BY application_name" >&2
+      exit 1
+    fi
+    sleep 0.05
+  done
+}
+
+confirmar_sesion_a() {
+  printf 'COMMIT;\n\\q\n' >&8
+  exec 8>&-
+  if ! wait "$SESION_A_PID"; then
+    echo "✗ la sesión que mutaba la fila máxima no pudo confirmar" >&2
+    exit 1
+  fi
+  SESION_A_PID=""
+}
+
 limpiar_sql
 "${PSQL[@]}" >/dev/null <<SQL
 INSERT INTO auth.users (
@@ -138,7 +206,11 @@ SELECT id,
     ('$VENTA_SECUENCIA_DOS'::uuid,'T13-REST-SECUENCIA-2'),
     ('$VENTA_REAL_UNO'::uuid,'T13-REST-REAL-1'),
     ('$VENTA_REAL_DOS'::uuid,'T13-REST-REAL-2'),
-    ('$VENTA_REAL_DIVERGENCIA'::uuid,'T13-REST-REAL-DIVERGENCIA')
+    ('$VENTA_REAL_DIVERGENCIA'::uuid,'T13-REST-REAL-DIVERGENCIA'),
+    ('$VENTA_TOCTOU_APROBADA_UNO'::uuid,'T13-REST-TOCTOU-APROBADA-1'),
+    ('$VENTA_TOCTOU_APROBADA_DOS'::uuid,'T13-REST-TOCTOU-APROBADA-2'),
+    ('$VENTA_TOCTOU_LIBERADA_UNO'::uuid,'T13-REST-TOCTOU-LIBERADA-1'),
+    ('$VENTA_TOCTOU_LIBERADA_DOS'::uuid,'T13-REST-TOCTOU-LIBERADA-2')
   ) AS fixture(id,numero);
 SQL
 
@@ -277,14 +349,14 @@ assert_eq "dos ventas de la misma identidad reciben números consecutivos distin
          WHERE v.id IN ('$VENTA_SECUENCIA_UNO','$VENTA_SECUENCIA_DOS')")"
 
 crear_snapshot_real() {
-  local venta="$1" numero="$2"
+  local venta="$1" numero="$2" punto_venta="${3:-986}"
   local canonical
   canonical="$(jq -cS \
-    --arg venta "$venta" --argjson numero "$numero" '
+    --arg venta "$venta" --argjson numero "$numero" --argjson punto_venta "$punto_venta" '
       .input | del(.hash)
       | .venta.id=$venta
       | .identidad={
-          numero:$numero,emisorCuit:"30714199664",puntoVenta:986,
+          numero:$numero,emisorCuit:"30714199664",puntoVenta:$punto_venta,
           cbteTipo:6,modo:"PRODUCCION",simulado:false,validez:"PRODUCCION"
         }
     ' test/fixtures/fiscal-snapshot-parity-v2.json)"
@@ -301,17 +373,18 @@ payload_claim() {
 
 payload_reserva_real() {
   local venta="$1" token="$2" version="$3" numero="$4" remoto="$5" local_observado="$6"
+  local punto_venta="${7:-986}"
   jq -nc \
     --arg venta "$venta" --arg token "$token" --argjson version "$version" \
     --argjson snapshot "$SNAPSHOT" --arg hash "$SNAPSHOT_HASH" \
     --argjson numero "$numero" --argjson remoto "$remoto" \
-    --argjson local_observado "$local_observado" '
+    --argjson local_observado "$local_observado" --argjson punto_venta "$punto_venta" '
       {
         p_venta_id:$venta,p_accion:"RESERVAR",p_claim_token:$token,
         p_payload:{
           expected_version:$version,snapshot:$snapshot,snapshot_hash:$hash,
           numero_propuesto:$numero,fecha_comprobante:"2026-08-22",
-          emisor_cuit:"30714199664",punto_venta:986,cbte_tipo:6,
+          emisor_cuit:"30714199664",punto_venta:$punto_venta,cbte_tipo:6,
           modo:"PRODUCCION",simulado:false,validez:"PRODUCCION",
           ultimo_remoto:$remoto,ultimo_local_observado:$local_observado
         }
@@ -397,6 +470,141 @@ post_rpc reserva-real-divergencia \
 assert_eq "un adelanto real irreconciliable conserva BLOQUEADO" "BLOQUEADO|LOCAL_ADELANTADO" \
   "$(q "SELECT concat_ws('|',afip_estado,afip_error_codigo)
           FROM public.ventas WHERE id='$VENTA_REAL_DIVERGENCIA'")"
+
+# Interleaving determinista 1: APROBAR ya actualizó la fila que definía MAX,
+# pero mantiene el row lock hasta que RESERVAR demuestre estar esperándola.
+post_rpc claim-toctou-aprobada-uno \
+  "$(payload_claim "$VENTA_TOCTOU_APROBADA_UNO" "$TOKEN_TOCTOU_APROBADA_UNO" 0)"
+crear_snapshot_real "$VENTA_TOCTOU_APROBADA_UNO" 1 985
+post_rpc reserva-toctou-aprobada-uno \
+  "$(payload_reserva_real \
+    "$VENTA_TOCTOU_APROBADA_UNO" "$TOKEN_TOCTOU_APROBADA_UNO" 1 1 0 0 985)"
+post_rpc claim-toctou-aprobada-dos \
+  "$(payload_claim "$VENTA_TOCTOU_APROBADA_DOS" "$TOKEN_TOCTOU_APROBADA_DOS" 0)"
+
+abrir_sesion_a "toctou-aprobada-a"
+printf '%s\n' \
+  "SET application_name='t13_toctou_aprobar_maximo';" \
+  "SET ROLE service_role;" \
+  "BEGIN;" \
+  "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','REQUEST_INICIADO','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":2}'::jsonb);" \
+  "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','RESPUESTA_RECIBIDA','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":3,\"respuesta_resumen\":{\"tipo\":\"EMISION\",\"resultado\":\"A\",\"fuente\":\"FECAESolicitar\",\"rechazo_confirmado\":false,\"observaciones\":[]}}'::jsonb);" \
+  "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','APROBAR','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":4,\"cae\":\"74123456789031\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:01:00.000Z\"}'::jsonb);" >&8
+esperar_condicion_db \
+  "la aprobación concurrente mantiene la fila máxima bloqueada" \
+  "SELECT count(*) FROM pg_catalog.pg_stat_activity
+    WHERE application_name='t13_toctou_aprobar_maximo'
+      AND state='idle in transaction'" \
+  "1"
+
+crear_snapshot_real "$VENTA_TOCTOU_APROBADA_DOS" 1 985
+post_rpc reserva-toctou-durante-aprobacion \
+  "$(payload_reserva_real \
+    "$VENTA_TOCTOU_APROBADA_DOS" "$TOKEN_TOCTOU_APROBADA_DOS" 1 1 0 1 985)" &
+POST_CONCURRENTE_PID=$!
+esperar_condicion_db \
+  "RESERVAR espera exactamente la transacción que aprobó el máximo" \
+  "SELECT count(*)
+     FROM pg_catalog.pg_stat_activity AS espera
+     JOIN pg_catalog.pg_stat_activity AS bloqueador
+       ON bloqueador.pid=ANY(pg_catalog.pg_blocking_pids(espera.pid))
+    WHERE bloqueador.application_name='t13_toctou_aprobar_maximo'
+      AND espera.wait_event_type='Lock'
+      AND espera.query ILIKE '%transicionar_emision_fiscal%'" \
+  "1"
+confirmar_sesion_a
+wait "$POST_CONCURRENTE_PID"
+POST_CONCURRENTE_PID=""
+assert_eq "aprobar durante la decisión fuerza reconsulta, nunca bloqueo falso" "409" \
+  "$(cut -d'|' -f1 "$TMP_DIR/reserva-toctou-durante-aprobacion.meta")"
+jq -e '
+  .code == "PT409" and
+  (.message | startswith("EMISION_FISCAL_SECUENCIA_OBSOLETA"))
+' "$TMP_DIR/reserva-toctou-durante-aprobacion.body" >/dev/null || {
+  echo "✗ el cambio concurrente de la fila máxima no pidió reconsultar secuencia" >&2
+  exit 1
+}
+assert_eq "el conflicto concurrente conserva el mismo claim sin número parcial" \
+  "APROBADO|1|EMITIENDO|PREFLIGHT|$TOKEN_TOCTOU_APROBADA_DOS||f" \
+  "$(q "SELECT concat_ws('|',
+      uno.afip_estado,uno.afip_numero,dos.afip_estado,dos.afip_fase,
+      dos.afip_claim_token,coalesce(dos.afip_numero::text,''),
+      dos.afip_estado='BLOQUEADO')
+    FROM public.ventas AS uno
+    CROSS JOIN public.ventas AS dos
+    WHERE uno.id='$VENTA_TOCTOU_APROBADA_UNO'
+      AND dos.id='$VENTA_TOCTOU_APROBADA_DOS'")"
+
+crear_snapshot_real "$VENTA_TOCTOU_APROBADA_DOS" 2 985
+post_rpc reserva-toctou-aprobada-dos-final \
+  "$(payload_reserva_real \
+    "$VENTA_TOCTOU_APROBADA_DOS" "$TOKEN_TOCTOU_APROBADA_DOS" 1 2 1 1 985)"
+assert_eq "con remoto actualizado la segunda venta toma el número 2 con el mismo claim" \
+  "EMITIENDO|RESERVADO|2|$TOKEN_TOCTOU_APROBADA_DOS" \
+  "$(q "SELECT concat_ws('|',afip_estado,afip_fase,afip_numero,afip_claim_token)
+          FROM public.ventas WHERE id='$VENTA_TOCTOU_APROBADA_DOS'")"
+
+# Interleaving determinista 2: la fila que definía MAX libera su identidad
+# mientras RESERVAR espera. El máximo debe recalcularse y permitir reutilizar 1.
+post_rpc claim-toctou-liberada-uno \
+  "$(payload_claim "$VENTA_TOCTOU_LIBERADA_UNO" "$TOKEN_TOCTOU_LIBERADA_UNO" 0)"
+crear_snapshot_real "$VENTA_TOCTOU_LIBERADA_UNO" 1 984
+post_rpc reserva-toctou-liberada-uno \
+  "$(payload_reserva_real \
+    "$VENTA_TOCTOU_LIBERADA_UNO" "$TOKEN_TOCTOU_LIBERADA_UNO" 1 1 0 0 984)"
+post_rpc claim-toctou-liberada-dos \
+  "$(payload_claim "$VENTA_TOCTOU_LIBERADA_DOS" "$TOKEN_TOCTOU_LIBERADA_DOS" 0)"
+
+abrir_sesion_a "toctou-liberada-a"
+printf '%s\n' \
+  "SET application_name='t13_toctou_liberar_maximo';" \
+  "SET ROLE service_role;" \
+  "BEGIN;" \
+  "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_LIBERADA_UNO','ERROR_CORREGIBLE','$TOKEN_TOCTOU_LIBERADA_UNO','{\"expected_version\":2,\"error_clase\":\"SECUENCIA\",\"error_codigo\":\"TEST_LIBERAR\",\"error_fase\":\"RESERVADO\",\"mensaje_mascarado\":\"fixture nunca enviado\",\"liberar_identidad\":true}'::jsonb);" >&8
+esperar_condicion_db \
+  "la liberación concurrente mantiene la fila máxima bloqueada" \
+  "SELECT count(*) FROM pg_catalog.pg_stat_activity
+    WHERE application_name='t13_toctou_liberar_maximo'
+      AND state='idle in transaction'" \
+  "1"
+
+crear_snapshot_real "$VENTA_TOCTOU_LIBERADA_DOS" 1 984
+post_rpc reserva-toctou-durante-liberacion \
+  "$(payload_reserva_real \
+    "$VENTA_TOCTOU_LIBERADA_DOS" "$TOKEN_TOCTOU_LIBERADA_DOS" 1 1 0 1 984)" &
+POST_CONCURRENTE_PID=$!
+esperar_condicion_db \
+  "RESERVAR espera exactamente la transacción que liberó el máximo" \
+  "SELECT count(*)
+     FROM pg_catalog.pg_stat_activity AS espera
+     JOIN pg_catalog.pg_stat_activity AS bloqueador
+       ON bloqueador.pid=ANY(pg_catalog.pg_blocking_pids(espera.pid))
+    WHERE bloqueador.application_name='t13_toctou_liberar_maximo'
+      AND espera.wait_event_type='Lock'
+      AND espera.query ILIKE '%transicionar_emision_fiscal%'" \
+  "1"
+confirmar_sesion_a
+wait "$POST_CONCURRENTE_PID"
+POST_CONCURRENTE_PID=""
+assert_eq "liberar durante la decisión permite reservar sin bloqueo falso" "200" \
+  "$(cut -d'|' -f1 "$TMP_DIR/reserva-toctou-durante-liberacion.meta")"
+assert_eq "tras liberar el máximo sólo la segunda venta conserva el número 1" \
+  "ERROR_CORREGIBLE||EMITIENDO|RESERVADO|1|1|f" \
+  "$(q "SELECT concat_ws('|',
+      uno.afip_estado,coalesce(uno.afip_numero::text,''),
+      dos.afip_estado,dos.afip_fase,dos.afip_numero,
+      (SELECT count(*) FROM public.ventas AS v
+        WHERE v.afip_emisor_cuit='30714199664'
+          AND v.afip_punto_venta=984
+          AND v.afip_cbte_tipo=6
+          AND v.afip_modo='PRODUCCION'
+          AND v.afip_simulado=false
+          AND v.afip_numero=1),
+      dos.afip_estado='BLOQUEADO')
+    FROM public.ventas AS uno
+    CROSS JOIN public.ventas AS dos
+    WHERE uno.id='$VENTA_TOCTOU_LIBERADA_UNO'
+      AND dos.id='$VENTA_TOCTOU_LIBERADA_DOS'")"
 
 assert_eq "PostgREST no deja transacciones abortadas ociosas" "0" \
   "$(q "SELECT count(*) FROM pg_stat_activity

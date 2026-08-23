@@ -175,11 +175,12 @@ no constituye una ventana de convivencia; el cliente actual requiere el contrato
 
 La instalación manual debe detenerse antes de la #4 y entrar en una ventana de mantenimiento real:
 impedir nuevas escrituras comerciales, drenar requests y transacciones de todas las instancias
-anteriores, aplicar #4 a #20 en orden, desplegar el cliente compatible con autorización separada y
+anteriores, aplicar #4 a #21 en orden, desplegar el cliente compatible con autorización separada y
 mantener el bloqueo hasta comprobarlo y drenar las instancias viejas. Si no se puede demostrar el
 mantenimiento o el drenaje, se aborta. No se expone el helper a `authenticated` como atajo; el
 permiso transitorio de `service_role` se retira sólo junto con el escritor fiscal legado, en un gate
-posterior.
+posterior. La #21 completa el cierre: bloquea RPC privilegiadas para perfiles inactivos y deja a
+`anon`/`authenticated` con sólo lectura sobre encabezados e ítems de remitos.
 
 ### Corte fiscal y rollback
 

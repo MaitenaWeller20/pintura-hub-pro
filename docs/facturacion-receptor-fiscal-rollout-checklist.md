@@ -27,28 +27,29 @@ manualmente el usuario autorizado y cada operación remota requiere aprobación 
 SHA-256 calculado sobre el contenido exacto de cada archivo al cierre local. Comparar antes de
 ejecutar; cualquier diferencia exige detenerse y revisar un nuevo manifiesto.
 
-| Orden | Migración                                                     | SHA-256                                                            |
-| ----: | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-|     1 | `20260822133249_venta_fiscal_neutra_enum.sql`                 | `296fa2152e4aa06650f0b8877ac4c9f0be624f43f6da3a138b60930e5e80bc39` |
-|     2 | `20260822133911_receptor_fiscal_outbox.sql`                   | `4bb5a2152d531d011c5d5c22008c788b565a526f960a28437c0af1521211e985` |
-|     3 | `20260822144846_maquina_estados_emision_fiscal.sql`           | `679d0bae210bb5f479cf8e36edcc75185b74893352a35c57be22f46f9ca33e93` |
-|     4 | `20260822161644_venta_fiscal_atomica.sql`                     | `bc3584e955169a4e2b6f88dda9fffcf55dbedac2e6c61bf02c0a471802698e8e` |
-|     5 | `20260822195131_proteger_evidencia_factura_a_emisores.sql`    | `ebcdcb63bae803142d8c57a28dc3716b05859882cd69dda51bcb7f78fd87924e` |
-|     6 | `20260822203901_snapshot_fiscal_v2_completo.sql`              | `ec66d5fef8703e633d4a03f142d36918d8995f2d3b8184ebe8f69b825ed4ba4c` |
-|     7 | `20260822215956_snapshot_fiscal_v2_fechas_cuit_canonicos.sql` | `5fc2293cc37b5ad04efc638282f28b9b27b6cdfdcedd2bc3bf18cceaf680eaa7` |
-|     8 | `20260822232541_recuperar_cae_emision_fiscal.sql`             | `eaedbfe22727afe6bcc3a00e397245f113e0dc93d08c2356a284cc1aac9db6b7` |
-|     9 | `20260822232546_lectura_exacta_emision_fiscal.sql`            | `de057070eebe91b6bf17e012872cee4dab2a6335a5986cde0edbf69c4bb3e15b` |
-|    10 | `20260823030402_cola_fiscal_lectura.sql`                      | `9480cbbb544801845f1f5f13c24371c62dcd97f8f8d7a25526f7c585b90bbedb` |
-|    11 | `20260823081724_conflictos_emision_no_reintentables.sql`      | `2d8c02a1343cee307c8ee3a9826fbe50a355dfc075de6b3dc43c726770fe67a3` |
-|    12 | `20260823103551_bloquear_notas_debito_v2.sql`                 | `e4f87ec2599e3d9178155e03fad22807975fcb20392779266a9ad4e8cf78898f` |
-|    13 | `20260823121146_cercar_notas_en_crear_venta.sql`              | `40ddfc00279b5129c1e144ac498eb7863beeaa02858c8238c3e80975ab2cf0f4` |
-|    14 | `20260823121846_liberar_claim_ante_reserva_fiscal_ajena.sql`  | `244b16ae91c849d557cdbdc577be5efdb58c7fb6a342554ac93259448b231288` |
-|    15 | `20260823130734_recomputar_maximo_fiscal_bajo_lock.sql`       | `a3264543d82cf65aeee204cf2bb81fcab7d0c96283059c01222cc278ef3e52cb` |
-|    16 | `20260823143000_crear_remito_atomico.sql`                     | `d2e2a49d92a885a684760290a1af0c395db9ca774f0530afa5890a9c3e1f2aaf` |
-|    17 | `20260823160000_remitos_integridad_idempotencia.sql`          | `3554739cba7147b3a48b3e616d795a234416149afcbc605126f33c60607cd1cc` |
-|    18 | `20260823162000_fix_venta_idempotencia_autorizacion.sql`      | `7a4e87044f1b869f051979bab0e1dd09643dd3c4a0dd0d310caa618f760b5cc9` |
-|    19 | `20260823164000_restringir_liberacion_claim_fiscal.sql`       | `dd56b55bb4aae0a6852300d1d8d456efc74bc5a9839da38dae7288daa1b59af1` |
-|    20 | `20260823165000_nota_credito_idempotente.sql`                 | `b14e354e266285ee3de8df8882fdb9270ba424ad69460dcf89fcb87a7af9839a` |
+| Orden | Migración                                                        | SHA-256                                                            |
+| ----: | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+|     1 | `20260822133249_venta_fiscal_neutra_enum.sql`                    | `296fa2152e4aa06650f0b8877ac4c9f0be624f43f6da3a138b60930e5e80bc39` |
+|     2 | `20260822133911_receptor_fiscal_outbox.sql`                      | `4bb5a2152d531d011c5d5c22008c788b565a526f960a28437c0af1521211e985` |
+|     3 | `20260822144846_maquina_estados_emision_fiscal.sql`              | `679d0bae210bb5f479cf8e36edcc75185b74893352a35c57be22f46f9ca33e93` |
+|     4 | `20260822161644_venta_fiscal_atomica.sql`                        | `bc3584e955169a4e2b6f88dda9fffcf55dbedac2e6c61bf02c0a471802698e8e` |
+|     5 | `20260822195131_proteger_evidencia_factura_a_emisores.sql`       | `ebcdcb63bae803142d8c57a28dc3716b05859882cd69dda51bcb7f78fd87924e` |
+|     6 | `20260822203901_snapshot_fiscal_v2_completo.sql`                 | `ec66d5fef8703e633d4a03f142d36918d8995f2d3b8184ebe8f69b825ed4ba4c` |
+|     7 | `20260822215956_snapshot_fiscal_v2_fechas_cuit_canonicos.sql`    | `5fc2293cc37b5ad04efc638282f28b9b27b6cdfdcedd2bc3bf18cceaf680eaa7` |
+|     8 | `20260822232541_recuperar_cae_emision_fiscal.sql`                | `eaedbfe22727afe6bcc3a00e397245f113e0dc93d08c2356a284cc1aac9db6b7` |
+|     9 | `20260822232546_lectura_exacta_emision_fiscal.sql`               | `de057070eebe91b6bf17e012872cee4dab2a6335a5986cde0edbf69c4bb3e15b` |
+|    10 | `20260823030402_cola_fiscal_lectura.sql`                         | `9480cbbb544801845f1f5f13c24371c62dcd97f8f8d7a25526f7c585b90bbedb` |
+|    11 | `20260823081724_conflictos_emision_no_reintentables.sql`         | `2d8c02a1343cee307c8ee3a9826fbe50a355dfc075de6b3dc43c726770fe67a3` |
+|    12 | `20260823103551_bloquear_notas_debito_v2.sql`                    | `e4f87ec2599e3d9178155e03fad22807975fcb20392779266a9ad4e8cf78898f` |
+|    13 | `20260823121146_cercar_notas_en_crear_venta.sql`                 | `40ddfc00279b5129c1e144ac498eb7863beeaa02858c8238c3e80975ab2cf0f4` |
+|    14 | `20260823121846_liberar_claim_ante_reserva_fiscal_ajena.sql`     | `244b16ae91c849d557cdbdc577be5efdb58c7fb6a342554ac93259448b231288` |
+|    15 | `20260823130734_recomputar_maximo_fiscal_bajo_lock.sql`          | `a3264543d82cf65aeee204cf2bb81fcab7d0c96283059c01222cc278ef3e52cb` |
+|    16 | `20260823143000_crear_remito_atomico.sql`                        | `d2e2a49d92a885a684760290a1af0c395db9ca774f0530afa5890a9c3e1f2aaf` |
+|    17 | `20260823160000_remitos_integridad_idempotencia.sql`             | `3554739cba7147b3a48b3e616d795a234416149afcbc605126f33c60607cd1cc` |
+|    18 | `20260823162000_fix_venta_idempotencia_autorizacion.sql`         | `7a4e87044f1b869f051979bab0e1dd09643dd3c4a0dd0d310caa618f760b5cc9` |
+|    19 | `20260823164000_restringir_liberacion_claim_fiscal.sql`          | `dd56b55bb4aae0a6852300d1d8d456efc74bc5a9839da38dae7288daa1b59af1` |
+|    20 | `20260823165000_nota_credito_idempotente.sql`                    | `b14e354e266285ee3de8df8882fdb9270ba424ad69460dcf89fcb87a7af9839a` |
+|    21 | `20260823170000_restringir_perfiles_inactivos_y_acl_remitos.sql` | `eb93fc0a7ce83f2be487aa597379a3b9d8bb8ab30d380f70c3abc5935722bef7` |
 
 No forman parte del manifiesto `backfill_cola_fiscal` ni `retirar_escritor_fiscal_legacy`: sólo
 pueden crearse después de sus respectivos gates post-deployment.
@@ -98,8 +99,9 @@ real.
 - [ ] Se registró la duración máxima real de requests/functions/transactions: `__________`.
 - [ ] Se esperó al menos ese límite y la auditoría mostró que no quedan requests ni transacciones
       anteriores en curso.
-- [ ] Se aplicaron #4 a #20, desde `20260822161644_venta_fiscal_atomica.sql` hasta
-      `20260823165000_nota_credito_idempotente.sql`, uno por transacción y con hashes verificados.
+- [ ] Se aplicaron #4 a #21, desde `20260822161644_venta_fiscal_atomica.sql` hasta
+      `20260823170000_restringir_perfiles_inactivos_y_acl_remitos.sql`, uno por transacción y con
+      hashes verificados.
 - [ ] Se desplegó el cliente compatible sólo con autorización separada; ID: `__________`.
 - [ ] El mantenimiento siguió activo mientras convivían instancias antiguas y nuevas.
 - [ ] Se esperó y comprobó el drenaje de todas las instancias antiguas.

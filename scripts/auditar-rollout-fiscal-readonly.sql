@@ -35,7 +35,8 @@ WITH requeridas(version,nombre) AS (
     ('20260823160000','remitos_integridad_idempotencia'),
     ('20260823162000','fix_venta_idempotencia_autorizacion'),
     ('20260823164000','restringir_liberacion_claim_fiscal'),
-    ('20260823165000','nota_credito_idempotente')
+    ('20260823165000','nota_credito_idempotente'),
+    ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos')
 )
 SELECT
   r.version,

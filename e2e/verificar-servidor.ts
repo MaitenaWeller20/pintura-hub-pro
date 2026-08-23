@@ -9,6 +9,8 @@
  */
 import type { FullConfig } from "@playwright/test";
 
+import { crearRepositorioEmpleadoLocalHttp, prepararEmpleadoLocalE2E } from "./empleado-local";
+
 type EntornoServidorE2E = {
   NODE_ENV?: string;
   INVOICING_MOCK_TEST_RUNNER?: string;
@@ -111,4 +113,10 @@ export default async function verificarServidor(config: FullConfig) {
       "El proceso servidor no confirmó NODE_ENV=test + runner Playwright + modo mock + escenario esperado.",
     );
   }
+
+  // Un reset limpio sólo tiene los datos de catálogo. Las pruebas de permisos y
+  // multisucursal necesitan un empleado autenticable; el teardown que devuelve
+  // esta función borra sólo lo creado o agregado por esta corrida.
+  const repositorioEmpleado = crearRepositorioEmpleadoLocalHttp(process.env);
+  return prepararEmpleadoLocalE2E(repositorioEmpleado);
 }

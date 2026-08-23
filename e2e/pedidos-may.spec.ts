@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { test, expect, ingresar, campo } from "./apoyo";
 import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fiscal";
+import {
+  limpiarIngresoLocalE2E,
+  prepararIngresoLocalE2E,
+  PRODUCTO_INGRESO_E2E,
+  PROVEEDOR_INGRESO_E2E,
+} from "./fixtures/ingreso-local";
 
 /**
  * Un test por cada cosa que reportó la clienta, para que si alguna se rompe de
@@ -9,10 +15,35 @@ import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fi
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
-  await prepararFixturesFiscales();
+  // También limpia una corrida interrumpida antes de que el fixture fiscal
+  // intente borrar el producto referenciado por ese ingreso.
+  await limpiarIngresoLocalE2E();
+  const fiscal = await prepararFixturesFiscales();
+  try {
+    await prepararIngresoLocalE2E({
+      productoId: fiscal.productoId,
+      sucursalId: fiscal.sucursalPrincipalId,
+      usuarioId: fiscal.usuarioAdmin.id,
+    });
+  } catch (error) {
+    await limpiarFixturesFiscales();
+    throw error;
+  }
 });
 test.afterAll(async () => {
-  await limpiarFixturesFiscales();
+  const errores: unknown[] = [];
+  for (const limpiar of [limpiarIngresoLocalE2E, limpiarFixturesFiscales]) {
+    try {
+      await limpiar();
+    } catch (error) {
+      errores.push(error);
+    }
+  }
+  if (errores.length > 0) {
+    throw new Error(
+      `Falló el cleanup de pedidos-may:\n${errores.map(String).join("\n")}`,
+    );
+  }
 });
 test.beforeEach(async ({ page }) => {
   await ingresar(page, "fiscalAdmin");
@@ -151,21 +182,16 @@ test("ventas: un remito de obra se guarda sin elegir cliente", async ({ page }) 
 
 test("ingresos: se puede ver qué se cargó en un ingreso", async ({ page }) => {
   await page.goto("/ingresos-mercaderia");
-  const hay = await page
-    .locator("tbody tr")
-    .first()
-    .waitFor({ state: "visible", timeout: 15_000 })
-    .then(() => true)
-    .catch(() => false);
-  test.skip(!hay, "no hay ingresos cargados");
-
   await expect(page.locator("thead")).toContainText(/sucursal/i);
-
-  await page.locator('button[title="Ver qué se cargó"]').first().click();
+  const fila = page.locator("tbody tr").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await expect(fila).toHaveCount(1);
+  await fila.getByTitle("Ver qué se cargó").click();
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
-  await expect(dialogo).toContainText(/ingreso de/i);
+  await expect(dialogo).toContainText(PROVEEDOR_INGRESO_E2E);
   await expect(dialogo).toContainText(/sucursal/i);
   // La grilla de productos con sus cantidades.
   await expect(dialogo.locator("thead")).toContainText(/cantidad/i);
+  await expect(dialogo).toContainText(PRODUCTO_INGRESO_E2E);
+  await expect(dialogo.locator("tbody tr")).toContainText("2");
 });

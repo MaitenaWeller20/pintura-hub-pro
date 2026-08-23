@@ -5,7 +5,11 @@ import {
   parsePreviewEmisionFiscalAutoritativa,
   parseRespuestaConfirmacionFiscal,
   parseResultadoConciliacionFiscal,
+  parseResultadoLiberacionFiscal,
 } from "./dialogo-emision-contract";
+import { crearHuellaConfirmacionFiscal } from "@/lib/fiscal/confirmacion";
+
+const HUELLA_CONFIRMACION = "ec47af3f3b2d8a8b0e853d3302da871df5ff862e61b20e18a3e0ea6ba39e0b6b";
 
 const RECEPTOR = {
   razonSocial: "APLICACIONES Y SERVICIOS S.R.L.",
@@ -52,7 +56,7 @@ const PREVIEW = {
   advertencia_demora: null,
   confirmacion_factura_a_permitida: true,
   confirmacion_autoritativa: CONFIRMACION,
-  huella_confirmacion: "a".repeat(64),
+  huella_confirmacion: HUELLA_CONFIRMACION,
 } as const;
 
 const PREVIEW_PROVISIONAL = {
@@ -64,6 +68,7 @@ const PREVIEW_PROVISIONAL = {
   punto_venta: 5,
   modo: "PRODUCCION",
   letra: "A",
+  cbte_tipo: 1,
   razon_letra: "La condición determina letra A.",
   fecha_comercial: "2026-08-23T15:00:00.000Z",
   fecha_fiscal: "2026-08-23",
@@ -73,13 +78,16 @@ const PREVIEW_PROVISIONAL = {
   pagado: "121.00",
   saldo: "0.00",
   confirmacion_factura_a_permitida: true,
-  huella_confirmacion: "c".repeat(64),
+  huella_confirmacion: HUELLA_CONFIRMACION,
   confirmacion_provisional: {
+    version: 1,
     importe: "121.00",
     emisor_cuit: "30714199664",
     punto_venta: 5,
     modo: "PRODUCCION",
     letra: "A",
+    cbte_tipo: 1,
+    fecha_fiscal: "2026-08-23",
     receptor: RECEPTOR,
   },
   advertencia: "Se revalidará contra la venta persistida.",
@@ -113,6 +121,191 @@ describe("contrato runtime del diálogo fiscal", () => {
     );
   });
 
+  it.each(["2026-02-31", "0000-01-01", "2026-2-03"])(
+    "rechaza la fecha fiscal calendario no canónica %s aun si se repite en la tupla",
+    (fechaFiscal) => {
+      expect(() =>
+        parsePreviewEmisionFiscalAutoritativa({
+          ...PREVIEW,
+          fecha_fiscal: fechaFiscal,
+          confirmacion_autoritativa: { ...CONFIRMACION, fechaFiscal },
+        }),
+      ).toThrow(/previsualizaci.n fiscal/i);
+    },
+  );
+
+  it("rechaza CUIT emisor inválido aunque visible y tupla coincidan", () => {
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        emisor_cuit: "00000000000",
+        confirmacion_autoritativa: { ...CONFIRMACION, emisorCuit: "00000000000" },
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+  });
+
+  it("reutiliza las reglas canónicas del receptor para CUIT, CUIL y SIN_IDENTIFICAR", () => {
+    const receptorCuilIncoherente = {
+      ...RECEPTOR,
+      tipoDocumento: "CUIL",
+      numeroDocumento: "20123456789",
+      docTipoArca: 80,
+      docNroArca: "20123456789",
+      condicionIva: "EXENTO",
+    } as const;
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        receptor: receptorCuilIncoherente,
+        letra: "B",
+        cbte_tipo: 6,
+        confirmacion_autoritativa: {
+          ...CONFIRMACION,
+          receptor: receptorCuilIncoherente,
+          letra: "B",
+          cbteTipo: 6,
+        },
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+
+    const receptorAnonimoIncoherente = {
+      ...RECEPTOR,
+      tipoDocumento: "SIN_IDENTIFICAR",
+      numeroDocumento: "0",
+      docTipoArca: 99,
+      docNroArca: "0",
+      condicionIva: "CONSUMIDOR_FINAL",
+      origen: "MANUAL",
+      origenId: null,
+    } as const;
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        receptor: receptorAnonimoIncoherente,
+        letra: "B",
+        cbte_tipo: 6,
+        confirmacion_autoritativa: {
+          ...CONFIRMACION,
+          receptor: receptorAnonimoIncoherente,
+          letra: "B",
+          cbteTipo: 6,
+        },
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+  });
+
+  it.each([
+    {
+      ...RECEPTOR,
+      razonSocial: "Receptor con CUIL",
+      tipoDocumento: "CUIL",
+      numeroDocumento: "20244720510",
+      docTipoArca: 86,
+      docNroArca: "20244720510",
+      condicionIva: "EXENTO",
+    },
+    {
+      ...RECEPTOR,
+      razonSocial: "Consumidor final",
+      domicilio: null,
+      tipoDocumento: "SIN_IDENTIFICAR",
+      numeroDocumento: null,
+      docTipoArca: 99,
+      docNroArca: "0",
+      condicionIva: "CONSUMIDOR_FINAL",
+      origen: "MANUAL",
+      origenId: null,
+    },
+  ] as const)("acepta un receptor canónico $tipoDocumento", (receptor) => {
+    const confirmacion = { ...CONFIRMACION, receptor, letra: "B" as const, cbteTipo: 6 };
+    const preview = {
+      ...PREVIEW,
+      receptor,
+      letra: "B" as const,
+      cbte_tipo: 6,
+      confirmacion_autoritativa: confirmacion,
+      huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacion),
+    };
+    expect(parsePreviewEmisionFiscalAutoritativa(preview)).toEqual(preview);
+  });
+
+  it.each([
+    ["importe", { ...PREVIEW, total: "122.00" }],
+    ["CUIT emisor", { ...PREVIEW, emisor_cuit: "30717322467" }],
+    ["punto de venta", { ...PREVIEW, punto_venta: 6 }],
+    ["modo", { ...PREVIEW, modo: "HOMOLOGACION" }],
+    ["letra", { ...PREVIEW, letra: "B" }],
+    ["CbteTipo", { ...PREVIEW, cbte_tipo: 6 }],
+    ["fecha fiscal", { ...PREVIEW, fecha_fiscal: "2026-08-24" }],
+    ["receptor", { ...PREVIEW, receptor: { ...RECEPTOR, razonSocial: "Otro receptor" } }],
+  ] as const)("rechaza divergencia visible/tupla en %s", (_campo, preview) => {
+    expect(() => parsePreviewEmisionFiscalAutoritativa(preview)).toThrow(
+      /previsualizaci.n fiscal/i,
+    );
+  });
+
+  it("rechaza letra o CbteTipo incompatibles con el receptor aunque la tupla coincida", () => {
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        letra: "B",
+        cbte_tipo: 6,
+        confirmacion_autoritativa: { ...CONFIRMACION, letra: "B", cbteTipo: 6 },
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        cbte_tipo: 6,
+        confirmacion_autoritativa: { ...CONFIRMACION, cbteTipo: 6 },
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+  });
+
+  it("verifica la huella SHA-256 canónica de previews autoritativas y provisionales", () => {
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({ ...PREVIEW, huella_confirmacion: "f".repeat(64) }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+    expect(() =>
+      parsePreviewEmisionFiscal({ ...PREVIEW_PROVISIONAL, huella_confirmacion: "f".repeat(64) }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+  });
+
+  it.each([
+    ["importe", { ...PREVIEW_PROVISIONAL, total: "122.00" }],
+    ["CUIT emisor", { ...PREVIEW_PROVISIONAL, emisor_cuit: "30717322467" }],
+    ["punto de venta", { ...PREVIEW_PROVISIONAL, punto_venta: 6 }],
+    ["modo", { ...PREVIEW_PROVISIONAL, modo: "HOMOLOGACION" }],
+    ["letra", { ...PREVIEW_PROVISIONAL, letra: "B" }],
+    ["CbteTipo", { ...PREVIEW_PROVISIONAL, cbte_tipo: 6 }],
+    ["fecha fiscal", { ...PREVIEW_PROVISIONAL, fecha_fiscal: "2026-08-24" }],
+    [
+      "receptor",
+      {
+        ...PREVIEW_PROVISIONAL,
+        receptor: { ...RECEPTOR, razonSocial: "Otro receptor" },
+      },
+    ],
+  ] as const)("rechaza divergencia provisional visible/tupla en %s", (_campo, preview) => {
+    expect(() => parsePreviewEmisionFiscal(preview)).toThrow(/previsualizaci.n fiscal/i);
+  });
+
+  it("acepta una reconfirmación completa con la huella canónica exacta", () => {
+    expect(
+      parseRespuestaConfirmacionFiscal({
+        estado: "RECONFIRMACION_REQUERIDA",
+        mensaje: "Revisá los cambios.",
+        huella_confirmacion: HUELLA_CONFIRMACION,
+        confirmacion_autoritativa: CONFIRMACION,
+      }),
+    ).toEqual({
+      estado: "RECONFIRMACION_REQUERIDA",
+      mensaje: "Revisá los cambios.",
+      huella_confirmacion: HUELLA_CONFIRMACION,
+      confirmacion_autoritativa: CONFIRMACION,
+    });
+  });
+
   it.each([
     "version",
     "importe",
@@ -130,7 +323,7 @@ describe("contrato runtime del diálogo fiscal", () => {
       parseRespuestaConfirmacionFiscal({
         estado: "RECONFIRMACION_REQUERIDA",
         mensaje: "Revisá los cambios.",
-        huella_confirmacion: "b".repeat(64),
+        huella_confirmacion: HUELLA_CONFIRMACION,
         confirmacion_autoritativa: tupla,
       }),
     ).toThrow(/respuesta fiscal/i);
@@ -152,6 +345,24 @@ describe("contrato runtime del diálogo fiscal", () => {
     expect(() => parseRespuestaConfirmacionFiscal({ estado: "EXITO", mensaje: "listo" })).toThrow(
       /respuesta fiscal/i,
     );
+    expect(() =>
+      parseRespuestaConfirmacionFiscal({
+        estado: "APROBADO",
+        cae: "123",
+        numero: 1,
+        recuperado: false,
+        advertencias: [],
+      }),
+    ).toThrow(/respuesta fiscal/i);
+    expect(() =>
+      parseRespuestaConfirmacionFiscal({
+        estado: "APROBADO",
+        cae: "00000000000000",
+        numero: 1,
+        recuperado: false,
+        advertencias: [],
+      }),
+    ).toThrow(/respuesta fiscal/i);
   });
 
   it.each([{ estado: "EXITO", mensaje: "listo" }, { estado: "APROBADO" }])(
@@ -177,5 +388,64 @@ describe("contrato runtime del diálogo fiscal", () => {
     expect(() => parseResultadoConciliacionFiscal({ estado: "DESCONOCIDO" })).toThrow(
       /conciliaci.n fiscal/i,
     );
+    expect(() =>
+      parseResultadoConciliacionFiscal({
+        estado: "APROBADO",
+        cae: "CAE-invalido",
+        numero: 1,
+        recuperado: true,
+        advertencias: [],
+      }),
+    ).toThrow(/conciliaci.n fiscal/i);
+    expect(() =>
+      parseResultadoConciliacionFiscal({ estado: "BLOQUEADO", diferencias: [] }),
+    ).toThrow(/conciliaci.n fiscal/i);
+  });
+
+  it("valida directamente el resultado de liberación", () => {
+    expect(parseResultadoLiberacionFiscal({ estado: "LIBERADO" })).toEqual({
+      estado: "LIBERADO",
+    });
+    expect(() =>
+      parseResultadoLiberacionFiscal({ estado: "LIBERADO", venta_id: "oculto" }),
+    ).toThrow(/liberaci.n fiscal/i);
+    expect(() => parseResultadoLiberacionFiscal({ estado: "OK" })).toThrow(/liberaci.n fiscal/i);
+  });
+
+  it("una respuesta semánticamente inválida no dispara callbacks", () => {
+    const onCompletada = vi.fn();
+    const onReconfirmacion = vi.fn();
+    expect(() =>
+      despacharRespuestaConfirmacionFiscal(
+        {
+          estado: "APROBADO",
+          cae: "123",
+          numero: 1,
+          recuperado: false,
+          advertencias: [],
+        },
+        { onCompletada, onReconfirmacion },
+      ),
+    ).toThrow(/respuesta fiscal/i);
+    expect(onCompletada).not.toHaveBeenCalled();
+    expect(onReconfirmacion).not.toHaveBeenCalled();
+  });
+
+  it("una reconfirmación semánticamente inválida no dispara ningún callback", () => {
+    const onCompletada = vi.fn();
+    const onReconfirmacion = vi.fn();
+    expect(() =>
+      despacharRespuestaConfirmacionFiscal(
+        {
+          estado: "RECONFIRMACION_REQUERIDA",
+          mensaje: "Revisá los cambios.",
+          huella_confirmacion: HUELLA_CONFIRMACION,
+          confirmacion_autoritativa: { ...CONFIRMACION, fechaFiscal: "2026-02-31" },
+        },
+        { onCompletada, onReconfirmacion },
+      ),
+    ).toThrow(/respuesta fiscal/i);
+    expect(onCompletada).not.toHaveBeenCalled();
+    expect(onReconfirmacion).not.toHaveBeenCalled();
   });
 });

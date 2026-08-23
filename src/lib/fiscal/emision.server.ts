@@ -18,6 +18,11 @@ import {
   letraDeCbteTipo,
   type Letra,
 } from "./codigos";
+import {
+  copiarConfirmacionFiscal,
+  crearHuellaConfirmacionFiscal,
+  type ConfirmacionFiscalPostBorrador,
+} from "./confirmacion";
 import { cargarContextoFiscal } from "./contexto.server";
 import { validarModalidadFacturaA, type ContextoFiscal } from "./contexto";
 import {
@@ -37,7 +42,6 @@ import {
 import type { ReceptorFiscalConfirmado, SelectorReceptorFiscal } from "./receptor";
 import {
   crearSnapshotFiscalV2,
-  sha256HexUtf8,
   validarSnapshotFiscalV2,
   type SnapshotFiscalV2,
   type SnapshotFiscalV2Input,
@@ -178,50 +182,7 @@ export type EntradaPreviewBorradorFiscal = {
   receptor: SelectorReceptorFiscal;
 };
 
-export type ConfirmacionFiscalPostBorrador = {
-  version: 1;
-  importe: string;
-  emisorCuit: string;
-  puntoVenta: number;
-  modo: "PRODUCCION" | "HOMOLOGACION";
-  letra: Letra;
-  cbteTipo: number;
-  fechaFiscal: string;
-  receptor: ReceptorFiscalConfirmado;
-};
-
-function copiarConfirmacionFiscal(
-  confirmacion: ConfirmacionFiscalPostBorrador,
-): ConfirmacionFiscalPostBorrador {
-  return {
-    version: 1,
-    importe: confirmacion.importe,
-    emisorCuit: confirmacion.emisorCuit,
-    puntoVenta: confirmacion.puntoVenta,
-    modo: confirmacion.modo,
-    letra: confirmacion.letra,
-    cbteTipo: confirmacion.cbteTipo,
-    fechaFiscal: confirmacion.fechaFiscal,
-    receptor: {
-      razonSocial: confirmacion.receptor.razonSocial,
-      domicilio: confirmacion.receptor.domicilio,
-      tipoDocumento: confirmacion.receptor.tipoDocumento,
-      numeroDocumento: confirmacion.receptor.numeroDocumento,
-      docTipoArca: confirmacion.receptor.docTipoArca,
-      docNroArca: confirmacion.receptor.docNroArca,
-      condicionIva: confirmacion.receptor.condicionIva,
-      origen: confirmacion.receptor.origen,
-      origenId: confirmacion.receptor.origenId,
-      verificadoArcaAt: confirmacion.receptor.verificadoArcaAt,
-    },
-  };
-}
-
-export function crearHuellaConfirmacionFiscal(
-  confirmacion: ConfirmacionFiscalPostBorrador,
-): string {
-  return sha256HexUtf8(JSON.stringify(copiarConfirmacionFiscal(confirmacion)));
-}
+export { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
 
 export async function emitirPostBorradorConHuella(
   input: {
@@ -481,6 +442,7 @@ export async function construirPreviewBorradorFiscalProvisional(
     punto_venta: contexto.pv.numero,
     modo: contexto.pv.modo,
     letra,
+    cbte_tipo: confirmacionFingerprint.cbteTipo,
     razon_letra: `La condición ${receptor.condicionIva} determina letra ${letra}.`,
     fecha_comercial: input.fechaComercial,
     fecha_fiscal: fechaFiscal,
@@ -495,11 +457,14 @@ export async function construirPreviewBorradorFiscalProvisional(
     confirmacion_factura_a_permitida: confirmacionFacturaA,
     huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacionFingerprint),
     confirmacion_provisional: {
+      version: 1 as const,
       importe: totalTexto,
       emisor_cuit: contexto.emisor.cuit,
       punto_venta: contexto.pv.numero,
       modo: contexto.pv.modo,
       letra,
+      cbte_tipo: confirmacionFingerprint.cbteTipo,
+      fecha_fiscal: fechaFiscal,
       receptor,
     },
     advertencia:

@@ -102,13 +102,17 @@ function previewReconfirmada(
     emisor_cuit: autoritativa.emisorCuit,
     punto_venta: autoritativa.puntoVenta,
     modo: autoritativa.modo,
+    cbte_tipo: autoritativa.cbteTipo,
     huella_confirmacion: respuesta.huella_confirmacion,
     confirmacion_provisional: {
+      version: 1,
       importe: autoritativa.importe,
       emisor_cuit: autoritativa.emisorCuit,
       punto_venta: autoritativa.puntoVenta,
       modo: autoritativa.modo,
       letra: autoritativa.letra,
+      cbte_tipo: autoritativa.cbteTipo,
+      fecha_fiscal: autoritativa.fechaFiscal,
       receptor: autoritativa.receptor,
     },
   };

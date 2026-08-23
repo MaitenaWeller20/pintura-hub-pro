@@ -289,6 +289,7 @@ describe("preview provisional de borrador", () => {
       emisor_cuit: "30714199664",
       punto_venta: 5,
       modo: "HOMOLOGACION",
+      cbte_tipo: 6,
       fecha_comercial: "2026-08-10T15:00:00.000Z",
       fecha_fiscal: "2026-08-22",
       demora_dias: 12,
@@ -298,10 +299,13 @@ describe("preview provisional de borrador", () => {
     });
     expect(resultado.receptor.tipoDocumento).toBe("SIN_IDENTIFICAR");
     expect(resultado.confirmacion_provisional).toMatchObject({
+      version: 1,
       importe: "0.20",
       emisor_cuit: "30714199664",
       punto_venta: 5,
       letra: "B",
+      cbte_tipo: 6,
+      fecha_fiscal: "2026-08-22",
     });
   });
 

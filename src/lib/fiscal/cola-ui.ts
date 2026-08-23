@@ -148,6 +148,53 @@ export function accionesColaHabilitadas(input: {
   return !input.isPlaceholderData;
 }
 
+/**
+ * Identidad estable de la consulta que alimenta la tabla. `resultado` sólo
+ * controla el banner posterior a una emisión y no cambia los datos pedidos.
+ */
+export function huellaConsultaCola(raw: Record<string, unknown>): string {
+  const search = normalizarBusquedaCola(raw);
+  return JSON.stringify([
+    search.tab,
+    search.page,
+    search.desde ?? null,
+    search.hasta ?? null,
+    search.sucursal ?? null,
+    search.emisor ?? null,
+    search.documento ?? null,
+    search.estado ?? null,
+    search.venta ?? null,
+  ]);
+}
+
+export type SeleccionColaFiscal<T extends { venta_id: string }> = {
+  fila: T;
+  huellaConsulta: string;
+};
+
+/**
+ * Una selección sólo sigue siendo autoritativa para la misma consulta y si
+ * su fila todavía existe. El placeholder de otra clave nunca puede sostener
+ * ni reabrir un diálogo fiscal.
+ */
+export function resolverSeleccionColaFiscal<T extends { venta_id: string }>(input: {
+  seleccion: SeleccionColaFiscal<T> | null;
+  huellaConsulta: string;
+  isPlaceholderData: boolean;
+  filas: T[];
+}): SeleccionColaFiscal<T> | null {
+  if (
+    !input.seleccion ||
+    input.isPlaceholderData ||
+    input.seleccion.huellaConsulta !== input.huellaConsulta
+  ) {
+    return null;
+  }
+  return input.filas.some((fila) => fila.venta_id === input.seleccion?.fila.venta_id)
+    ? input.seleccion
+    : null;
+}
+
 export function presentarResultadoCola(
   resultado: ResultadoColaFiscal,
   requiereAdministrador: boolean,

@@ -4,9 +4,11 @@ import {
   accionesColaHabilitadas,
   cerrarResultadoCola,
   debeRefrescarCola,
+  huellaConsultaCola,
   normalizarBusquedaCola,
   presentarResultadoCola,
   presentarEstadoColaFiscal,
+  resolverSeleccionColaFiscal,
   resolverTabAutoritativo,
 } from "./cola-ui";
 
@@ -308,5 +310,71 @@ describe("actualización y resultado autoritativos", () => {
       detalle: "No repitas la venta ni el cobro recién enviado. La factura quedó a revisar.",
       requiereAdministrador: true,
     });
+  });
+
+  it("descarta definitivamente la selección al cambiar clave y no la remonta al volver", () => {
+    type Fila = { venta_id: string };
+    type Seleccion = { fila: Fila; huellaConsulta: string };
+
+    const anterior = huellaConsultaCola({ tab: "pendientes", page: 1 });
+    const siguiente = huellaConsultaCola({
+      tab: "revisar",
+      page: 2,
+      sucursal: "20000000-0000-4000-8000-000000000001",
+    });
+    expect(siguiente).not.toBe(anterior);
+
+    let seleccion: Seleccion | null = {
+      fila: { venta_id: VENTA },
+      huellaConsulta: anterior,
+    };
+    seleccion = resolverSeleccionColaFiscal({
+      seleccion,
+      huellaConsulta: siguiente,
+      isPlaceholderData: true,
+      filas: [{ venta_id: VENTA }],
+    });
+    expect(seleccion).toBeNull();
+    seleccion = resolverSeleccionColaFiscal({
+      seleccion,
+      huellaConsulta: siguiente,
+      isPlaceholderData: false,
+      filas: [],
+    });
+    expect(seleccion).toBeNull();
+    expect(
+      resolverSeleccionColaFiscal({
+        seleccion,
+        huellaConsulta: anterior,
+        isPlaceholderData: false,
+        filas: [{ venta_id: VENTA }],
+      }),
+    ).toBeNull();
+  });
+
+  it("conserva el diálogo durante polling de la misma clave y lo cierra si A desaparece", () => {
+    type Fila = { venta_id: string };
+    type Seleccion = { fila: Fila; huellaConsulta: string };
+
+    const seleccion: Seleccion = {
+      fila: { venta_id: VENTA },
+      huellaConsulta: "clave-estable",
+    };
+    expect(
+      resolverSeleccionColaFiscal({
+        seleccion,
+        huellaConsulta: "clave-estable",
+        isPlaceholderData: false,
+        filas: [{ venta_id: VENTA }],
+      }),
+    ).toBe(seleccion);
+    expect(
+      resolverSeleccionColaFiscal({
+        seleccion,
+        huellaConsulta: "clave-estable",
+        isPlaceholderData: false,
+        filas: [],
+      }),
+    ).toBeNull();
   });
 });

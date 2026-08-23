@@ -50,7 +50,7 @@ export function fechaFiscalHoyAr(reloj: RelojFiscal = relojSistema): string {
   return fmtFechaIsoAr(reloj());
 }
 
-function validarFechaIsoCalendario(fecha: string, nombre: string): void {
+export function validarFechaIsoCalendario(fecha: string, nombre: string): void {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fecha);
   if (!match) throw new Error(`${nombre} debe tener formato YYYY-MM-DD.`);
   const year = Number(match[1]);

@@ -28,12 +28,15 @@ import {
   actualizarBusquedaCola,
   cerrarResultadoCola,
   debeRefrescarCola,
+  huellaConsultaCola,
   normalizarBusquedaCola,
   presentarEstadoColaFiscal,
   presentarResultadoCola,
+  resolverSeleccionColaFiscal,
   resolverTabAutoritativo,
   type BusquedaColaFiscal,
   type ResultadoColaFiscal,
+  type SeleccionColaFiscal,
   type TabColaFiscal,
 } from "@/lib/fiscal/cola-ui";
 import {
@@ -225,7 +228,7 @@ function ColaFiscalPage() {
   const emitir = useServerFn(emitirComprobante);
   const reconciliar = useServerFn(reconciliarComprobante);
   const liberar = useServerFn(liberarClaimFiscal);
-  const [seleccionada, setSeleccionada] = useState<ColaFiscalFila | null>(null);
+  const [seleccion, setSeleccion] = useState<SeleccionColaFiscal<ColaFiscalFila> | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [mensajeAccion, setMensajeAccion] = useState<string | null>(null);
   const returnFocusRef = useRef<HTMLButtonElement>(null);
@@ -260,17 +263,29 @@ function ColaFiscalPage() {
     refetchInterval: (query) => (debeRefrescarCola(query.state.data?.filas ?? []) ? 4_000 : false),
   });
 
+  const filas = cola.data?.filas ?? [];
+  const accionesHabilitadas = accionesColaHabilitadas({
+    isPlaceholderData: cola.isPlaceholderData,
+    isFetching: cola.isFetching,
+  });
+  const huellaConsulta = huellaConsultaCola(search);
+  const seleccionVigente = resolverSeleccionColaFiscal({
+    seleccion,
+    huellaConsulta,
+    isPlaceholderData: cola.isPlaceholderData,
+    filas,
+  });
+  const seleccionada = seleccionVigente?.fila ?? null;
+
+  useEffect(() => {
+    if (seleccion !== seleccionVigente) setSeleccion(seleccionVigente);
+  }, [seleccion, seleccionVigente]);
+
   const favoritos = useQuery({
     queryKey: ["receptores-fiscales", seleccionada?.sucursal_id ?? null],
     queryFn: () =>
       listarFavoritos({ data: { sucursal_id: seleccionada?.sucursal_id ?? undefined } }),
     enabled: seleccionada !== null,
-  });
-
-  const filas = cola.data?.filas ?? [];
-  const accionesHabilitadas = accionesColaHabilitadas({
-    isPlaceholderData: cola.isPlaceholderData,
-    isFetching: cola.isFetching,
   });
   const filaResultado = search.venta
     ? filas.find((fila) => fila.venta_id === search.venta)
@@ -415,7 +430,7 @@ function ColaFiscalPage() {
           setMensajeAccion(null);
           if (nombre === "Facturar" || nombre === "Corregir/reintentar") {
             returnFocusRef.current = document.activeElement as HTMLButtonElement | null;
-            setSeleccionada(row);
+            setSeleccion({ fila: row, huellaConsulta });
             return;
           }
           accion.mutate({ row, nombre });
@@ -458,7 +473,7 @@ function ColaFiscalPage() {
           favoritos={favoritos.data ?? []}
           returnFocusRef={returnFocusRef}
           onOpenChange={(open) => {
-            if (!open) setSeleccionada(null);
+            if (!open) setSeleccion(null);
           }}
           onPrevisualizar={(receptor: SelectorReceptorFiscal) =>
             previsualizar({
@@ -491,7 +506,7 @@ function ColaFiscalPage() {
           onCompletada={(resultado) => {
             const resultadoUrl = resultadoDespuesDeEmitir(resultado);
             const ventaId = seleccionada.venta_id;
-            setSeleccionada(null);
+            setSeleccion(null);
             void queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
             if (resultadoUrl) {
               void navigate({

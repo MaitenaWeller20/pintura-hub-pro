@@ -1,10 +1,23 @@
 import { z } from "zod";
+import { cuitValido, determinarLetra, letraDeCbteTipo } from "@/lib/fiscal/codigos";
+import {
+  confirmacionesFiscalesIguales,
+  verificarHuellaConfirmacionFiscal,
+  type ConfirmacionFiscalPostBorrador,
+} from "@/lib/fiscal/confirmacion";
+import { validarFechaIsoCalendario } from "@/lib/fiscal/fecha";
+import { validarReceptorFiscalConfirmado } from "@/lib/fiscal/receptor";
 
 const uuid = z.string().uuid();
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const decimal = z.string().regex(/^(0|[1-9]\d{0,12})\.\d{2}$/);
 const huella = z.string().regex(/^[0-9a-f]{64}$/);
 const cuit = z.string().regex(/^\d{11}$/);
+const textoSemantico = z.string().refine((value) => value.trim().length > 0);
+const cae = z
+  .string()
+  .regex(/^\d{14}$/)
+  .refine((value) => value !== "00000000000000");
 
 const receptorConfirmadoSchema = z
   .object({
@@ -76,6 +89,7 @@ const previewProvisionalSchema = z
     punto_venta: z.number().int().positive(),
     modo: z.enum(["PRODUCCION", "HOMOLOGACION"]),
     letra: z.enum(["A", "B", "C"]),
+    cbte_tipo: z.number().int().positive(),
     razon_letra: z.string().min(1),
     fecha_comercial: z.string().datetime({ offset: true }),
     fecha_fiscal: fecha,
@@ -88,11 +102,14 @@ const previewProvisionalSchema = z
     huella_confirmacion: huella,
     confirmacion_provisional: z
       .object({
+        version: z.literal(1),
         importe: decimal,
         emisor_cuit: cuit,
         punto_venta: z.number().int().positive(),
         modo: z.enum(["PRODUCCION", "HOMOLOGACION"]),
         letra: z.enum(["A", "B", "C"]),
+        cbte_tipo: z.number().int().positive(),
+        fecha_fiscal: fecha,
         receptor: receptorConfirmadoSchema,
       })
       .strict(),
@@ -109,16 +126,18 @@ const resultadoEmisionFiscalSchema = z.discriminatedUnion("estado", [
   z
     .object({
       estado: z.literal("APROBADO"),
-      cae: z.string().min(1),
+      cae,
       numero: z.number().int().positive(),
       recuperado: z.boolean(),
-      advertencias: z.array(z.string()),
+      advertencias: z.array(textoSemantico),
     })
     .strict(),
-  z.object({ estado: z.literal("ERROR_CORREGIBLE"), mensaje: z.string().min(1) }).strict(),
-  z.object({ estado: z.literal("RECONCILIAR"), mensaje: z.string().min(1) }).strict(),
-  z.object({ estado: z.literal("BLOQUEADO"), diferencias: z.array(z.string()) }).strict(),
-  z.object({ estado: z.literal("EN_CURSO"), mensaje: z.string().min(1) }).strict(),
+  z.object({ estado: z.literal("ERROR_CORREGIBLE"), mensaje: textoSemantico }).strict(),
+  z.object({ estado: z.literal("RECONCILIAR"), mensaje: textoSemantico }).strict(),
+  z
+    .object({ estado: z.literal("BLOQUEADO"), diferencias: z.array(textoSemantico).min(1) })
+    .strict(),
+  z.object({ estado: z.literal("EN_CURSO"), mensaje: textoSemantico }).strict(),
 ]);
 
 const reconfirmacionSchema = z
@@ -140,6 +159,103 @@ export type ResultadoEmisionFiscalUi = z.infer<typeof resultadoEmisionFiscalSche
 export type RespuestaReconfirmacion = z.infer<typeof reconfirmacionSchema>;
 export type RespuestaConfirmacionFiscal = z.infer<typeof respuestaConfirmacionSchema>;
 
+type PreviewAutoritativa = z.infer<typeof previewAutoritativaSchema>;
+type PreviewProvisional = z.infer<typeof previewProvisionalSchema>;
+type ConfirmacionEstructural = z.infer<typeof confirmacionAutoritativaSchema>;
+
+function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): void {
+  validarFechaIsoCalendario(confirmacion.fechaFiscal, "La fecha fiscal");
+  if (!cuitValido(confirmacion.emisorCuit)) {
+    throw new Error("El CUIT emisor no es canónico o no tiene dígito verificador válido.");
+  }
+  validarReceptorFiscalConfirmado(confirmacion.receptor, Number(confirmacion.importe));
+  const letraEsperada = determinarLetra(
+    "RESPONSABLE_INSCRIPTO",
+    confirmacion.receptor.condicionIva,
+  );
+  if (confirmacion.letra !== letraEsperada) {
+    throw new Error("La letra no coincide con la condición fiscal del receptor.");
+  }
+  if (letraDeCbteTipo(confirmacion.cbteTipo) !== confirmacion.letra) {
+    throw new Error("El CbteTipo no coincide con la letra fiscal confirmada.");
+  }
+}
+
+function confirmacionVisibleAutoritativa(
+  preview: PreviewAutoritativa,
+): ConfirmacionFiscalPostBorrador {
+  return {
+    version: 1,
+    importe: preview.total,
+    emisorCuit: preview.emisor_cuit,
+    puntoVenta: preview.punto_venta,
+    modo: preview.modo,
+    letra: preview.letra,
+    cbteTipo: preview.cbte_tipo,
+    fechaFiscal: preview.fecha_fiscal,
+    receptor: preview.receptor,
+  };
+}
+
+function confirmacionVisibleProvisional(
+  preview: PreviewProvisional,
+): ConfirmacionFiscalPostBorrador {
+  return {
+    version: 1,
+    importe: preview.total,
+    emisorCuit: preview.emisor_cuit,
+    puntoVenta: preview.punto_venta,
+    modo: preview.modo,
+    letra: preview.letra,
+    cbteTipo: preview.cbte_tipo,
+    fechaFiscal: preview.fecha_fiscal,
+    receptor: preview.receptor,
+  };
+}
+
+function confirmacionProvisional(preview: PreviewProvisional): ConfirmacionFiscalPostBorrador {
+  return {
+    version: preview.confirmacion_provisional.version,
+    importe: preview.confirmacion_provisional.importe,
+    emisorCuit: preview.confirmacion_provisional.emisor_cuit,
+    puntoVenta: preview.confirmacion_provisional.punto_venta,
+    modo: preview.confirmacion_provisional.modo,
+    letra: preview.confirmacion_provisional.letra,
+    cbteTipo: preview.confirmacion_provisional.cbte_tipo,
+    fechaFiscal: preview.confirmacion_provisional.fecha_fiscal,
+    receptor: preview.confirmacion_provisional.receptor,
+  };
+}
+
+function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
+  if (preview.autoritativo) {
+    const visible = confirmacionVisibleAutoritativa(preview);
+    validarConfirmacionSemantica(preview.confirmacion_autoritativa);
+    if (!confirmacionesFiscalesIguales(visible, preview.confirmacion_autoritativa)) {
+      throw new Error("La preview visible difiere de su confirmación autoritativa.");
+    }
+    if (
+      !verificarHuellaConfirmacionFiscal(
+        preview.confirmacion_autoritativa,
+        preview.huella_confirmacion,
+      )
+    ) {
+      throw new Error("La huella no coincide con la confirmación autoritativa.");
+    }
+    return;
+  }
+
+  const visible = confirmacionVisibleProvisional(preview);
+  const confirmacion = confirmacionProvisional(preview);
+  validarConfirmacionSemantica(confirmacion);
+  if (!confirmacionesFiscalesIguales(visible, confirmacion)) {
+    throw new Error("La preview visible difiere de su confirmación provisional.");
+  }
+  if (!verificarHuellaConfirmacionFiscal(confirmacion, preview.huella_confirmacion)) {
+    throw new Error("La huella no coincide con la confirmación provisional.");
+  }
+}
+
 function parsear<T>(schema: z.ZodType<T>, value: unknown, mensaje: string): T {
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new Error(mensaje);
@@ -147,29 +263,56 @@ function parsear<T>(schema: z.ZodType<T>, value: unknown, mensaje: string): T {
 }
 
 export function parsePreviewEmisionFiscal(value: unknown): PreviewEmisionFiscal {
-  return parsear(
+  const preview = parsear(
     previewEmisionFiscalSchema,
     value,
     "ARCA no devolvió una previsualización fiscal completa y válida.",
   );
+  try {
+    validarPreviewSemantica(preview);
+    return preview;
+  } catch {
+    throw new Error("ARCA no devolvió una previsualización fiscal completa y válida.");
+  }
 }
 
 export function parsePreviewEmisionFiscalAutoritativa(
   value: unknown,
 ): z.infer<typeof previewAutoritativaSchema> {
-  return parsear(
+  const preview = parsear(
     previewAutoritativaSchema,
     value,
     "ARCA no devolvió una previsualización fiscal autoritativa completa y válida.",
   );
+  try {
+    validarPreviewSemantica(preview);
+    return preview;
+  } catch {
+    throw new Error("ARCA no devolvió una previsualización fiscal autoritativa completa y válida.");
+  }
 }
 
 export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfirmacionFiscal {
-  return parsear(
+  const respuesta = parsear(
     respuestaConfirmacionSchema,
     value,
     "ARCA devolvió una respuesta fiscal desconocida o incompleta.",
   );
+  if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") return respuesta;
+  try {
+    validarConfirmacionSemantica(respuesta.confirmacion_autoritativa);
+    if (
+      !verificarHuellaConfirmacionFiscal(
+        respuesta.confirmacion_autoritativa,
+        respuesta.huella_confirmacion,
+      )
+    ) {
+      throw new Error("La huella no coincide con la reconfirmación autoritativa.");
+    }
+    return respuesta;
+  } catch {
+    throw new Error("ARCA devolvió una respuesta fiscal desconocida o incompleta.");
+  }
 }
 
 export function despacharRespuestaConfirmacionFiscal(

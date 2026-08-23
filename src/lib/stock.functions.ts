@@ -91,53 +91,44 @@ export const crearRemito = createServerFn({ method: "POST" })
       .object({
         sucursal_origen_id: z.string().uuid(),
         sucursal_destino_id: z.string().uuid(),
-        observaciones: z.string().optional().nullable(),
+        observaciones: z.string().max(2000).optional().nullable(),
         items: z
           .array(z.object({ producto_id: z.string().uuid(), cantidad: z.number().positive() }))
-          .min(1),
+          .min(1)
+          .max(500),
+      })
+      .superRefine((data, ctx) => {
+        const vistos = new Set<string>();
+        for (const item of data.items) {
+          if (vistos.has(item.producto_id)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["items"],
+              message: "Un producto no puede repetirse en el mismo remito",
+            });
+            return;
+          }
+          vistos.add(item.producto_id);
+        }
       })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    if (data.sucursal_origen_id === data.sucursal_destino_id)
-      throw new Error("Origen y destino deben ser distintos");
-
-    // R7b: el remito lo crea el ORIGEN (o un admin). Sin esto, un empleado del
-    // destino podía crear un remito saliendo de otra sucursal y auto-aprobarlo.
-    // La barrera autoritativa es la RLS de INSERT; acá damos un error claro.
-    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-    if (!isAdmin) {
-      const { data: miSuc } = await supabase.rpc("current_sucursal_id");
-      if (miSuc !== data.sucursal_origen_id)
-        throw new Error("Sólo podés crear remitos que salgan de tu sucursal.");
-    }
-
-    // Numero
-    const { data: numero } = await supabase.rpc("next_comprobante_numero", {
-      _sucursal_id: data.sucursal_origen_id,
-      _tipo: "REMITO" as const,
+    const { supabase } = context;
+    // La RPC valida usuario/origen/destino/ítems, reserva el número owner-only y
+    // crea encabezado + detalle en una única transacción. No se ignora ningún
+    // error ni puede quedar un remito sin ítems si falla el segundo INSERT.
+    const { data: creados, error } = await supabase.rpc("crear_remito", {
+      p_sucursal_origen_id: data.sucursal_origen_id,
+      p_sucursal_destino_id: data.sucursal_destino_id,
+      p_observaciones: data.observaciones?.trim() || "",
+      p_items: data.items,
     });
-
-    const { data: rem, error } = await supabase
-      .from("remitos")
-      .insert({
-        numero: numero as unknown as string,
-        sucursal_origen_id: data.sucursal_origen_id,
-        sucursal_destino_id: data.sucursal_destino_id,
-        observaciones: data.observaciones ?? null,
-        creado_por: userId,
-      })
-      .select()
-      .single();
     if (error) throw new Error(error.message);
 
-    const { error: iErr } = await supabase
-      .from("remito_items")
-      .insert(data.items.map((i) => ({ ...i, remito_id: rem.id })));
-    if (iErr) throw new Error(iErr.message);
-
-    return { id: rem.id, numero };
+    const creado = creados?.[0];
+    if (!creado) throw new Error("No se pudo confirmar el remito creado");
+    return { id: creado.remito_id, numero: creado.numero };
   });
 
 /**

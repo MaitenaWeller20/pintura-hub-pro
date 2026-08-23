@@ -3429,6 +3429,18 @@ export type Database = {
           ya_estaban: number
         }[]
       }
+      crear_remito: {
+        Args: {
+          p_items: Json
+          p_observaciones: string
+          p_sucursal_destino_id: string
+          p_sucursal_origen_id: string
+        }
+        Returns: {
+          numero: string
+          remito_id: string
+        }[]
+      }
       crear_venta: {
         Args: {
           p_cbte_asoc_id?: string

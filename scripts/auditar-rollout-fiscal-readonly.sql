@@ -38,7 +38,8 @@ WITH requeridas(version,nombre) AS (
     ('20260823165000','nota_credito_idempotente'),
     ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
     ('20260823172000','perfil_activo_autorizacion_global'),
-    ('20260823173000','anulacion_neutral_idempotente')
+    ('20260823173000','anulacion_neutral_idempotente'),
+    ('20260823174401','barrera_postgrest_perfiles_activos')
 )
 SELECT
   'LEDGER' AS control,
@@ -85,7 +86,8 @@ BEGIN
       ('20260823165000','nota_credito_idempotente'),
       ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
       ('20260823172000','perfil_activo_autorizacion_global'),
-      ('20260823173000','anulacion_neutral_idempotente')
+      ('20260823173000','anulacion_neutral_idempotente'),
+      ('20260823174401','barrera_postgrest_perfiles_activos')
   )
   SELECT pg_catalog.string_agg(r.version||'_'||r.nombre,',' ORDER BY r.version)
     INTO v_faltantes
@@ -120,7 +122,8 @@ BEGIN
       ('20260823165000','nota_credito_idempotente'),
       ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
       ('20260823172000','perfil_activo_autorizacion_global'),
-      ('20260823173000','anulacion_neutral_idempotente')
+      ('20260823173000','anulacion_neutral_idempotente'),
+      ('20260823174401','barrera_postgrest_perfiles_activos')
   )
   SELECT pg_catalog.string_agg(sm.version||'_'||sm.name,',' ORDER BY sm.version)
     INTO v_inesperadas
@@ -140,6 +143,83 @@ END;
 $$;
 
 SELECT 'ESQUEMA' AS control,'comienzo de postcondiciones independientes' AS estado;
+
+-- Barrera stale-JWT de la Data API instalada por #24. Todos los booleanos deben ser true.
+-- `pgrst.db_pre_request` sólo protege PostgREST/Data API: no es evidencia de cobertura para
+-- GoTrue/Auth, Storage, Realtime ni otros productos de Supabase.
+WITH funcion AS (
+  SELECT p.*
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
+   WHERE n.nspname='public'
+     AND p.proname='validar_perfil_activo_postgrest'
+), configuracion AS (
+  SELECT
+    pg_catalog.count(*) FILTER (
+      WHERE opcion.valor='pgrst.db_pre_request=public.validar_perfil_activo_postgrest'
+    )=1
+    AND pg_catalog.count(*) FILTER (
+      WHERE opcion.valor LIKE 'pgrst.db_pre_request=%'
+    )=1 AS exacta
+    FROM pg_catalog.pg_db_role_setting AS s
+    JOIN pg_catalog.pg_roles AS r ON r.oid=s.setrole
+    CROSS JOIN LATERAL pg_catalog.unnest(s.setconfig) AS opcion(valor)
+   WHERE r.rolname='authenticator'
+), acl AS (
+  SELECT
+    f.oid,
+    pg_catalog.has_function_privilege(
+      'authenticator',f.oid,'EXECUTE'
+    ) AS authenticator_execute,
+    pg_catalog.has_function_privilege('anon',f.oid,'EXECUTE') AS anon_execute,
+    pg_catalog.has_function_privilege(
+      'authenticated',f.oid,'EXECUTE'
+    ) AS authenticated_execute,
+    pg_catalog.has_function_privilege(
+      'service_role',f.oid,'EXECUTE'
+    ) AS service_role_execute,
+    NOT EXISTS (
+      SELECT 1
+        FROM pg_catalog.aclexplode(
+          COALESCE(f.proacl,pg_catalog.acldefault('f',f.proowner))
+        ) AS permiso
+        LEFT JOIN pg_catalog.pg_roles AS concedido_a ON concedido_a.oid=permiso.grantee
+       WHERE permiso.privilege_type<>'EXECUTE'
+          OR permiso.grantee=0
+          OR (
+            permiso.grantee<>f.proowner
+            AND concedido_a.rolname NOT IN (
+              'authenticator','anon','authenticated','service_role'
+            )
+          )
+    ) AS sin_public_ni_terceros
+  FROM funcion AS f
+)
+SELECT
+  'ESQUEMA_POSTGREST' AS control,
+  (SELECT pg_catalog.count(*)=1 FROM funcion) AS funcion_unica,
+  COALESCE((
+    SELECT
+      pg_catalog.pg_get_function_identity_arguments(f.oid)=''
+      AND f.prorettype='pg_catalog.void'::pg_catalog.regtype
+      AND f.prolang=(
+        SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname='plpgsql'
+      )
+      AND f.prosecdef
+      AND f.provolatile='s'
+      AND 'search_path=""'=ANY(COALESCE(f.proconfig,ARRAY[]::text[]))
+    FROM funcion AS f
+  ),false) AS contrato_funcion_exacto,
+  (SELECT c.exacta FROM configuracion AS c) AS pre_request_exacto,
+  COALESCE((
+    SELECT
+      a.authenticator_execute
+      AND a.anon_execute
+      AND a.authenticated_execute
+      AND a.service_role_execute
+      AND a.sin_public_ni_terceros
+    FROM acl AS a
+  ),false) AS acl_exacto;
 
 -- Banderas. Antes del corte: false/true. Durante mantenimiento y rollback: false/false.
 SELECT

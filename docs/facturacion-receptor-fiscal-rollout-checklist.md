@@ -52,6 +52,7 @@ ejecutar; cualquier diferencia exige detenerse y revisar un nuevo manifiesto.
 |    21 | `20260823170000_restringir_perfiles_inactivos_y_acl_remitos.sql` | `eb93fc0a7ce83f2be487aa597379a3b9d8bb8ab30d380f70c3abc5935722bef7` |
 |    22 | `20260823172000_perfil_activo_autorizacion_global.sql`           | `87d7f7336b7d6a8718d2826341116745c88fad0d7a579b46504f96a3f70362dc` |
 |    23 | `20260823173000_anulacion_neutral_idempotente.sql`               | `35e2c97613ad6c35ee7474a470804aa6f951eea0989cdecf3933ec5b74103d3b` |
+|    24 | `20260823174401_barrera_postgrest_perfiles_activos.sql`          | `865df1c382abc61caf79b973ad5b45b7258994b1732e4d131a16039eaf2f8c0a` |
 
 No forman parte del manifiesto `backfill_cola_fiscal` ni `retirar_escritor_fiscal_legacy`: sólo
 pueden crearse después de sus respectivos gates post-deployment.
@@ -108,11 +109,19 @@ real.
 - [ ] Se registró la duración máxima real de requests/functions/transactions: `__________`.
 - [ ] Se esperó al menos ese límite y la auditoría mostró que no quedan requests ni transacciones
       anteriores en curso.
-- [ ] Se aplicaron #4 a #23, desde `20260822161644_venta_fiscal_atomica.sql` hasta
-      `20260823173000_anulacion_neutral_idempotente.sql`, uno por transacción, con hashes y
+- [ ] Se aplicaron #4 a #24, desde `20260822161644_venta_fiscal_atomica.sql` hasta
+      `20260823174401_barrera_postgrest_perfiles_activos.sql`, uno por transacción, con hashes y
       postcondiciones verificados, y cada versión quedó registrada mediante `migration repair`.
 - [ ] La auditoría sólo lectura distingue esquema de ledger y terminó sin la excepción
-      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 23 filas.
+      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 24 filas.
+- [ ] La postcondición de #24 confirmó que el rol `authenticator` tiene
+      `pgrst.db_pre_request=public.validar_perfil_activo_postgrest`, que la función existe con su
+      contrato y ACL esperados, y que PostgREST recargó la configuración.
+- [ ] El contrato REST global confirmó que un JWT `authenticated` con perfil inactivo o ausente
+      recibe rechazo antes de leer, escribir o ejecutar RPC; un perfil activo y los contratos
+      explícitos de `anon`/`service_role` siguen operando.
+- [ ] Se registró que esta barrera cubre exclusivamente la Data API/PostgREST: no intercepta Auth,
+      Storage, Realtime ni otros productos, que requieren controles propios si entran en alcance.
 - [ ] Se desplegó el cliente compatible sólo con autorización separada; ID: `__________`.
 - [ ] El mantenimiento siguió activo mientras convivían instancias antiguas y nuevas.
 - [ ] Se esperó y comprobó el drenaje de todas las instancias antiguas.

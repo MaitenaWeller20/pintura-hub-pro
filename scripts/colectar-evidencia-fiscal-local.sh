@@ -27,10 +27,11 @@ STATUS_JSON="$(supabase status -o json 2>/dev/null)" || {
 API_URL="$(jq -er '.API_URL' <<<"$STATUS_JSON")"
 API_HOST="$(node -e '
   const u = new URL(process.argv[1]);
+  if (u.protocol !== "http:" || !u.port) process.exit(1);
   if (!["127.0.0.1", "localhost", "::1"].includes(u.hostname)) process.exit(2);
   process.stdout.write(u.hostname);
 ' "$API_URL")" || {
-  echo "Guard local: API_URL no apunta a localhost; se rechazó recolectar evidencia." >&2
+  echo "Guard local: API_URL no es un endpoint HTTP con puerto en localhost; se rechazó recolectar evidencia." >&2
   exit 1
 }
 unset STATUS_JSON
@@ -100,6 +101,13 @@ find supabase/migrations -maxdepth 1 -type f -name '*.sql' -print \
   | awk '$0 >= "20260822133249"' \
   | sort \
   >"$EVIDENCE_DIR/task14-migrations-files.txt"
+
+EXPECTED_TASK14_MIGRATIONS=24
+ACTUAL_TASK14_MIGRATIONS="$(wc -l <"$EVIDENCE_DIR/task14-migrations-files.txt" | tr -d ' ')"
+if [[ "$ACTUAL_TASK14_MIGRATIONS" != "$EXPECTED_TASK14_MIGRATIONS" ]]; then
+  echo "El paquete Task 14 debe contener exactamente 24 migraciones; se encontraron $ACTUAL_TASK14_MIGRATIONS." >&2
+  exit 1
+fi
 
 while IFS= read -r migration; do
   shasum -a 256 "supabase/migrations/$migration"
@@ -194,6 +202,7 @@ done
     scripts/test-remitos-acl.sh \
     scripts/test-remitos-concurrencia.sh \
     scripts/test-perfiles-inactivos-rpc.sh \
+    scripts/test-perfiles-inactivos-rest-global.sh \
     scripts/test-conflictos-emision-rest.sh \
     scripts/test-notas-v2-rest.sh \
     scripts/test-notas-v2-scope.sh \

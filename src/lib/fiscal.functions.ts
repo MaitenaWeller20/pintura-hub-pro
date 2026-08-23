@@ -20,7 +20,7 @@ import {
   prepararDatosFiscalesLegacyMarcados,
   type DatosFiscalesPreparados,
 } from "./fiscal/impresion";
-import type { QrAfipInput } from "./fiscal/qr";
+import { exigirPngDataUrlFiscal, type QrAfipInput } from "./fiscal/qr";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -454,13 +454,7 @@ export async function resolverDatosFiscalesComprobanteDesdeFila(
     preparado = prepararDatosFiscalesImpresos(fila);
   }
 
-  const qr = await deps.generarQr(preparado.qrInput);
-  if (typeof qr !== "string" || !/^data:image\/png;base64,\S+$/.test(qr)) {
-    throw new ErrorImpresionFiscal(
-      "QR_FISCAL_OBLIGATORIO",
-      "No se obtuvo el QR obligatorio del comprobante fiscal.",
-    );
-  }
+  const qr = exigirPngDataUrlFiscal(await deps.generarQr(preparado.qrInput));
   return { ...preparado, qr };
 }
 

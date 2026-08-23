@@ -464,7 +464,7 @@ export function prepararDatosFiscalesLegacyMarcados(input: unknown): DatosFiscal
     );
   }
   const totales = copiarTotalesLegacy(datos.totales);
-  const importe = decimalCanonico(fila.afip_imp_total ?? totales?.total, "legacy");
+  const importe = decimalCanonico(fila.afip_imp_total ?? totales?.total ?? datos.total, "legacy");
   const modo = modoFiscal(fila.afip_modo ?? datos.modo);
   const simulado = Boolean(fila.afip_simulado ?? datos.simulado);
   const validez = validezFiscal(fila.afip_validez ?? (simulado ? "SIMULADA" : modo));

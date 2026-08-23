@@ -240,6 +240,35 @@ describe("fallback histórico marcado", () => {
       }),
     ).toThrowError(expect.objectContaining({ codigo: "LEGACY_FISCAL_NO_MARCADO" }));
   });
+
+  it("reimprime una fila histórica real sin snapshot, fecha fiscal ni total fiscal", () => {
+    const {
+      afip_fecha_comprobante: _fechaFiscal,
+      afip_imp_total: _totalFiscal,
+      ...filaHistorica
+    } = filaLegacy;
+    const datosSinSnapshot = {
+      ...datosHistoricos,
+      totales: null,
+      lineas: null,
+      fecha: "2020-02-03T18:45:00.000Z",
+      total: 1210,
+      sin_snapshot: true,
+    };
+
+    const preparado = prepararDatosFiscalesLegacyMarcados({
+      fila: filaHistorica,
+      datosHistoricos: datosSinSnapshot,
+    });
+
+    expect(preparado).toMatchObject({
+      origen: "LEGACY_INCOMPLETO",
+      advertencia: "HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS",
+      fecha: "2020-02-03",
+      totales: null,
+    });
+    expect(preparado.qrInput).toMatchObject({ fecha: "2020-02-03", importe: "1210.00" });
+  });
 });
 
 describe("QR fiscal obligatorio", () => {
@@ -258,6 +287,25 @@ describe("QR fiscal obligatorio", () => {
 
     await expect(qrAfipDataUrlObligatorio(input)).rejects.toMatchObject({
       name: "ErrorImpresionFiscal",
+      codigo: "QR_FISCAL_OBLIGATORIO",
+    });
+  });
+
+  it("rechaza un data URL con base64 basura aunque declare image/png", async () => {
+    const input = prepararDatosFiscalesImpresos(filaAprobada()).qrInput;
+    vi.spyOn(QRCode, "toDataURL").mockResolvedValueOnce("data:image/png;base64,not-a-png" as never);
+
+    await expect(qrAfipDataUrlObligatorio(input)).rejects.toMatchObject({
+      codigo: "QR_FISCAL_OBLIGATORIO",
+    });
+  });
+
+  it("rechaza base64 válido cuyos bytes no tienen firma PNG", async () => {
+    const input = prepararDatosFiscalesImpresos(filaAprobada()).qrInput;
+    const noEsPng = `data:image/png;base64,${Buffer.from("bytes que no son png").toString("base64")}`;
+    vi.spyOn(QRCode, "toDataURL").mockResolvedValueOnce(noEsPng as never);
+
+    await expect(qrAfipDataUrlObligatorio(input)).rejects.toMatchObject({
       codigo: "QR_FISCAL_OBLIGATORIO",
     });
   });
@@ -305,6 +353,15 @@ describe("fachada de lectura fiscal", () => {
         generarQr: async () => {
           throw new ErrorImpresionFiscal("QR_FISCAL_OBLIGATORIO", "QR roto");
         },
+      }),
+    ).rejects.toMatchObject({ codigo: "QR_FISCAL_OBLIGATORIO" });
+  });
+
+  it("rechaza en la fachada un supuesto PNG con base64 basura", async () => {
+    await expect(
+      resolverDatosFiscalesComprobanteDesdeFila(filaAprobada(), {
+        cargarLegacy: async () => null,
+        generarQr: async () => "data:image/png;base64,not-a-png",
       }),
     ).rejects.toMatchObject({ codigo: "QR_FISCAL_OBLIGATORIO" });
   });

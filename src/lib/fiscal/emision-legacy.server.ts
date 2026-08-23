@@ -634,7 +634,11 @@ export async function datosFiscalesComprobanteLegacy({
     totales: snap?.totales ?? null,
     // Las líneas tal como se declararon. El PDF las prefiere sobre venta_items.
     lineas: snap?.lineas ?? null,
-    fecha: snap?.fecha ?? null,
+    // Los históricos anteriores al snapshot no tienen fecha/total fiscales
+    // separados. En esa rama explícita se conserva la mejor evidencia disponible
+    // de la propia venta para poder reconstruir el QR, siempre marcada legacy.
+    fecha: snap?.fecha ?? venta.fecha,
+    total: snap?.totales?.total ?? venta.afip_imp_total ?? venta.total,
     cae: venta.cae,
     cae_vencimiento: venta.cae_vencimiento,
     punto_venta: venta.afip_punto_venta,

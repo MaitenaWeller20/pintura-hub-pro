@@ -17,6 +17,7 @@ import {
   type DatosFiscalesPreparados,
   type ItemComprobante,
 } from "./impresion";
+import { exigirPngDataUrlFiscal } from "./qr";
 
 export type {
   DatosFiscalesImpresos,
@@ -110,12 +111,7 @@ export function generarComprobantePdf(
   items: ItemComprobante[],
   fiscal: DatosFiscalesPreparados | null,
 ): { doc: jsPDF; nombre: string } {
-  if (fiscal?.cae && !fiscal.qr) {
-    throw new ErrorImpresionFiscal(
-      "QR_FISCAL_OBLIGATORIO",
-      "El comprobante tiene CAE pero no tiene el QR fiscal obligatorio.",
-    );
-  }
+  const qrFiscal = fiscal?.cae ? exigirPngDataUrlFiscal(fiscal.qr) : null;
   if (fiscal?.origen === "SNAPSHOT_V2") {
     if (
       !fiscal.emisor ||
@@ -323,8 +319,17 @@ export function generarComprobantePdf(
   // jspdf-autotable cuelga dónde terminó la tabla del documento, pero no lo
   // declara en los tipos de jsPDF.
   const finTabla = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
-  // El bloque de totales mide, como mucho, ~10 líneas de 4,5mm más el TOTAL.
-  let yt = asegurarEspacio(finTabla + 6, 12 + (fiscal?.totales?.alicuotas?.length ?? 1) * 4.5);
+  const t = fiscal?.totales;
+  const exento = abs(t?.exento);
+  const noGravado = abs(t?.no_gravado);
+  const percepciones = abs(t?.tributos ?? venta.percepciones);
+  const cantidadLineasDetalle = esC
+    ? t
+      ? 1 + (exento > 0 ? 1 : 0) + (noGravado > 0 ? 1 : 0)
+      : 1
+    : 1 + (exento > 0 ? 1 : 0) + (noGravado > 0 ? 1 : 0) + (t?.alicuotas?.length || 1);
+  const cantidadLineasTotales = cantidadLineasDetalle + (percepciones > 0 ? 1 : 0) + 1;
+  let yt = asegurarEspacio(finTabla + 6, cantidadLineasTotales * 4.5 + 4);
   const xEtiqueta = 130;
   const linea = (etiqueta: string, valor: string, negrita = false) => {
     doc.setFont("helvetica", negrita ? "bold" : "normal");
@@ -335,12 +340,19 @@ export function generarComprobantePdf(
   };
 
   doc.setFontSize(8);
-  const t = fiscal?.totales;
   if (esC) {
-    // Clase C: importe final, sin neto ni IVA.
-    linea("Subtotal", money(t?.total ?? venta.total));
+    // Clase C: subtotal y conceptos no gravados, sin discriminar IVA.
+    if (t) {
+      linea("Subtotal", money(t.neto));
+      if (exento > 0) linea("Exento", money(exento));
+      if (noGravado > 0) linea("No gravado", money(noGravado));
+    } else {
+      linea("Subtotal", money(venta.total));
+    }
   } else {
     linea("Neto gravado", money(t?.neto ?? venta.subtotal_sin_iva));
+    if (exento > 0) linea("Exento", money(exento));
+    if (noGravado > 0) linea("No gravado", money(noGravado));
     if (t?.alicuotas?.length) {
       // El desglose real que se le declaró a AFIP.
       for (const a of t.alicuotas) {
@@ -350,7 +362,6 @@ export function generarComprobantePdf(
       linea("IVA", money(venta.iva_total));
     }
   }
-  const percepciones = abs(t?.tributos ?? venta.percepciones);
   if (percepciones > 0) linea("Percepciones y otros tributos", money(percepciones));
 
   doc.setDrawColor(120);
@@ -386,12 +397,17 @@ export function generarComprobantePdf(
       );
     }
     leyendas.push("Régimen de Transparencia Fiscal al Consumidor (Ley N° 27.743)");
-    leyendas.push(`IVA Contenido: ${money(fiscal.iva_contenido)}`);
-    leyendas.push(
-      `Otros Impuestos Nacionales Indirectos: ${money(
-        fiscal.otros_impuestos_nacionales_indirectos,
-      )}`,
-    );
+    if (fiscal.origen === "LEGACY_INCOMPLETO") {
+      leyendas.push("IVA Contenido: no disponible en histórico legacy");
+      leyendas.push("Otros Impuestos Nacionales Indirectos: no disponible en histórico legacy");
+    } else {
+      leyendas.push(`IVA Contenido: ${money(fiscal.iva_contenido)}`);
+      leyendas.push(
+        `Otros Impuestos Nacionales Indirectos: ${money(
+          fiscal.otros_impuestos_nacionales_indirectos,
+        )}`,
+      );
+    }
   }
   const marcaSinValidez =
     fiscal?.validez === "SIMULADA"
@@ -424,7 +440,15 @@ export function generarComprobantePdf(
     // El bloque mide 28mm de QR. Se reserva junto con sus leyendas para que el
     // pie fiscal sea una unidad visual y ninguna obligación quede huérfana.
     yt = asegurarEspacio(yt + 4, 30 + (leyendasPartidas.length ? 2 + altoLeyendas : 0));
-    doc.addImage(fiscal.qr!, "PNG", MARGEN, yt, 28, 28);
+    try {
+      doc.addImage(qrFiscal!, "PNG", MARGEN, yt, 28, 28);
+    } catch (cause) {
+      throw new ErrorImpresionFiscal(
+        "QR_FISCAL_OBLIGATORIO",
+        "No se pudo incorporar el QR obligatorio al comprobante fiscal.",
+        { cause },
+      );
+    }
     const xc = MARGEN + 32;
     doc.setFont("helvetica", "bold");
     doc.text(

@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
 import { fmtFechaIsoAr } from "./fecha";
+import { ErrorImpresionFiscal } from "./impresion";
 
 /**
  * QR de AFIP — RG 4892.
@@ -25,6 +26,33 @@ export interface QrAfipInput {
   tipoDocRec: number; // 80 CUIT | 96 DNI | 99 consumidor final
   nroDocRec: string | number; // 0 si no hay documento
   codAut: string; // el CAE
+}
+
+const FIRMA_PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+const BASE64_ESTRICTO = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+export function esPngDataUrlFiscal(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^data:image\/png;base64,(.+)$/.exec(value);
+  if (!match || !BASE64_ESTRICTO.test(match[1])) return false;
+
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(Buffer.from(match[1], "base64"));
+  } catch {
+    return false;
+  }
+  return FIRMA_PNG.every((byte, index) => bytes[index] === byte);
+}
+
+export function exigirPngDataUrlFiscal(value: unknown): string {
+  if (!esPngDataUrlFiscal(value)) {
+    throw new ErrorImpresionFiscal(
+      "QR_FISCAL_OBLIGATORIO",
+      "El QR fiscal obligatorio no es un PNG válido.",
+    );
+  }
+  return value;
 }
 
 function fechaQr(value: string | Date): string {
@@ -104,12 +132,8 @@ export async function qrAfipDataUrlObligatorio(d: QrAfipInput): Promise<string> 
       width: 256,
       errorCorrectionLevel: "M",
     });
-    if (typeof result !== "string" || !/^data:image\/png;base64,\S+$/.test(result)) {
-      throw new Error("El generador no devolvió un PNG data-URL.");
-    }
-    return result;
+    return exigirPngDataUrlFiscal(result);
   } catch (cause) {
-    const { ErrorImpresionFiscal } = await import("./impresion");
     if (cause instanceof ErrorImpresionFiscal) throw cause;
     throw new ErrorImpresionFiscal(
       "QR_FISCAL_OBLIGATORIO",

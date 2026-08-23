@@ -134,6 +134,24 @@ const fiscalBase: DatosFiscalesImpresos = {
   qr: QR_PNG,
 };
 
+const fiscalConTotalesCompletos: DatosFiscalesImpresos = {
+  ...fiscalBase,
+  lineas: [
+    items[0],
+    { ...items[0], codigo: "EX-001", descripcion: "Operación exenta", subtotal_con_iva: 100 },
+    { ...items[0], codigo: "NG-001", descripcion: "Operación no gravada", subtotal_con_iva: 50 },
+  ],
+  totales: {
+    neto: 1000,
+    exento: 100,
+    no_gravado: 50,
+    iva: 210,
+    tributos: 20,
+    total: 1380,
+    alicuotas: [{ Id: 5, BaseImp: 1000, Importe: 210 }],
+  },
+};
+
 describe("numeración fiscal impresa", () => {
   it("usa el formato PPPPP-NNNNNNNN", () => {
     expect(numeroFiscal(1, 42)).toBe("00001-00000042");
@@ -210,6 +228,30 @@ describe("leyenda de crédito fiscal Ley 27.618", () => {
     });
 
     expect(textoDelPdf(doc)).toContain(LEYENDA_CREDITO_FISCAL_MONOTRIBUTO);
+  });
+});
+
+describe("totales fiscales completos", () => {
+  it("imprime neto, exento, no gravado, IVA y tributos en renglones separados", () => {
+    const { doc } = generarComprobantePdf(
+      { ...venta, total: 999999 },
+      items,
+      fiscalConTotalesCompletos,
+    );
+    const texto = textoDelPdf(doc);
+
+    expect(texto).toContain("Neto gravado");
+    expect(texto).toContain("$ 1.000,00");
+    expect(texto).toContain("Exento");
+    expect(texto).toContain("$ 100,00");
+    expect(texto).toContain("No gravado");
+    expect(texto).toContain("$ 50,00");
+    expect(texto).toContain("IVA 21,00%");
+    expect(texto).toContain("$ 210,00");
+    expect(texto).toContain("Percepciones y otros tributos");
+    expect(texto).toContain("$ 20,00");
+    expect(texto).toContain("$ 1.380,00");
+    expect(texto).not.toContain("$ 999.999,00");
   });
 });
 
@@ -334,6 +376,29 @@ describe("comprobantes largos", () => {
     }
   });
 
+  it("reserva la altura dinámica de neto, exento, no gravado, IVA y tributos", () => {
+    const ALTO_A4_PT = 841.89;
+    for (let n = 1; n <= 60; n++) {
+      const lista = Array.from({ length: n }, (_, k) => ({
+        ...items[0],
+        codigo: `TOTAL-${k}`,
+      }));
+      const { doc: d } = generarComprobantePdf(venta, lista, {
+        ...fiscalConTotalesCompletos,
+        lineas: lista,
+      });
+      const texto = textoDelPdf(d);
+      const ys = [...texto.matchAll(/([\d.-]+) ([\d.-]+) Td/g)].map((match) => Number(match[2]));
+
+      expect(texto, `con ${n} ítems faltó el exento`).toContain("Exento");
+      expect(texto, `con ${n} ítems faltó el no gravado`).toContain("No gravado");
+      expect(Math.min(...ys), `con ${n} ítems el total salió debajo del pie`).toBeGreaterThan(0);
+      expect(Math.max(...ys), `con ${n} ítems el total salió arriba del borde`).toBeLessThan(
+        ALTO_A4_PT,
+      );
+    }
+  });
+
   it.each([1, 20, 60])("con %s ítems conserva todas las páginas en A4", (cantidad) => {
     const lista = Array.from({ length: cantidad }, (_, k) => ({
       ...items[0],
@@ -445,7 +510,34 @@ describe("defensas del renderer fiscal", () => {
       advertencia: "HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS",
     });
 
-    expect(textoDelPdf(doc)).toContain("HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS");
+    const texto = textoDelPdf(doc);
+    expect(texto).toContain("HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS");
+    expect(texto).toContain("IVA Contenido: no disponible en histórico legacy");
+    expect(texto).toContain(
+      "Otros Impuestos Nacionales Indirectos: no disponible en histórico legacy",
+    );
+    expect(texto).not.toContain("IVA Contenido: $ 0,00");
+    expect(texto).not.toContain("Otros Impuestos Nacionales Indirectos: $ 0,00");
+  });
+
+  it.each([
+    ["base64 basura", "data:image/png;base64,not-a-png"],
+    [
+      "firma incorrecta",
+      `data:image/png;base64,${Buffer.from("contenido que no es png").toString("base64")}`,
+    ],
+  ])("rechaza QR con %s antes de invocar el renderer PNG", (_caso, qr) => {
+    expect(() => generarComprobantePdf(venta, items, { ...fiscalBase, qr })).toThrowError(
+      expect.objectContaining({ codigo: "QR_FISCAL_OBLIGATORIO" }),
+    );
+  });
+
+  it("envuelve como error fiscal tipado un PNG con firma válida que addImage no puede leer", () => {
+    const pngTruncado = "data:image/png;base64,iVBORw0KGgo=";
+
+    expect(() =>
+      generarComprobantePdf(venta, items, { ...fiscalBase, qr: pngTruncado }),
+    ).toThrowError(expect.objectContaining({ codigo: "QR_FISCAL_OBLIGATORIO" }));
   });
 });
 

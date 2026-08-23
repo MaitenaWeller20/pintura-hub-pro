@@ -444,7 +444,16 @@ export async function confirmarCierreFiscalInmediato<T>(
     }): Promise<T>;
   },
 ): Promise<T> {
-  const ventaId = await obtenerVentaUnaVez(input.control, input.idempotencyKey, deps.crearVenta);
+  let ventaId: string;
+  try {
+    ventaId = await obtenerVentaUnaVez(input.control, input.idempotencyKey, deps.crearVenta);
+  } catch (cause) {
+    const detalle = cause instanceof Error ? cause.message : "Error desconocido";
+    throw new Error(
+      `No se pudo confirmar si la venta quedó registrada. No repitas la venta ni el cobro: verificá la venta en la cola de facturación antes de volver a intentar. Detalle: ${detalle}`,
+      { cause },
+    );
+  }
   return deps.emitirPostBorrador({
     ventaId,
     receptor: input.receptor,

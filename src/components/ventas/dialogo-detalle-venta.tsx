@@ -209,7 +209,7 @@ export function DialogoDetalleVenta({
               <div className="space-y-1">
                 <strong>Estado fiscal:</strong> <EstadoFiscalPill estado={venta.afip_estado} />
                 <div className="mt-1">
-                  <ValidezFiscal validez={venta.afip_validez} compacta />
+                  <ValidezFiscal validez={venta.afip_validez} estado={venta.afip_estado} compacta />
                 </div>
                 {fiscal ? <p className="font-medium">{fiscal}</p> : null}
                 {venta.afip_fecha_comprobante ? (

@@ -1,6 +1,7 @@
 import { StatusPill } from "@/components/app/status-pill";
 
 const PRESENTACION = {
+  NO_APLICA: { texto: "No fiscal/No aplica", tono: "neutral" },
   SIN_FACTURAR: { texto: "Sin facturar", tono: "warning" },
   EMITIENDO: { texto: "Emitiendo", tono: "info" },
   APROBADO: { texto: "Aprobado", tono: "success" },

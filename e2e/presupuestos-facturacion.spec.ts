@@ -57,6 +57,26 @@ test("la conversión v2 es neutral y comparte pagos mixtos, total cobrado y sald
   await expect(resumen).toContainText(/La factura se emite por el total/);
 });
 
+test("Cancelar devuelve el foco al botón que abrió la conversión", async ({ page }) => {
+  const dialogo = await abrirConversion(page);
+  const abrir = page.getByTestId("convertir");
+
+  await dialogo.getByRole("button", { name: "Cancelar" }).click();
+
+  await expect(dialogo).not.toBeVisible();
+  await expect(abrir).toBeFocused();
+});
+
+test("Escape devuelve el foco al botón que abrió la conversión", async ({ page }) => {
+  const dialogo = await abrirConversion(page);
+  const abrir = page.getByTestId("convertir");
+
+  await page.keyboard.press("Escape");
+
+  await expect(dialogo).not.toBeVisible();
+  await expect(abrir).toBeFocused();
+});
+
 test("convierte una vez, conserva venta_id y una falla fiscal deja CONVERTIDO", async ({
   page,
 }) => {

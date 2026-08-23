@@ -1371,14 +1371,7 @@ function NuevaVenta() {
                   huellaConfirmacion,
                 },
                 {
-                  async crearVenta(clave) {
-                    try {
-                      return await crearVentaPersistida(clave);
-                    } catch (cause) {
-                      const detalle = cause instanceof Error ? cause.message : "Error desconocido";
-                      throw new Error(`Venta no creada. ${detalle}`);
-                    }
-                  },
+                  crearVenta: crearVentaPersistida,
                   emitirPostBorrador: (input) =>
                     emitirPostBorrador({
                       data: {

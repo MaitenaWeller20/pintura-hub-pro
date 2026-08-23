@@ -170,3 +170,15 @@ export function objetivoToggleUsuario(
 ): boolean {
   return estado?.tipo === "requiere_reintento" ? estado.activoDeseado : !activoActual;
 }
+
+// Una operación fail-safe puede conservar la clave original mientras drena
+// una intención más nueva e incluso opuesta. La UI no debe prometer que el
+// retry "activa" o "desactiva": primero reconcilia el estado vigente.
+const ETIQUETA_RECONCILIACION = {
+  estado: "Acceso pendiente de reconciliar",
+  accion: "Reconciliar acceso pendiente",
+} as const;
+
+export function etiquetaReconciliacionToggleUsuario(): typeof ETIQUETA_RECONCILIACION {
+  return ETIQUETA_RECONCILIACION;
+}

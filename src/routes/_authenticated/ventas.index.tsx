@@ -423,7 +423,7 @@ function VentasList() {
                 <div className="space-y-1">
                   <EstadoFiscalPill estado={v.afip_estado} />
                   <div>
-                    <ValidezFiscal validez={v.afip_validez} compacta />
+                    <ValidezFiscal validez={v.afip_validez} estado={v.afip_estado} compacta />
                   </div>
                 </div>
               ) : (

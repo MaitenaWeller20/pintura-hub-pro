@@ -70,7 +70,8 @@ function renderVentaAntigua(esAdmin: boolean): string {
 describe("interactividad de filas fiscales", () => {
   it("mantiene visibles pero inertes los datos placeholder", () => {
     const html = render(false);
-    expect(html).toContain("V-00001");
+    expect(html).toContain("Venta V-00001");
+    expect(html).not.toContain("Venta V-V-00001");
     expect(html).toContain('aria-busy="true"');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Facturar/s);
   });

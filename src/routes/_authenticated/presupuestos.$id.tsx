@@ -33,6 +33,7 @@ import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
 import { emitirComprobante, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
 import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
 import { resultadoColaDespuesDeEmision } from "@/lib/ventas-ui";
+import { destinoColaFiscalVentaConvertida } from "@/lib/presupuesto-ui";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/$id")({
   component: DetallePresupuesto,
@@ -182,6 +183,10 @@ function DetallePresupuesto() {
 
   if (!cu || !p) return null;
 
+  const destinoColaVentaConvertida = p.venta_id
+    ? destinoColaFiscalVentaConvertida(p.venta_id, cu)
+    : null;
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -233,13 +238,12 @@ function DetallePresupuesto() {
         <SectionCard>
           <p className="text-sm">
             Este presupuesto ya se convirtió una vez. La venta vinculada es{" "}
-            {p.venta_id ? (
-              <a
-                href={`/facturacion/cola?venta=${encodeURIComponent(p.venta_id)}`}
-                className="font-semibold text-primary underline"
-              >
+            {p.venta_id && destinoColaVentaConvertida ? (
+              <a href={destinoColaVentaConvertida} className="font-semibold text-primary underline">
                 {p.venta_id}
               </a>
+            ) : p.venta_id ? (
+              <strong>{p.venta_id}</strong>
             ) : (
               <strong>no identificable; requiere revisión administrativa</strong>
             )}
@@ -332,6 +336,7 @@ function DetallePresupuesto() {
         facturacionV2Habilitada={cu.facturacionV2Habilitada}
         facturacionLegacyHabilitada={cu.facturacionLegacyHabilitada}
         puedeFacturar={cu.puedeFacturar}
+        returnFocusRef={botonConvertirRef}
         onOpenChange={setAbrirConv}
         onConvertida={(resultado: PresupuestoConvertido) => {
           toast.success("Venta creada una sola vez con los precios del presupuesto.");

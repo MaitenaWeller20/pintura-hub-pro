@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   RegistroOperacionesToggleUsuario,
   estadoInicialToggleUsuario,
+  etiquetaReconciliacionToggleUsuario,
   objetivoToggleUsuario,
   type AlmacenClaveValor,
 } from "./usuario-toggle-durable";
@@ -117,6 +118,13 @@ describe("RegistroOperacionesToggleUsuario", () => {
 });
 
 describe("estado de fila del toggle", () => {
+  it("describe un retry ambiguo sin prometer activar ni desactivar", () => {
+    expect(etiquetaReconciliacionToggleUsuario()).toEqual({
+      estado: "Acceso pendiente de reconciliar",
+      accion: "Reconciliar acceso pendiente",
+    });
+  });
+
   it("reintenta una baja ambigua aunque el perfil ya aparezca inactivo", () => {
     expect(
       objetivoToggleUsuario(false, {

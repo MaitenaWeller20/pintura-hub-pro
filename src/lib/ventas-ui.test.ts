@@ -436,11 +436,11 @@ describe("creación comercial idempotente antes de emitir", () => {
     });
   });
 
-  it("si crear la venta falla no llama emisión y permite reintentar la misma clave", async () => {
+  it("ante respuesta perdida no afirma que la venta no existe, no emite y permite reintentar la misma clave", async () => {
     const control = crearControlCreacionVenta();
     const crearVenta = vi
       .fn()
-      .mockRejectedValueOnce(new Error("venta no creada"))
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
       .mockResolvedValueOnce({ id: "72000000-0000-4000-8000-000000000003" });
     const emitirPostBorrador = vi.fn(async () => ({ estado: "APROBADO" }));
     const input = {
@@ -451,9 +451,11 @@ describe("creación comercial idempotente antes de emitir", () => {
       huellaConfirmacion: "c".repeat(64),
     };
 
-    await expect(
-      confirmarCierreFiscalInmediato(input, { crearVenta, emitirPostBorrador }),
-    ).rejects.toThrow("venta no creada");
+    const intento = confirmarCierreFiscalInmediato(input, { crearVenta, emitirPostBorrador });
+    await expect(intento).rejects.toThrow(/no se pudo confirmar si la venta quedó registrada/i);
+    await expect(intento).rejects.toThrow(/no repitas la venta ni el cobro/i);
+    await expect(intento).rejects.toThrow(/cola de facturación/i);
+    await expect(intento).rejects.not.toThrow(/venta no creada/i);
     expect(emitirPostBorrador).not.toHaveBeenCalled();
 
     await confirmarCierreFiscalInmediato(input, { crearVenta, emitirPostBorrador });

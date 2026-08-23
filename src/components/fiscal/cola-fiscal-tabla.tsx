@@ -154,7 +154,7 @@ export function ColaFiscalTabla({
                         <ReceiptText className="h-4 w-4 text-primary" />
                         {etiquetaDocumento(row)}
                       </div>
-                      <p className="mt-1 font-mono text-xs">Venta V-{row.numero_comprobante}</p>
+                      <p className="mt-1 font-mono text-xs">Venta {row.numero_comprobante}</p>
                       <p className="font-mono text-xs text-muted-foreground">{numeroFiscal(row)}</p>
                     </TableCell>
                     <TableCell className="align-top">
@@ -198,7 +198,11 @@ export function ColaFiscalTabla({
                     <TableCell className="align-top">
                       <EstadoFiscalPill estado={row.afip_estado} />
                       <p className="mt-2">
-                        <ValidezFiscal validez={row.afip_validez} compacta />
+                        <ValidezFiscal
+                          validez={row.afip_validez}
+                          estado={row.afip_estado}
+                          compacta
+                        />
                       </p>
                       {row.claim_vencido || row.venta_antigua ? (
                         <p className="mt-1 flex items-center gap-1 text-xs font-medium text-warning">

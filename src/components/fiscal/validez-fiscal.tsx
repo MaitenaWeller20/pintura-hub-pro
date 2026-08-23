@@ -3,11 +3,14 @@ import { textoValidezFiscal, type ValidezFiscalTipo } from "@/lib/fiscal/validez
 
 export function ValidezFiscal({
   validez,
+  estado,
   compacta = false,
 }: {
   validez: unknown;
+  estado?: unknown;
   compacta?: boolean;
 }) {
+  if (estado === "NO_APLICA") return null;
   const normalizada: ValidezFiscalTipo | null =
     validez === "PRODUCCION" || validez === "HOMOLOGACION" || validez === "SIMULADA"
       ? validez

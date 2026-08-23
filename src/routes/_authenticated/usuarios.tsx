@@ -39,6 +39,7 @@ import { faltanteUsuario, generarPassword, PASSWORD_MINIMO } from "@/lib/alta-us
 import {
   almacenSesionToggleUsuario,
   estadoInicialToggleUsuario,
+  etiquetaReconciliacionToggleUsuario,
   objetivoToggleUsuario,
   RegistroOperacionesToggleUsuario,
   type EstadoToggleUsuario,
@@ -68,6 +69,7 @@ function UsuariosPage() {
   const [estadosToggle, setEstadosToggle] = useState<Record<string, EstadoToggleUsuario>>(() =>
     estadoInicialToggleUsuario(registroToggles),
   );
+  const etiquetaReconciliacion = etiquetaReconciliacionToggleUsuario();
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
 
@@ -235,8 +237,7 @@ function UsuariosPage() {
                 )}
                 {estadosToggle[u.id]?.tipo === "requiere_reintento" && (
                   <p className="text-xs text-amber-700" role="status">
-                    Requiere reintentar la{" "}
-                    {estadosToggle[u.id].activoDeseado ? "activación" : "desactivación"}
+                    {etiquetaReconciliacion.estado}
                   </p>
                 )}
                 {estadosToggle[u.id]?.tipo === "supersedida" && (
@@ -273,7 +274,7 @@ function UsuariosPage() {
                 variant="ghost"
                 title={
                   estadosToggle[u.id]?.tipo === "requiere_reintento"
-                    ? `Reintentar ${estadosToggle[u.id].activoDeseado ? "activación" : "desactivación"}`
+                    ? etiquetaReconciliacion.accion
                     : u.activo
                       ? "Desactivar"
                       : "Activar"

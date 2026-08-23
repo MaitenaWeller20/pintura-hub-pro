@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, Loader2, ReceiptText } from "lucide-react";
@@ -57,6 +57,7 @@ export function DialogoConvertirPresupuesto({
   facturacionV2Habilitada,
   facturacionLegacyHabilitada,
   puedeFacturar,
+  returnFocusRef,
   onOpenChange,
   onConvertida,
 }: {
@@ -65,6 +66,7 @@ export function DialogoConvertirPresupuesto({
   facturacionV2Habilitada: boolean;
   facturacionLegacyHabilitada: boolean;
   puedeFacturar: boolean;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   onOpenChange(open: boolean): void;
   onConvertida(resultado: PresupuestoConvertido): void;
 }) {
@@ -175,6 +177,11 @@ export function DialogoConvertirPresupuesto({
         className="max-w-2xl p-0"
         closeDisabled={mutacion.isPending}
         hideClose={mutacion.isPending}
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusRef?.current) return;
+          event.preventDefault();
+          returnFocusRef.current.focus();
+        }}
       >
         <div className="px-4 pt-5 sm:px-6">
           <DialogHeader>

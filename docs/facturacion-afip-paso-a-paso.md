@@ -1,6 +1,6 @@
 # Facturación electrónica: puesta en marcha por empresa
 
-**Actualizado:** 2026-08-19
+**Actualizado:** 2026-08-23
 **Alcance:** APLICACIONES Y SERVICIOS S.R.L. (General Paz) y GRUPO CASA FORMA S.A.S. (O'Higgins).
 
 ## 1. Regla principal
@@ -20,7 +20,7 @@ Producción y homologación también tienen credenciales separadas y pueden conv
 
 ## 2. Antes del trámite
 
-En `/facturacion`, revisar la tarjeta de cada empresa:
+En `/facturacion/configuracion`, revisar la tarjeta de cada empresa:
 
 - razón social y CUIT exactos;
 - condición frente al IVA;
@@ -37,7 +37,8 @@ Mientras `INVOICING_MOCK_MODE=true`, el sistema no llama a ARCA, no registra una
 
 ## 3. CSR que recibe la contadora
 
-En `/facturacion` → **ARCA por empresa** → tarjeta del CUIT correcto → **Producción**:
+En `/facturacion/configuracion` → **ARCA por empresa** → tarjeta del CUIT correcto →
+**Producción**:
 
 - Si ya existe una clave, aparece **Descargar CSR de producción**. Descargarlo de nuevo no rota ni reemplaza la clave privada.
 - Si no existe, aparece **Generar CSR de producción**. El botón se habilita cuando el emisor tiene CUIT y razón social, y la sucursal tiene un PV productivo activo.
@@ -97,6 +98,15 @@ Cambiar el número, ambiente o estado de un PV borra la verificación y deshabil
 No hace falta que las dos empresas queden listas el mismo día: el sistema bloquea individualmente la que todavía no tenga credencial válida.
 
 ## 7. Primera factura real
+
+La operación diaria y los pendientes fiscales se administran en `/facturacion/cola`. El detalle de
+venta, receptor fiscal, letra calculada y manejo seguro de errores está documentado en
+[Venta y facturación con receptor fiscal](./facturacion-receptor-fiscal-operacion.md).
+
+La v2 debe permanecer apagada y el escritor legado encendido hasta completar el despliegue
+compatible, el drenaje, la conciliación y una autorización separada. Las migraciones de Supabase las
+ejecuta manualmente el responsable del proyecto; esta guía no autoriza desplegar, migrar producción
+ni habilitar la v2.
 
 Hacer una operación pequeña por cada CUIT habilitado y verificar:
 

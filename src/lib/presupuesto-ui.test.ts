@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { destinoColaFiscalVentaConvertida } from "./presupuesto-ui";
+import {
+  accionFiscalDespuesDeConvertirPresupuesto,
+  destinoColaFiscalVentaConvertida,
+} from "./presupuesto-ui";
 
 describe("destino fiscal de un presupuesto convertido", () => {
   it.each([
@@ -28,5 +31,23 @@ describe("destino fiscal de un presupuesto convertido", () => {
     expect(destinoColaFiscalVentaConvertida("venta 1", acceso)).toBe(
       "/facturacion/cola?venta=venta%201",
     );
+  });
+
+  it("permanece en el presupuesto convertido si el empleado no puede abrir la cola", () => {
+    expect(
+      accionFiscalDespuesDeConvertirPresupuesto(
+        { ventaId: "venta-1", facturarAhora: false },
+        { isAdmin: false, facturacionV2Habilitada: true, puedeFacturar: false },
+      ),
+    ).toBe("PERMANECER");
+  });
+
+  it("abre la cola sólo cuando el usuario tiene acceso efectivo", () => {
+    expect(
+      accionFiscalDespuesDeConvertirPresupuesto(
+        { ventaId: "venta-1", facturarAhora: false },
+        { isAdmin: false, facturacionV2Habilitada: true, puedeFacturar: true },
+      ),
+    ).toBe("ABRIR_COLA");
   });
 });

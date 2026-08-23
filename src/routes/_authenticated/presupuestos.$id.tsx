@@ -33,7 +33,10 @@ import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
 import { emitirComprobante, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
 import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
 import { resultadoColaDespuesDeEmision } from "@/lib/ventas-ui";
-import { destinoColaFiscalVentaConvertida } from "@/lib/presupuesto-ui";
+import {
+  accionFiscalDespuesDeConvertirPresupuesto,
+  destinoColaFiscalVentaConvertida,
+} from "@/lib/presupuesto-ui";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/$id")({
   component: DetallePresupuesto,
@@ -343,10 +346,10 @@ function DetallePresupuesto() {
           void qc.invalidateQueries({ queryKey: ["presupuesto", id] });
           void qc.invalidateQueries({ queryKey: ["presupuestos"] });
           setAbrirConv(false);
-          if (!cu.facturacionV2Habilitada) return;
-          if (resultado.facturarAhora) {
+          const accion = accionFiscalDespuesDeConvertirPresupuesto(resultado, cu);
+          if (accion === "FACTURAR_AHORA") {
             setVentaParaFacturar({ id: resultado.ventaId, clienteId: resultado.clienteId });
-          } else {
+          } else if (accion === "ABRIR_COLA") {
             navegarACola(resultado.ventaId, "venta_creada_factura_pendiente");
           }
         }}

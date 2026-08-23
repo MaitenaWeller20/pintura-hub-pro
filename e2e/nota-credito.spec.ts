@@ -1,4 +1,15 @@
 import { test, expect, ingresar } from "./apoyo";
+import {
+  MARCA_REMITO_EDITAR_E2E,
+  MARCA_REMITO_VER_E2E,
+  PRODUCTO_REMITO_A_CODIGO_E2E,
+  PRODUCTO_REMITO_B_CODIGO_E2E,
+  limpiarEfectosNotasRemitosE2E,
+  limpiarFixtureNotasRemitosE2E,
+  leerRemitoE2E,
+  prepararFixtureNotasRemitosE2E,
+  type FixtureNotasRemitosE2E,
+} from "./fixtures/nota-credito-remitos";
 
 /**
  * Nota de crédito SIN factura asociada.
@@ -11,6 +22,20 @@ import { test, expect, ingresar } from "./apoyo";
  * pantalla diga la verdad sobre lo que va a pasar: sin factura la nota queda
  * como documento interno y no se manda a AFIP.
  */
+
+let fixture: FixtureNotasRemitosE2E;
+
+test.beforeAll(async () => {
+  fixture = await prepararFixtureNotasRemitosE2E();
+});
+
+test.afterEach(async () => {
+  await limpiarEfectosNotasRemitosE2E();
+});
+
+test.afterAll(async () => {
+  await limpiarFixtureNotasRemitosE2E();
+});
 
 test.beforeEach(async ({ page }) => {
   await ingresar(page);
@@ -101,23 +126,26 @@ test("remitos: se puede ver qué trae un remito antes de aceptarlo", async ({ pa
   const alta = page.getByRole("dialog");
   await alta.waitFor({ state: "visible" });
 
-  // Destino: la otra sucursal (el origen viene precargado con la propia).
   const destino = alta.locator('label:has-text("Destino") + button[role=combobox]');
   await destino.click();
-  await page.getByRole("option").first().click();
+  await page.getByRole("option", { name: fixture.sucursalDestinoNombre, exact: true }).click();
 
-  await page.getByTestId("remito-buscar-producto").fill("bl");
-  const resultado = alta.locator("div.overflow-auto > button").first();
+  await page.getByTestId("remito-buscar-producto").fill(PRODUCTO_REMITO_A_CODIGO_E2E);
+  const resultado = alta.getByRole("button", {
+    name: new RegExp(PRODUCTO_REMITO_A_CODIGO_E2E),
+  });
   await resultado.waitFor({ state: "visible", timeout: 15_000 });
   await resultado.click();
+  await alta.locator('label:has-text("Observaciones") + textarea').fill(MARCA_REMITO_VER_E2E);
 
   await alta.getByRole("button", { name: /crear remito/i }).click();
   await expect(alta).not.toBeVisible({ timeout: 20_000 });
 
-  const primeraFila = page.locator("tbody tr").first();
-  await primeraFila.waitFor({ state: "visible", timeout: 20_000 });
+  const remito = await leerRemitoE2E(MARCA_REMITO_VER_E2E);
+  const filaPropia = page.getByRole("row").filter({ hasText: remito.numero });
+  await expect(filaPropia).toHaveCount(1, { timeout: 20_000 });
 
-  await primeraFila.getByRole("button", { name: /ver qué trae/i }).click();
+  await filaPropia.getByRole("button", { name: /ver qué trae/i }).click();
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
 
@@ -126,6 +154,7 @@ test("remitos: se puede ver qué trae un remito antes de aceptarlo", async ({ pa
   await expect(dialogo.getByRole("columnheader", { name: /cantidad/i })).toBeVisible();
   await expect(dialogo).toContainText(/viene de/i);
   await expect(dialogo).toContainText(/va a/i);
+  await expect(dialogo).toContainText(PRODUCTO_REMITO_A_CODIGO_E2E);
 });
 
 test("remitos: el origen puede corregir los productos mientras está pendiente", async ({
@@ -138,36 +167,43 @@ test("remitos: el origen puede corregir los productos mientras está pendiente",
   const alta = page.getByRole("dialog");
   const destino = alta.locator('label:has-text("Destino") + button[role=combobox]');
   await destino.click();
-  await page.getByRole("option").first().click();
+  await page.getByRole("option", { name: fixture.sucursalDestinoNombre, exact: true }).click();
 
-  await page.getByTestId("remito-buscar-producto").fill("bl");
-  const primerProducto = alta.locator("div.overflow-auto > button").first();
+  await page.getByTestId("remito-buscar-producto").fill(PRODUCTO_REMITO_A_CODIGO_E2E);
+  const primerProducto = alta.getByRole("button", {
+    name: new RegExp(PRODUCTO_REMITO_A_CODIGO_E2E),
+  });
   await primerProducto.waitFor({ state: "visible", timeout: 15_000 });
   await primerProducto.click();
+  await alta.locator('label:has-text("Observaciones") + textarea').fill(MARCA_REMITO_EDITAR_E2E);
   await alta.getByRole("button", { name: /crear remito/i }).click();
   await expect(alta).not.toBeVisible({ timeout: 20_000 });
 
-  const primeraFila = page.locator("tbody tr").first();
-  await primeraFila.waitFor({ state: "visible", timeout: 20_000 });
-  await primeraFila.getByRole("button", { name: /editar remito/i }).click();
+  const remito = await leerRemitoE2E(MARCA_REMITO_EDITAR_E2E);
+  const filaPropia = page.getByRole("row").filter({ hasText: remito.numero });
+  await expect(filaPropia).toHaveCount(1, { timeout: 20_000 });
+  await filaPropia.getByRole("button", { name: /editar remito/i }).click();
 
   const edicion = page.getByRole("dialog");
   await expect(edicion.getByRole("heading", { name: /editar remito/i })).toBeVisible();
   await expect(edicion.getByText(/el origen no se puede cambiar/i)).toBeVisible();
 
   await edicion.getByRole("button", { name: /quitar producto/i }).click();
-  await edicion.getByTestId("remito-buscar-producto").fill("bl");
-  const reemplazo = edicion.locator("div.overflow-auto > button").nth(1);
+  await edicion.getByTestId("remito-buscar-producto").fill(PRODUCTO_REMITO_B_CODIGO_E2E);
+  const reemplazo = edicion.getByRole("button", {
+    name: new RegExp(PRODUCTO_REMITO_B_CODIGO_E2E),
+  });
   await reemplazo.waitFor({ state: "visible", timeout: 15_000 });
-  const codigoReemplazo = (await reemplazo.locator("span").first().innerText()).trim();
   await reemplazo.click();
 
-  await edicion.getByLabel("Observaciones").fill("Producto corregido");
+  await edicion
+    .locator('label:has-text("Observaciones") + textarea')
+    .fill(`${MARCA_REMITO_EDITAR_E2E} · Producto corregido`);
   await edicion.getByRole("button", { name: /guardar cambios/i }).click();
   await expect(edicion).not.toBeVisible({ timeout: 20_000 });
 
-  await primeraFila.getByRole("button", { name: /ver qué trae/i }).click();
+  await filaPropia.getByRole("button", { name: /ver qué trae/i }).click();
   const detalle = page.getByRole("dialog");
-  await expect(detalle).toContainText(codigoReemplazo);
+  await expect(detalle).toContainText(PRODUCTO_REMITO_B_CODIGO_E2E);
   await expect(detalle).toContainText("Producto corregido");
 });

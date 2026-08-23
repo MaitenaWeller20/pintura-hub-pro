@@ -12,6 +12,50 @@ export type EntradaPermisoFiscal = {
 
 export type PermisoFiscal = { ventaId: string; sucursalId: string; esAdmin: boolean };
 
+export type ContextoColaFiscal = {
+  userId: string;
+  esAdmin: boolean;
+  sucursalId: string | null;
+};
+
+export type LecturasContextoColaFiscal = {
+  consultarEsAdmin(userId: string): Promise<boolean>;
+  cargarPerfil(
+    userId: string,
+  ): Promise<{ activo: boolean; puedeFacturar: boolean; sucursalId: string | null } | null>;
+  cargarSucursal(
+    sucursalId: string,
+    userId: string,
+  ): Promise<{ activa: boolean; asignada: boolean } | null>;
+};
+
+/** Autoriza lecturas operativas sin abrir un cliente privilegiado. */
+export async function autorizarContextoColaFiscal(input: {
+  userId: string;
+  lecturas: LecturasContextoColaFiscal;
+}): Promise<ContextoColaFiscal> {
+  const esAdmin = await input.lecturas.consultarEsAdmin(input.userId);
+  if (esAdmin) return { userId: input.userId, esAdmin: true, sucursalId: null };
+
+  const perfil = await input.lecturas.cargarPerfil(input.userId);
+  if (!perfil) throw new Error("No existe un perfil fiscal para el operador.");
+  if (!perfil.activo) throw new Error("El perfil está inactivo y no puede usar la cola fiscal.");
+  if (!perfil.puedeFacturar) {
+    throw new Error("El perfil no tiene la capacidad fiscal puede_facturar.");
+  }
+  if (!perfil.sucursalId) throw new Error("El operador no tiene una sucursal activa.");
+
+  const sucursal = await input.lecturas.cargarSucursal(perfil.sucursalId, input.userId);
+  if (!sucursal?.activa) throw new Error("La sucursal activa del operador está inactiva.");
+  if (!sucursal.asignada) throw new Error("La sucursal activa no está asignada al operador.");
+
+  return {
+    userId: input.userId,
+    esAdmin: false,
+    sucursalId: perfil.sucursalId,
+  };
+}
+
 /** Regla pura usada antes de abrir service-role, claims o adaptadores ARCA. */
 export function evaluarPermisoFiscal(input: EntradaPermisoFiscal): PermisoFiscal {
   if (input.accion === "CONCILIAR" || input.accion === "LIBERAR") {

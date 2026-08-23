@@ -95,8 +95,19 @@ check "sólo authenticated ejecuta la desactivación controlada" "false|true|fal
 check "sólo authenticated ejecuta la administración del permiso fiscal" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('service_role','public.administrar_puede_facturar(uuid,boolean)','execute')::text")"
 
+check "cola fiscal tiene una única firma invoker y estable" "1|false|s" \
+  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura' and pg_get_function_identity_arguments(p.oid)='p_tab text, p_page integer, p_page_size integer, p_desde date, p_hasta date, p_sucursal_id uuid, p_emisor_id uuid, p_documento text, p_estado text, p_venta_id uuid'")"
+check "cola fiscal fija search_path vacío" "search_path=\"\"" \
+  "$(q "select array_to_string(p.proconfig,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
+check "sólo authenticated ejecuta la lectura de cola" "false|true|false" \
+  "$(q "select has_function_privilege('anon','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text||'|'||has_function_privilege('service_role','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text")"
+check "favoritos no admiten DELETE directo ni policy DELETE" "false|0" \
+  "$(q "select has_table_privilege('authenticated','public.receptores_fiscales','delete')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='DELETE')::text")"
+
 check "índices de cola, favoritos e intentos existen" "4" \
   "$(q "select count(*) from pg_indexes where schemaname='public' and indexname in ('idx_ventas_cola_fiscal','idx_receptores_fiscales_sucursal','idx_receptores_fiscales_documento','idx_emision_fiscal_intentos_venta')")"
+check "índice de cola incluye legacy y orden total descendente" "true|true|true|true" \
+  "$(q "select (indexdef ilike '%fecha DESC, id DESC%')::text||'|'||(indexdef ilike '%PENDIENTE%')::text||'|'||(indexdef ilike '%ERROR%')::text||'|'||(indexdef ilike '%SIN_FACTURAR%')::text from pg_indexes where schemaname='public' and indexname='idx_ventas_cola_fiscal'")"
 check "se preserva la unicidad fiscal multiemisor exacta" "true" \
   "$(q "select (indexdef ilike '%(afip_emisor_cuit, afip_punto_venta, afip_cbte_tipo, afip_numero, afip_modo, afip_simulado)%' and indexdef ilike '%where (afip_numero is not null)%')::text from pg_indexes where schemaname='public' and indexname='uq_ventas_afip_numeracion'")"
 

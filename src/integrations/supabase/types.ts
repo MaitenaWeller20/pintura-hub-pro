@@ -3285,6 +3285,32 @@ export type Database = {
           saldo: number
         }[]
       }
+      cola_fiscal_lectura: {
+        Args: {
+          p_desde?: string
+          p_documento?: string
+          p_emisor_id?: string
+          p_estado?: string
+          p_hasta?: string
+          p_page: number
+          p_page_size: number
+          p_sucursal_id?: string
+          p_tab: string
+          p_venta_id?: string
+        }
+        Returns: {
+          conteo_emitidas: number
+          conteo_historial: number
+          conteo_pendientes: number
+          conteo_revisar: number
+          filas: Json
+          filtros_disponibles: Json
+          pagina: number
+          paginas: number
+          tamano_pagina: number
+          total: number
+        }[]
+      }
       condicion_iva_emisor: { Args: never; Returns: string }
       confirmar_ingreso_mercaderia: {
         Args: {
@@ -3424,6 +3450,10 @@ export type Database = {
           venta_id: string
         }[]
       }
+      cuit_fiscal_snapshot_valido: {
+        Args: { p_cuit: string }
+        Returns: boolean
+      }
       current_sucursal_id: { Args: never; Returns: string }
       desactivar_receptor_fiscal: {
         Args: { p_receptor_id: string }
@@ -3490,6 +3520,7 @@ export type Database = {
       }
       iniciar_conteo_stock: { Args: never; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
+      leer_venta_fiscal_exacta: { Args: { p_venta_id: string }; Returns: Json }
       next_comprobante_numero: {
         Args: {
           _sucursal_id: string
@@ -3576,6 +3607,10 @@ export type Database = {
           afip_version: number
           venta_id: string
         }[]
+      }
+      validar_snapshot_fiscal_v2: {
+        Args: { p_snapshot: Json }
+        Returns: undefined
       }
     }
     Enums: {

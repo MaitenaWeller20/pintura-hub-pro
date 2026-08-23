@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluarPermisoFiscal } from "./permiso.server";
+import { autorizarContextoColaFiscal, evaluarPermisoFiscal } from "./permiso.server";
 
 const base = {
   venta: { id: "venta", sucursalId: "sucursal-a", diasAntiguedad: 0 },
@@ -84,5 +84,84 @@ describe("permiso fiscal server", () => {
         confirmaVentaAntigua: false,
       }),
     ).toMatchObject({ esAdmin: false });
+  });
+});
+
+describe("contexto user-bound de cola y favoritos", () => {
+  it("fuerza al empleado activo y capaz a su sucursal activa habilitada", async () => {
+    const contexto = await autorizarContextoColaFiscal({
+      userId: "user",
+      lecturas: {
+        consultarEsAdmin: async () => false,
+        cargarPerfil: async () => ({
+          activo: true,
+          puedeFacturar: true,
+          sucursalId: "sucursal-a",
+        }),
+        cargarSucursal: async () => ({ activa: true, asignada: true }),
+      },
+    });
+    expect(contexto).toEqual({ userId: "user", esAdmin: false, sucursalId: "sucursal-a" });
+  });
+
+  it.each([
+    [null, /perfil/i],
+    [{ activo: false, puedeFacturar: true, sucursalId: "sucursal-a" }, /inactivo/i],
+    [{ activo: true, puedeFacturar: false, sucursalId: "sucursal-a" }, /capacidad/i],
+    [{ activo: true, puedeFacturar: true, sucursalId: null }, /sucursal activa/i],
+  ])("rechaza un empleado sin contexto fiscal completo", async (perfil, mensaje) => {
+    await expect(
+      autorizarContextoColaFiscal({
+        userId: "user",
+        lecturas: {
+          consultarEsAdmin: async () => false,
+          cargarPerfil: async () => perfil,
+          cargarSucursal: async () => ({ activa: true, asignada: true }),
+        },
+      }),
+    ).rejects.toThrow(mensaje);
+  });
+
+  it("rechaza sucursal deshabilitada y deja al admin sin filtro forzado", async () => {
+    await expect(
+      autorizarContextoColaFiscal({
+        userId: "user",
+        lecturas: {
+          consultarEsAdmin: async () => false,
+          cargarPerfil: async () => ({
+            activo: true,
+            puedeFacturar: true,
+            sucursalId: "sucursal-a",
+          }),
+          cargarSucursal: async () => ({ activa: false, asignada: true }),
+        },
+      }),
+    ).rejects.toThrow(/sucursal.*inactiva/i);
+
+    await expect(
+      autorizarContextoColaFiscal({
+        userId: "user",
+        lecturas: {
+          consultarEsAdmin: async () => false,
+          cargarPerfil: async () => ({
+            activo: true,
+            puedeFacturar: true,
+            sucursalId: "sucursal-a",
+          }),
+          cargarSucursal: async () => ({ activa: true, asignada: false }),
+        },
+      }),
+    ).rejects.toThrow(/sucursal.*asignada/i);
+
+    await expect(
+      autorizarContextoColaFiscal({
+        userId: "admin",
+        lecturas: {
+          consultarEsAdmin: async () => true,
+          cargarPerfil: async () => null,
+          cargarSucursal: async () => null,
+        },
+      }),
+    ).resolves.toEqual({ userId: "admin", esAdmin: true, sucursalId: null });
   });
 });

@@ -175,12 +175,20 @@ no constituye una ventana de convivencia; el cliente actual requiere el contrato
 
 La instalación manual debe detenerse antes de la #4 y entrar en una ventana de mantenimiento real:
 impedir nuevas escrituras comerciales, drenar requests y transacciones de todas las instancias
-anteriores, aplicar #4 a #21 en orden, desplegar el cliente compatible con autorización separada y
+anteriores, aplicar #4 a #23 en orden, desplegar el cliente compatible con autorización separada y
 mantener el bloqueo hasta comprobarlo y drenar las instancias viejas. Si no se puede demostrar el
 mantenimiento o el drenaje, se aborta. No se expone el helper a `authenticated` como atajo; el
 permiso transitorio de `service_role` se retira sólo junto con el escritor fiscal legado, en un gate
-posterior. La #21 completa el cierre: bloquea RPC privilegiadas para perfiles inactivos y deja a
-`anon`/`authenticated` con sólo lectura sobre encabezados e ítems de remitos.
+posterior. La #21 bloquea RPC privilegiadas puntuales y deja a `anon`/`authenticated` con sólo
+lectura sobre remitos; la #22 vuelve global el requisito de perfil activo, impide la auto-reactivación
+con un JWT viejo y ordena los locks de stock; la #23 hace recuperable también una cancelación
+neutral cuya respuesta se perdió.
+
+Cada archivo manual se ejecuta en una transacción y, sólo después de verificar su esquema, se
+registra mediante `supabase migration repair --status applied <VERSION> --linked`. A continuación
+se exige que `supabase migration list --linked` coincida exactamente con el manifiesto. Nunca se
+escribe a mano en `supabase_migrations`: esquema y ledger son controles separados, y una diferencia
+detiene el rollout.
 
 ### Corte fiscal y rollback
 

@@ -36,9 +36,12 @@ WITH requeridas(version,nombre) AS (
     ('20260823162000','fix_venta_idempotencia_autorizacion'),
     ('20260823164000','restringir_liberacion_claim_fiscal'),
     ('20260823165000','nota_credito_idempotente'),
-    ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos')
+    ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
+    ('20260823172000','perfil_activo_autorizacion_global'),
+    ('20260823173000','anulacion_neutral_idempotente')
 )
 SELECT
+  'LEDGER' AS control,
   r.version,
   r.nombre,
   EXISTS (
@@ -49,6 +52,94 @@ SELECT
   ) AS aplicada_exacta
 FROM requeridas AS r
 ORDER BY r.version;
+
+-- Gate de ledger: el SQL ya aplicado y el registro de migraciones son controles
+-- distintos. La verificación de esquema continúa debajo, pero no se la acepta
+-- como sustituto del `migration repair` oficial.
+DO $$
+DECLARE
+  v_faltantes text;
+  v_inesperadas text;
+BEGIN
+  WITH requeridas(version,nombre) AS (
+    VALUES
+      ('20260822133249','venta_fiscal_neutra_enum'),
+      ('20260822133911','receptor_fiscal_outbox'),
+      ('20260822144846','maquina_estados_emision_fiscal'),
+      ('20260822161644','venta_fiscal_atomica'),
+      ('20260822195131','proteger_evidencia_factura_a_emisores'),
+      ('20260822203901','snapshot_fiscal_v2_completo'),
+      ('20260822215956','snapshot_fiscal_v2_fechas_cuit_canonicos'),
+      ('20260822232541','recuperar_cae_emision_fiscal'),
+      ('20260822232546','lectura_exacta_emision_fiscal'),
+      ('20260823030402','cola_fiscal_lectura'),
+      ('20260823081724','conflictos_emision_no_reintentables'),
+      ('20260823103551','bloquear_notas_debito_v2'),
+      ('20260823121146','cercar_notas_en_crear_venta'),
+      ('20260823121846','liberar_claim_ante_reserva_fiscal_ajena'),
+      ('20260823130734','recomputar_maximo_fiscal_bajo_lock'),
+      ('20260823143000','crear_remito_atomico'),
+      ('20260823160000','remitos_integridad_idempotencia'),
+      ('20260823162000','fix_venta_idempotencia_autorizacion'),
+      ('20260823164000','restringir_liberacion_claim_fiscal'),
+      ('20260823165000','nota_credito_idempotente'),
+      ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
+      ('20260823172000','perfil_activo_autorizacion_global'),
+      ('20260823173000','anulacion_neutral_idempotente')
+  )
+  SELECT pg_catalog.string_agg(r.version||'_'||r.nombre,',' ORDER BY r.version)
+    INTO v_faltantes
+    FROM requeridas AS r
+   WHERE NOT EXISTS (
+     SELECT 1
+       FROM supabase_migrations.schema_migrations AS sm
+      WHERE sm.version=r.version AND sm.name=r.nombre
+   );
+
+  WITH requeridas(version,nombre) AS (
+    VALUES
+      ('20260822133249','venta_fiscal_neutra_enum'),
+      ('20260822133911','receptor_fiscal_outbox'),
+      ('20260822144846','maquina_estados_emision_fiscal'),
+      ('20260822161644','venta_fiscal_atomica'),
+      ('20260822195131','proteger_evidencia_factura_a_emisores'),
+      ('20260822203901','snapshot_fiscal_v2_completo'),
+      ('20260822215956','snapshot_fiscal_v2_fechas_cuit_canonicos'),
+      ('20260822232541','recuperar_cae_emision_fiscal'),
+      ('20260822232546','lectura_exacta_emision_fiscal'),
+      ('20260823030402','cola_fiscal_lectura'),
+      ('20260823081724','conflictos_emision_no_reintentables'),
+      ('20260823103551','bloquear_notas_debito_v2'),
+      ('20260823121146','cercar_notas_en_crear_venta'),
+      ('20260823121846','liberar_claim_ante_reserva_fiscal_ajena'),
+      ('20260823130734','recomputar_maximo_fiscal_bajo_lock'),
+      ('20260823143000','crear_remito_atomico'),
+      ('20260823160000','remitos_integridad_idempotencia'),
+      ('20260823162000','fix_venta_idempotencia_autorizacion'),
+      ('20260823164000','restringir_liberacion_claim_fiscal'),
+      ('20260823165000','nota_credito_idempotente'),
+      ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
+      ('20260823172000','perfil_activo_autorizacion_global'),
+      ('20260823173000','anulacion_neutral_idempotente')
+  )
+  SELECT pg_catalog.string_agg(sm.version||'_'||sm.name,',' ORDER BY sm.version)
+    INTO v_inesperadas
+    FROM supabase_migrations.schema_migrations AS sm
+   WHERE sm.version>='20260822133249'
+     AND NOT EXISTS (
+       SELECT 1 FROM requeridas AS r
+        WHERE r.version=sm.version AND r.nombre=sm.name
+     );
+
+  IF v_faltantes IS NOT NULL OR v_inesperadas IS NOT NULL THEN
+    RAISE EXCEPTION
+      'LEDGER_MIGRACIONES_INCOMPLETO: faltantes=%, inesperadas=%. Verifique esquema; luego use migration repair oficial, nunca edite supabase_migrations.',
+      COALESCE(v_faltantes,'ninguna'),COALESCE(v_inesperadas,'ninguna');
+  END IF;
+END;
+$$;
+
+SELECT 'ESQUEMA' AS control,'comienzo de postcondiciones independientes' AS estado;
 
 -- Banderas. Antes del corte: false/true. Durante mantenimiento y rollback: false/false.
 SELECT

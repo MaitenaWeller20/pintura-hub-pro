@@ -138,6 +138,15 @@ fi
 
 supabase migration list --local >"$EVIDENCE_DIR/migration-list-local.txt"
 
+{
+  echo "scope=local-only"
+  echo "schema_verified_by=$AUDIT_SQL"
+  echo "ledger_verified_by=task14-migrations-files.txt vs task14-migrations-ledger.txt"
+  echo "linked_repair_executed=false"
+  echo "linked_repair_instruction=supabase migration repair --status applied <VERSION> --linked"
+  echo "linked_list_required_before_rollout=true"
+} >"$EVIDENCE_DIR/schema-vs-ledger.txt"
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   --no-psqlrc --set ON_ERROR_STOP=1 --file=- \
   <"$AUDIT_SQL" \
@@ -183,6 +192,7 @@ done
     scripts/test-caja-y-saldos.sh \
     scripts/test-crear-remito-atomico.sh \
     scripts/test-remitos-acl.sh \
+    scripts/test-remitos-concurrencia.sh \
     scripts/test-perfiles-inactivos-rpc.sh \
     scripts/test-conflictos-emision-rest.sh \
     scripts/test-notas-v2-rest.sh \
@@ -208,7 +218,7 @@ done
 END_EPOCH="$(date +%s)"
 {
   echo "cwd=$(pwd)"
-  echo "commands=git status --short; git diff --check; shasum -a 256 + manifest cmp; supabase migration list --local; docker psql READ ONLY audit; tracked/generated path/content-candidate scan"
+  echo "commands=git status --short; git diff --check; shasum -a 256 + manifest cmp; supabase migration list --local; local ledger diff; docker psql READ ONLY schema+ledger audit; tracked/generated path/content-candidate scan"
   echo "environment_values_recorded=false"
   echo "external_network_used=false"
   echo "exit=0"

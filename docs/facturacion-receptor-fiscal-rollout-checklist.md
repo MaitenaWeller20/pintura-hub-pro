@@ -50,6 +50,8 @@ ejecutar; cualquier diferencia exige detenerse y revisar un nuevo manifiesto.
 |    19 | `20260823164000_restringir_liberacion_claim_fiscal.sql`          | `dd56b55bb4aae0a6852300d1d8d456efc74bc5a9839da38dae7288daa1b59af1` |
 |    20 | `20260823165000_nota_credito_idempotente.sql`                    | `b14e354e266285ee3de8df8882fdb9270ba424ad69460dcf89fcb87a7af9839a` |
 |    21 | `20260823170000_restringir_perfiles_inactivos_y_acl_remitos.sql` | `eb93fc0a7ce83f2be487aa597379a3b9d8bb8ab30d380f70c3abc5935722bef7` |
+|    22 | `20260823172000_perfil_activo_autorizacion_global.sql`           | `87d7f7336b7d6a8718d2826341116745c88fad0d7a579b46504f96a3f70362dc` |
+|    23 | `20260823173000_anulacion_neutral_idempotente.sql`               | `35e2c97613ad6c35ee7474a470804aa6f951eea0989cdecf3933ec5b74103d3b` |
 
 No forman parte del manifiesto `backfill_cola_fiscal` ni `retirar_escritor_fiscal_legacy`: sólo
 pueden crearse después de sus respectivos gates post-deployment.
@@ -71,9 +73,16 @@ Aplicar manualmente, un archivo por vez y en el orden del manifiesto, desde
 `20260822144846_maquina_estados_emision_fiscal.sql`, inclusive.
 
 - [ ] Antes de cada archivo se comparó su SHA-256.
-- [ ] Cada archivo se ejecutó en su propia transacción desde SQL Editor.
-- [ ] Si se cortó la conexión, se inspeccionó el ledger y las postcondiciones antes de decidir;
-      nunca se reintentó a ciegas ni se editó `supabase_migrations` manualmente.
+- [ ] Cada archivo se ejecutó en su propia transacción desde SQL Editor (`BEGIN;` + contenido exacto
+      + `COMMIT;`) y se verificaron sus postcondiciones de esquema antes de registrar la versión.
+- [ ] Después de verificar cada archivo, desde el checkout vinculado se ejecutó el mecanismo oficial
+      `supabase migration repair --status applied <VERSION> --linked`; nunca se hizo `INSERT`,
+      `UPDATE` ni `DELETE` manual sobre `supabase_migrations`.
+- [ ] `supabase migration list --linked` confirmó inmediatamente la versión local/remota exacta. Si
+      repair o el listado no coincidieron, se abortó antes del archivo siguiente.
+- [ ] Si se cortó la conexión, se inspeccionaron **por separado** esquema y ledger antes de decidir:
+      si el esquema ya estaba aplicado, no se reejecutó el SQL; se verificó y recién después se hizo
+      `migration repair`. Nunca se reintentó a ciegas.
 - [ ] Se verificó después de cada archivo y se registró el query ID/operador/hora.
 - [ ] Las banderas continuaron `v2=false`, `legacy=true`.
 - [ ] No se ejecutó el modo aplicar de `backfill_cola_fiscal`.
@@ -99,9 +108,11 @@ real.
 - [ ] Se registró la duración máxima real de requests/functions/transactions: `__________`.
 - [ ] Se esperó al menos ese límite y la auditoría mostró que no quedan requests ni transacciones
       anteriores en curso.
-- [ ] Se aplicaron #4 a #21, desde `20260822161644_venta_fiscal_atomica.sql` hasta
-      `20260823170000_restringir_perfiles_inactivos_y_acl_remitos.sql`, uno por transacción y con
-      hashes verificados.
+- [ ] Se aplicaron #4 a #23, desde `20260822161644_venta_fiscal_atomica.sql` hasta
+      `20260823173000_anulacion_neutral_idempotente.sql`, uno por transacción, con hashes y
+      postcondiciones verificados, y cada versión quedó registrada mediante `migration repair`.
+- [ ] La auditoría sólo lectura distingue esquema de ledger y terminó sin la excepción
+      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 23 filas.
 - [ ] Se desplegó el cliente compatible sólo con autorización separada; ID: `__________`.
 - [ ] El mantenimiento siguió activo mientras convivían instancias antiguas y nuevas.
 - [ ] Se esperó y comprobó el drenaje de todas las instancias antiguas.

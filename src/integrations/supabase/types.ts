@@ -1973,9 +1973,11 @@ export type Database = {
           estado: Database["public"]["Enums"]["estado_remito"]
           fecha_aprobacion: string | null
           id: string
+          idempotency_key: string | null
           motivo_rechazo: string | null
           numero: string
           observaciones: string | null
+          request_fingerprint: string | null
           sucursal_destino_id: string
           sucursal_origen_id: string
           updated_at: string
@@ -1987,9 +1989,11 @@ export type Database = {
           estado?: Database["public"]["Enums"]["estado_remito"]
           fecha_aprobacion?: string | null
           id?: string
+          idempotency_key?: string | null
           motivo_rechazo?: string | null
           numero: string
           observaciones?: string | null
+          request_fingerprint?: string | null
           sucursal_destino_id: string
           sucursal_origen_id: string
           updated_at?: string
@@ -2001,9 +2005,11 @@ export type Database = {
           estado?: Database["public"]["Enums"]["estado_remito"]
           fecha_aprobacion?: string | null
           id?: string
+          idempotency_key?: string | null
           motivo_rechazo?: string | null
           numero?: string
           observaciones?: string | null
+          request_fingerprint?: string | null
           sucursal_destino_id?: string
           sucursal_origen_id?: string
           updated_at?: string
@@ -2776,6 +2782,7 @@ export type Database = {
           fecha: string
           id: string
           idempotency_key: string | null
+          idempotency_payload_hash: string | null
           iva_total: number
           nombre_obra: string | null
           numero_comprobante: string
@@ -2827,6 +2834,7 @@ export type Database = {
           fecha?: string
           id?: string
           idempotency_key?: string | null
+          idempotency_payload_hash?: string | null
           iva_total?: number
           nombre_obra?: string | null
           numero_comprobante: string
@@ -2878,6 +2886,7 @@ export type Database = {
           fecha?: string
           id?: string
           idempotency_key?: string | null
+          idempotency_payload_hash?: string | null
           iva_total?: number
           nombre_obra?: string | null
           numero_comprobante?: string
@@ -3158,6 +3167,27 @@ export type Database = {
       }
     }
     Functions: {
+      _crear_venta_core_20260823: {
+        Args: {
+          p_cbte_asoc_id?: string
+          p_cliente_id: string
+          p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
+          p_fecha?: string
+          p_idempotency_key?: string
+          p_items: Json
+          p_nombre_obra?: string
+          p_observaciones?: string
+          p_pagos: Json
+          p_percepciones?: number
+          p_sucursal_id: string
+          p_tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
       abrir_caja: {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
@@ -3431,6 +3461,7 @@ export type Database = {
       }
       crear_remito: {
         Args: {
+          p_idempotency_key: string
           p_items: Json
           p_observaciones: string
           p_sucursal_destino_id: string

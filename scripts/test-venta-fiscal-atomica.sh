@@ -194,7 +194,7 @@ SELECT * FROM public.crear_venta(
   'b4000000-0000-0000-0000-000000000001','VENTA','CONTADO',
   '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":2}]'::jsonb,
   '[{"forma_pago":"EFECTIVO","monto":1000}]'::jsonb,
-  0,'T4-REPLAY-NO-DEBE-ESCRIBIR',NULL,NULL,NULL,
+  0,'T4-VENTA-PRINCIPAL',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000001'
 );
 SELECT pg_temp.capture_effects('replayed');
@@ -206,7 +206,8 @@ SELECT pg_temp.assert_effects_equal(
   'created','replayed','el replay no duplica ningún efecto comercial'
 );
 
--- Sólo una fila neutral versión 0 totalmente virgen se puede reparar.
+-- Una fila anterior a la huella no se puede reparar de forma verificable: la
+-- misma respuesta opaca cubre clave ajena, payload cambiado y legado sin hash.
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
@@ -219,17 +220,29 @@ SELECT
   'CONTADO',100,21,121,121,'PAGADO','T4-LEGACY-NEUTRAL',
   'e4000000-0000-0000-0000-000000000002','PENDIENTE',0
 FROM public.sucursales ORDER BY numero LIMIT 1;
-SELECT venta_id FROM public.crear_venta(
-  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  'b4000000-0000-0000-0000-000000000001','VENTA','CONTADO',
-  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
-  '[{"forma_pago":"EFECTIVO","monto":1210}]'::jsonb,
-  0,NULL,NULL,NULL,NULL,'e4000000-0000-0000-0000-000000000002'
-);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.crear_venta(
+      (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+      'b4000000-0000-0000-0000-000000000001','VENTA','CONTADO',
+      '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+      '[{"forma_pago":"EFECTIVO","monto":1210}]'::jsonb,
+      0,NULL,NULL,NULL,NULL,'e4000000-0000-0000-0000-000000000002'
+    );
+    RAISE EXCEPTION 'el replay legacy sin hash no falló';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='el replay legacy sin hash no falló'
+       OR SQLERRM NOT LIKE '%no corresponde a esta operación%' THEN
+      RAISE;
+    END IF;
+  END;
+END;
+$$;
 SELECT pg_temp.assert_true(
-  (SELECT afip_estado='SIN_FACTURAR' AND afip_version=0
+  (SELECT afip_estado='PENDIENTE' AND afip_version=0
      FROM public.ventas WHERE id='f4000000-0000-0000-0000-000000000001'),
-  'el fast path repara sólo el neutral legacy completamente virgen'
+  'el replay legacy sin huella se rechaza y no repara estado'
 );
 
 -- Un replay con claim activo debe bloquear la fila y devolverla sin resetearla.
@@ -246,7 +259,9 @@ SELECT pg_temp.capture_effects('before_emitting_replay');
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b4000000-0000-0000-0000-000000000001','VENTA','CONTADO',
-  '[]'::jsonb,'[]'::jsonb,0,NULL,NULL,NULL,NULL,
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":2}]'::jsonb,
+  '[{"forma_pago":"EFECTIVO","monto":1000}]'::jsonb,
+  0,'T4-VENTA-PRINCIPAL',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000001'
 );
 SELECT pg_temp.capture_effects('after_emitting_replay');
@@ -536,13 +551,17 @@ SELECT pg_temp.capture_effects('before_evidence_replays');
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b4000000-0000-0000-0000-000000000001','VENTA','CONTADO',
-  '[]'::jsonb,'[]'::jsonb,0,NULL,NULL,NULL,NULL,
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[{"forma_pago":"EFECTIVO","monto":100}]'::jsonb,
+  0,'T4-COBRO-RECON',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000032'
 );
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b4000000-0000-0000-0000-000000000001','VENTA','CONTADO',
-  '[]'::jsonb,'[]'::jsonb,0,NULL,NULL,NULL,NULL,
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[{"forma_pago":"EFECTIVO","monto":100}]'::jsonb,
+  0,'T4-COBRO-OK',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000033'
 );
 SELECT pg_temp.capture_effects('after_evidence_replays');
@@ -585,7 +604,8 @@ SELECT afip_estado,afip_version,afip_error,afip_error_clase,afip_error_codigo,
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b4000000-0000-0000-0000-000000000001','VENTA','CTA_CTE',
-  '[]'::jsonb,'[]'::jsonb,0,NULL,NULL,NULL,NULL,
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T4-BLOQUEADA',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000034'
 );
 SELECT pg_temp.assert_true(
@@ -1559,8 +1579,8 @@ SELECT pg_temp.assert_true(
   NOT has_function_privilege('public','public.next_comprobante_numero(uuid,tipo_comprobante)','execute')
   AND NOT has_function_privilege('anon','public.next_comprobante_numero(uuid,tipo_comprobante)','execute')
   AND NOT has_function_privilege('authenticated','public.next_comprobante_numero(uuid,tipo_comprobante)','execute')
-  AND NOT has_function_privilege('service_role','public.next_comprobante_numero(uuid,tipo_comprobante)','execute'),
-  'next_comprobante_numero queda como helper interno sin roles API'
+  AND has_function_privilege('service_role','public.next_comprobante_numero(uuid,tipo_comprobante)','execute'),
+  'next_comprobante_numero queda cerrado a JWT de usuario y sólo conserva compatibilidad backend legacy'
 );
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1 AND bool_and(p.prosecdef)
@@ -1682,14 +1702,39 @@ VALUES (
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
-  observaciones,idempotency_key,afip_estado,afip_version
+  observaciones,idempotency_key,afip_estado,afip_version,idempotency_payload_hash
 )
 SELECT
   'f4000000-0000-0000-0000-000000000101',id,
   'b4000000-0000-0000-0000-000000000101',
   'a4000000-0000-0000-0000-000000000101','T4-VTA-LOCK','VENTA',
   'CTA_CTE',100,21,121,0,'PENDIENTE','T4-LOCK',
-  'e4000000-0000-0000-0000-000000000101','SIN_FACTURAR',0
+  'e4000000-0000-0000-0000-000000000101','SIN_FACTURAR',0,
+  pg_catalog.encode(
+    extensions.digest(
+      pg_catalog.convert_to(
+        pg_catalog.jsonb_build_object(
+          'version',1,
+          'actor_id','a4000000-0000-0000-0000-000000000101'::uuid,
+          'sucursal_id',id,
+          'cliente_id','b4000000-0000-0000-0000-000000000101'::uuid,
+          'tipo_comprobante','VENTA'::public.tipo_comprobante,
+          'condicion_venta','CTA_CTE'::public.condicion_venta,
+          'items','[]'::jsonb,
+          'pagos','[]'::jsonb,
+          'percepciones',0::numeric,
+          'observaciones',NULL,
+          'nombre_obra',NULL,
+          'fecha',NULL,
+          'cbte_asoc_id',NULL,
+          'idempotency_key','e4000000-0000-0000-0000-000000000101'::uuid
+        )::text,
+        'UTF8'
+      ),
+      'sha256'
+    ),
+    'hex'
+  )
 FROM public.sucursales ORDER BY numero LIMIT 1;
 SQL
 

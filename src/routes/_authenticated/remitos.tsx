@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
@@ -48,6 +48,7 @@ import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearRemito, editarRemito, aprobarRemito, rechazarRemito } from "@/lib/stock.functions";
 import { fmtDateTime } from "@/lib/format";
+import { uuidv4 } from "@/lib/uuid";
 import {
   filtroProducto,
   ordenarProductosPorRelevancia,
@@ -444,6 +445,9 @@ function RemitoDialog({ open, remito = null, onClose, onSaved }: any) {
   const crear = useServerFn(crearRemito);
   const editar = useServerFn(editarRemito);
   const esEdicion = !!remito;
+  // Se conserva durante toda la apertura del diálogo. Un timeout permite
+  // reintentar con la misma clave y recuperar el remito ya confirmado.
+  const idempotencyKeyRef = useRef(uuidv4());
   const [origen, setOrigen] = useState<string>(
     remito?.sucursal_origen_id ?? cu?.sucursal?.id ?? "",
   );
@@ -523,6 +527,7 @@ function RemitoDialog({ open, remito = null, onClose, onSaved }: any) {
           sucursal_destino_id: destino,
           observaciones: obs,
           items: detalle,
+          idempotency_key: idempotencyKeyRef.current,
         },
       });
     },

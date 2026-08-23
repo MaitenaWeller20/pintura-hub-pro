@@ -47,7 +47,12 @@ export const editarRemito = createServerFn({ method: "POST" })
           .array(
             z.object({
               producto_id: z.string().uuid(),
-              cantidad: z.number().positive().finite(),
+              cantidad: z
+                .number()
+                .min(0.01)
+                .max(999_999_999_999.99)
+                .multipleOf(0.01)
+                .finite(),
             }),
           )
           .min(1)
@@ -92,8 +97,19 @@ export const crearRemito = createServerFn({ method: "POST" })
         sucursal_origen_id: z.string().uuid(),
         sucursal_destino_id: z.string().uuid(),
         observaciones: z.string().max(2000).optional().nullable(),
+        idempotency_key: z.string().uuid(),
         items: z
-          .array(z.object({ producto_id: z.string().uuid(), cantidad: z.number().positive() }))
+          .array(
+            z.object({
+              producto_id: z.string().uuid(),
+              cantidad: z
+                .number()
+                .min(0.01)
+                .max(999_999_999_999.99)
+                .multipleOf(0.01)
+                .finite(),
+            }),
+          )
           .min(1)
           .max(500),
       })
@@ -123,6 +139,7 @@ export const crearRemito = createServerFn({ method: "POST" })
       p_sucursal_destino_id: data.sucursal_destino_id,
       p_observaciones: data.observaciones?.trim() || "",
       p_items: data.items,
+      p_idempotency_key: data.idempotency_key,
     });
     if (error) throw new Error(error.message);
 

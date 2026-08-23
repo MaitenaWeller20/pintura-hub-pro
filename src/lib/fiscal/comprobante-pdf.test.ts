@@ -118,7 +118,7 @@ const fiscalBase: DatosFiscalesImpresos = {
   simulado: false,
   validez: "PRODUCCION",
   iva_contenido: "210.00",
-  otros_impuestos_nacionales_indirectos: "17.00",
+  otros_impuestos_nacionales_indirectos: "0.00",
   qrInput: {
     fecha: "2026-08-22",
     cuit: "30712345678",
@@ -212,7 +212,7 @@ describe("comprobante impreso — los campos obligatorios", () => {
   it("incluye la leyenda de Transparencia Fiscal en una B a consumidor final", () => {
     expect(texto).toContain("Régimen de Transparencia Fiscal al Consumidor (Ley N° 27.743)");
     expect(texto).toContain("IVA Contenido: $ 210,00");
-    expect(texto).toContain("Otros Impuestos Nacionales Indirectos: $ 17,00");
+    expect(texto).toContain("Otros Impuestos Nacionales Indirectos: $ 0,00");
   });
 });
 
@@ -251,6 +251,7 @@ describe("totales fiscales completos", () => {
     expect(texto).toContain("$ 210,00");
     expect(texto).toContain("Percepciones y otros tributos");
     expect(texto).toContain("$ 20,00");
+    expect(texto).toContain("Otros Impuestos Nacionales Indirectos: $ 0,00");
     expect(texto).toContain("$ 1.380,00");
     expect(texto).not.toContain("$ 999.999,00");
   });
@@ -449,7 +450,7 @@ describe("comprobantes largos", () => {
     }
     const contenido = textoDelPdf(d);
     expect(contenido).toContain("CAE N°: 75123456789012");
-    expect(contenido).toContain("Otros Impuestos Nacionales Indirectos: $ 17,00");
+    expect(contenido).toContain("Otros Impuestos Nacionales Indirectos: $ 0,00");
     if (cantidad === 60) expect(d.getNumberOfPages()).toBeGreaterThan(1);
   });
 

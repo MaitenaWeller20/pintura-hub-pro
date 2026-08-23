@@ -126,6 +126,10 @@ export type DependenciasEmisionFiscal = {
   cargarEstadoParaLiberar?(ventaId: string): Promise<{
     claimToken: string;
     afipVersion: number;
+    afipEstado: string;
+    afipFase: string | null;
+    afipNumero: number | null;
+    tieneIdentidadReservada: boolean;
   }>;
   crearPayloadCae(snapshot: SnapshotFiscalV2): unknown;
   solicitarCae(reserva: ReservaFiscalPersistida, payload: unknown): Promise<SolicitudCaeFiscal>;

@@ -1,17 +1,135 @@
 import { describe, expect, it } from "vitest";
 import {
   cargarContextoArcaCongelado,
+  crearDependenciasEmisionFiscalServer,
   construirPreviewBorradorFiscalProvisional,
   construirSnapshotFiscalDesdeLectura,
   crearHuellaConfirmacionFiscal,
   esConflictoClaimFiscalServer,
   esConflictoSecuenciaFiscalServer,
+  liberarClaimFiscalVerificado,
   observarUltimoNumeroFiscalLocal,
+  previsualizarVentaFiscalExistente,
   proyectarReceptorFiscalConfirmado,
   type ConfirmacionFiscalPostBorrador,
 } from "./emision.server";
-import type { ReservaFiscalPersistida } from "./emision";
+import type { DependenciasEmisionFiscal, ReservaFiscalPersistida } from "./emision";
 import { validarSnapshotFiscalV2 } from "./snapshot";
+
+describe("liberación administrativa de claims", () => {
+  function dependenciasLiberacion(
+    estado: Record<string, unknown>,
+    transicionar: DependenciasEmisionFiscal["transicionar"] = async () => ({
+      venta_id: "71000000-0000-4000-8000-000000000001",
+      afip_estado: "ERROR_CORREGIBLE",
+      afip_fase: null,
+      afip_claim_token: null,
+      afip_numero: null,
+      afip_version: 2,
+    }),
+  ): DependenciasEmisionFiscal {
+    return {
+      cargarEstadoParaLiberar: async () => estado as never,
+      transicionar,
+    } as unknown as DependenciasEmisionFiscal;
+  }
+
+  it.each([
+    ["RESERVADO con número", "RESERVADO", 42, true],
+    ["PREFLIGHT con identidad anómala", "PREFLIGHT", null, true],
+  ])("rechaza %s antes de invocar la RPC", async (_caso, fase, numero, tieneIdentidad) => {
+    let transiciones = 0;
+    const deps = dependenciasLiberacion(
+      {
+        claimToken: "71000000-0000-4000-8000-000000000099",
+        afipVersion: 2,
+        afipEstado: "EMITIENDO",
+        afipFase: fase,
+        afipNumero: numero,
+        tieneIdentidadReservada: tieneIdentidad,
+      },
+      async () => {
+        transiciones += 1;
+        throw new Error("La transición insegura no debía ejecutarse.");
+      },
+    );
+
+    await expect(
+      liberarClaimFiscalVerificado({
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        deps,
+      }),
+    ).rejects.toThrow(/PREFLIGHT.*sin identidad|identidad.*reservada/i);
+    expect(transiciones).toBe(0);
+  });
+
+  it("libera sólo un PREFLIGHT sin identidad y conserva el CAS de versión", async () => {
+    const llamadas: Parameters<DependenciasEmisionFiscal["transicionar"]>[0][] = [];
+    const deps = dependenciasLiberacion(
+      {
+        claimToken: "71000000-0000-4000-8000-000000000099",
+        afipVersion: 7,
+        afipEstado: "EMITIENDO",
+        afipFase: "PREFLIGHT",
+        afipNumero: null,
+        tieneIdentidadReservada: false,
+      },
+      async (input) => {
+        llamadas.push(input);
+        return {
+          venta_id: input.ventaId,
+          afip_estado: "ERROR_CORREGIBLE",
+          afip_fase: null,
+          afip_claim_token: null,
+          afip_numero: null,
+          afip_version: 8,
+        };
+      },
+    );
+
+    await expect(
+      liberarClaimFiscalVerificado({
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        deps,
+      }),
+    ).resolves.toEqual({ estado: "LIBERADO" });
+    expect(llamadas).toEqual([
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        accion: "LIBERAR",
+        claimToken: "71000000-0000-4000-8000-000000000099",
+        payload: {
+          expected_version: 7,
+          verificacion: { nunca_enviado: true, fuente: "log_intento" },
+        },
+      },
+    ]);
+  });
+
+  it("falla cerrado si el adaptador no ofrece la lectura segura de PREFLIGHT", async () => {
+    const deps = {
+      cargarReservaPersistida: async () => ({
+        claimToken: "71000000-0000-4000-8000-000000000099",
+        afipVersion: 2,
+      }),
+      transicionar: async () => ({
+        venta_id: "71000000-0000-4000-8000-000000000001",
+        afip_estado: "ERROR_CORREGIBLE",
+        afip_fase: null,
+        afip_claim_token: null,
+        afip_numero: null,
+        afip_version: 3,
+      }),
+    } as unknown as DependenciasEmisionFiscal;
+
+    await expect(
+      liberarClaimFiscalVerificado({
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        deps,
+      }),
+    ).rejects.toThrow(/lectura segura.*PREFLIGHT/i);
+  });
+});
 
 describe("clasificación de contención fiscal REST", () => {
   it("acepta PT409 sólo con el prefijo estable de versión", () => {
@@ -249,7 +367,7 @@ describe("Snapshot desde lectura PostgreSQL exacta", () => {
     expect(validarSnapshotFiscalV2(snapshot)).toEqual(snapshot);
   });
 
-  it("mapea percepciones con descripción obligatoria y strings canónicos", () => {
+  it("mantiene las percepciones como tributo sin inventar otros impuestos nacionales indirectos", () => {
     const snapshot = construirSnapshotFiscalDesdeLectura({
       preparacion: preparacion("0.02") as never,
       numero: 1,
@@ -264,7 +382,180 @@ describe("Snapshot desde lectura PostgreSQL exacta", () => {
         importe: "0.02",
       },
     ]);
-    expect(snapshot.otrosImpuestosNacionalesIndirectos).toBe("0.02");
+    expect(snapshot.importeTributos).toBe("0.02");
+    expect(snapshot.otrosImpuestosNacionalesIndirectos).toBe("0.00");
+  });
+});
+
+describe("preview autoritativa de una nota de crédito", () => {
+  it("hereda los nombres fiscales congelados aunque el emisor y la sucursal vivos se renombren", async () => {
+    const base = preparacion();
+    const originalPreparacion = {
+      ...base,
+      contexto: {
+        ...base.contexto,
+        emisorImpreso: {
+          ...base.contexto.emisorImpreso,
+          razon_social: "EMISOR ORIGINAL CONGELADO",
+        },
+        sucursal: {
+          ...base.contexto.sucursal,
+          nombre: "SUCURSAL ORIGINAL CONGELADA",
+        },
+      },
+    };
+    const original = construirSnapshotFiscalDesdeLectura({
+      preparacion: originalPreparacion as never,
+      numero: 41,
+      fechaComprobante: "2026-08-22",
+    });
+
+    const lecturaOriginal = {
+      ...originalPreparacion.lectura,
+      venta: {
+        ...originalPreparacion.lectura.venta,
+        afipEstado: "APROBADO",
+        afipFase: "PERSISTIDO",
+        afipSnapshot: original,
+        afipSnapshotHash: original.hash,
+        afipNumero: original.identidad.numero,
+        afipEmisorCuit: original.identidad.emisorCuit,
+        afipPuntoVenta: original.identidad.puntoVenta,
+        afipCbteTipo: original.identidad.cbteTipo,
+        afipModo: original.identidad.modo,
+        afipSimulado: original.identidad.simulado,
+        afipValidez: original.identidad.validez,
+        afipFechaComprobante: original.fechaComprobante,
+        afipImpTotal: original.importeTotal,
+        cae: "75123456789012",
+        caeVencimiento: "2026-09-01",
+      },
+    };
+
+    const notaId = "71000000-0000-4000-8000-000000000002";
+    const lecturaNota = {
+      ...originalPreparacion.lectura,
+      venta: {
+        ...originalPreparacion.lectura.venta,
+        id: notaId,
+        numeroComercial: "NC-1",
+        tipoComprobante: "NOTA_CREDITO",
+        clienteId: null,
+        afipCbteAsocId: original.venta.id,
+      },
+    };
+
+    const emisorId = original.emisor.id;
+    const sucursalId = original.sucursal.id;
+    const admin = {
+      async rpc(_nombre: string, argumentos: { p_venta_id: string }) {
+        return {
+          data: argumentos.p_venta_id === notaId ? lecturaNota : lecturaOriginal,
+          error: null,
+        };
+      },
+      from(tabla: string) {
+        return {
+          select(columnas: string) {
+            const consulta = {
+              eq() {
+                return consulta;
+              },
+              async maybeSingle() {
+                if (tabla === "sucursales" && columnas === "direccion") {
+                  return { data: { direccion: "DOMICILIO VIVO" }, error: null };
+                }
+                if (tabla === "sucursales") {
+                  return {
+                    data: {
+                      id: sucursalId,
+                      nombre: "SUCURSAL RENOMBRADA EN VIVO",
+                      telefono: "3510000000",
+                      emisor_id: emisorId,
+                      emisor: {
+                        id: emisorId,
+                        razon_social: "EMISOR RENOMBRADO EN VIVO",
+                        nombre_fantasia: "Nombre vivo",
+                        cuit: original.identidad.emisorCuit,
+                        domicilio_fiscal: "DOMICILIO VIVO",
+                        condicion_iva: "RESPONSABLE_INSCRIPTO",
+                        ingresos_brutos: "123",
+                        inicio_actividades: "2020-01-01",
+                        factura_a_modalidad: "ESTANDAR_CONFIRMADA",
+                        factura_a_revalidar_at: "2027-01-01",
+                      },
+                    },
+                    error: null,
+                  };
+                }
+                if (tabla === "puntos_venta") {
+                  return {
+                    data: {
+                      sucursal_id: sucursalId,
+                      emisor_id: emisorId,
+                      numero: original.identidad.puntoVenta,
+                      modo: original.identidad.modo,
+                      activo: true,
+                    },
+                    error: null,
+                  };
+                }
+                if (tabla === "credenciales_arca") {
+                  return {
+                    data: {
+                      emisor_id: emisorId,
+                      ambiente: original.identidad.modo,
+                      arca_key_enc: "key",
+                      arca_cert_enc: "cert",
+                      habilitada: true,
+                    },
+                    error: null,
+                  };
+                }
+                throw new Error(`Consulta inesperada a ${tabla}.`);
+              },
+            };
+            return consulta;
+          },
+        };
+      },
+    };
+
+    const dependencias = crearDependenciasEmisionFiscalServer({
+      admin: admin as never,
+      usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
+      ventaIdAutorizada: notaId,
+      validarModalidadFacturaA: false,
+    });
+    const preparacionRuntime = await dependencias.prepararEmision({
+      ventaId: notaId,
+      receptor: { origen: "COMPROBANTE_ORIGINAL" },
+    });
+    expect(preparacionRuntime.confirmacionAutoritativa).toMatchObject({
+      emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
+      sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",
+    });
+
+    const preview = await previsualizarVentaFiscalExistente({
+      ventaId: notaId,
+      receptor: { origen: "COMPROBANTE_ORIGINAL" },
+      admin: admin as never,
+      usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
+    });
+
+    expect(preview.emisor_razon_social).toBe("EMISOR ORIGINAL CONGELADO");
+    expect(preview.sucursal_nombre).toBe("SUCURSAL ORIGINAL CONGELADA");
+    expect(preview.confirmacion_autoritativa).toMatchObject({
+      emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
+      sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",
+    });
+    expect(preview.huella_confirmacion).toBe(
+      crearHuellaConfirmacionFiscal({
+        ...preview.confirmacion_autoritativa,
+        emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
+        sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",
+      }),
+    );
   });
 });
 

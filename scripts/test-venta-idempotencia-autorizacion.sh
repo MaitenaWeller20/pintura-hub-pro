@@ -275,12 +275,12 @@ SELECT pg_temp.assert_true(
   (SELECT count(*)=1
           AND bool_and(p.prosecdef)
           AND bool_and(p.proconfig @> ARRAY['search_path=""']::text[])
+          AND bool_and(pg_catalog.pg_get_function_identity_arguments(p.oid)=
+            'p_sucursal_id uuid, p_cliente_id uuid, p_tipo_comprobante tipo_comprobante, p_condicion_venta condicion_venta, p_items jsonb, p_pagos jsonb, p_percepciones numeric, p_observaciones text, p_nombre_obra text, p_fecha timestamp with time zone, p_cbte_asoc_id uuid, p_idempotency_key uuid')
      FROM pg_catalog.pg_proc AS p
      JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
     WHERE n.nspname='public'
-      AND p.proname='crear_venta'
-      AND pg_catalog.pg_get_function_identity_arguments(p.oid)=
-        'p_sucursal_id uuid, p_cliente_id uuid, p_tipo_comprobante tipo_comprobante, p_condicion_venta condicion_venta, p_items jsonb, p_pagos jsonb, p_percepciones numeric, p_observaciones text, p_nombre_obra text, p_fecha timestamp with time zone, p_cbte_asoc_id uuid, p_idempotency_key uuid'),
+      AND p.proname='crear_venta'),
   'crear_venta conserva una sola firma exacta, SECURITY DEFINER y search_path vacío'
 );
 SELECT pg_temp.assert_true(
@@ -302,12 +302,12 @@ SELECT pg_temp.assert_true(
   (SELECT count(*)=1
           AND bool_and(p.prosecdef)
           AND bool_and(p.proconfig @> ARRAY['search_path=""']::text[])
+          AND bool_and(pg_catalog.pg_get_function_identity_arguments(p.oid)=
+            'p_sucursal_id uuid, p_cliente_id uuid, p_tipo_comprobante tipo_comprobante, p_condicion_venta condicion_venta, p_items jsonb, p_pagos jsonb, p_percepciones numeric, p_observaciones text, p_nombre_obra text, p_fecha timestamp with time zone, p_cbte_asoc_id uuid, p_idempotency_key uuid')
      FROM pg_catalog.pg_proc AS p
      JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
     WHERE n.nspname='public'
-      AND p.proname='_crear_venta_core_20260823'
-      AND pg_catalog.pg_get_function_identity_arguments(p.oid)=
-        'p_sucursal_id uuid, p_cliente_id uuid, p_tipo_comprobante tipo_comprobante, p_condicion_venta condicion_venta, p_items jsonb, p_pagos jsonb, p_percepciones numeric, p_observaciones text, p_nombre_obra text, p_fecha timestamp with time zone, p_cbte_asoc_id uuid, p_idempotency_key uuid')
+      AND p.proname='_crear_venta_core_20260823')
   AND NOT pg_catalog.has_function_privilege(
     'public','public._crear_venta_core_20260823(uuid,uuid,public.tipo_comprobante,public.condicion_venta,jsonb,jsonb,numeric,text,text,timestamptz,uuid,uuid)','EXECUTE'
   )

@@ -9,8 +9,12 @@ suite("motor fiscal contra Supabase local", () => {
   const ids = {
     user: "a9000000-0000-4000-8000-000000000001",
     client: "b9000000-0000-4000-8000-000000000001",
-    sales: [1, 2, 3, 4, 5].map((n) => `c9000000-0000-4000-8000-${String(n).padStart(12, "0")}`),
-    items: [1, 2, 3, 4, 5].map((n) => `d9000000-0000-4000-8000-${String(n).padStart(12, "0")}`),
+    sales: [1, 2, 3, 4, 5, 6, 7].map(
+      (n) => `c9000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+    ),
+    items: [1, 2, 3, 4, 5, 6, 7].map(
+      (n) => `d9000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+    ),
   };
   let sql: any;
   let supabase: any;
@@ -211,6 +215,7 @@ suite("motor fiscal contra Supabase local", () => {
     outcomes: Array<"OK" | "TIMEOUT">,
   ) {
     let arcaCalls = 0;
+    const transitionActions: string[] = [];
     const confirmacionAutoritativa = {
       version: 1 as const,
       importe: "1210.00",
@@ -235,6 +240,7 @@ suite("motor fiscal contra Supabase local", () => {
     };
     const huellaConfirmacion = crearHuellaConfirmacionFiscal(confirmacionAutoritativa);
     const transition = async ({ ventaId: id, accion, claimToken, payload }: any) => {
+      transitionActions.push(accion);
       const { data, error } = await supabase.rpc("transicionar_emision_fiscal", {
         p_venta_id: id,
         p_accion: accion,
@@ -326,7 +332,13 @@ suite("motor fiscal contra Supabase local", () => {
           ? { accion: "REENVIAR_MISMO_NUMERO" }
           : { accion: "BLOQUEAR", diferencias: ["secuencia"] },
     };
-    return { dependencies, arcaCalls: () => arcaCalls, transition, huellaConfirmacion };
+    return {
+      dependencies,
+      arcaCalls: () => arcaCalls,
+      transition,
+      transitionActions,
+      huellaConfirmacion,
+    };
   }
 
   it("aprueba, conserva lo comercial y hace coincidir los payloads TS con las allowlists", async () => {
@@ -458,6 +470,84 @@ suite("motor fiscal contra Supabase local", () => {
       afip_fase: "PERSISTIDO",
       afip_version: 5,
       cae: "74123456789012",
+    });
+  });
+
+  it("propaga RECUPERAR_CAE desde el motor TS hasta la RPC real", async () => {
+    const runtime = deps(ids.sales[5], ids.items[5], 905, ["TIMEOUT"]);
+    await ejecutarEmisionFiscal(
+      {
+        ventaId: ids.sales[5],
+        receptor: { origen: "CLIENTE_COMERCIAL" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: runtime.huellaConfirmacion,
+      },
+      runtime.dependencies,
+    );
+    runtime.transitionActions.length = 0;
+    runtime.dependencies.consultarComprobanteCompleto = async () => ({ voucher: "exacto" });
+    runtime.dependencies.decidirConciliacion = () => ({
+      accion: "RECUPERAR_CAE",
+      cae: "74123456789013",
+      vencimiento: "2026-09-02",
+    });
+
+    await expect(
+      ejecutarConciliacionFiscal({ ventaId: ids.sales[5] }, runtime.dependencies),
+    ).resolves.toMatchObject({
+      estado: "APROBADO",
+      recuperado: true,
+      cae: "74123456789013",
+    });
+    expect(runtime.transitionActions).toEqual(["RECUPERAR_CAE"]);
+    const [sale] = await sql`
+      select afip_estado,afip_fase,cae,afip_numero
+        from public.ventas
+       where id=${ids.sales[5]}
+    `;
+    expect(sale).toMatchObject({
+      afip_estado: "APROBADO",
+      afip_fase: "PERSISTIDO",
+      cae: "74123456789013",
+      afip_numero: 1,
+    });
+  });
+
+  it("propaga una divergencia como BLOQUEAR hasta la RPC real", async () => {
+    const runtime = deps(ids.sales[6], ids.items[6], 906, ["TIMEOUT"]);
+    await ejecutarEmisionFiscal(
+      {
+        ventaId: ids.sales[6],
+        receptor: { origen: "CLIENTE_COMERCIAL" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: runtime.huellaConfirmacion,
+      },
+      runtime.dependencies,
+    );
+    runtime.transitionActions.length = 0;
+    runtime.dependencies.consultarComprobanteCompleto = async () => ({ voucher: "divergente" });
+    runtime.dependencies.decidirConciliacion = () => ({
+      accion: "BLOQUEAR",
+      diferencias: ["receptor.docNro", "total", "total"],
+    });
+
+    await expect(
+      ejecutarConciliacionFiscal({ ventaId: ids.sales[6] }, runtime.dependencies),
+    ).resolves.toEqual({
+      estado: "BLOQUEADO",
+      diferencias: ["receptor.docNro", "total"],
+    });
+    expect(runtime.transitionActions).toEqual(["BLOQUEAR"]);
+    const [sale] = await sql`
+      select afip_estado,afip_fase,afip_numero,afip_error_clase
+        from public.ventas
+       where id=${ids.sales[6]}
+    `;
+    expect(sale).toMatchObject({
+      afip_estado: "BLOQUEADO",
+      afip_fase: "REQUEST_INICIADO",
+      afip_numero: 1,
+      afip_error_clase: "DIVERGENCIA",
     });
   });
 });

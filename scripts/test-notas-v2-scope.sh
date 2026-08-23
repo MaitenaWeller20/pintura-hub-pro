@@ -23,13 +23,13 @@ $$;
 
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1
+          AND bool_and(pg_get_function_identity_arguments(p.oid)='')
+          AND bool_and(NOT p.prosecdef)
+          AND bool_and(p.proconfig = ARRAY['search_path=""']::text[])
      FROM pg_proc AS p
      JOIN pg_namespace AS n ON n.oid=p.pronamespace
     WHERE n.nspname='public'
-      AND p.proname='bloquear_nota_debito_v2'
-      AND pg_get_function_identity_arguments(p.oid)=''
-      AND NOT p.prosecdef
-      AND p.proconfig = ARRAY['search_path=""']::text[]),
+      AND p.proname='bloquear_nota_debito_v2'),
   'el guard ND tiene firma única, SECURITY INVOKER y search_path vacío'
 );
 SELECT pg_temp.assert_true(

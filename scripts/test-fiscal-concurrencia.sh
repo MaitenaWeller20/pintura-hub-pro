@@ -278,14 +278,14 @@ check "el reclamo ganador persiste una sola versión y un solo intento" \
 echo
 echo "== Firma, hash y privilegios =="
 check "la RPC tiene una sola firma SECURITY INVOKER y search_path fijado" \
-  "1|false|true" \
-  "$(q "SELECT count(*)||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='transicionar_emision_fiscal' AND pg_get_function_identity_arguments(p.oid)='p_venta_id uuid, p_accion text, p_claim_token uuid, p_payload jsonb'")"
+  "1|true|false|true" \
+  "$(q "SELECT count(*)||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_venta_id uuid, p_accion text, p_claim_token uuid, p_payload jsonb')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='transicionar_emision_fiscal'")"
 check "sólo service_role puede ejecutar la RPC" \
   "false|false|false|true" \
   "$(q "SELECT has_function_privilege('public','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text||'|'||has_function_privilege('anon','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)','execute')::text")"
 check "el helper CUIT tiene una sola firma inmutable, invoker y search_path fijado" \
-  "1|true|false|true" \
-  "$(q "SELECT count(*)||'|'||bool_and(p.provolatile='i')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='cuit_fiscal_snapshot_valido' AND pg_get_function_identity_arguments(p.oid)='p_cuit text'")"
+  "1|true|true|false|true" \
+  "$(q "SELECT count(*)||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_cuit text')::text||'|'||bool_and(p.provolatile='i')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='cuit_fiscal_snapshot_valido'")"
 check "sólo service_role puede ejecutar el helper CUIT interno" \
   "false|false|false|true" \
   "$(q "SELECT has_function_privilege('public','public.cuit_fiscal_snapshot_valido(text)','execute')::text||'|'||has_function_privilege('anon','public.cuit_fiscal_snapshot_valido(text)','execute')::text||'|'||has_function_privilege('authenticated','public.cuit_fiscal_snapshot_valido(text)','execute')::text||'|'||has_function_privilege('service_role','public.cuit_fiscal_snapshot_valido(text)','execute')::text")"
@@ -302,8 +302,8 @@ check "sólo service_role puede ejecutar el validador v2" \
   "false|false|false|true" \
   "$(q "SELECT has_function_privilege('public','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('anon','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.validar_snapshot_fiscal_v2(jsonb)','execute')::text")"
 check "el validador v2 conserva una sola firma invoker y search_path fijado" \
-  "1|false|true" \
-  "$(q "SELECT count(*)||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='validar_snapshot_fiscal_v2' AND pg_get_function_identity_arguments(p.oid)='p_snapshot jsonb'")"
+  "1|true|false|true" \
+  "$(q "SELECT count(*)||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_snapshot jsonb')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='validar_snapshot_fiscal_v2'")"
 check "RESERVAR aplica explícitamente el helper CUIT estricto" \
   "true" \
   "$(q "SELECT (pg_get_functiondef('public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)'::regprocedure) LIKE '%NOT public.cuit_fiscal_snapshot_valido(p_payload->>''emisor_cuit'')%')::text")"
@@ -791,11 +791,10 @@ check_sql "la lectura exacta devuelve strings canónicos y no la deriva IEEE-754
    ) AS fiscal) AS exacta;"
 
 check_sql "la lectura exacta tiene una sola firma SECURITY INVOKER y search_path fijo" \
-  "1|false|true" \
-  "SELECT count(*)||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text
+  "1|true|false|true" \
+  "SELECT count(*)||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_venta_id uuid')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text
      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-    WHERE n.nspname='public' AND p.proname='leer_venta_fiscal_exacta'
-      AND pg_get_function_identity_arguments(p.oid)='p_venta_id uuid';"
+    WHERE n.nspname='public' AND p.proname='leer_venta_fiscal_exacta';"
 
 check_sql "sólo service_role ejecuta la lectura fiscal exacta" \
   "false|false|false|true" \

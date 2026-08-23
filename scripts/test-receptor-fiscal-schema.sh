@@ -74,18 +74,18 @@ check "authenticated no tiene privilegios sobre intentos" "false|false|false|fal
 check "service_role tiene sólo lectura/alta/actualización de intentos" "true|true|true|false" \
   "$(q "select has_table_privilege('service_role','public.emision_fiscal_intentos','select')::text||'|'||has_table_privilege('service_role','public.emision_fiscal_intentos','insert')::text||'|'||has_table_privilege('service_role','public.emision_fiscal_intentos','update')::text||'|'||has_table_privilege('service_role','public.emision_fiscal_intentos','delete')::text")"
 
-check "puede_facturar tiene una única firma invoker" "1|false" \
-  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='puede_facturar' and pg_get_function_identity_arguments(p.oid)='_uid uuid'")"
-check "backfill tiene una única firma invoker" "1|false" \
-  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='backfill_cola_fiscal' and pg_get_function_identity_arguments(p.oid)='p_aplicar boolean'")"
-check "desactivar favorito tiene una única firma definer" "1|true" \
-  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='desactivar_receptor_fiscal' and pg_get_function_identity_arguments(p.oid)='p_receptor_id uuid'")"
-check "guardar favorito post-CAE tiene una única firma definer" "1|true|v" \
-  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guardar_receptor_fiscal_desde_venta' and pg_get_function_identity_arguments(p.oid)='p_venta_id uuid'")"
+check "puede_facturar tiene una única firma invoker" "1|true|false" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='_uid uuid')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='puede_facturar'")"
+check "backfill tiene una única firma invoker" "1|true|false" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_aplicar boolean')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='backfill_cola_fiscal'")"
+check "desactivar favorito tiene una única firma definer" "1|true|true" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_receptor_id uuid')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='desactivar_receptor_fiscal'")"
+check "guardar favorito post-CAE tiene una única firma definer" "1|true|true|v" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_venta_id uuid')::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guardar_receptor_fiscal_desde_venta'")"
 check "guardar favorito post-CAE fija search_path vacío" "search_path=\"\"" \
   "$(q "select array_to_string(p.proconfig,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guardar_receptor_fiscal_desde_venta' and pg_get_function_identity_arguments(p.oid)='p_venta_id uuid'")"
-check "administrar permiso fiscal tiene una única firma definer" "1|true" \
-  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='administrar_puede_facturar' and pg_get_function_identity_arguments(p.oid)='p_profile_id uuid, p_puede_facturar boolean'")"
+check "administrar permiso fiscal tiene una única firma definer" "1|true|true" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_profile_id uuid, p_puede_facturar boolean')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='administrar_puede_facturar'")"
 check "PUBLIC no ejecuta rutinas fiscales o privilegiadas nuevas" "0" \
   "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','desactivar_receptor_fiscal','guardar_receptor_fiscal_desde_venta','administrar_puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
 check "authenticated y service_role ejecutan puede_facturar" "true|true" \
@@ -101,8 +101,8 @@ check "sólo authenticated ejecuta el guardado post-CAE" "false|true|false" \
 check "sólo authenticated ejecuta la administración del permiso fiscal" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('service_role','public.administrar_puede_facturar(uuid,boolean)','execute')::text")"
 
-check "cola fiscal tiene una única firma invoker y estable" "1|false|s" \
-  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura' and pg_get_function_identity_arguments(p.oid)='p_tab text, p_page integer, p_page_size integer, p_desde date, p_hasta date, p_sucursal_id uuid, p_emisor_id uuid, p_documento text, p_estado text, p_venta_id uuid'")"
+check "cola fiscal tiene una única firma invoker y estable" "1|true|false|s" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_tab text, p_page integer, p_page_size integer, p_desde date, p_hasta date, p_sucursal_id uuid, p_emisor_id uuid, p_documento text, p_estado text, p_venta_id uuid')::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
 check "cola fiscal fija search_path vacío" "search_path=\"\"" \
   "$(q "select array_to_string(p.proconfig,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
 check "sólo authenticated ejecuta la lectura de cola" "false|true|false" \
@@ -492,8 +492,10 @@ CREATE TEMP TABLE t2_backfill_antes ON COMMIT DROP AS
 SELECT id,afip_estado,afip_validez,afip_legacy_incompleto,afip_snapshot,
        afip_fecha_comprobante,afip_punto_venta
   FROM public.ventas WHERE id::text LIKE 'e2000000-%';
+SET LOCAL ROLE service_role;
 CREATE TEMP TABLE t2_backfill_preview ON COMMIT DROP AS
 SELECT * FROM public.backfill_cola_fiscal(false);
+RESET ROLE;
 
 DO $$
 BEGIN
@@ -522,7 +524,9 @@ BEGIN
   END IF;
 END $$;
 
+SET LOCAL ROLE service_role;
 SELECT * FROM public.backfill_cola_fiscal(true);
+RESET ROLE;
 
 DO $$
 BEGIN

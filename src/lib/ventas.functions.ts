@@ -99,7 +99,10 @@ export async function ejecutarCreacionNotaSegunFlags(
   deps: {
     cargarFlags(): Promise<FlagsFacturacion>;
     crearRegular(input: VentaInput): Promise<ResultadoCreacionVenta>;
-    crearNotaCreditoTotal(originalId: string): Promise<ResultadoCreacionVenta>;
+    crearNotaCreditoTotal(
+      originalId: string,
+      idempotencyKey: string,
+    ): Promise<ResultadoCreacionVenta>;
   },
 ): Promise<ResultadoCreacionVenta> {
   const flags = await deps.cargarFlags();
@@ -116,7 +119,10 @@ export async function ejecutarCreacionNotaSegunFlags(
     if (!input.cbte_asoc_id) {
       throw new Error("La nota de crédito fiscal exige el comprobante original.");
     }
-    return deps.crearNotaCreditoTotal(input.cbte_asoc_id);
+    if (!input.idempotency_key) {
+      throw new Error("Falta la clave de idempotencia de la nota de crédito.");
+    }
+    return deps.crearNotaCreditoTotal(input.cbte_asoc_id, input.idempotency_key);
   }
   return deps.crearRegular(input);
 }
@@ -170,7 +176,7 @@ export const crearVenta = createServerFn({ method: "POST" })
       {
         cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(supabase as never),
         crearRegular,
-        async crearNotaCreditoTotal(originalId) {
+        async crearNotaCreditoTotal(originalId, idempotencyKey) {
           const { data: original, error: lecturaError } = await supabase
             .from("ventas")
             .select(
@@ -203,6 +209,7 @@ export const crearVenta = createServerFn({ method: "POST" })
           }
           const { data: result, error } = await supabase.rpc("anular_venta", {
             p_venta_id: originalId,
+            p_idempotency_key: idempotencyKey,
           });
           if (error) throw new Error(error.message);
           return normalizarVentaCreada(result);

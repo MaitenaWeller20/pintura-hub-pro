@@ -58,7 +58,33 @@ describe("cerco comercial de NC/ND", () => {
         crearNotaCreditoTotal,
       }),
     ).resolves.toMatchObject({ id: "79000000-0000-4000-8000-000000000001" });
-    expect(crearNotaCreditoTotal).toHaveBeenCalledWith("78000000-0000-4000-8000-000000000001");
+    expect(crearNotaCreditoTotal).toHaveBeenCalledWith(
+      "78000000-0000-4000-8000-000000000001",
+      VENTA_BASE.idempotency_key,
+    );
+    expect(crearRegular).not.toHaveBeenCalled();
+  });
+
+  it("en v2 rechaza una NC sin clave estable antes de todo escritor", async () => {
+    const crearRegular = vi.fn();
+    const crearNotaCreditoTotal = vi.fn();
+    const input = {
+      ...nota("NOTA_CREDITO"),
+      idempotency_key: undefined,
+    };
+
+    await expect(
+      ejecutarCreacionNotaSegunFlags(input, {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+        }),
+        crearRegular,
+        crearNotaCreditoTotal,
+      }),
+    ).rejects.toThrow("Falta la clave de idempotencia de la nota de crédito.");
+
+    expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
     expect(crearRegular).not.toHaveBeenCalled();
   });
 

@@ -1084,7 +1084,44 @@ SELECT pg_temp.assert_true(
 DELETE FROM public.ventas WHERE id='f4000000-0000-0000-0000-000000000060';
 
 CREATE TEMP TABLE t_nc_result AS
-SELECT * FROM public.anular_venta((SELECT venta_id FROM t_approved_original));
+SELECT * FROM public.anular_venta(
+  (SELECT venta_id FROM t_approved_original),
+  'e4000000-0000-0000-0000-000000000065'
+);
+CREATE TEMP TABLE t_nc_replay AS
+SELECT * FROM public.anular_venta(
+  (SELECT venta_id FROM t_approved_original),
+  'e4000000-0000-0000-0000-000000000065'
+);
+SELECT pg_temp.assert_true(
+  (SELECT r.nc_id=o.nc_id AND r.nc_numero=o.nc_numero
+     FROM t_nc_replay AS r CROSS JOIN t_nc_result AS o)
+  AND (SELECT count(*)=1 FROM public.ventas
+        WHERE idempotency_key='e4000000-0000-0000-0000-000000000065'),
+  'reintentar una NC con la misma clave recupera el éxito sin duplicarla'
+);
+SELECT pg_temp.capture_effects('nc-key-mismatch-before');
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.anular_venta(
+      (SELECT venta_id FROM t_sale),
+      'e4000000-0000-0000-0000-000000000065'
+    );
+    RAISE EXCEPTION 'la clave de una NC se reutilizó para otro original';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='la clave de una NC se reutilizó para otro original'
+       OR SQLERRM NOT LIKE '%clave de idempotencia no corresponde%' THEN
+      RAISE;
+    END IF;
+  END;
+END;
+$$;
+SELECT pg_temp.capture_effects('nc-key-mismatch-after');
+SELECT pg_temp.assert_effects_equal(
+  'nc-key-mismatch-before','nc-key-mismatch-after',
+  'una clave de NC no se puede reutilizar para otro original ni muta efectos'
+);
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1 FROM public.ventas
     WHERE afip_cbte_asoc_id=(SELECT venta_id FROM t_approved_original)
@@ -1554,18 +1591,20 @@ SELECT pg_temp.assert_effects_equal(
 
 -- Contrato y mínimo privilegio.
 SELECT pg_temp.assert_true(
-  (SELECT count(*)=1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  (SELECT count(*)=1 AND bool_and(pg_get_function_identity_arguments(p.oid)=
+        'p_sucursal_id uuid, p_cliente_id uuid, p_tipo_comprobante tipo_comprobante, p_condicion_venta condicion_venta, p_items jsonb, p_pagos jsonb, p_percepciones numeric, p_observaciones text, p_nombre_obra text, p_fecha timestamp with time zone, p_cbte_asoc_id uuid, p_idempotency_key uuid')
+     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND p.proname='crear_venta'
-      AND pg_get_function_identity_arguments(p.oid)=
-        'p_sucursal_id uuid, p_cliente_id uuid, p_tipo_comprobante tipo_comprobante, p_condicion_venta condicion_venta, p_items jsonb, p_pagos jsonb, p_percepciones numeric, p_observaciones text, p_nombre_obra text, p_fecha timestamp with time zone, p_cbte_asoc_id uuid, p_idempotency_key uuid'),
+  ),
   'crear_venta conserva su firma exacta y sin overloads'
 );
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1 AND bool_and(p.prosecdef)
+          AND bool_and(pg_get_function_identity_arguments(p.oid)=
+            'p_presupuesto_id uuid, p_cliente_id uuid, p_condicion_venta condicion_venta, p_pagos jsonb, p_idempotency_key uuid')
      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND p.proname='convertir_presupuesto_en_venta_neutral'
-      AND pg_get_function_identity_arguments(p.oid)=
-        'p_presupuesto_id uuid, p_cliente_id uuid, p_condicion_venta condicion_venta, p_pagos jsonb, p_idempotency_key uuid'),
+  ),
   'la conversión neutral tiene un nombre y firma no ambiguos'
 );
 SELECT pg_temp.assert_true(
@@ -1585,10 +1624,19 @@ SELECT pg_temp.assert_true(
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1 AND bool_and(p.prosecdef)
           AND bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')
-     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+          AND bool_and(pg_get_function_identity_arguments(p.oid)=
+            'p_venta_id uuid, p_idempotency_key uuid')
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND p.proname='anular_venta'
-      AND pg_get_function_identity_arguments(p.oid)='p_venta_id uuid'),
-  'anular_venta conserva firma, SECURITY DEFINER y search_path fijado'
+  ),
+  'anular_venta conserva una sola firma idempotente, SECURITY DEFINER y search_path fijado'
+);
+SELECT pg_temp.assert_true(
+  NOT has_function_privilege('public','public._anular_venta_core_20260823(uuid)','execute')
+  AND NOT has_function_privilege('anon','public._anular_venta_core_20260823(uuid)','execute')
+  AND NOT has_function_privilege('authenticated','public._anular_venta_core_20260823(uuid)','execute')
+  AND NOT has_function_privilege('service_role','public._anular_venta_core_20260823(uuid)','execute'),
+  'el core de anulación queda owner-only detrás de la envoltura autorizada'
 );
 
 ROLLBACK;

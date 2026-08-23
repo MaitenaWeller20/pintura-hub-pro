@@ -404,6 +404,9 @@ export function generarComprobantePdf(
       leyendas.push("Otros Impuestos Nacionales Indirectos: no disponible en histórico legacy");
     } else {
       leyendas.push(`IVA Contenido: ${money(fiscal.iva_contenido)}`);
+      // Este renglón usa exclusivamente el campo legal dedicado del snapshot.
+      // `totales.tributos` puede contener percepciones genéricas y no autoriza
+      // a presentarlas como Otros Impuestos Nacionales Indirectos.
       leyendas.push(
         `Otros Impuestos Nacionales Indirectos: ${money(
           fiscal.otros_impuestos_nacionales_indirectos,

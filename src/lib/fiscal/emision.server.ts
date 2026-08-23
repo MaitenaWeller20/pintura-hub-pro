@@ -597,7 +597,10 @@ export function construirSnapshotFiscalDesdeLectura(input: {
       letra === "B" && receptor.condicionIva === "CONSUMIDOR_FINAL"
         ? lectura.venta.ivaTotal
         : "0.00",
-    otrosImpuestosNacionalesIndirectos: lectura.venta.percepciones,
+    // `percepciones` es un tributo genérico del modelo comercial. No alcanza
+    // para afirmar que sea un Impuesto Nacional Indirecto de la Ley 27.743.
+    // Hasta contar con una fuente específica y trazable, el importe legal es 0.
+    otrosImpuestosNacionalesIndirectos: "0.00",
     origen: "VENTA",
     comprobanteOriginalId: null,
     cbtesAsoc: [],
@@ -718,6 +721,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
     receptor: ReceptorFiscalConfirmado;
     letra: Letra;
     contexto: ContextoFiscal;
+    original: SnapshotFiscalV2 | null;
   };
 } {
   const { admin, usuario, ventaIdAutorizada } = input;
@@ -780,6 +784,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
         receptor: { ...interna.receptor },
         letra: interna.letra,
         contexto: interna.contexto,
+        original: interna.original,
       };
     },
     generarClaimToken: () => crypto.randomUUID(),
@@ -863,9 +868,9 @@ export function crearDependenciasEmisionFiscalServer(input: {
         version: 1,
         importe: lectura.venta.total,
         emisorCuit: preparacionBase.emisorCuit,
-        emisorRazonSocial: contexto.emisorImpreso.razon_social,
-        sucursalId: contexto.sucursal.id,
-        sucursalNombre: contexto.sucursal.nombre,
+        emisorRazonSocial: original?.emisor.razonSocial ?? contexto.emisorImpreso.razon_social,
+        sucursalId: original?.sucursal.id ?? contexto.sucursal.id,
+        sucursalNombre: original?.sucursal.nombre ?? contexto.sucursal.nombre,
         puntoVenta: preparacionBase.puntoVenta,
         modo: preparacionBase.modo,
         letra,
@@ -977,9 +982,27 @@ export function crearDependenciasEmisionFiscalServer(input: {
       if (!lectura.venta.afipClaimToken) {
         throw new Error("La venta no tiene claim fiscal vigente para liberar.");
       }
+      const tieneIdentidadReservada =
+        lectura.venta.afipNumero !== null ||
+        lectura.venta.afipEmisorCuit !== null ||
+        lectura.venta.afipPuntoVenta !== null ||
+        lectura.venta.afipCbteTipo !== null ||
+        lectura.venta.afipModo !== null ||
+        lectura.venta.afipSimulado ||
+        lectura.venta.afipValidez !== null ||
+        lectura.venta.afipFechaComprobante !== null ||
+        lectura.venta.afipImpTotal !== null ||
+        lectura.venta.afipSnapshot !== null ||
+        lectura.venta.afipSnapshotHash !== null ||
+        lectura.venta.cae !== null ||
+        lectura.venta.caeVencimiento !== null;
       return {
         claimToken: lectura.venta.afipClaimToken,
         afipVersion: lectura.venta.afipVersion,
+        afipEstado: lectura.venta.afipEstado,
+        afipFase: lectura.venta.afipFase,
+        afipNumero: lectura.venta.afipNumero,
+        tieneIdentidadReservada,
       };
     },
     crearPayloadCae: crearPayloadCaeDesdeSnapshot,
@@ -1071,9 +1094,18 @@ export async function liberarClaimFiscalVerificado(input: {
   ventaId: string;
   deps: DependenciasEmisionFiscal;
 }): Promise<{ estado: "LIBERADO" }> {
-  const estado = input.deps.cargarEstadoParaLiberar
-    ? await input.deps.cargarEstadoParaLiberar(input.ventaId)
-    : await input.deps.cargarReservaPersistida(input.ventaId);
+  if (!input.deps.cargarEstadoParaLiberar) {
+    throw new Error("LIBERAR exige una lectura segura del estado PREFLIGHT.");
+  }
+  const estado = await input.deps.cargarEstadoParaLiberar(input.ventaId);
+  if (
+    estado.afipEstado !== "EMITIENDO" ||
+    estado.afipFase !== "PREFLIGHT" ||
+    estado.afipNumero !== null ||
+    estado.tieneIdentidadReservada
+  ) {
+    throw new Error("LIBERAR sólo admite un claim PREFLIGHT vencido sin identidad reservada.");
+  }
   await input.deps.transicionar({
     ventaId: input.ventaId,
     accion: "LIBERAR",
@@ -1128,13 +1160,17 @@ export async function previsualizarVentaFiscalExistente(input: {
   const vista = deps.obtenerVistaPreparacion(input.ventaId);
   const receptorVisible = proyectarReceptorFiscalConfirmado(vista.receptor);
   const demoraDias = diasDesdeHoyAr(new Date(lectura.venta.fechaComercial));
+  const emisorRazonSocial =
+    vista.original?.emisor.razonSocial ?? vista.contexto.emisorImpreso.razon_social;
+  const sucursalId = vista.original?.sucursal.id ?? vista.contexto.sucursal.id;
+  const sucursalNombre = vista.original?.sucursal.nombre ?? vista.contexto.sucursal.nombre;
   const confirmacionAutoritativa: ConfirmacionFiscalPostBorrador = {
     version: 1,
     importe: lectura.venta.total,
     emisorCuit: preparacion.emisorCuit,
-    emisorRazonSocial: vista.contexto.emisorImpreso.razon_social,
-    sucursalId: vista.contexto.sucursal.id,
-    sucursalNombre: vista.contexto.sucursal.nombre,
+    emisorRazonSocial,
+    sucursalId,
+    sucursalNombre,
     puntoVenta: preparacion.puntoVenta,
     modo: preparacion.modo,
     letra: vista.letra,
@@ -1155,9 +1191,9 @@ export async function previsualizarVentaFiscalExistente(input: {
     letra: vista.letra,
     razon_letra: `La condición ${vista.receptor.condicionIva} determina letra ${vista.letra}.`,
     emisor_cuit: preparacion.emisorCuit,
-    emisor_razon_social: vista.contexto.emisorImpreso.razon_social,
-    sucursal_id: vista.contexto.sucursal.id,
-    sucursal_nombre: vista.contexto.sucursal.nombre,
+    emisor_razon_social: emisorRazonSocial,
+    sucursal_id: sucursalId,
+    sucursal_nombre: sucursalNombre,
     punto_venta: preparacion.puntoVenta,
     modo: preparacion.modo,
     cbte_tipo: preparacion.cbteTipo,

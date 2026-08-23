@@ -106,12 +106,32 @@ INSERT INTO auth.users(
 
 UPDATE public.profiles
    SET username='t17_inactivo_empleado',nombre_completo='Empleado inactivo T17',
-       sucursal_id='$DESTINO_ID',activo=false,permite_venta_sin_stock=true
+       sucursal_id='$DESTINO_ID',permite_venta_sin_stock=true
  WHERE id='$EMPLEADO_ID';
 UPDATE public.profiles
    SET username='t17_inactivo_admin',nombre_completo='Admin inactivo T17',
-       sucursal_id=NULL,activo=false
+       sucursal_id=NULL
  WHERE id='$ADMIN_ID';
+
+INSERT INTO public.usuario_estado_acceso(
+  profile_id,version,activo_deseado,operacion_id,pendiente
+) VALUES
+  ('$EMPLEADO_ID',1,false,'a4180000-0000-4000-8000-000000000011',true),
+  ('$ADMIN_ID',1,false,'a4180000-0000-4000-8000-000000000012',true)
+ON CONFLICT (profile_id) DO UPDATE
+SET version=EXCLUDED.version,activo_deseado=false,
+    operacion_id=EXCLUDED.operacion_id,pendiente=true;
+SELECT pg_catalog.set_config(
+  'app.usuario_activo_operacion','a4180000-0000-4000-8000-000000000011',true
+);
+UPDATE public.profiles SET activo=false WHERE id='$EMPLEADO_ID';
+SELECT pg_catalog.set_config(
+  'app.usuario_activo_operacion','a4180000-0000-4000-8000-000000000012',true
+);
+UPDATE public.profiles SET activo=false WHERE id='$ADMIN_ID';
+UPDATE public.usuario_estado_acceso
+   SET pendiente=false
+ WHERE profile_id IN ('$EMPLEADO_ID','$ADMIN_ID');
 
 INSERT INTO public.profile_sucursales(profile_id,sucursal_id)
 VALUES ('$EMPLEADO_ID','$DESTINO_ID');
@@ -234,7 +254,7 @@ SELECT pg_temp.assert_raises(
 );
 SELECT pg_temp.assert_raises(
   \$q\$UPDATE public.profiles SET activo=true WHERE id='$ADMIN_ID'\$q\$,
-  'Sólo un administrador puede activar o desactivar un usuario',
+  'transición versionada',
   'un admin inactivo no puede auto-reactivarse con su JWT todavía vigente'
 );
 
@@ -252,12 +272,11 @@ SELECT pg_temp.assert_raises(
 RESET ROLE;
 SET LOCAL request.jwt.claims='{}';
 SET LOCAL ROLE service_role;
-UPDATE public.profiles SET activo=true WHERE id='$ADMIN_ID';
-SELECT pg_temp.assert_true(
-  (SELECT activo FROM public.profiles WHERE id='$ADMIN_ID'),
-  'service_role interno sin JWT conserva el canal para reactivar perfiles'
+SELECT pg_temp.assert_raises(
+  \$q\$UPDATE public.profiles SET activo=true WHERE id='$ADMIN_ID'\$q\$,
+  'transición versionada',
+  'service_role tampoco puede saltear el CAS con un UPDATE directo'
 );
-UPDATE public.profiles SET activo=false WHERE id='$ADMIN_ID';
 RESET ROLE;
 SELECT pg_temp.assert_true(
   (SELECT estado='ACTIVA' FROM public.ventas WHERE id='$VENTA_ID')

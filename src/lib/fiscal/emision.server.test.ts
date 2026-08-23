@@ -794,6 +794,7 @@ const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
   sucursalNombre: "Sucursal",
   puntoVenta: 5,
   modo: "HOMOLOGACION",
+  afipValidez: "HOMOLOGACION",
   letra: "B",
   cbteTipo: 6,
   fechaFiscal: "2026-08-22",
@@ -852,7 +853,7 @@ function confirmacionesDistintas(): Array<[string, ConfirmacionFiscalPostBorrado
 describe("handshake post-creación del borrador", () => {
   it("produce SHA-256 canónico de la tupla completa", () => {
     expect(crearHuellaConfirmacionFiscal(CONFIRMACION_BASE)).toBe(
-      "d51d91f9d06bab2e21a82d75954031194279607f11b9d352300a847535153d66",
+      "a7d246f35cf03dcf2d68e2b6f156072057a0f402a8eed97cdeed9b06d8edde62",
     );
   });
 
@@ -888,6 +889,21 @@ describe("handshake post-creación del borrador", () => {
     };
     expect(crearHuellaConfirmacionFiscal({ ...base, ...cambio } as never)).not.toBe(
       crearHuellaConfirmacionFiscal(base as never),
+    );
+  });
+
+  it("distingue validez simulada de homologacion aunque el modo sea el mismo", () => {
+    const homologacion = {
+      ...CONFIRMACION_BASE,
+      afipValidez: "HOMOLOGACION",
+    } as unknown as ConfirmacionFiscalPostBorrador;
+    const simulada = {
+      ...CONFIRMACION_BASE,
+      afipValidez: "SIMULADA",
+    } as unknown as ConfirmacionFiscalPostBorrador;
+
+    expect(crearHuellaConfirmacionFiscal(simulada)).not.toBe(
+      crearHuellaConfirmacionFiscal(homologacion),
     );
   });
 });

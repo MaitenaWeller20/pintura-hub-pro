@@ -26,6 +26,7 @@ function preview(overrides: Partial<PreviewEmisionFiscal> = {}): PreviewEmisionF
     sucursalNombre: "Casa Central",
     puntoVenta: 5,
     modo: "PRODUCCION" as const,
+    afipValidez: "SIMULADA" as const,
     letra: "A" as const,
     cbteTipo: 3,
     fechaFiscal: "2026-08-23",

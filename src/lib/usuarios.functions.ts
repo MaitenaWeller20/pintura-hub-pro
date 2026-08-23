@@ -193,14 +193,37 @@ export const crearUsuario = createServerFn({ method: "POST" })
 type ErrorOperacionUsuario = { message?: string } | null;
 
 export type OperacionesToggleUsuario = {
-  actualizarPerfil(
+  iniciar(
     userId: string,
     activo: boolean,
-  ): Promise<{ data: { id: string } | null; error: ErrorOperacionUsuario }>;
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  finalizar(
+    userId: string,
+    version: number,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  reclamarReconciliacion(
+    userId: string,
+    versionObservada: number,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
   actualizarAuth(
     userId: string,
     banDuration: "none" | "876000h",
   ): Promise<{ error: ErrorOperacionUsuario }>;
+  generarOperacionId(): string;
+};
+
+type EstadoToggleUsuario = {
+  version: number;
+  activoDeseado: boolean;
+  pendiente: boolean;
+  activoActual: boolean;
+  operacionId: string;
+  aplicada: boolean;
+  supersedida: boolean;
+  reclamada: boolean;
 };
 
 function mensajeErrorUsuario(error: unknown, fallback: string): string {
@@ -218,81 +241,170 @@ function mensajeErrorUsuario(error: unknown, fallback: string): string {
 }
 
 export async function ejecutarToggleUsuarioActivo(
-  input: { user_id: string; activo: boolean },
+  input: { user_id: string; activo: boolean; operacion_id: string },
   operaciones: OperacionesToggleUsuario,
 ): Promise<{ ok: true }> {
-  const actualizarPerfilValidado = async (activo: boolean): Promise<void> => {
-    const { data, error } = await operaciones.actualizarPerfil(input.user_id, activo);
-    if (error) {
-      throw new Error(
-        mensajeErrorUsuario(error, `No se pudo ${activo ? "reactivar" : "inactivar"} el perfil`),
-      );
+  const parsearEstado = (data: unknown, fallback: string): EstadoToggleUsuario => {
+    if (typeof data !== "object" || data === null) throw new Error(fallback);
+    const value = data as Record<string, unknown>;
+    if (
+      typeof value.version !== "number" ||
+      !Number.isSafeInteger(value.version) ||
+      value.version < 0 ||
+      typeof value.activo_deseado !== "boolean" ||
+      typeof value.pendiente !== "boolean" ||
+      typeof value.activo_actual !== "boolean" ||
+      typeof value.operacion_id !== "string"
+    ) {
+      throw new Error(fallback);
     }
-    if (data?.id !== input.user_id) {
-      throw new Error("El perfil del usuario no existe");
+    return {
+      version: value.version,
+      activoDeseado: value.activo_deseado,
+      pendiente: value.pendiente,
+      activoActual: value.activo_actual,
+      operacionId: value.operacion_id,
+      aplicada: value.aplicada === true,
+      supersedida: value.supersedida === true,
+      reclamada: value.reclamada === true,
+    };
+  };
+
+  const rpcConReintento = async (
+    ejecutar: () => Promise<{ data: unknown; error: ErrorOperacionUsuario }>,
+    fallback: string,
+  ): Promise<EstadoToggleUsuario> => {
+    let ultimoError: unknown = null;
+    // Las RPC son idempotentes por operacion/version. Repetir una vez cubre el
+    // timeout posterior al COMMIT sin crear una intención nueva.
+    for (let intento = 0; intento < 2; intento += 1) {
+      try {
+        const { data, error } = await ejecutar();
+        if (!error) return parsearEstado(data, fallback);
+        ultimoError = error;
+      } catch (error) {
+        ultimoError = error;
+      }
     }
+    throw new Error(mensajeErrorUsuario(ultimoError, fallback));
   };
 
   const actualizarAuthValidado = async (banDuration: "none" | "876000h"): Promise<void> => {
-    const { error } = await operaciones.actualizarAuth(input.user_id, banDuration);
-    if (error) {
-      throw new Error(
-        mensajeErrorUsuario(
-          error,
-          banDuration === "none"
-            ? "No se pudo quitar el bloqueo de acceso"
-            : "No se pudo bloquear el acceso",
-        ),
-      );
+    let ultimoError: unknown = null;
+    // updateUserById con el mismo ban_duration es idempotente. Un segundo
+    // intento resuelve el caso en que GoTrue aplicó el cambio pero se perdió la
+    // respuesta.
+    for (let intento = 0; intento < 2; intento += 1) {
+      try {
+        const { error } = await operaciones.actualizarAuth(input.user_id, banDuration);
+        if (!error) return;
+        ultimoError = error;
+      } catch (error) {
+        ultimoError = error;
+      }
     }
+    throw new Error(
+      mensajeErrorUsuario(
+        ultimoError,
+        banDuration === "none"
+          ? "No se pudo quitar el bloqueo de acceso"
+          : "No se pudo bloquear el acceso",
+      ),
+    );
   };
 
-  if (!input.activo) {
-    // Fail-safe: cerrar primero la frontera de datos. Si luego falla el ban de
-    // GoTrue, el pre-request y las RPC siguen viendo el perfil inactivo.
-    await actualizarPerfilValidado(false);
-    await actualizarAuthValidado("876000h");
+  const iniciar = await rpcConReintento(
+    () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
+    "No se pudo iniciar el cambio de acceso",
+  );
+  if (iniciar.supersedida) {
+    throw new Error(
+      "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
+    );
+  }
+  if (iniciar.operacionId !== input.operacion_id || iniciar.activoDeseado !== input.activo) {
+    throw new Error("La transición de acceso no coincide con la operación solicitada");
+  }
+  if (!iniciar.pendiente) {
+    // Reintento posterior a una respuesta perdida: la misma operación ya quedó
+    // estable y no se vuelve a tocar Auth.
     return { ok: true };
   }
 
-  // Para reactivar, Auth se abre primero. Sólo publicamos el perfil como activo
-  // si eso funcionó; si la segunda operación falla, restauramos el ban.
-  await actualizarAuthValidado("none");
-  try {
-    await actualizarPerfilValidado(true);
-  } catch (errorPerfil) {
-    const mensajePerfil = mensajeErrorUsuario(errorPerfil, "No se pudo reactivar el perfil");
-    try {
-      await actualizarAuthValidado("876000h");
-    } catch (errorReban) {
-      const mensajeReban = mensajeErrorUsuario(errorReban, "No se pudo restaurar el bloqueo");
-      throw new Error(`${mensajePerfil}. Además, no se pudo restaurar el bloqueo: ${mensajeReban}`);
+  await actualizarAuthValidado(iniciar.activoDeseado ? "none" : "876000h");
+  let final = await rpcConReintento(
+    () => operaciones.finalizar(input.user_id, iniciar.version, input.operacion_id),
+    "No se pudo finalizar el cambio de acceso",
+  );
+  if (final.aplicada) return { ok: true };
+
+  // Ya se tocó Auth con una intención vieja. Si el cambio más nuevo sigue
+  // pendiente, su perfil continúa cerrado y él mismo terminará la operación.
+  // Si ya estaba estable, reclamamos por CAS una reconciliación que conserva
+  // exactamente su desired más nuevo; nunca volvemos a imponer el pedido viejo.
+  for (let intento = 0; intento < 4 && !final.pendiente; intento += 1) {
+    const reconciliacionId = operaciones.generarOperacionId();
+    const reclamo = await rpcConReintento(
+      () => operaciones.reclamarReconciliacion(input.user_id, final.version, reconciliacionId),
+      "No se pudo reconciliar el cambio de acceso más reciente",
+    );
+    if (!reclamo.reclamada) {
+      final = reclamo;
+      continue;
     }
-    throw new Error(mensajePerfil);
+    if (!reclamo.pendiente) break;
+
+    await actualizarAuthValidado(reclamo.activoDeseado ? "none" : "876000h");
+    final = await rpcConReintento(
+      () => operaciones.finalizar(input.user_id, reclamo.version, reconciliacionId),
+      "No se pudo cerrar la reconciliación del acceso",
+    );
+    if (final.aplicada) break;
   }
 
-  return { ok: true };
+  throw new Error(
+    "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
+  );
 }
 
 export const toggleUsuarioActivo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ user_id: z.string().uuid(), activo: z.boolean() }).parse(d),
+    z
+      .object({
+        user_id: z.string().uuid(),
+        activo: z.boolean(),
+        operacion_id: z.string().uuid(),
+      })
+      .strict()
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-    if (!isAdmin) throw new Error("Solo admin");
+    await requireAdmin(supabase as unknown as ClienteCapacidadFiscal, userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     return ejecutarToggleUsuarioActivo(data, {
-      async actualizarPerfil(targetUserId, activo) {
-        const { data: perfil, error } = await supabaseAdmin
-          .from("profiles")
-          .update({ activo })
-          .eq("id", targetUserId)
-          .select("id")
-          .maybeSingle();
-        return { data: perfil, error };
+      async iniciar(targetUserId, activo, operacionId) {
+        return supabaseAdmin.rpc("iniciar_transicion_usuario_activo", {
+          p_actor_id: userId,
+          p_profile_id: targetUserId,
+          p_activo: activo,
+          p_operacion_id: operacionId,
+        });
+      },
+      async finalizar(targetUserId, version, operacionId) {
+        return supabaseAdmin.rpc("finalizar_transicion_usuario_activo", {
+          p_profile_id: targetUserId,
+          p_version: version,
+          p_operacion_id: operacionId,
+        });
+      },
+      async reclamarReconciliacion(targetUserId, versionObservada, operacionId) {
+        return supabaseAdmin.rpc("reclamar_reconciliacion_usuario_activo", {
+          p_profile_id: targetUserId,
+          p_version_observada: versionObservada,
+          p_operacion_id: operacionId,
+        });
       },
       async actualizarAuth(targetUserId, banDuration) {
         const { error } = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
@@ -300,6 +412,7 @@ export const toggleUsuarioActivo = createServerFn({ method: "POST" })
         });
         return { error };
       },
+      generarOperacionId: () => crypto.randomUUID(),
     });
   });
 

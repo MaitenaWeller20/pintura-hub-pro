@@ -53,6 +53,7 @@ export const Route = createFileRoute("/_authenticated/usuarios")({
 function UsuariosPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [togglesPendientes, setTogglesPendientes] = useState<Set<string>>(() => new Set());
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
 
@@ -97,13 +98,27 @@ function UsuariosPage() {
     queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[],
   });
 
-  const togg = useMutation({
-    mutationFn: async (d: any) => toggle({ data: d }),
+  const togg = useMutation<
+    unknown,
+    Error,
+    { user_id: string; activo: boolean; operacion_id: string }
+  >({
+    mutationFn: async (d) => toggle({ data: d }),
+    onMutate: (d) => {
+      setTogglesPendientes((actuales) => new Set(actuales).add(d.user_id));
+    },
     onSuccess: () => {
       toast.success("Estado actualizado");
       qc.invalidateQueries({ queryKey: ["usuarios"] });
     },
     onError: (e: any) => toast.error(e.message),
+    onSettled: (_data, _error, variables) => {
+      setTogglesPendientes((actuales) => {
+        const siguientes = new Set(actuales);
+        siguientes.delete(variables.user_id);
+        return siguientes;
+      });
+    },
   });
 
   // Antes esto venía precargado con "emp1234" — la misma contraseña débil que
@@ -207,9 +222,21 @@ function UsuariosPage() {
                 size="sm"
                 variant="ghost"
                 title={u.activo ? "Desactivar" : "Activar"}
-                onClick={() => togg.mutate({ user_id: u.id, activo: !u.activo })}
+                disabled={togglesPendientes.has(u.id)}
+                aria-busy={togglesPendientes.has(u.id)}
+                onClick={() =>
+                  togg.mutate({
+                    user_id: u.id,
+                    activo: !u.activo,
+                    operacion_id: crypto.randomUUID(),
+                  })
+                }
               >
-                <Power className="h-3.5 w-3.5" />
+                {togglesPendientes.has(u.id) ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Power className="h-3.5 w-3.5" />
+                )}
               </Button>
             </TableCell>
           </TableRow>

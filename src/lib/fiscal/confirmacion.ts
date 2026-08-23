@@ -11,6 +11,7 @@ export type ConfirmacionFiscalPostBorrador = {
   sucursalNombre: string;
   puntoVenta: number;
   modo: "PRODUCCION" | "HOMOLOGACION";
+  afipValidez: "PRODUCCION" | "HOMOLOGACION" | "SIMULADA";
   letra: Letra;
   cbteTipo: number;
   fechaFiscal: string;
@@ -38,6 +39,7 @@ export function copiarConfirmacionFiscal(
     sucursalNombre: confirmacion.sucursalNombre,
     puntoVenta: confirmacion.puntoVenta,
     modo: confirmacion.modo,
+    afipValidez: confirmacion.afipValidez,
     letra: confirmacion.letra,
     cbteTipo: confirmacion.cbteTipo,
     fechaFiscal: confirmacion.fechaFiscal,

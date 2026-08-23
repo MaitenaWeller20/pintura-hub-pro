@@ -1706,7 +1706,7 @@ DELETE FROM public.caja_movimientos
 DELETE FROM public.caja_sesiones
  WHERE abierta_por='a4000000-0000-0000-0000-000000000101';
 UPDATE public.profiles
-   SET activo=false,sucursal_id=NULL
+   SET sucursal_id=NULL
  WHERE id='a4000000-0000-0000-0000-000000000101';
 DELETE FROM public.profile_sucursales
  WHERE profile_id='a4000000-0000-0000-0000-000000000101';

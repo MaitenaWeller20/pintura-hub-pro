@@ -35,6 +35,7 @@ const CONFIRMACION = {
   sucursalNombre: "Casa Central",
   puntoVenta: 5,
   modo: "PRODUCCION",
+  afipValidez: "PRODUCCION",
   letra: "A",
   cbteTipo: 1,
   fechaFiscal: "2026-08-23",
@@ -108,6 +109,7 @@ const PREVIEW_PROVISIONAL = {
     sucursal_nombre: "Casa Central",
     punto_venta: 5,
     modo: "PRODUCCION",
+    afip_validez: "PRODUCCION",
     letra: "A",
     cbte_tipo: 1,
     fecha_fiscal: "2026-08-23",
@@ -137,7 +139,7 @@ function respuestaReconfirmacion(
     sucursal_nombre: confirmacion.sucursalNombre,
     punto_venta: confirmacion.puntoVenta,
     modo: confirmacion.modo,
-    afip_validez: confirmacion.modo,
+    afip_validez: confirmacion.afipValidez,
     cbte_tipo: confirmacion.cbteTipo,
     pagado: confirmacion.pagado,
     saldo: confirmacion.saldo,
@@ -156,7 +158,7 @@ function respuestaReconfirmacion(
   return {
     estado: "RECONFIRMACION_REQUERIDA" as const,
     mensaje: "Revisá los cambios.",
-    afip_validez: confirmacion.modo,
+    afip_validez: confirmacion.afipValidez,
     preview_autoritativa: preview,
     huella_confirmacion: huella,
     confirmacion_autoritativa: confirmacion,
@@ -460,6 +462,7 @@ describe("contrato runtime del diálogo fiscal", () => {
     "emisorCuit",
     "puntoVenta",
     "modo",
+    "afipValidez",
     "letra",
     "cbteTipo",
     "fechaFiscal",
@@ -482,7 +485,11 @@ describe("contrato runtime del diálogo fiscal", () => {
   });
 
   it("reemplaza modo y validez juntos cuando la reconfirmación cambia de ambiente", () => {
-    const confirmacion = { ...CONFIRMACION, modo: "HOMOLOGACION" as const };
+    const confirmacion = {
+      ...CONFIRMACION,
+      modo: "HOMOLOGACION" as const,
+      afipValidez: "HOMOLOGACION" as const,
+    };
     const respuesta = parseRespuestaConfirmacionFiscal(respuestaReconfirmacion(confirmacion));
     expect(respuesta.estado).toBe("RECONFIRMACION_REQUERIDA");
     if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") throw new Error("Respuesta inesperada");
@@ -490,7 +497,10 @@ describe("contrato runtime del diálogo fiscal", () => {
       autoritativo: true,
       modo: "HOMOLOGACION",
       afip_validez: "HOMOLOGACION",
-      confirmacion_autoritativa: { modo: "HOMOLOGACION" },
+      confirmacion_autoritativa: {
+        modo: "HOMOLOGACION",
+        afipValidez: "HOMOLOGACION",
+      },
     });
   });
 
@@ -531,7 +541,11 @@ describe("contrato runtime del diálogo fiscal", () => {
   });
 
   it("rechaza una validez vieja o ausente en la reconfirmación", () => {
-    const confirmacion = { ...CONFIRMACION, modo: "HOMOLOGACION" as const };
+    const confirmacion = {
+      ...CONFIRMACION,
+      modo: "HOMOLOGACION" as const,
+      afipValidez: "HOMOLOGACION" as const,
+    };
     const base = respuestaReconfirmacion(confirmacion);
     const sinValidez = { ...base } as Record<string, unknown>;
     delete sinValidez.afip_validez;

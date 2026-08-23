@@ -102,10 +102,10 @@ find supabase/migrations -maxdepth 1 -type f -name '*.sql' -print \
   | sort \
   >"$EVIDENCE_DIR/task14-migrations-files.txt"
 
-EXPECTED_TASK14_MIGRATIONS=24
+EXPECTED_TASK14_MIGRATIONS=25
 ACTUAL_TASK14_MIGRATIONS="$(wc -l <"$EVIDENCE_DIR/task14-migrations-files.txt" | tr -d ' ')"
 if [[ "$ACTUAL_TASK14_MIGRATIONS" != "$EXPECTED_TASK14_MIGRATIONS" ]]; then
-  echo "El paquete Task 14 debe contener exactamente 24 migraciones; se encontraron $ACTUAL_TASK14_MIGRATIONS." >&2
+  echo "El paquete Task 14 debe contener exactamente 25 migraciones; se encontraron $ACTUAL_TASK14_MIGRATIONS." >&2
   exit 1
 fi
 
@@ -207,7 +207,8 @@ done
     scripts/test-notas-v2-rest.sh \
     scripts/test-notas-v2-scope.sh \
     scripts/test-venta-idempotencia-autorizacion.sh \
-    scripts/test-liberar-claim-fiscal.sh; do
+    scripts/test-liberar-claim-fiscal.sh \
+    scripts/test-toggle-usuario-activo-cas.sh; do
     if [[ ! -f "$script" ]]; then
       echo "MISSING $script"
       exit 1

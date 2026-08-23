@@ -53,6 +53,7 @@ ejecutar; cualquier diferencia exige detenerse y revisar un nuevo manifiesto.
 |    22 | `20260823172000_perfil_activo_autorizacion_global.sql`           | `87d7f7336b7d6a8718d2826341116745c88fad0d7a579b46504f96a3f70362dc` |
 |    23 | `20260823173000_anulacion_neutral_idempotente.sql`               | `35e2c97613ad6c35ee7474a470804aa6f951eea0989cdecf3933ec5b74103d3b` |
 |    24 | `20260823174401_barrera_postgrest_perfiles_activos.sql`          | `865df1c382abc61caf79b973ad5b45b7258994b1732e4d131a16039eaf2f8c0a` |
+|    25 | `20260823180500_toggle_usuario_activo_cas.sql`                   | `aeaf6b67098ef8402049ae3adb63dbedd21ae0b6fa802df5bfcb24be2459e617` |
 
 No forman parte del manifiesto `backfill_cola_fiscal` ni `retirar_escritor_fiscal_legacy`: sólo
 pueden crearse después de sus respectivos gates post-deployment.
@@ -74,8 +75,7 @@ Aplicar manualmente, un archivo por vez y en el orden del manifiesto, desde
 `20260822144846_maquina_estados_emision_fiscal.sql`, inclusive.
 
 - [ ] Antes de cada archivo se comparó su SHA-256.
-- [ ] Cada archivo se ejecutó en su propia transacción desde SQL Editor (`BEGIN;` + contenido exacto
-      + `COMMIT;`) y se verificaron sus postcondiciones de esquema antes de registrar la versión.
+- [ ] Cada archivo se ejecutó en su propia transacción desde SQL Editor (`BEGIN;` + contenido exacto + `COMMIT;`) y se verificaron sus postcondiciones de esquema antes de registrar la versión.
 - [ ] Después de verificar cada archivo, desde el checkout vinculado se ejecutó el mecanismo oficial
       `supabase migration repair --status applied <VERSION> --linked`; nunca se hizo `INSERT`,
       `UPDATE` ni `DELETE` manual sobre `supabase_migrations`.
@@ -109,17 +109,24 @@ real.
 - [ ] Se registró la duración máxima real de requests/functions/transactions: `__________`.
 - [ ] Se esperó al menos ese límite y la auditoría mostró que no quedan requests ni transacciones
       anteriores en curso.
-- [ ] Se aplicaron #4 a #24, desde `20260822161644_venta_fiscal_atomica.sql` hasta
-      `20260823174401_barrera_postgrest_perfiles_activos.sql`, uno por transacción, con hashes y
+- [ ] Se aplicaron #4 a #25, desde `20260822161644_venta_fiscal_atomica.sql` hasta
+      `20260823180500_toggle_usuario_activo_cas.sql`, uno por transacción, con hashes y
       postcondiciones verificados, y cada versión quedó registrada mediante `migration repair`.
 - [ ] La auditoría sólo lectura distingue esquema de ledger y terminó sin la excepción
-      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 24 filas.
+      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 25 filas.
 - [ ] La postcondición de #24 confirmó que el rol `authenticator` tiene
       `pgrst.db_pre_request=public.validar_perfil_activo_postgrest`, que la función existe con su
       contrato y ACL esperados, y que PostgREST recargó la configuración.
+- [ ] La postcondición de #25 confirmó las dos tablas CAS sin grants directos, las tres RPC
+      `service_role`-only y el trigger que impide cambiar `profiles.activo` por fuera de una
+      transición versionada.
 - [ ] El contrato REST global confirmó que un JWT `authenticated` con perfil inactivo o ausente
-      recibe rechazo antes de leer, escribir o ejecutar RPC; un perfil activo y los contratos
-      explícitos de `anon`/`service_role` siguen operando.
+      —o cuyo usuario está bloqueado/eliminado en Auth— recibe rechazo antes de leer, escribir o
+      ejecutar RPC; un perfil activo y los contratos explícitos de `anon`/`service_role` siguen
+      operando.
+- [ ] El contrato CAS confirmó inicio/final idempotentes ante respuesta perdida, retry tardío
+      supersedido, baja/alta concurrentes, reconciliación de la intención más nueva y cero perfiles
+      publicados mientras GoTrue queda pendiente.
 - [ ] Se registró que esta barrera cubre exclusivamente la Data API/PostgREST: no intercepta Auth,
       Storage, Realtime ni otros productos, que requieren controles propios si entran en alcance.
 - [ ] Se desplegó el cliente compatible sólo con autorización separada; ID: `__________`.

@@ -41,6 +41,7 @@ const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
   sucursalNombre: "Sucursal",
   puntoVenta: 5,
   modo: "PRODUCCION",
+  afipValidez: "PRODUCCION",
   letra: "A",
   cbteTipo: 1,
   fechaFiscal: "2026-08-22",

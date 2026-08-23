@@ -203,7 +203,7 @@ rechaza "un empleado sigue sin poder auto-activarse" "
   $(como 11111111-1111-1111-1111-111111111111)
   UPDATE public.profiles SET activo = false
   WHERE id = '11111111-1111-1111-1111-111111111111';
-  COMMIT;" "Sólo un administrador puede activar o desactivar"
+  COMMIT;" "transición versionada"
 
 rechaza "un empleado sigue sin poder darse venta sin stock" "
   BEGIN;

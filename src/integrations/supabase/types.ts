@@ -2609,6 +2609,76 @@ export type Database = {
         }
         Relationships: []
       }
+      usuario_estado_acceso: {
+        Row: {
+          activo_deseado: boolean
+          operacion_id: string | null
+          pendiente: boolean
+          profile_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          activo_deseado: boolean
+          operacion_id?: string | null
+          pendiente?: boolean
+          profile_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          activo_deseado?: boolean
+          operacion_id?: string | null
+          pendiente?: boolean
+          profile_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usuario_estado_acceso_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      usuario_estado_acceso_operaciones: {
+        Row: {
+          activo_deseado: boolean
+          created_at: string
+          operacion_id: string
+          profile_id: string
+          tipo: string
+          version: number
+        }
+        Insert: {
+          activo_deseado: boolean
+          created_at?: string
+          operacion_id: string
+          profile_id: string
+          tipo: string
+          version: number
+        }
+        Update: {
+          activo_deseado?: boolean
+          created_at?: string
+          operacion_id?: string
+          profile_id?: string
+          tipo?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usuario_estado_acceso_operaciones_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       venta_items: {
         Row: {
           cantidad: number
@@ -3551,6 +3621,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      finalizar_transicion_usuario_activo: {
+        Args: {
+          p_operacion_id: string
+          p_profile_id: string
+          p_version: number
+        }
+        Returns: Json
+      }
       fiscal_json_canonico: { Args: { p_value: Json }; Returns: string }
       fiscal_snapshot_hash: { Args: { p_snapshot: Json }; Returns: string }
       guardar_extraccion_ingreso: {
@@ -3588,6 +3666,15 @@ export type Database = {
         Returns: boolean
       }
       iniciar_conteo_stock: { Args: never; Returns: string }
+      iniciar_transicion_usuario_activo: {
+        Args: {
+          p_activo: boolean
+          p_actor_id: string
+          p_operacion_id: string
+          p_profile_id: string
+        }
+        Returns: Json
+      }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       leer_venta_fiscal_exacta: { Args: { p_venta_id: string }; Returns: Json }
       next_comprobante_numero: {
@@ -3613,6 +3700,14 @@ export type Database = {
       rechazar_remito: {
         Args: { p_motivo?: string; p_remito_id: string }
         Returns: undefined
+      }
+      reclamar_reconciliacion_usuario_activo: {
+        Args: {
+          p_operacion_id: string
+          p_profile_id: string
+          p_version_observada: number
+        }
+        Returns: Json
       }
       registrar_cobranza: {
         Args: {

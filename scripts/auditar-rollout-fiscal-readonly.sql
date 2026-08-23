@@ -39,7 +39,8 @@ WITH requeridas(version,nombre) AS (
     ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
     ('20260823172000','perfil_activo_autorizacion_global'),
     ('20260823173000','anulacion_neutral_idempotente'),
-    ('20260823174401','barrera_postgrest_perfiles_activos')
+    ('20260823174401','barrera_postgrest_perfiles_activos'),
+    ('20260823180500','toggle_usuario_activo_cas')
 )
 SELECT
   'LEDGER' AS control,
@@ -87,7 +88,8 @@ BEGIN
       ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
       ('20260823172000','perfil_activo_autorizacion_global'),
       ('20260823173000','anulacion_neutral_idempotente'),
-      ('20260823174401','barrera_postgrest_perfiles_activos')
+      ('20260823174401','barrera_postgrest_perfiles_activos'),
+      ('20260823180500','toggle_usuario_activo_cas')
   )
   SELECT pg_catalog.string_agg(r.version||'_'||r.nombre,',' ORDER BY r.version)
     INTO v_faltantes
@@ -123,7 +125,8 @@ BEGIN
       ('20260823170000','restringir_perfiles_inactivos_y_acl_remitos'),
       ('20260823172000','perfil_activo_autorizacion_global'),
       ('20260823173000','anulacion_neutral_idempotente'),
-      ('20260823174401','barrera_postgrest_perfiles_activos')
+      ('20260823174401','barrera_postgrest_perfiles_activos'),
+      ('20260823180500','toggle_usuario_activo_cas')
   )
   SELECT pg_catalog.string_agg(sm.version||'_'||sm.name,',' ORDER BY sm.version)
     INTO v_inesperadas
@@ -220,6 +223,117 @@ SELECT
       AND a.sin_public_ni_terceros
     FROM acl AS a
   ),false) AS acl_exacto;
+
+-- Alta/baja de usuarios instalada por #25. Las tablas no tienen superficie
+-- directa y las únicas entradas son tres RPC service_role-only. La definición
+-- del pre-request debe consultar también el bloqueo/eliminación de GoTrue.
+WITH tablas AS (
+  SELECT c.*
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid=c.relnamespace
+   WHERE n.nspname='public'
+     AND c.relname IN (
+       'usuario_estado_acceso',
+       'usuario_estado_acceso_operaciones'
+     )
+), roles(rol) AS (
+  VALUES ('anon'::name),('authenticated'::name),('service_role'::name)
+), privilegios(privilegio) AS (
+  VALUES
+    ('SELECT'),('INSERT'),('UPDATE'),('DELETE'),
+    ('TRUNCATE'),('REFERENCES'),('TRIGGER')
+), funciones_esperadas(nombre,argumentos) AS (
+  VALUES
+    (
+      'iniciar_transicion_usuario_activo',
+      'p_actor_id uuid, p_profile_id uuid, p_activo boolean, p_operacion_id uuid'
+    ),
+    (
+      'finalizar_transicion_usuario_activo',
+      'p_profile_id uuid, p_version bigint, p_operacion_id uuid'
+    ),
+    (
+      'reclamar_reconciliacion_usuario_activo',
+      'p_profile_id uuid, p_version_observada bigint, p_operacion_id uuid'
+    )
+), funciones AS (
+  SELECT
+    p.*,
+    n.nspname,
+    e.argumentos AS argumentos_esperados
+  FROM funciones_esperadas AS e
+  JOIN pg_catalog.pg_proc AS p ON p.proname=e.nombre
+  JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
+  WHERE n.nspname='public'
+), pre_request AS (
+  SELECT p.oid,pg_catalog.pg_get_functiondef(p.oid) AS definicion
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
+   WHERE n.nspname='public'
+     AND p.proname='validar_perfil_activo_postgrest'
+), trigger_cas AS (
+  SELECT t.*
+    FROM pg_catalog.pg_trigger AS t
+    JOIN pg_catalog.pg_class AS c ON c.oid=t.tgrelid
+    JOIN pg_catalog.pg_namespace AS n ON n.oid=c.relnamespace
+   WHERE n.nspname='public'
+     AND c.relname='profiles'
+     AND t.tgname='trg_profiles_activo_transicion'
+     AND NOT t.tgisinternal
+)
+SELECT
+  'ESQUEMA_TOGGLE_CAS' AS control,
+  (SELECT pg_catalog.count(*)=2 AND pg_catalog.bool_and(relrowsecurity) FROM tablas)
+    AS tablas_rls_exactas,
+  NOT EXISTS (
+    SELECT 1
+      FROM tablas AS t
+      CROSS JOIN roles AS r
+      CROSS JOIN privilegios AS p
+     WHERE pg_catalog.has_table_privilege(r.rol,t.oid,p.privilegio)
+  ) AS tablas_sin_grants_directos,
+  (
+    SELECT pg_catalog.count(*)=3 AND pg_catalog.bool_and(
+      pg_catalog.pg_get_function_identity_arguments(f.oid)=f.argumentos_esperados
+      AND f.prosecdef
+      AND f.provolatile='v'
+      AND 'search_path=""'=ANY(COALESCE(f.proconfig,ARRAY[]::text[]))
+    )
+    FROM funciones AS f
+  ) AS rpc_contrato_exacto,
+  (
+    SELECT pg_catalog.count(*)=3 AND pg_catalog.bool_and(
+      pg_catalog.has_function_privilege('service_role',f.oid,'EXECUTE')
+      AND NOT pg_catalog.has_function_privilege('anon',f.oid,'EXECUTE')
+      AND NOT pg_catalog.has_function_privilege('authenticated',f.oid,'EXECUTE')
+      AND NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.aclexplode(
+            COALESCE(f.proacl,pg_catalog.acldefault('f',f.proowner))
+          ) AS permiso
+          LEFT JOIN pg_catalog.pg_roles AS concedido_a
+            ON concedido_a.oid=permiso.grantee
+         WHERE permiso.privilege_type<>'EXECUTE'
+            OR permiso.grantee=0
+            OR (
+              permiso.grantee<>f.proowner
+              AND concedido_a.rolname IS DISTINCT FROM 'service_role'
+            )
+      )
+    )
+    FROM funciones AS f
+  ) AS rpc_acl_exacto,
+  (
+    SELECT pg_catalog.count(*)=1 AND pg_catalog.bool_and(tgenabled='O')
+    FROM trigger_cas
+  ) AS trigger_activo,
+  COALESCE((
+    SELECT
+      pg_catalog.strpos(definicion,'auth.users')>0
+      AND pg_catalog.strpos(definicion,'banned_until')>0
+      AND pg_catalog.strpos(definicion,'deleted_at')>0
+    FROM pre_request
+  ),false) AS pre_request_valida_auth;
 
 -- Banderas. Antes del corte: false/true. Durante mantenimiento y rollback: false/false.
 SELECT

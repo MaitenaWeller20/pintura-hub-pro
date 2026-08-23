@@ -155,12 +155,28 @@ MISSING_ID="$(crear_usuario sin-perfil "$MISSING_EMAIL")"
 SUCURSAL_ID="$(q "SELECT id FROM public.sucursales WHERE activa ORDER BY numero LIMIT 1")"
 
 "${PSQL[@]}" >/dev/null <<SQL
+BEGIN;
 UPDATE public.profiles
-   SET username='t24_activo',nombre_completo='T24 activo',activo=true,sucursal_id='$SUCURSAL_ID'
+   SET username='t24_activo',nombre_completo='T24 activo',sucursal_id='$SUCURSAL_ID'
  WHERE id='$ACTIVE_ID';
 UPDATE public.profiles
-   SET username='t24_inactivo',nombre_completo='T24 inactivo',activo=false,sucursal_id='$SUCURSAL_ID'
+   SET username='t24_inactivo',nombre_completo='T24 inactivo',sucursal_id='$SUCURSAL_ID'
  WHERE id='$INACTIVE_ID';
+INSERT INTO public.usuario_estado_acceso(
+  profile_id,version,activo_deseado,operacion_id,pendiente
+) VALUES (
+  '$INACTIVE_ID',1,false,'b4240000-0000-4000-8000-000000000024',true
+)
+ON CONFLICT (profile_id) DO UPDATE
+SET version=EXCLUDED.version,activo_deseado=false,
+    operacion_id=EXCLUDED.operacion_id,pendiente=true;
+SELECT pg_catalog.set_config(
+  'app.usuario_activo_operacion','b4240000-0000-4000-8000-000000000024',true
+);
+UPDATE public.profiles SET activo=false WHERE id='$INACTIVE_ID';
+UPDATE public.usuario_estado_acceso
+   SET pendiente=false
+ WHERE profile_id='$INACTIVE_ID';
 DELETE FROM public.profiles WHERE id='$MISSING_ID';
 INSERT INTO public.user_roles(user_id,role)
 VALUES ('$INACTIVE_ID','admin'),('$MISSING_ID','admin')
@@ -169,6 +185,7 @@ INSERT INTO public.clientes(id,razon_social,tipo,activo)
 VALUES ('$CLIENTE_ID','T24 CLIENTE ORIGINAL','CONSUMIDOR_FINAL',true);
 INSERT INTO public.proveedores(id,razon_social,activo)
 VALUES ('$PROVEEDOR_ID','T24 PROVEEDOR ORIGINAL',true);
+COMMIT;
 SQL
 
 ACTIVE_JWT="$(login activo "$ACTIVE_EMAIL")"

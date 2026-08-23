@@ -175,18 +175,21 @@ no constituye una ventana de convivencia; el cliente actual requiere el contrato
 
 La instalación manual debe detenerse antes de la #4 y entrar en una ventana de mantenimiento real:
 impedir nuevas escrituras comerciales, drenar requests y transacciones de todas las instancias
-anteriores, aplicar #4 a #24 en orden, desplegar el cliente compatible con autorización separada y
+anteriores, aplicar #4 a #25 en orden, desplegar el cliente compatible con autorización separada y
 mantener el bloqueo hasta comprobarlo y drenar las instancias viejas. Si no se puede demostrar el
 mantenimiento o el drenaje, se aborta. No se expone el helper a `authenticated` como atajo; el
 permiso transitorio de `service_role` se retira sólo junto con el escritor fiscal legado, en un gate
 posterior. La #21 bloquea RPC privilegiadas puntuales y deja a `anon`/`authenticated` con sólo
 lectura sobre remitos; la #22 vuelve global el requisito de perfil activo, impide la auto-reactivación
 con un JWT viejo y ordena los locks de stock; la #23 hace recuperable también una cancelación
-neutral cuya respuesta se perdió. La #24 instala la última barrera para la Data API/PostgREST: un
+neutral cuya respuesta se perdió. La #24 instala la barrera global para la Data API/PostgREST: un
 JWT `authenticated` que siga siendo criptográficamente válido queda rechazado si su perfil está
-inactivo o ya no existe, antes de acceder a tablas, vistas o RPC.
+inactivo o ya no existe, antes de acceder a tablas, vistas o RPC. La #25 suma el estado de Auth a
+ese control: también rechaza al usuario eliminado o bloqueado y serializa cada alta/baja con una
+versión y una clave idempotente. El perfil permanece inactivo hasta que GoTrue confirma el mismo
+estado; una respuesta vieja o supersedida no puede ganar sobre el pedido más reciente.
 
-La barrera de #24 no se ejecuta en GoTrue/Auth, Storage, Realtime ni otros productos de Supabase.
+La barrera de #24/#25 no se ejecuta en GoTrue/Auth, Storage, Realtime ni otros productos de Supabase.
 No debe presentarse como un cierre universal de sesión: esos caminos necesitan su propio control si
 entran en alcance. `anon` y `service_role` conservan deliberadamente sus contratos actuales; el test
 REST global verifica también que un perfil activo continúa operando.

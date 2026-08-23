@@ -6,6 +6,7 @@ import {
   crearServicioColaFiscal,
   type ColaFiscalRpcArgs,
 } from "./cola.functions";
+import { crearSnapshotFiscalV2 } from "./snapshot";
 
 const UUID = {
   user: "11000000-0000-4000-8000-000000000001",
@@ -40,6 +41,7 @@ const safeRow = {
   saldo: "210.00",
   afip_estado: "SIN_FACTURAR",
   afip_fase: null,
+  afip_legacy_incompleto: false,
   claim_vencido: false,
   venta_antigua: false,
   afip_validez: null,
@@ -91,9 +93,7 @@ describe("contrato de consulta de la cola fiscal", () => {
         return rpcPage();
       },
       listarFavoritos: async () => [],
-      cargarVentaAprobada: async () => null,
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
+      guardarFavoritoDesdeVenta: async () => {
         throw new Error("no usado");
       },
       desactivarFavorito: async () => undefined,
@@ -137,9 +137,7 @@ describe("contrato de consulta de la cola fiscal", () => {
         return rpcPage([{ ...safeRow, tab: "revisar", afip_estado: "ERROR" }]);
       },
       listarFavoritos: async () => [],
-      cargarVentaAprobada: async () => null,
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
+      guardarFavoritoDesdeVenta: async () => {
         throw new Error("no usado");
       },
       desactivarFavorito: async () => undefined,
@@ -147,7 +145,7 @@ describe("contrato de consulta de la cola fiscal", () => {
 
     const result = await servicio.listarColaFiscal(UUID.user, {
       tab: "pendientes",
-      page: 1,
+      page: 7,
       pageSize: 20,
       desde: "2026-08-01",
       hasta: "2026-08-22",
@@ -161,6 +159,7 @@ describe("contrato de consulta de la cola fiscal", () => {
     expect(recibidos).toEqual(
       expect.objectContaining({
         p_sucursal_id: UUID.branchB,
+        p_page: 1,
         p_emisor_id: UUID.emitter,
         p_documento: "30714199664",
         p_estado: "ERROR",
@@ -168,6 +167,7 @@ describe("contrato de consulta de la cola fiscal", () => {
       }),
     );
     expect(result.filas[0]).toMatchObject({ venta_id: UUID.sale, tab: "revisar" });
+    expect(result.page).toBe(1);
   });
 
   it("rechaza cualquier campo secreto agregado por error a la proyección RPC", async () => {
@@ -175,9 +175,7 @@ describe("contrato de consulta de la cola fiscal", () => {
       autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
       consultarCola: async () => rpcPage([{ ...safeRow, afip_snapshot_hash: "no-debe-salir" }]),
       listarFavoritos: async () => [],
-      cargarVentaAprobada: async () => null,
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
+      guardarFavoritoDesdeVenta: async () => {
         throw new Error("no usado");
       },
       desactivarFavorito: async () => undefined,
@@ -198,9 +196,7 @@ describe("contrato de consulta de la cola fiscal", () => {
       autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
       consultarCola: async () => respuesta,
       listarFavoritos: async () => [],
-      cargarVentaAprobada: async () => null,
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
+      guardarFavoritoDesdeVenta: async () => {
         throw new Error("no usado");
       },
       desactivarFavorito: async () => undefined,
@@ -229,9 +225,7 @@ describe("favoritos fiscales user-bound", () => {
           domicilio: null,
         },
       ],
-      cargarVentaAprobada: async () => null,
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
+      guardarFavoritoDesdeVenta: async () => {
         throw new Error("no usado");
       },
       desactivarFavorito: async () => undefined,
@@ -251,119 +245,32 @@ describe("favoritos fiscales user-bound", () => {
     ]);
   });
 
-  it("reintenta guardar sólo desde evidencia APROBADO/PERSISTIDO y deriva toda asociación", async () => {
-    const inserciones: Record<string, unknown>[] = [];
+  it("guarda por una única RPC autoritativa y sólo envía el UUID de la venta", async () => {
+    const ventas: string[] = [];
     const servicio = crearServicioColaFiscal({
       autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
       consultarCola: async () => rpcPage(),
       listarFavoritos: async () => [],
-      cargarVentaAprobada: async () => ({
-        id: UUID.sale,
-        sucursalId: UUID.branchA,
-        clienteId: UUID.client,
-        estado: "APROBADO",
-        fase: "PERSISTIDO",
-        total: "1210.00",
-        receptor: {
-          razonSocial: "Persona",
+      guardarFavoritoDesdeVenta: async (ventaId: string) => {
+        ventas.push(ventaId);
+        return {
+          id: UUID.favorite,
+          sucursal_id: UUID.branchA,
+          cliente_comercial_id: UUID.client,
+          tipo_documento: "DNI",
+          numero_documento: "12345678",
+          razon_social: "Persona",
+          condicion_iva: "CONSUMIDOR_FINAL",
           domicilio: null,
-          tipoDocumento: "DNI",
-          numeroDocumento: "12345678",
-          docTipoArca: 96,
-          docNroArca: "12345678",
-          condicionIva: "CONSUMIDOR_FINAL",
-          origen: "MANUAL",
-          origenId: null,
-          verificadoArcaAt: null,
-        },
-      }),
-      buscarFavorito: async () => null,
-      insertarFavorito: async (fila) => {
-        inserciones.push(fila);
-        return { id: UUID.favorite, ...fila } as any;
+        };
       },
       desactivarFavorito: async () => undefined,
     });
 
-    const favorito = await servicio.guardarReceptorFiscal(UUID.user, { venta_id: UUID.sale });
-    expect(inserciones).toEqual([
-      {
-        sucursal_id: UUID.branchA,
-        creado_por: UUID.user,
-        cliente_comercial_id: UUID.client,
-        tipo_documento: "DNI",
-        numero_documento: "12345678",
-        razon_social: "Persona",
-        condicion_iva: "CONSUMIDOR_FINAL",
-        domicilio: null,
-      },
-    ]);
-    expect(favorito).toMatchObject({ id: UUID.favorite, numero_documento: "12345678" });
-  });
-
-  it("nunca guarda anónimo, favorito previo ni una venta sin aprobación persistida", async () => {
-    const base = {
-      autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
-      consultarCola: async () => rpcPage(),
-      listarFavoritos: async () => [],
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
-        throw new Error("no debe insertar");
-      },
-      desactivarFavorito: async () => undefined,
-    };
-    const venta = {
-      id: UUID.sale,
-      sucursalId: UUID.branchA,
-      clienteId: UUID.client,
-      estado: "APROBADO",
-      fase: "PERSISTIDO",
-      total: "100.00",
-      receptor: {
-        razonSocial: "Consumidor Final",
-        domicilio: null,
-        tipoDocumento: "SIN_IDENTIFICAR",
-        numeroDocumento: null,
-        docTipoArca: 99,
-        docNroArca: "0",
-        condicionIva: "CONSUMIDOR_FINAL",
-        origen: "MANUAL",
-        origenId: null,
-        verificadoArcaAt: null,
-      },
-    };
-
     await expect(
-      crearServicioColaFiscal({
-        ...base,
-        cargarVentaAprobada: async () => venta,
-      }).guardarReceptorFiscal(UUID.user, { venta_id: UUID.sale }),
-    ).rejects.toThrow(/sin identificar/i);
-
-    await expect(
-      crearServicioColaFiscal({
-        ...base,
-        cargarVentaAprobada: async () => ({ ...venta, estado: "SIN_FACTURAR" }),
-      }).guardarReceptorFiscal(UUID.user, { venta_id: UUID.sale }),
-    ).rejects.toThrow(/APROBADO\/PERSISTIDO/);
-
-    await expect(
-      crearServicioColaFiscal({
-        ...base,
-        cargarVentaAprobada: async () => ({
-          ...venta,
-          receptor: {
-            ...venta.receptor,
-            tipoDocumento: "DNI",
-            numeroDocumento: "12345678",
-            docTipoArca: 96,
-            docNroArca: "12345678",
-            origen: "FAVORITO",
-            origenId: UUID.favorite,
-          },
-        }),
-      }).guardarReceptorFiscal(UUID.user, { venta_id: UUID.sale }),
-    ).rejects.toThrow(/manual confirmado/i);
+      servicio.guardarReceptorFiscal(UUID.user, { venta_id: UUID.sale }),
+    ).resolves.toMatchObject({ id: UUID.favorite, numero_documento: "12345678" });
+    expect(ventas).toEqual([UUID.sale]);
   });
 
   it("desactiva por UUID estricto y deja la idempotencia a la RPC autorizada", async () => {
@@ -372,9 +279,7 @@ describe("favoritos fiscales user-bound", () => {
       autorizar: async () => ({ userId: UUID.user, esAdmin: false, sucursalId: UUID.branchA }),
       consultarCola: async () => rpcPage(),
       listarFavoritos: async () => [],
-      cargarVentaAprobada: async () => null,
-      buscarFavorito: async () => null,
-      insertarFavorito: async () => {
+      guardarFavoritoDesdeVenta: async () => {
         throw new Error("no usado");
       },
       desactivarFavorito: async (id) => {
@@ -402,6 +307,8 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     receiverClient: "b1110000-0000-4000-8000-000000000002",
     oldSale: "c1110000-0000-4000-8000-000000000001",
     receiverSale: "c1110000-0000-4000-8000-000000000002",
+    preCaeSale: "c1110000-0000-4000-8000-000000000003",
+    legacyApprovedSale: "c1110000-0000-4000-8000-000000000004",
   };
   let sql: any;
   let branchA = "";
@@ -467,7 +374,7 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
       throw new Error("La integración de cola sólo admite PostgreSQL local.");
     }
     const postgresModule = await import("postgres");
-    sql = postgresModule.default(databaseUrl, { max: 1 });
+    sql = postgresModule.default(databaseUrl, { max: 3 });
     await cleanup();
 
     const branches = await sql`
@@ -478,6 +385,88 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     branchB = branches[1].id;
     emitterA = branches[0].emisor_id;
     emitterB = branches[1].emisor_id;
+
+    const manualSnapshot = crearSnapshotFiscalV2({
+      venta: {
+        id: ids.receiverSale,
+        numeroComercial: "T11-COLA-RECEPTOR",
+        tipoComprobante: "VENTA",
+        condicionVenta: "CONTADO",
+        fechaComercial: "2026-08-23T12:00:00.000Z",
+      },
+      items: [
+        {
+          id: "d1110000-0000-4000-8000-000000000010",
+          productoId: null,
+          codigo: "T11",
+          descripcion: "Item T11",
+          cantidad: "1.00",
+          precioUnitarioSinIva: "100.00",
+          descuentoPorcentaje: "0.00",
+          ivaPorcentaje: "21.00",
+          subtotalNeto: "100.00",
+          importeIva: "21.00",
+          subtotalTotal: "121.00",
+        },
+      ],
+      emisor: {
+        id: emitterA,
+        razonSocial: "EMISOR CONGELADO",
+        nombreFantasia: null,
+        cuit: "30717322467",
+        domicilioFiscal: "Domicilio fiscal",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+        ingresosBrutos: null,
+        inicioActividades: "2020-01-01",
+        telefono: null,
+      },
+      sucursal: {
+        id: branchA,
+        nombre: "SUCURSAL CONGELADA",
+        direccion: "Domicilio sucursal",
+        telefono: null,
+      },
+      receptor: {
+        razonSocial: "RECEPTOR MANUAL CONGELADO",
+        domicilio: "Domicilio receptor",
+        tipoDocumento: "CUIT",
+        numeroDocumento: "30714199664",
+        docTipoArca: 80,
+        docNroArca: "30714199664",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+        origen: "MANUAL",
+        origenId: null,
+        verificadoArcaAt: null,
+        condicionIvaReceptorId: 1,
+      },
+      identidad: {
+        numero: 991004,
+        emisorCuit: "30717322467",
+        puntoVenta: 91,
+        cbteTipo: 1,
+        modo: "PRODUCCION",
+        simulado: false,
+        validez: "PRODUCCION",
+      },
+      letra: "A",
+      concepto: 1,
+      fechaComprobante: "2026-08-23",
+      importeNeto: "100.00",
+      importeExento: "0.00",
+      importeNoGravado: "0.00",
+      importeIva: "21.00",
+      importeTributos: "0.00",
+      importeTotal: "121.00",
+      alicuotasIva: [{ id: 5, baseImponible: "100.00", importe: "21.00" }],
+      tributos: [],
+      moneda: "PES",
+      cotizacion: "1.000000",
+      ivaContenido: "0.00",
+      otrosImpuestosNacionalesIndirectos: "0.00",
+      origen: "VENTA",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+    });
 
     await sql`
       insert into auth.users (
@@ -537,6 +526,18 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
         '2020-01-01T12:00:00Z',100,0,'SIN_FACTURAR',0
       )
     `;
+    await sql`
+      insert into public.ventas(
+        id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,fecha,
+        total,total_pagado,afip_estado,afip_version,afip_legacy_incompleto,
+        afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_modo,
+        afip_simulado,afip_validez,cae
+      ) values (
+        ${ids.legacyApprovedSale},${branchA},${ids.client},${ids.employee},
+        'T11-COLA-LEGACY-APROBADO','FACTURA_B',now(),100,100,'APROBADO',0,true,
+        991005,'30714199664',91,6,'HOMOLOGACION',true,'SIMULADA','CAE-LEGACY-T11'
+      )
+    `;
 
     await sql`
       insert into public.ventas(
@@ -550,7 +551,6 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     const hashExpired = "e".repeat(64);
     const hashRecon = "b".repeat(64);
     const hashApproved = "a".repeat(64);
-    const hashReceiver = "f".repeat(64);
     await sql`
       insert into public.ventas(
         sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,fecha,total,total_pagado,
@@ -604,15 +604,18 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
         afip_cbte_tipo,afip_modo,afip_simulado,afip_validez,afip_fecha_comprobante,
         afip_imp_total,afip_snapshot_hash,afip_snapshot,cae,cae_vencimiento
       ) values (
-        ${ids.receiverSale},${branchA},${ids.receiverClient},${ids.employee},'T11-COLA-RECEPTOR','VENTA',now(),100,100,
-        'APROBADO','PERSISTIDO',2,991004,'30714199664',91,6,'PRODUCCION',false,'PRODUCCION',current_date,
-        100,${hashReceiver},jsonb_build_object(
-          'version',2,'hash',${hashReceiver}::text,'fechaComprobante',current_date::text,
-          'identidad',jsonb_build_object('numero',991004,'emisorCuit','30714199664','puntoVenta',91,'cbteTipo',6,'modo','PRODUCCION','simulado',false),
-          'receptor',jsonb_build_object('razonSocial','RECEPTOR CONGELADO','tipoDocumento','CUIT','numeroDocumento','30714199664','condicionIva','RESPONSABLE_INSCRIPTO'),
-          'emisor',jsonb_build_object('id',${emitterA}::text,'razonSocial','EMISOR CONGELADO','cuit','30714199664'),
-          'sucursal',jsonb_build_object('id',${branchA}::text,'nombre','SUCURSAL CONGELADA')
-        ),'74111111111112',current_date+10
+        ${ids.receiverSale},${branchA},${ids.receiverClient},${ids.employee},'T11-COLA-RECEPTOR','VENTA','2026-08-23T12:00:00Z',121,121,
+        'APROBADO','PERSISTIDO',2,991004,'30717322467',91,1,'PRODUCCION',false,'PRODUCCION','2026-08-23',
+        121,${manualSnapshot.hash},${sql.json(manualSnapshot)},'74111111111112','2026-09-02'
+      )
+    `;
+    await sql`
+      insert into public.ventas(
+        id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,fecha,
+        total,total_pagado,afip_estado,afip_version
+      ) values (
+        ${ids.preCaeSale},${branchA},${ids.receiverClient},${ids.employee},
+        'T11-COLA-PRE-CAE','VENTA',now(),121,0,'SIN_FACTURAR',0
       )
     `;
   }, 30_000);
@@ -635,7 +638,7 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     expect(page3.paginas).toBe(5);
     expect(Number(page3.conteo_pendientes)).toBe(206);
     expect(Number(page3.conteo_revisar)).toBe(7);
-    expect(Number(page3.conteo_emitidas)).toBe(1);
+    expect(Number(page3.conteo_emitidas)).toBe(2);
     expect(Number(page3.conteo_historial)).toBe(1);
     const pares = page3.filas.map((row: any) => `${row.fecha_comercial}|${row.venta_id}`);
     expect(pares).toEqual([...pares].sort().reverse());
@@ -696,6 +699,7 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
 
     const old = await consultar(ids.employee, {
       tab: "revisar",
+      page: 99,
       desde: "2026-08-01",
       hasta: "2026-08-23",
       ventaId: ids.oldSale,
@@ -703,6 +707,206 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     expect(old.filas).toEqual([
       expect.objectContaining({ venta_id: ids.oldSale, tab: "pendientes" }),
     ]);
+    expect(old.pagina).toBe(1);
+  });
+
+  it("usa acceso por clave para venta exacta y sólo expande el tamaño de página solicitado", async () => {
+    const explain = await sql.begin(async (tx: any) => {
+      await tx`set local enable_seqscan=off`;
+      return tx`
+        explain (analyze,buffers,format json)
+        select id
+          from public.ventas
+         where id=${ids.oldSale}
+           and afip_estado in (
+             'NO_APLICA','PENDIENTE','ERROR','SIN_FACTURAR','EMITIENDO','RECONCILIAR',
+             'APROBADO','ERROR_CORREGIBLE','CANCELADO','BLOQUEADO'
+           )
+      `;
+    });
+    const payload = Object.values(explain[0])[0] as any;
+    const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
+    const root = (Array.isArray(parsed) ? parsed[0] : parsed).Plan;
+    const nodes: any[] = [];
+    const visit = (node: any) => {
+      nodes.push(node);
+      for (const child of node.Plans ?? []) visit(child);
+    };
+    visit(root);
+    expect(nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ "Index Name": "ventas_pkey", "Actual Rows": 1 }),
+      ]),
+    );
+
+    const pagina = await consultar(ids.employee, {
+      tab: "pendientes",
+      page: 3,
+      pageSize: 5,
+      desde: "2026-08-01",
+    });
+    expect(pagina.filas).toHaveLength(5);
+    expect(Number(pagina.total)).toBeGreaterThan(200);
+  });
+
+  it("cierra escritura directa y guarda idempotente sólo desde CAE con datos derivados", async () => {
+    await expect(
+      comoUsuario(
+        ids.employee,
+        (tx: any) => tx`
+        insert into public.receptores_fiscales(
+          sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
+        ) values (${branchA},${ids.employee},'DNI','30111222','BYPASS','CONSUMIDOR_FINAL')
+      `,
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    await expect(
+      comoUsuario(
+        ids.employee,
+        (tx: any) => tx`
+        update public.receptores_fiscales set razon_social='SPOOF'
+      `,
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    await expect(
+      comoUsuario(
+        ids.employee,
+        (tx: any) => tx`
+        select * from public.guardar_receptor_fiscal_desde_venta(${ids.preCaeSale})
+      `,
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    const [primero, segundo] = await Promise.all([
+      comoUsuario(
+        ids.employee,
+        (tx: any) => tx`
+        select * from public.guardar_receptor_fiscal_desde_venta(${ids.receiverSale})
+      `,
+      ),
+      comoUsuario(
+        ids.employee,
+        (tx: any) => tx`
+        select * from public.guardar_receptor_fiscal_desde_venta(${ids.receiverSale})
+      `,
+      ),
+    ]);
+    expect(segundo).toEqual(primero);
+    expect(primero).toEqual([
+      expect.objectContaining({
+        sucursal_id: branchA,
+        cliente_comercial_id: ids.receiverClient,
+        tipo_documento: "CUIT",
+        numero_documento: "30714199664",
+        razon_social: "RECEPTOR MANUAL CONGELADO",
+        condicion_iva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "Domicilio receptor",
+      }),
+    ]);
+    const [persistido] = await sql`
+      select creado_por,count(*) over ()::integer as cantidad
+        from public.receptores_fiscales
+       where sucursal_id=${branchA} and tipo_documento='CUIT'
+         and numero_documento='30714199664' and activo
+         and creado_por=${ids.employee}
+    `;
+    expect(persistido).toMatchObject({ creado_por: ids.employee, cantidad: 1 });
+  });
+
+  it("proyecta la única marca legacy segura y mantiene APROBADO incompleto descargable", async () => {
+    const legacy = await consultar(ids.employee, {
+      tab: "pendientes",
+      page: 88,
+      ventaId: ids.legacyApprovedSale,
+    });
+    expect(legacy.pagina).toBe(1);
+    expect(legacy.filas).toEqual([
+      expect.objectContaining({
+        venta_id: ids.legacyApprovedSale,
+        afip_estado: "APROBADO",
+        afip_fase: null,
+        afip_legacy_incompleto: true,
+        tab: "emitidas",
+      }),
+    ]);
+  });
+
+  it("revalida perfil, asignación y sucursal activa antes de desactivar", async () => {
+    const [favorito] = await comoUsuario(
+      ids.employee,
+      (tx: any) => tx`
+      select * from public.guardar_receptor_fiscal_desde_venta(${ids.receiverSale})
+    `,
+    );
+
+    try {
+      await sql`update public.profiles set activo=false where id=${ids.employee}`;
+      await expect(
+        comoUsuario(
+          ids.employee,
+          (tx: any) => tx`
+          select public.desactivar_receptor_fiscal(${favorito.id})
+        `,
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await sql`update public.profiles set activo=true where id=${ids.employee}`;
+    }
+
+    try {
+      await sql`update public.profiles set sucursal_id=null where id=${ids.employee}`;
+      await sql`
+        delete from public.profile_sucursales
+         where profile_id=${ids.employee} and sucursal_id=${branchA}
+      `;
+      await expect(
+        comoUsuario(
+          ids.employee,
+          (tx: any) => tx`
+          select public.desactivar_receptor_fiscal(${favorito.id})
+        `,
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await sql`
+        insert into public.profile_sucursales(profile_id,sucursal_id)
+        values (${ids.employee},${branchA}) on conflict do nothing
+      `;
+      await sql`update public.profiles set sucursal_id=${branchA} where id=${ids.employee}`;
+    }
+
+    try {
+      await sql`update public.sucursales set activa=false where id=${branchA}`;
+      await expect(
+        comoUsuario(
+          ids.employee,
+          (tx: any) => tx`
+          select public.desactivar_receptor_fiscal(${favorito.id})
+        `,
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await sql`update public.sucursales set activa=true where id=${branchA}`;
+    }
+
+    await comoUsuario(
+      ids.employee,
+      (tx: any) => tx`
+      select public.desactivar_receptor_fiscal(${favorito.id})
+    `,
+    );
+    await comoUsuario(
+      ids.employee,
+      (tx: any) => tx`
+      select public.desactivar_receptor_fiscal(${favorito.id})
+    `,
+    );
+    const [fila] = await sql`
+      select activo from public.receptores_fiscales where id=${favorito.id}
+    `;
+    expect(fila.activo).toBe(false);
   });
 
   it("expone sólo la proyección segura y clasifica estados legacy sin volverlos emitibles", async () => {

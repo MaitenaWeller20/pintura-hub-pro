@@ -8,7 +8,6 @@ import {
   type ContextoColaFiscal,
   type LecturasContextoColaFiscal,
 } from "./permiso.server";
-import { validarReceptorFiscalConfirmado, type ReceptorFiscalConfirmado } from "./receptor";
 
 const tabs = ["pendientes", "revisar", "emitidas", "historial"] as const;
 const estadosCola = [
@@ -136,6 +135,7 @@ const filaColaSchema = z
     saldo: z.string(),
     afip_estado: estadoSchema,
     afip_fase: z.enum(fasesCola).nullable(),
+    afip_legacy_incompleto: z.boolean(),
     claim_vencido: z.boolean(),
     venta_antigua: z.boolean(),
     afip_validez: z.enum(["PRODUCCION", "HOMOLOGACION", "SIMULADA"]).nullable(),
@@ -204,28 +204,12 @@ export type ColaFiscalFila = z.infer<typeof filaColaSchema>;
 export type ReceptorFiscalFavorito = z.infer<typeof favoritoSchema>;
 
 type ContextoAutorizado = ContextoColaFiscal;
-type VentaAprobada = {
-  id: string;
-  sucursalId: string;
-  clienteId: string | null;
-  estado: string;
-  fase: string | null;
-  total: string;
-  receptor: unknown;
-};
-type FavoritoInsert = Omit<ReceptorFiscalFavorito, "id"> & { creado_por: string };
 
 export type DependenciasColaFiscal = {
   autorizar(userId: string): Promise<ContextoAutorizado>;
   consultarCola(args: ColaFiscalRpcArgs): Promise<unknown>;
   listarFavoritos(args: { sucursalId: string | null }): Promise<unknown>;
-  cargarVentaAprobada(ventaId: string): Promise<VentaAprobada | null>;
-  buscarFavorito(args: {
-    sucursalId: string;
-    tipoDocumento: ReceptorFiscalConfirmado["tipoDocumento"];
-    numeroDocumento: string;
-  }): Promise<unknown | null>;
-  insertarFavorito(fila: FavoritoInsert): Promise<unknown>;
+  guardarFavoritoDesdeVenta(ventaId: string): Promise<unknown>;
   desactivarFavorito(id: string): Promise<void>;
 };
 
@@ -247,7 +231,7 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
         respuestaRpcSchema,
         await deps.consultarCola({
           p_tab: input.tab,
-          p_page: input.page,
+          p_page: input.venta_id ? 1 : input.page,
           p_page_size: input.pageSize,
           p_desde: input.desde,
           p_hasta: input.hasta,
@@ -261,7 +245,7 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
 
       return {
         filas: respuesta.filas,
-        page: respuesta.pagina,
+        page: input.venta_id ? 1 : respuesta.pagina,
         pageSize: respuesta.tamano_pagina,
         total: respuesta.total,
         paginas: respuesta.paginas,
@@ -284,44 +268,8 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
 
     async guardarReceptorFiscal(userId: string, rawInput: unknown) {
       const input = guardarFavoritoInputSchema.parse(rawInput);
-      const contexto = await deps.autorizar(userId);
-      const venta = await deps.cargarVentaAprobada(input.venta_id);
-      if (!venta) throw new Error("Venta no encontrada o no visible para el operador.");
-      if (!contexto.esAdmin && venta.sucursalId !== contexto.sucursalId) {
-        throw new Error("La venta no pertenece a la sucursal activa del operador.");
-      }
-      if (venta.estado !== "APROBADO" || venta.fase !== "PERSISTIDO") {
-        throw new Error("Sólo se puede reintentar desde evidencia APROBADO/PERSISTIDO.");
-      }
-
-      const receptor = validarReceptorFiscalConfirmado(venta.receptor, Number(venta.total));
-      if (receptor.origen !== "MANUAL") {
-        throw new Error("Sólo se guarda un receptor manual confirmado por el operador.");
-      }
-      if (receptor.tipoDocumento === "SIN_IDENTIFICAR" || !receptor.numeroDocumento) {
-        throw new Error("Un receptor sin identificar no se puede guardar como favorito.");
-      }
-
-      const existente = await deps.buscarFavorito({
-        sucursalId: venta.sucursalId,
-        tipoDocumento: receptor.tipoDocumento,
-        numeroDocumento: receptor.numeroDocumento,
-      });
-      if (existente) return proyeccionSegura(favoritoSchema, existente);
-
-      return proyeccionSegura(
-        favoritoSchema,
-        await deps.insertarFavorito({
-          sucursal_id: venta.sucursalId,
-          creado_por: contexto.userId,
-          cliente_comercial_id: venta.clienteId,
-          tipo_documento: receptor.tipoDocumento,
-          numero_documento: receptor.numeroDocumento,
-          razon_social: receptor.razonSocial.trim(),
-          condicion_iva: receptor.condicionIva,
-          domicilio: receptor.domicilio?.trim() || null,
-        }),
-      );
+      await deps.autorizar(userId);
+      return proyeccionSegura(favoritoSchema, await deps.guardarFavoritoDesdeVenta(input.venta_id));
     },
 
     async desactivarReceptorFiscal(userId: string, rawInput: unknown) {
@@ -402,52 +350,15 @@ function dependenciasSupabase(supabase: SupabaseClient<Database>): DependenciasC
       if (error) throw new Error(`No se pudieron listar los receptores fiscales: ${error.message}`);
       return data ?? [];
     },
-    async cargarVentaAprobada(ventaId) {
-      const { data, error } = await supabase
-        .from("ventas")
-        .select("id,sucursal_id,cliente_id,afip_estado,afip_fase,total,afip_snapshot")
-        .eq("id", ventaId)
-        .maybeSingle();
-      if (error) throw new Error(`No se pudo cargar la venta fiscal: ${error.message}`);
-      if (!data) return null;
-      const snapshot =
-        typeof data.afip_snapshot === "object" && data.afip_snapshot !== null
-          ? (data.afip_snapshot as Record<string, unknown>)
-          : null;
-      return {
-        id: data.id,
-        sucursalId: data.sucursal_id,
-        clienteId: data.cliente_id,
-        estado: data.afip_estado,
-        fase: data.afip_fase,
-        total: String(data.total),
-        receptor: snapshot?.receptor,
-      };
-    },
-    async buscarFavorito({ sucursalId, tipoDocumento, numeroDocumento }) {
-      const { data, error } = await supabase
-        .from("receptores_fiscales")
-        .select(proyeccionFavorito)
-        .eq("activo", true)
-        .eq("sucursal_id", sucursalId)
-        .eq("tipo_documento", tipoDocumento)
-        .eq("numero_documento", numeroDocumento)
-        .order("created_at")
-        .limit(1)
-        .maybeSingle();
-      if (error) throw new Error(`No se pudo verificar el receptor fiscal: ${error.message}`);
-      return data;
-    },
-    async insertarFavorito(fila) {
-      const { data, error } = await supabase
-        .from("receptores_fiscales")
-        .insert(fila)
-        .select(proyeccionFavorito)
-        .single();
-      if (error || !data) {
+    async guardarFavoritoDesdeVenta(ventaId) {
+      const { data, error } = await supabase.rpc("guardar_receptor_fiscal_desde_venta", {
+        p_venta_id: ventaId,
+      });
+      const favorito = data?.[0];
+      if (error || !favorito) {
         throw new Error(`No se pudo guardar el receptor fiscal: ${error?.message ?? "sin fila"}`);
       }
-      return data;
+      return favorito;
     },
     async desactivarFavorito(id) {
       const { error } = await supabase.rpc("desactivar_receptor_fiscal", {

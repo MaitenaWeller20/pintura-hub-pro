@@ -80,10 +80,14 @@ check "backfill tiene una única firma invoker" "1|false" \
   "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='backfill_cola_fiscal' and pg_get_function_identity_arguments(p.oid)='p_aplicar boolean'")"
 check "desactivar favorito tiene una única firma definer" "1|true" \
   "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='desactivar_receptor_fiscal' and pg_get_function_identity_arguments(p.oid)='p_receptor_id uuid'")"
+check "guardar favorito post-CAE tiene una única firma definer" "1|true|v" \
+  "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guardar_receptor_fiscal_desde_venta' and pg_get_function_identity_arguments(p.oid)='p_venta_id uuid'")"
+check "guardar favorito post-CAE fija search_path vacío" "search_path=\"\"" \
+  "$(q "select array_to_string(p.proconfig,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='guardar_receptor_fiscal_desde_venta' and pg_get_function_identity_arguments(p.oid)='p_venta_id uuid'")"
 check "administrar permiso fiscal tiene una única firma definer" "1|true" \
   "$(q "select count(*)::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='administrar_puede_facturar' and pg_get_function_identity_arguments(p.oid)='p_profile_id uuid, p_puede_facturar boolean'")"
 check "PUBLIC no ejecuta rutinas fiscales o privilegiadas nuevas" "0" \
-  "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','desactivar_receptor_fiscal','administrar_puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
+  "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','desactivar_receptor_fiscal','guardar_receptor_fiscal_desde_venta','administrar_puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
 check "authenticated y service_role ejecutan puede_facturar" "true|true" \
   "$(q "select has_function_privilege('authenticated','public.puede_facturar(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.puede_facturar(uuid)','execute')::text")"
 check "el navegador no ejecuta backfill" "false|false" \
@@ -92,6 +96,8 @@ check "el navegador no ejecuta directamente el guard de perfiles" "false|false" 
   "$(q "select has_function_privilege('anon','public.guard_profiles_columnas()','execute')::text||'|'||has_function_privilege('authenticated','public.guard_profiles_columnas()','execute')::text")"
 check "sólo authenticated ejecuta la desactivación controlada" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.desactivar_receptor_fiscal(uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.desactivar_receptor_fiscal(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.desactivar_receptor_fiscal(uuid)','execute')::text")"
+check "sólo authenticated ejecuta el guardado post-CAE" "false|true|false" \
+  "$(q "select has_function_privilege('anon','public.guardar_receptor_fiscal_desde_venta(uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.guardar_receptor_fiscal_desde_venta(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.guardar_receptor_fiscal_desde_venta(uuid)','execute')::text")"
 check "sólo authenticated ejecuta la administración del permiso fiscal" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('service_role','public.administrar_puede_facturar(uuid,boolean)','execute')::text")"
 
@@ -101,13 +107,15 @@ check "cola fiscal fija search_path vacío" "search_path=\"\"" \
   "$(q "select array_to_string(p.proconfig,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
 check "sólo authenticated ejecuta la lectura de cola" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text||'|'||has_function_privilege('service_role','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text")"
-check "favoritos no admiten DELETE directo ni policy DELETE" "false|0" \
-  "$(q "select has_table_privilege('authenticated','public.receptores_fiscales','delete')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='DELETE')::text")"
+check "favoritos dejan sólo SELECT directo al navegador" "true|false|false|false|1|0|0|0" \
+  "$(q "select has_table_privilege('authenticated','public.receptores_fiscales','select')::text||'|'||has_table_privilege('authenticated','public.receptores_fiscales','insert')::text||'|'||has_table_privilege('authenticated','public.receptores_fiscales','update')::text||'|'||has_table_privilege('authenticated','public.receptores_fiscales','delete')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='SELECT')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='INSERT')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='UPDATE')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='DELETE')::text")"
 
-check "índices de cola, favoritos e intentos existen" "4" \
-  "$(q "select count(*) from pg_indexes where schemaname='public' and indexname in ('idx_ventas_cola_fiscal','idx_receptores_fiscales_sucursal','idx_receptores_fiscales_documento','idx_emision_fiscal_intentos_venta')")"
+check "índices de cola, favoritos e intentos existen" "5" \
+  "$(q "select count(*) from pg_indexes where schemaname='public' and indexname in ('idx_ventas_cola_fiscal','idx_ventas_cola_fiscal_global','idx_receptores_fiscales_sucursal','idx_receptores_fiscales_documento','idx_emision_fiscal_intentos_venta')")"
 check "índice de cola incluye legacy y orden total descendente" "true|true|true|true" \
   "$(q "select (indexdef ilike '%fecha DESC, id DESC%')::text||'|'||(indexdef ilike '%PENDIENTE%')::text||'|'||(indexdef ilike '%ERROR%')::text||'|'||(indexdef ilike '%SIN_FACTURAR%')::text from pg_indexes where schemaname='public' and indexname='idx_ventas_cola_fiscal'")"
+check "cola tiene caminos parciales ordenados global y por sucursal" "true|true" \
+  "$(q "select (select indexdef ilike '%(sucursal_id, fecha DESC, id DESC)%' from pg_indexes where schemaname='public' and indexname='idx_ventas_cola_fiscal')::text||'|'||(select indexdef ilike '%(fecha DESC, id DESC)%' from pg_indexes where schemaname='public' and indexname='idx_ventas_cola_fiscal_global')::text")"
 check "se preserva la unicidad fiscal multiemisor exacta" "true" \
   "$(q "select (indexdef ilike '%(afip_emisor_cuit, afip_punto_venta, afip_cbte_tipo, afip_numero, afip_modo, afip_simulado)%' and indexdef ilike '%where (afip_numero is not null)%')::text from pg_indexes where schemaname='public' and indexname='uq_ventas_afip_numeracion'")"
 
@@ -278,7 +286,7 @@ UPDATE public.ventas
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims','{"sub":"a2000000-0000-0000-0000-000000000002","role":"authenticated"}',true);
 DO $$
-DECLARE v_count integer; v_rows integer;
+DECLARE v_count integer;
 BEGIN
   -- Sin filtro activo del cliente: la policy debe ocultar por sí sola los inactivos.
   SELECT count(*) INTO v_count FROM public.receptores_fiscales
@@ -290,70 +298,31 @@ BEGIN
     RAISE EXCEPTION 'puede_facturar no reconoció al empleado fiscal activo';
   END IF;
 
-  INSERT INTO public.receptores_fiscales (
-    id,sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
-  ) VALUES (
-    'd2000000-0000-0000-0000-000000000010',public.current_sucursal_id(),auth.uid(),
-    'DNI','32111222','T2 FAV INSERT PROPIO','CONSUMIDOR_FINAL'
-  );
-
   BEGIN
     INSERT INTO public.receptores_fiscales (
-      sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
+      id,sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
     ) VALUES (
-      (SELECT id FROM public.sucursales ORDER BY numero OFFSET 1 LIMIT 1),auth.uid(),
-      'DNI','32111223','T2 FAV INSERT OTRA','CONSUMIDOR_FINAL'
+      'd2000000-0000-0000-0000-000000000010',public.current_sucursal_id(),auth.uid(),
+      'DNI','32111222','T2 FAV INSERT DIRECTO','CONSUMIDOR_FINAL'
     );
-    RAISE EXCEPTION 'empleado insertó un favorito en otra sucursal';
+    RAISE EXCEPTION 'authenticated conservó INSERT directo sobre favoritos';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 
   BEGIN
-    INSERT INTO public.receptores_fiscales (
-      sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
-    ) VALUES (
-      public.current_sucursal_id(),'a2000000-0000-0000-0000-000000000003',
-      'DNI','32111224','T2 FAV INSERT OTRO CREADOR','CONSUMIDOR_FINAL'
-    );
-    RAISE EXCEPTION 'empleado falseó el creador de un favorito';
+    UPDATE public.receptores_fiscales SET domicilio='NO DEBE CAMBIAR'
+     WHERE id='d2000000-0000-0000-0000-000000000001';
+    RAISE EXCEPTION 'authenticated conservó UPDATE directo sobre favoritos';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 
-  BEGIN
-    INSERT INTO public.receptores_fiscales (
-      sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
-    ) VALUES (
-      public.current_sucursal_id(),auth.uid(),'SIN_IDENTIFICAR','0',
-      'T2 FAV ANONIMO','CONSUMIDOR_FINAL'
-    );
-    RAISE EXCEPTION 'se guardó SIN_IDENTIFICAR como favorito';
-  EXCEPTION WHEN check_violation OR insufficient_privilege THEN NULL;
-  END;
-
-  BEGIN
-    INSERT INTO public.receptores_fiscales (
-      sucursal_id,creado_por,tipo_documento,numero_documento,razon_social,condicion_iva
-    ) VALUES (
-      public.current_sucursal_id(),auth.uid(),'CUIT','30-71419966-4',
-      'T2 FAV DOC NO CANONICO','RESPONSABLE_INSCRIPTO'
-    );
-    RAISE EXCEPTION 'se guardó un documento no canónico';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
-
-  UPDATE public.receptores_fiscales SET domicilio='NO DEBE CAMBIAR'
-   WHERE id='d2000000-0000-0000-0000-000000000004';
-  GET DIAGNOSTICS v_rows=ROW_COUNT;
-  IF v_rows <> 0 THEN
-    RAISE EXCEPTION 'empleado editó un favorito creado por otro usuario';
-  END IF;
-
-  PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000010');
+  PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000001');
+  PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000001');
   IF EXISTS (
     SELECT 1 FROM public.receptores_fiscales
-     WHERE id='d2000000-0000-0000-0000-000000000010'
+     WHERE id='d2000000-0000-0000-0000-000000000001'
   ) THEN
-    RAISE EXCEPTION 'el favorito desactivado siguió visible para el empleado';
+    RAISE EXCEPTION 'la desactivación idempotente siguió visible para el empleado';
   END IF;
 
   BEGIN
@@ -430,7 +399,7 @@ RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims','{"sub":"a2000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
 DO $$
-DECLARE v_count integer; v_rows integer;
+DECLARE v_count integer;
 BEGIN
   PERFORM public.administrar_puede_facturar(
     'a2000000-0000-0000-0000-000000000003',true
@@ -442,14 +411,19 @@ BEGIN
     RAISE EXCEPTION 'admin autenticado no pudo asignar puede_facturar por la RPC';
   END IF;
   SELECT count(*) INTO v_count FROM public.receptores_fiscales WHERE razon_social LIKE 'T2 FAV %';
-  IF v_count <> 5 THEN
-    RAISE EXCEPTION 'admin vio % favoritos; esperaba los 4 originales y el insertado',v_count;
+  IF v_count <> 4 THEN
+    RAISE EXCEPTION 'admin vio % favoritos; esperaba los 4 originales',v_count;
   END IF;
-  UPDATE public.receptores_fiscales SET domicilio='ADMIN OK'
-   WHERE id='d2000000-0000-0000-0000-000000000002';
-  GET DIAGNOSTICS v_rows=ROW_COUNT;
-  IF v_rows <> 1 THEN
-    RAISE EXCEPTION 'admin no pudo administrar favorito de otra sucursal';
+  BEGIN
+    UPDATE public.receptores_fiscales SET domicilio='ADMIN NO DIRECTO'
+     WHERE id='d2000000-0000-0000-0000-000000000002';
+    RAISE EXCEPTION 'admin conservó UPDATE directo sobre favoritos';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM public.desactivar_receptor_fiscal('d2000000-0000-0000-0000-000000000002');
+  IF (SELECT activo FROM public.receptores_fiscales
+       WHERE id='d2000000-0000-0000-0000-000000000002') THEN
+    RAISE EXCEPTION 'admin no pudo desactivar el favorito de otra sucursal por RPC';
   END IF;
   IF (SELECT afip_snapshot FROM public.ventas WHERE numero_comprobante='T2-ESTADO-NO_APLICA')
        IS DISTINCT FROM

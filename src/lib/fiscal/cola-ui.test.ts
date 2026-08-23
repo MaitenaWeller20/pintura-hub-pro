@@ -8,6 +8,7 @@ type Caso = {
   claimVencido?: boolean;
   numeroFiscal?: number | null;
   ventaAntigua?: boolean;
+  legacyIncompleto?: boolean;
   tab: "pendientes" | "revisar" | "emitidas" | "historial";
   empleado: string;
   admin: string;
@@ -103,6 +104,15 @@ const casos: Caso[] = [
     admin: "Ver/descargar",
   },
   {
+    nombre: "comprobante aprobado legacy incompleto",
+    estado: "APROBADO",
+    fase: null,
+    legacyIncompleto: true,
+    tab: "emitidas",
+    empleado: "Ver/descargar",
+    admin: "Ver/descargar",
+  },
+  {
     nombre: "intención cancelada",
     estado: "CANCELADO",
     tab: "historial",
@@ -119,6 +129,7 @@ describe("presentación de estados de la cola fiscal", () => {
       claimVencido: caso.claimVencido ?? false,
       numeroFiscal: caso.numeroFiscal ?? null,
       ventaAntigua: caso.ventaAntigua ?? false,
+      legacyIncompleto: caso.legacyIncompleto ?? false,
     };
 
     expect(presentarEstadoColaFiscal({ ...entrada, esAdmin: false })).toEqual({
@@ -139,6 +150,7 @@ describe("presentación de estados de la cola fiscal", () => {
         claimVencido: false,
         numeroFiscal: null,
         ventaAntigua: false,
+        legacyIncompleto: false,
         esAdmin: true,
       }),
     ).toThrow(/estado fiscal no soportado/i);
@@ -150,8 +162,21 @@ describe("presentación de estados de la cola fiscal", () => {
         claimVencido: true,
         numeroFiscal: null,
         ventaAntigua: false,
+        legacyIncompleto: false,
         esAdmin: true,
       }),
     ).toThrow(/identidad fiscal incierta/i);
+
+    expect(() =>
+      presentarEstadoColaFiscal({
+        estado: "APROBADO",
+        fase: null,
+        claimVencido: false,
+        numeroFiscal: 42,
+        ventaAntigua: false,
+        legacyIncompleto: false,
+        esAdmin: true,
+      }),
+    ).toThrow(/APROBADO sin persistencia/i);
   });
 });

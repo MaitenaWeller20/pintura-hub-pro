@@ -11,6 +11,7 @@ export function presentarEstadoColaFiscal(input: {
   claimVencido: boolean;
   numeroFiscal: number | null;
   ventaAntigua: boolean;
+  legacyIncompleto: boolean;
   esAdmin: boolean;
 }): PresentacionEstadoColaFiscal {
   switch (input.estado) {
@@ -80,7 +81,7 @@ export function presentarEstadoColaFiscal(input: {
       };
 
     case "APROBADO":
-      if (input.fase !== "PERSISTIDO") {
+      if (input.fase !== "PERSISTIDO" && !input.legacyIncompleto) {
         throw new Error("Estado fiscal no soportado: APROBADO sin persistencia.");
       }
       return { tab: "emitidas", accion: "Ver/descargar" };

@@ -3511,6 +3511,19 @@ export type Database = {
         }
         Returns: undefined
       }
+      guardar_receptor_fiscal_desde_venta: {
+        Args: { p_venta_id: string }
+        Returns: {
+          cliente_comercial_id: string
+          condicion_iva: string
+          domicilio: string
+          id: string
+          numero_documento: string
+          razon_social: string
+          sucursal_id: string
+          tipo_documento: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

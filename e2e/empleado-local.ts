@@ -9,6 +9,7 @@ type ConfiguracionUsuarioLocalE2E = {
   username: string;
   nombreCompleto: string;
   rol: RolUsuarioLocalE2E;
+  asignarSucursales: boolean;
 };
 
 const EMPLEADO_E2E: ConfiguracionUsuarioLocalE2E = {
@@ -17,6 +18,7 @@ const EMPLEADO_E2E: ConfiguracionUsuarioLocalE2E = {
   username: "empleado-e2e",
   nombreCompleto: "Empleado E2E",
   rol: "empleado",
+  asignarSucursales: true,
 };
 
 const ADMIN_E2E: ConfiguracionUsuarioLocalE2E = {
@@ -25,6 +27,7 @@ const ADMIN_E2E: ConfiguracionUsuarioLocalE2E = {
   username: "admin-e2e",
   nombreCompleto: "Admin E2E",
   rol: "admin",
+  asignarSucursales: false,
 };
 
 type UsuarioEmpleadoE2E = { id: string };
@@ -52,6 +55,7 @@ export type RepositorioEmpleadoLocalE2E = {
   agregarSucursal(usuarioId: string, sucursalId: string): Promise<void>;
   quitarSucursal(usuarioId: string, sucursalId: string): Promise<void>;
   quitarRol(usuarioId: string, rol: RolUsuarioLocalE2E): Promise<void>;
+  limpiarReferenciasUsuarioCreado(usuarioId: string): Promise<void>;
   eliminarPerfil(usuarioId: string): Promise<void>;
   eliminarUsuario(usuarioId: string): Promise<void>;
 };
@@ -118,6 +122,9 @@ async function prepararUsuarioLocalE2E(
     if (rolAgregado) {
       await intentar(() => repositorio.quitarRol(usuarioId!, configuracion.rol));
     }
+    if (usuarioCreado) {
+      await intentar(() => repositorio.limpiarReferenciasUsuarioCreado(usuarioId!));
+    }
     if (perfilCreado) await intentar(() => repositorio.eliminarPerfil(usuarioId!));
     if (usuarioCreado) await intentar(() => repositorio.eliminarUsuario(usuarioId!));
 
@@ -173,11 +180,13 @@ async function prepararUsuarioLocalE2E(
       throw new Error(`${configuracion.email} existe con un rol distinto de ${configuracion.rol}.`);
     }
 
-    const asignadas = new Set(estado.sucursalesAsignadas);
-    for (const sucursal of sucursales) {
-      if (asignadas.has(sucursal.id)) continue;
-      await repositorio.agregarSucursal(usuarioId, sucursal.id);
-      sucursalesAgregadas.push(sucursal.id);
+    if (configuracion.asignarSucursales) {
+      const asignadas = new Set(estado.sucursalesAsignadas);
+      for (const sucursal of sucursales) {
+        if (asignadas.has(sucursal.id)) continue;
+        await repositorio.agregarSucursal(usuarioId, sucursal.id);
+        sucursalesAgregadas.push(sucursal.id);
+      }
     }
 
     return limpiar;
@@ -344,6 +353,18 @@ export function crearRepositorioEmpleadoLocalHttp(
       await request(
         "DELETE",
         `/rest/v1/user_roles?${parametros({ user_id: `eq.${usuarioId}`, role: `eq.${rol}` })}`,
+      );
+    },
+    async limpiarReferenciasUsuarioCreado(usuarioId) {
+      // Una venta/NC puede abrir automáticamente una caja para el usuario de
+      // bootstrap. Sólo se limpian cajas del usuario creado por esta corrida;
+      // cualquier referencia RESTRICT hace fallar el DELETE en vez de esconder
+      // un residuo comercial. Los usuarios preexistentes nunca pasan por acá.
+      await request(
+        "DELETE",
+        `/rest/v1/caja_sesiones?${parametros({
+          or: `(abierta_por.eq.${usuarioId},cerrada_por.eq.${usuarioId})`,
+        })}`,
       );
     },
     async eliminarPerfil(usuarioId) {

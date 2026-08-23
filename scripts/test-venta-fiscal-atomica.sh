@@ -1406,6 +1406,132 @@ BEGIN
 END;
 $$;
 
+-- Task 9: el engine fiscal nunca repite creación/cobro/stock/caja/deuda. Se
+-- ejercitan aprobación, conciliación+recuperación y ausencia+reenvío+bloqueo
+-- sobre tres ventas ya durables, comparando el vector comercial completo.
+CREATE TEMP TABLE t_task9_paths(kind text PRIMARY KEY,venta_id uuid,pv integer,token uuid);
+INSERT INTO t_task9_paths
+SELECT 'APROBAR',venta_id,981,'e4000000-0000-0000-0000-000000000081'::uuid
+  FROM public.crear_venta(
+    (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+    'b4000000-0000-0000-0000-000000000001','VENTA','CTA_CTE',
+    '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+    '[]'::jsonb,0,'T4-T9-APROBAR',NULL,NULL,NULL,
+    'e4000000-0000-0000-0000-000000000081');
+INSERT INTO t_task9_paths
+SELECT 'RECUPERAR',venta_id,982,'e4000000-0000-0000-0000-000000000082'::uuid
+  FROM public.crear_venta(
+    (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+    'b4000000-0000-0000-0000-000000000001','VENTA','CTA_CTE',
+    '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+    '[]'::jsonb,0,'T4-T9-RECUPERAR',NULL,NULL,NULL,
+    'e4000000-0000-0000-0000-000000000082');
+INSERT INTO t_task9_paths
+SELECT 'REENVIAR_BLOQUEAR',venta_id,983,'e4000000-0000-0000-0000-000000000083'::uuid
+  FROM public.crear_venta(
+    (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+    'b4000000-0000-0000-0000-000000000001','VENTA','CTA_CTE',
+    '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
+    '[]'::jsonb,0,'T4-T9-REENVIAR',NULL,NULL,NULL,
+    'e4000000-0000-0000-0000-000000000083');
+
+CREATE OR REPLACE FUNCTION pg_temp.task9_hasta_request(
+  p_venta uuid,p_pv integer,p_token uuid
+)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  v_snapshot jsonb;
+BEGIN
+  PERFORM * FROM public.transicionar_emision_fiscal(
+    p_venta,'RECLAMAR',p_token,
+    '{"expected_version":0,"lease_segundos":300}'::jsonb
+  );
+  v_snapshot := pg_temp.factura_snapshot_v2(p_venta,p_pv,1,'1210.00');
+  PERFORM * FROM public.transicionar_emision_fiscal(
+    p_venta,'RESERVAR',p_token,
+    jsonb_build_object(
+      'expected_version',1,'snapshot',v_snapshot,
+      'snapshot_hash',v_snapshot->>'hash','numero_propuesto',1,
+      'fecha_comprobante','2026-08-22','emisor_cuit','30714199664',
+      'punto_venta',p_pv,'cbte_tipo',6,'modo','PRODUCCION','simulado',false,
+      'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0
+    )
+  );
+  PERFORM * FROM public.transicionar_emision_fiscal(
+    p_venta,'REQUEST_INICIADO',p_token,'{"expected_version":2}'::jsonb
+  );
+END;
+$$;
+
+SELECT pg_temp.capture_effects('task9_fiscal_before');
+SELECT pg_temp.task9_hasta_request(venta_id,pv,token) FROM t_task9_paths;
+
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='APROBAR'),'RESPUESTA_RECIBIDA',
+  (SELECT token FROM t_task9_paths WHERE kind='APROBAR'),
+  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[]}}'::jsonb
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='APROBAR'),'APROBAR',
+  (SELECT token FROM t_task9_paths WHERE kind='APROBAR'),
+  '{"expected_version":4,"cae":"74123456789011","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T18:00:00.000Z"}'::jsonb
+);
+
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='RECUPERAR'),'RECONCILIAR',
+  (SELECT token FROM t_task9_paths WHERE kind='RECUPERAR'),
+  '{"expected_version":3,"error_clase":"APLICACION","error_codigo":"TIMEOUT","error_fase":"REQUEST_INICIADO","mensaje_mascarado":"Respuesta incierta"}'::jsonb
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='RECUPERAR'),'RECUPERAR_CAE',
+  (SELECT token FROM t_task9_paths WHERE kind='RECUPERAR'),
+  jsonb_build_object(
+    'expected_version',4,'cae','74123456789012','cae_vencimiento',NULL,
+    'payload_hash',(SELECT afip_snapshot_hash FROM public.ventas
+                     WHERE id=(SELECT venta_id FROM t_task9_paths WHERE kind='RECUPERAR')),
+    'respuesta_resumen',jsonb_build_object(
+      'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
+      'coincidencia_completa',true,'observaciones','[]'::jsonb
+    )
+  )
+);
+
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR'),'RECONCILIAR',
+  (SELECT token FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR'),
+  '{"expected_version":3,"error_clase":"APLICACION","error_codigo":"TIMEOUT","error_fase":"REQUEST_INICIADO","mensaje_mascarado":"Respuesta incierta"}'::jsonb
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR'),'REENVIO_VERIFICADO',
+  (SELECT token FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR'),
+  jsonb_build_object(
+    'expected_version',4,
+    'nuevo_claim_token','e4000000-0000-0000-0000-000000000084',
+    'ultimo_remoto',0,
+    'payload_hash',(SELECT afip_snapshot_hash FROM public.ventas
+                     WHERE id=(SELECT venta_id FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR')),
+    'respuesta_resumen',jsonb_build_object(
+      'tipo','CONSULTA_ARCA','resultado','AUSENTE','fuente','FECompConsultar',
+      'ausencia_confirmada',true,'observaciones','[]'::jsonb
+    )
+  )
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR'),
+  'REQUEST_INICIADO','e4000000-0000-0000-0000-000000000084',
+  '{"expected_version":5}'::jsonb
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_task9_paths WHERE kind='REENVIAR_BLOQUEAR'),
+  'BLOQUEAR','e4000000-0000-0000-0000-000000000084',
+  '{"expected_version":6,"error_clase":"DIVERGENCIA","error_codigo":"DIVERGENCIA_ARCA","error_fase":"CONCILIACION","mensaje_mascarado":"Divergencia fiscal","diferencias":{"campos":["importeTotal"]}}'::jsonb
+);
+SELECT pg_temp.capture_effects('task9_fiscal_after');
+SELECT pg_temp.assert_effects_equal(
+  'task9_fiscal_before','task9_fiscal_after',
+  'Task 9: aprobar, conciliar, recuperar, reenviar y bloquear no cambian efectos comerciales'
+);
+
 -- Contrato y mínimo privilegio.
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace

@@ -754,6 +754,228 @@ check "BLOQUEAR conserva evidencia y exige revisión" \
   "$(q "SELECT v.afip_estado||'|'||v.afip_error_clase||'|'||v.afip_error_codigo||'|'||v.afip_error_fase||'|'||v.afip_version||'|'||i.resultado||'|'||(i.respuesta_resumen#>>'{diagnostico,diferencias,receptor}') FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000013'")"
 
 echo
+echo "== Task 9: lectura exacta y recuperación de CAE =="
+
+"${PSQL[@]}" >/dev/null <<'SQL'
+UPDATE public.ventas
+   SET subtotal_sin_iva=0.15,
+       iva_total=0.03,
+       percepciones=0.00,
+       total=0.18,
+       total_pagado=0.10
+ WHERE id='c3000000-0000-0000-0000-000000000040';
+INSERT INTO public.venta_items (
+  id,venta_id,producto_id,codigo,descripcion,cantidad,
+  precio_unitario_sin_iva,descuento_porcentaje,iva_porcentaje,
+  subtotal_sin_iva,iva_monto,subtotal_con_iva
+) VALUES (
+  'e3000000-0000-0000-0000-000000000040',
+  'c3000000-0000-0000-0000-000000000040',NULL,
+  'DERIVA-IEEE','Importe exacto PostgreSQL',0.02,7.25,0.00,21.00,
+  0.15,0.03,0.18
+);
+SQL
+
+check_sql "la lectura exacta devuelve strings canónicos y no la deriva IEEE-754" \
+  "0.15|0.03|0.00|0.18|0.10|0.08|0.02|7.25|0.00|21.00|0.15|0.03|0.18" \
+  "SELECT concat_ws('|',
+     fiscal#>>'{venta,subtotalSinIva}',fiscal#>>'{venta,ivaTotal}',
+     fiscal#>>'{venta,percepciones}',fiscal#>>'{venta,total}',
+     fiscal#>>'{venta,totalPagado}',fiscal#>>'{venta,saldo}',
+     fiscal#>>'{items,0,cantidad}',fiscal#>>'{items,0,precioUnitarioSinIva}',
+     fiscal#>>'{items,0,descuentoPorcentaje}',fiscal#>>'{items,0,ivaPorcentaje}',
+     fiscal#>>'{items,0,subtotalNeto}',fiscal#>>'{items,0,importeIva}',
+     fiscal#>>'{items,0,subtotalTotal}')
+   FROM (SELECT public.leer_venta_fiscal_exacta(
+     'c3000000-0000-0000-0000-000000000040'
+   ) AS fiscal) AS exacta;"
+
+check_sql "la lectura exacta tiene una sola firma SECURITY INVOKER y search_path fijo" \
+  "1|false|true" \
+  "SELECT count(*)||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text
+     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='public' AND p.proname='leer_venta_fiscal_exacta'
+      AND pg_get_function_identity_arguments(p.oid)='p_venta_id uuid';"
+
+check_sql "sólo service_role ejecuta la lectura fiscal exacta" \
+  "false|false|false|true" \
+  "SELECT has_function_privilege('public','public.leer_venta_fiscal_exacta(uuid)','execute')::text||'|'||
+          has_function_privilege('anon','public.leer_venta_fiscal_exacta(uuid)','execute')::text||'|'||
+          has_function_privilege('authenticated','public.leer_venta_fiscal_exacta(uuid)','execute')::text||'|'||
+          has_function_privilege('service_role','public.leer_venta_fiscal_exacta(uuid)','execute')::text;"
+
+claim 'c3000000-0000-0000-0000-000000000027' \
+  'd3000000-0000-0000-0000-000000000027' >/dev/null
+crear_snapshot 1 30714199664 927 1 PRODUCCION false 30714199664 \
+  'RECUPERACION EXACTA' 1210.00
+hash_recuperacion="$SNAPSHOT_HASH"
+snapshot_recuperacion="$SNAPSHOT"
+reservar 'c3000000-0000-0000-0000-000000000027' \
+  'd3000000-0000-0000-0000-000000000027' 1 1 30714199664 927 1 \
+  PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+q_sr "SELECT * FROM public.transicionar_emision_fiscal(
+  'c3000000-0000-0000-0000-000000000027','REQUEST_INICIADO',
+  'd3000000-0000-0000-0000-000000000027','{\"expected_version\":2}'::jsonb);" >/dev/null
+q_sr "SELECT * FROM public.transicionar_emision_fiscal(
+  'c3000000-0000-0000-0000-000000000027','RECONCILIAR',
+  'd3000000-0000-0000-0000-000000000027',
+  '{\"expected_version\":3,\"error_clase\":\"TRANSPORTE\",\"error_codigo\":\"TIMEOUT\",\"error_fase\":\"REQUEST_INICIADO\",\"mensaje_mascarado\":\"respuesta incierta\"}'::jsonb);" >/dev/null
+
+resumen_recuperacion='{"tipo":"CONSULTA_ARCA","resultado":"COINCIDE","fuente":"FECompConsultar","coincidencia_completa":true,"observaciones":[]}'
+payload_recuperacion="jsonb_build_object(
+  'expected_version',4,'cae','74123456789012','cae_vencimiento',NULL,
+  'payload_hash','$hash_recuperacion','respuesta_resumen','$resumen_recuperacion'::jsonb
+)"
+
+expect_fail_like "RECUPERAR_CAE conserva APROBAR cerrado desde RECONCILIAR" \
+  "APROBAR exige respuesta|APROBAR.*respuesta" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','APROBAR',
+    'd3000000-0000-0000-0000-000000000027',
+    '{\"expected_version\":4,\"cae\":\"74123456789012\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:00:00Z\"}'::jsonb);"
+
+expect_fail_like "RECUPERAR_CAE rechaza claves desconocidas" \
+  "Clave.*no permitida" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object('emitido_at','2026-08-22T15:00:00Z'));"
+expect_fail_like "RECUPERAR_CAE exige todas las claves" \
+  "Faltan claves.*cae_vencimiento" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion-'cae_vencimiento');"
+expect_fail_like "RECUPERAR_CAE rechaza CAE no textual o no canónico" \
+  "CAE.*14" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object('cae',74123456789012));"
+expect_fail_like "RECUPERAR_CAE rechaza vencimiento JSON de tipo incorrecto" \
+  "cae_vencimiento.*null.*string|vencimiento.*tipo" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object('cae_vencimiento',20260831));"
+expect_fail_like "RECUPERAR_CAE rechaza fecha inexistente" \
+  "cae_vencimiento.*fecha válida|vencimiento.*fecha válida" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object('cae_vencimiento','2026-02-30'));"
+expect_fail_like "RECUPERAR_CAE rechaza hash distinto" \
+  "payload_hash.*(coincide|identidad)|hash.*coincide" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object('payload_hash',repeat('f',64)));"
+expect_fail_like "RECUPERAR_CAE exige resumen exacto sin claves opcionales" \
+  "resumen.*(exacto|literal|inválido)" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object(
+      'respuesta_resumen','$resumen_recuperacion'::jsonb||jsonb_build_object('codigo','602')));"
+expect_fail_like "RECUPERAR_CAE exige observaciones exactamente vacías" \
+  "resumen.*(exacto|observaciones|inválido)" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object(
+      'respuesta_resumen',jsonb_set('$resumen_recuperacion'::jsonb,'{observaciones}','[\"x\"]'::jsonb)));"
+expect_fail_like "RECUPERAR_CAE revalida CAS" \
+  "Versión esperada" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion||jsonb_build_object('expected_version',3));"
+expect_fail_like "RECUPERAR_CAE revalida el token" \
+  "token fiscal" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000099',$payload_recuperacion);"
+
+identidad_recuperacion_antes="$(q "SELECT concat_ws('|',
+  afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,
+  afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,
+  afip_snapshot::text,afip_snapshot_hash,tipo_comprobante,numero_comprobante,
+  total,total_pagado,cliente_id,sucursal_id)
+ FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000027'")"
+
+check_sql "RECUPERAR_CAE persiste sólo CAE/auditoría y usa reloj del servidor" \
+  $'1\nAPROBADO|PERSISTIDO|74123456789012||5|t|PERSISTIDO|RECUPERADO_CAE|COINCIDE|true' \
+  "SELECT count(*) FROM public.transicionar_emision_fiscal(
+       'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+       'd3000000-0000-0000-0000-000000000027',$payload_recuperacion);
+   SELECT concat_ws('|',v.afip_estado,v.afip_fase,v.cae,
+          coalesce(v.cae_vencimiento::text,''),v.afip_version,
+          (v.afip_emitido_at BETWEEN clock_timestamp()-interval '5 seconds' AND clock_timestamp()+interval '1 second'),
+          i.fase,i.resultado,
+          coalesce(i.respuesta_resumen#>>'{evidencia_externa,consulta_recuperacion,resultado}',''),
+          coalesce(i.respuesta_resumen#>>'{evidencia_externa,consulta_recuperacion,coincidencia_completa}',''))
+     FROM public.ventas v
+     JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id
+      AND i.claim_token='d3000000-0000-0000-0000-000000000027'
+    WHERE v.id='c3000000-0000-0000-0000-000000000027';"
+
+identidad_recuperacion_despues="$(q "SELECT concat_ws('|',
+  afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,
+  afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,
+  afip_snapshot::text,afip_snapshot_hash,tipo_comprobante,numero_comprobante,
+  total,total_pagado,cliente_id,sucursal_id)
+ FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000027'")"
+check "RECUPERAR_CAE no reescribe identidad fiscal ni comercial" \
+  "$identidad_recuperacion_antes" "$identidad_recuperacion_despues"
+expect_fail_like "RECUPERAR_CAE rechaza una segunda recuperación/auditoría" \
+  "Versión esperada|token fiscal|RECUPERAR_CAE.*RECONCILIAR|recuperación.*auditada" \
+  "SELECT * FROM public.transicionar_emision_fiscal(
+    'c3000000-0000-0000-0000-000000000027','RECUPERAR_CAE',
+    'd3000000-0000-0000-0000-000000000027',$payload_recuperacion);"
+
+for suffix in 28 29; do
+  venta="c3000000-0000-0000-0000-0000000000${suffix}"
+  token="d3000000-0000-0000-0000-0000000000${suffix}"
+  claim "$venta" "$token" >/dev/null
+  crear_snapshot 1 30714199664 $((900 + suffix)) 1 PRODUCCION false 30714199664 \
+    "RECUPERACION CONCURRENTE $suffix" 1210.00
+  reservar "$venta" "$token" 1 1 30714199664 $((900 + suffix)) 1 \
+    PRODUCCION false PRODUCCION 0 0 "$SNAPSHOT" "$SNAPSHOT_HASH" >/dev/null
+  q_sr "SELECT * FROM public.transicionar_emision_fiscal(
+    '$venta','REQUEST_INICIADO','$token','{\"expected_version\":2}'::jsonb);" >/dev/null
+  q_sr "SELECT * FROM public.transicionar_emision_fiscal(
+    '$venta','RECONCILIAR','$token',
+    '{\"expected_version\":3,\"error_clase\":\"TRANSPORTE\",\"error_codigo\":\"TIMEOUT\",\"error_fase\":\"REQUEST_INICIADO\",\"mensaje_mascarado\":\"respuesta incierta\"}'::jsonb);" >/dev/null
+  if [[ "$suffix" == "28" ]]; then
+    hash_concurrente="$SNAPSHOT_HASH"
+  fi
+done
+
+payload_concurrente="jsonb_build_object(
+  'expected_version',4,'cae','74123456789028','cae_vencimiento','2026-09-01',
+  'payload_hash','$hash_concurrente','respuesta_resumen','$resumen_recuperacion'::jsonb
+)"
+for intento in uno dos; do
+  "${PSQL[@]}" >"$TMP_DIR/recuperar-${intento}.out" 2>&1 <<SQL &
+SET ROLE service_role;
+SELECT * FROM public.transicionar_emision_fiscal(
+  'c3000000-0000-0000-0000-000000000028','RECUPERAR_CAE',
+  'd3000000-0000-0000-0000-000000000028',$payload_concurrente
+);
+SQL
+  if [[ "$intento" == "uno" ]]; then pid_recuperar_uno=$!; else pid_recuperar_dos=$!; fi
+done
+set +e
+wait "$pid_recuperar_uno"; recuperar_uno_status=$?
+wait "$pid_recuperar_dos"; recuperar_dos_status=$?
+set -e
+if [[ "$recuperar_uno_status" -eq 0 && "$recuperar_dos_status" -ne 0 ]] \
+   || [[ "$recuperar_uno_status" -ne 0 && "$recuperar_dos_status" -eq 0 ]]; then
+  pass "dos RECUPERAR_CAE concurrentes dejan exactamente un ganador"
+else
+  fail "dos RECUPERAR_CAE concurrentes — estados ${recuperar_uno_status}/${recuperar_dos_status}"
+  sed -n '1,20p' "$TMP_DIR/recuperar-uno.out" >&2
+  sed -n '1,20p' "$TMP_DIR/recuperar-dos.out" >&2
+fi
+check "la recuperación concurrente deja un CAE y una sola auditoría inmutable" \
+  "APROBADO|PERSISTIDO|74123456789028|5|1|RECUPERADO_CAE" \
+  "$(q "SELECT v.afip_estado||'|'||v.afip_fase||'|'||v.cae||'|'||v.afip_version||'|'||
+              count(i.respuesta_resumen#>'{evidencia_externa,consulta_recuperacion}')||'|'||max(i.resultado)
+          FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id
+         WHERE v.id='c3000000-0000-0000-0000-000000000028' GROUP BY v.id")"
+
+echo
 echo "── resumen ──────────────────"
 printf 'ok: %d   fallas: %d\n' "$ok" "$failures"
 [[ "$failures" -eq 0 ]]

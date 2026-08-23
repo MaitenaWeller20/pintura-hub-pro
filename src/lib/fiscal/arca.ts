@@ -62,9 +62,18 @@ class ArcaRespuestaIncierta extends Error {
   override name = "ArcaRespuestaIncierta";
 }
 
-class ArcaRechazoDefinitivo extends Error {
+export class ArcaRechazoDefinitivo extends Error {
   override name = "ArcaRechazoDefinitivo";
+
+  constructor(
+    message: string,
+    readonly codigo = "RECHAZO_ARCA",
+  ) {
+    super(message);
+  }
 }
+
+type ClienteSupabaseTicketStorage = ConstructorParameters<typeof SupabaseTicketStorage>[0];
 
 function conTimeout<T>(p: Promise<T>, etiqueta: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -420,7 +429,7 @@ export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaCo
  * cualquier módulo que toque este archivo. Así se carga sólo cuando de verdad
  * hay que pedir un CAE.
  */
-async function buildArca(emisor: EmisorFiscal, pv: PuntoVenta, supabaseAdmin: any) {
+async function buildArca(emisor: EmisorFiscal, pv: PuntoVenta, supabaseAdmin: unknown) {
   const cert = decryptString(emisor.arca_cert_enc);
   const key = decryptString(emisor.arca_key_enc);
   if (!cert || !key) {
@@ -442,7 +451,11 @@ async function buildArca(emisor: EmisorFiscal, pv: PuntoVenta, supabaseAdmin: an
     ticketPath: "/tmp/quimex-arca-tickets",
     // Sin esto el SDK escribe el ticket en el bundle read-only de Vercel y se
     // cae la facturación entera. Ver ticket-storage.ts.
-    ticketStorage: new SupabaseTicketStorage(supabaseAdmin, cuit, production) as any,
+    ticketStorage: new SupabaseTicketStorage(
+      supabaseAdmin as ClienteSupabaseTicketStorage,
+      cuit,
+      production,
+    ),
     // Los servidores de AFIP usan TLS legacy: sin el agente de Node falla el
     // handshake. Requiere runtime Node (no edge).
     useHttpsAgent: true,
@@ -454,7 +467,7 @@ export async function ultimoAutorizado(
   emisor: EmisorFiscal,
   pv: PuntoVenta,
   cbteTipo: number,
-  supabaseAdmin: any,
+  supabaseAdmin: unknown,
 ): Promise<number> {
   if (MOCK) return 0;
   const arca = await buildArca(emisor, pv, supabaseAdmin);
@@ -480,7 +493,7 @@ export async function consultarComprobante(
   pv: PuntoVenta,
   cbteTipo: number,
   numero: number,
-  supabaseAdmin: any,
+  supabaseAdmin: unknown,
 ): Promise<{ cae: string; vencimiento: Date | null } | null> {
   const comprobante = await consultarComprobanteCompleto(
     emisor,
@@ -557,7 +570,7 @@ export async function solicitarCae(
   emisor: EmisorFiscal,
   pv: PuntoVenta,
   d: DatosCae,
-  supabaseAdmin: any,
+  supabaseAdmin: unknown,
 ): Promise<RespuestaCae> {
   if (MOCK) {
     // CAE simulado, determinístico, de 14 dígitos. Permite operar y demostrar el
@@ -650,6 +663,49 @@ export async function solicitarCae(
   }
 
   return { cae: String(r.cae), vencimiento: parseFechaAfip(r.caeFchVto), modo: pv.modo };
+}
+
+/**
+ * Writer v2: el único detalle enviado es el que Task 8 tradujo desde el
+ * Snapshot persistido. A diferencia del adaptador legacy, no reconstruye
+ * importes, tributos ni asociaciones.
+ */
+export async function solicitarCaeConPayload(
+  emisor: EmisorFiscal,
+  pv: PuntoVenta,
+  payload: Record<string, unknown>,
+  numero: number,
+  supabaseAdmin: unknown,
+): Promise<RespuestaCae> {
+  if (MOCK) {
+    const semilla = `${emisor.cuit}${pv.numero}${String(payload.CbteTipo)}${numero}`;
+    let hash = 0;
+    for (const caracter of semilla) hash = (hash * 31 + caracter.charCodeAt(0)) >>> 0;
+    const cae = String(hash).padStart(14, "7").slice(0, 14);
+    const vencimiento = new Date();
+    vencimiento.setUTCDate(vencimiento.getUTCDate() + 10);
+    return { cae, vencimiento, modo: pv.modo };
+  }
+
+  const arca = await buildArca(emisor, pv, supabaseAdmin);
+  const result = await conTimeout(
+    arca.electronicBillingService.createVoucher(payload as never),
+    "solicitar el CAE",
+  );
+  const respuesta = result as { cae?: unknown; caeFchVto?: string; response?: unknown };
+  if (typeof respuesta.cae !== "string" || !/^\d{14}$/.test(respuesta.cae)) {
+    const detalle = detalleRechazoAfip(respuesta.response);
+    throw new ArcaRechazoDefinitivo(
+      detalle
+        ? `ARCA no autorizó el comprobante: ${detalle}`
+        : "ARCA no autorizó el comprobante. Revisá los datos fiscales e intentá de nuevo.",
+    );
+  }
+  return {
+    cae: respuesta.cae,
+    vencimiento: parseFechaAfip(respuesta.caeFchVto),
+    modo: pv.modo,
+  };
 }
 
 /**

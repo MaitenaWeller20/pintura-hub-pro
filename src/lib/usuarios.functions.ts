@@ -338,6 +338,72 @@ export async function ejecutarToggleUsuarioActivo(
     );
   };
 
+  const imponerCierreFailSafe = async (causa: unknown): Promise<never> => {
+    let dbCerrada = false;
+    let authCerrado = false;
+    let ultimoErrorCierre: unknown = null;
+
+    // Esta RPC usa service_role y no vuelve a autorizar al actor original. Es
+    // deliberado: si el admin fue desactivado mientras GoTrue estaba en vuelo,
+    // el cierre de emergencia tiene que seguir disponible. Se reusa la misma
+    // clave en el retry para cubrir un COMMIT cuya respuesta se perdió.
+    for (let ronda = 0; ronda < 3 && !dbCerrada; ronda += 1) {
+      let cierreId: string;
+      try {
+        cierreId = operaciones.generarOperacionId();
+      } catch (error) {
+        ultimoErrorCierre = error;
+        break;
+      }
+      for (let intento = 0; intento < 2 && !dbCerrada; intento += 1) {
+        try {
+          const { data, error } = await operaciones.forzarCierreFailSafe(
+            input.user_id,
+            cierreId,
+          );
+          if (error) {
+            ultimoErrorCierre = error;
+            continue;
+          }
+          const cierre = parsearEstado(
+            data,
+            "No se pudo interpretar el cierre de emergencia del usuario",
+          );
+          estado = cierre;
+          // Una operación concurrente puede superseder la clave del cierre,
+          // pero mientras el estado vigente permanezca pending/profile=false
+          // el acceso de PostgREST ya está cerrado de forma global.
+          dbCerrada = cierre.pendiente && !cierre.activoActual;
+        } catch (error) {
+          ultimoErrorCierre = error;
+        }
+      }
+    }
+
+    // Bloquear también GoTrue evita depender únicamente del pre-request de DB
+    // durante una incidencia. Si Auth no responde pero DB quedó cerrada, sigue
+    // siendo fail-closed; si DB falló pero el ban entró, tampoco queda acceso.
+    try {
+      await actualizarAuthValidado("876000h");
+      authCerrado = true;
+    } catch (error) {
+      ultimoErrorCierre = ultimoErrorCierre ?? error;
+    }
+
+    const motivo = mensajeErrorUsuario(causa, "No se pudo reconciliar el acceso del usuario");
+    if (!dbCerrada && !authCerrado) {
+      throw new Error(
+        `${motivo}. Además falló el cierre de emergencia: ${mensajeErrorUsuario(
+          ultimoErrorCierre,
+          "requiere revisión administrativa inmediata",
+        )}`,
+      );
+    }
+    throw new Error(
+      `${motivo}. El acceso quedó cerrado de forma preventiva y requiere reintento administrativo.`,
+    );
+  };
+
   let estado = await rpcConReintento(
     () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
     "No se pudo iniciar el cambio de acceso",
@@ -358,9 +424,16 @@ export async function ejecutarToggleUsuarioActivo(
   for (let paso = 0; paso < 24 && escriturasAuth < 9; paso += 1) {
     if (!estado.pendiente) {
       if (estado.activoActual !== estado.activoDeseado) {
-        throw new Error("El acceso resuelto no coincide con la intención vigente");
+        return imponerCierreFailSafe(
+          new Error("El acceso resuelto no coincide con la intención vigente"),
+        );
       }
-      const authBloqueado = await leerAuthBloqueadoValidado();
+      let authBloqueado: boolean;
+      try {
+        authBloqueado = await leerAuthBloqueadoValidado();
+      } catch (error) {
+        return imponerCierreFailSafe(error);
+      }
       if (authBloqueado === !estado.activoDeseado) {
         if (estado.activoDeseado === input.activo) return { ok: true };
         throw new Error(
@@ -369,15 +442,19 @@ export async function ejecutarToggleUsuarioActivo(
       }
 
       const reconciliacionId = operaciones.generarOperacionId();
-      estado = await rpcConReintento(
-        () =>
-          operaciones.reclamarReconciliacion(
-            input.user_id,
-            estado.version,
-            reconciliacionId,
-          ),
-        "No se pudo reconciliar el cambio de acceso más reciente",
-      );
+      try {
+        estado = await rpcConReintento(
+          () =>
+            operaciones.reclamarReconciliacion(
+              input.user_id,
+              estado.version,
+              reconciliacionId,
+            ),
+          "No se pudo reconciliar el cambio de acceso más reciente",
+        );
+      } catch (error) {
+        return imponerCierreFailSafe(error);
+      }
       continue;
     }
 
@@ -395,10 +472,15 @@ export async function ejecutarToggleUsuarioActivo(
       // idempotente original devuelve el CAS vigente sin crear otra intención.
       // Si sigue exactamente el mismo pending, el perfil ya está fail-closed y
       // se conserva el error real. Si avanzó, el loop repara el desired actual.
-      const observado = await rpcConReintento(
-        () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
-        "No se pudo consultar el estado vigente después de finalizar",
-      );
+      let observado: EstadoToggleUsuario;
+      try {
+        observado = await rpcConReintento(
+          () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
+          "No se pudo consultar el estado vigente después de finalizar",
+        );
+      } catch (errorRecuperacion) {
+        return imponerCierreFailSafe(errorRecuperacion);
+      }
       if (
         observado.pendiente &&
         observado.version === intentado.version &&
@@ -410,29 +492,11 @@ export async function ejecutarToggleUsuarioActivo(
     }
   }
 
-  {
-    // Con churn sostenido no se adivina un ganador ni se espera para siempre.
-    // La primitiva fail-safe toma el desired vigente bajo lock, crea una
-    // reconciliación más nueva y deja profile=false/pending. El administrador
-    // ve el error y reintenta; jamás se informa éxito con Auth ambiguo.
-    let cerrada = false;
-    for (let intento = 0; intento < 3 && !cerrada; intento += 1) {
-      const cierreId = operaciones.generarOperacionId();
-      estado = await rpcConReintento(
-        () => operaciones.forzarCierreFailSafe(input.user_id, cierreId),
-        "No se pudo cerrar el acceso después de cambios concurrentes",
-      );
-      cerrada = estado.forzada && estado.pendiente && !estado.activoActual;
-    }
-    if (!cerrada) {
-      throw new Error(
-        "El acceso quedó en un estado ambiguo y no se pudo cerrar automáticamente; requiere revisión administrativa.",
-      );
-    }
-    throw new Error(
-      "La operación fue reemplazada varias veces. El acceso quedó cerrado y pendiente; reintentá la misma acción para reconciliarlo.",
-    );
-  }
+  return imponerCierreFailSafe(
+    new Error(
+      "La operación fue reemplazada varias veces. El acceso quedó cerrado y pendiente; reintentá la misma acción para reconciliarlo",
+    ),
+  );
 }
 
 export const toggleUsuarioActivo = createServerFn({ method: "POST" })

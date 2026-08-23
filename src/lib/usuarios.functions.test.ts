@@ -596,6 +596,88 @@ describe("toggleUsuarioActivo", () => {
     expect(doble.authCalls.at(-1)).toBe("876000h");
   });
 
+  it("cierra perfil y Auth si también fallan las lecturas posteriores a un finalizar ambiguo", async () => {
+    const doble = new ToggleCasDouble();
+    doble.ids = [OP_FAIL_SAFE];
+    doble.estado.perfilActivo = false;
+    doble.estado.activoDeseado = false;
+    doble.estado.authBloqueado = true;
+
+    const operaciones = doble.operaciones();
+    const iniciarReal = operaciones.iniciar;
+    let lecturas = 0;
+    operaciones.iniciar = async (...args) => {
+      lecturas += 1;
+      if (lecturas === 1) return iniciarReal(...args);
+      return { data: null, error: { message: "actor inactivo durante la recuperación" } };
+    };
+    operaciones.finalizar = async () => {
+      // Una baja posterior ya quedó estable en DB. La escritura Auth vieja
+      // aterrizó después y abrió GoTrue; además se pierden ambas respuestas de
+      // finalizar y ya no se puede releer con el actor original.
+      doble.estado.version = 2;
+      doble.estado.activoDeseado = false;
+      doble.estado.operacionId = OP_BAJA;
+      doble.estado.pendiente = false;
+      doble.estado.perfilActivo = false;
+      doble.operacionesConsumidas.set(OP_BAJA, {
+        version: 2,
+        activoDeseado: false,
+      });
+      return { data: null, error: { message: "timeout final ambiguo" } };
+    };
+
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: true, operacion_id: OP_ALTA },
+        operaciones,
+      ),
+    ).rejects.toThrow(/recuperación|cerrar|reconciliar/i);
+
+    expect(doble.forzarCalls).toBe(1);
+    expect(doble.estado).toMatchObject({
+      activoDeseado: false,
+      pendiente: true,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+    expect(doble.authCalls).toEqual(["none", "876000h"]);
+  });
+
+  it("impone cierre fail-safe si no puede leer Auth de un retry supersedido", async () => {
+    const doble = new ToggleCasDouble();
+    const operaciones = doble.operaciones();
+    await ejecutarToggleUsuarioActivo(
+      { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+      operaciones,
+    );
+    await ejecutarToggleUsuarioActivo(
+      { user_id: EMPLEADO, activo: true, operacion_id: OP_ALTA },
+      operaciones,
+    );
+    doble.ids = [OP_FAIL_SAFE];
+    operaciones.leerAuthBloqueado = async () => ({
+      bloqueado: null,
+      error: { message: "GoTrue no permite verificar" },
+    });
+
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+        operaciones,
+      ),
+    ).rejects.toThrow(/verificar|cerrar|reconciliar/i);
+
+    expect(doble.forzarCalls).toBe(1);
+    expect(doble.estado).toMatchObject({
+      activoDeseado: true,
+      pendiente: true,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+    expect(doble.authCalls.at(-1)).toBe("876000h");
+  });
+
   it("agota el churn de versiones en estado fail-closed y exige reintento", async () => {
     const doble = new ToggleCasDouble();
     doble.ids = [OP_FAIL_SAFE];
@@ -642,7 +724,8 @@ describe("toggleUsuarioActivo", () => {
       pendiente: true,
       perfilActivo: false,
     });
-    expect(doble.authCalls).toHaveLength(9);
+    expect(doble.authCalls).toHaveLength(10);
+    expect(doble.authCalls.at(-1)).toBe("876000h");
 
     operaciones.finalizar = finalizarReal;
     await expect(

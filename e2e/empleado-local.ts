@@ -1,6 +1,31 @@
 export const EMAIL_EMPLEADO_E2E = "empleado@local.test";
-const PASSWORD_EMPLEADO_E2E = "empleado1234";
+export const EMAIL_ADMIN_E2E = "admin@local.test";
 const CODIGOS_SUCURSALES_E2E = ["OHIGGINS", "GENERALPAZ"] as const;
+
+type RolUsuarioLocalE2E = "admin" | "empleado";
+type ConfiguracionUsuarioLocalE2E = {
+  email: string;
+  password: string;
+  username: string;
+  nombreCompleto: string;
+  rol: RolUsuarioLocalE2E;
+};
+
+const EMPLEADO_E2E: ConfiguracionUsuarioLocalE2E = {
+  email: EMAIL_EMPLEADO_E2E,
+  password: "empleado1234",
+  username: "empleado-e2e",
+  nombreCompleto: "Empleado E2E",
+  rol: "empleado",
+};
+
+const ADMIN_E2E: ConfiguracionUsuarioLocalE2E = {
+  email: EMAIL_ADMIN_E2E,
+  password: "admin1234",
+  username: "admin-e2e",
+  nombreCompleto: "Admin E2E",
+  rol: "admin",
+};
 
 type UsuarioEmpleadoE2E = { id: string };
 type SucursalEmpleadoE2E = { id: string; codigo: string };
@@ -17,12 +42,16 @@ export type EstadoEmpleadoLocalE2E = {
 export type RepositorioEmpleadoLocalE2E = {
   leerEstado(email: string): Promise<EstadoEmpleadoLocalE2E>;
   crearUsuario(email: string, password: string): Promise<UsuarioEmpleadoE2E>;
-  crearPerfil(usuarioId: string, sucursalId: string): Promise<void>;
+  crearPerfil(
+    usuarioId: string,
+    sucursalId: string,
+    perfil: { username: string; nombreCompleto: string },
+  ): Promise<void>;
   actualizarSucursalPerfil(usuarioId: string, sucursalId: string | null): Promise<void>;
-  agregarRol(usuarioId: string): Promise<void>;
+  agregarRol(usuarioId: string, rol: RolUsuarioLocalE2E): Promise<void>;
   agregarSucursal(usuarioId: string, sucursalId: string): Promise<void>;
   quitarSucursal(usuarioId: string, sucursalId: string): Promise<void>;
-  quitarRol(usuarioId: string): Promise<void>;
+  quitarRol(usuarioId: string, rol: RolUsuarioLocalE2E): Promise<void>;
   eliminarPerfil(usuarioId: string): Promise<void>;
   eliminarUsuario(usuarioId: string): Promise<void>;
 };
@@ -42,10 +71,11 @@ function requerirSucursales(estado: EstadoEmpleadoLocalE2E): SucursalEmpleadoE2E
  * Hace reproducible el E2E desde `supabase db reset` y devuelve un teardown exacto.
  * Si el usuario ya existía, sólo revierte las relaciones que esta corrida agregó.
  */
-export async function prepararEmpleadoLocalE2E(
+async function prepararUsuarioLocalE2E(
   repositorio: RepositorioEmpleadoLocalE2E,
+  configuracion: ConfiguracionUsuarioLocalE2E,
 ): Promise<LimpiarEmpleadoLocalE2E> {
-  let estado = await repositorio.leerEstado(EMAIL_EMPLEADO_E2E);
+  let estado = await repositorio.leerEstado(configuracion.email);
   const sucursales = requerirSucursales(estado);
   let usuarioId = estado.usuario?.id ?? null;
   let usuarioCreado = false;
@@ -85,7 +115,9 @@ export async function prepararEmpleadoLocalE2E(
         repositorio.actualizarSucursalPerfil(usuarioId!, sucursalPerfilAnterior ?? null),
       );
     }
-    if (rolAgregado) await intentar(() => repositorio.quitarRol(usuarioId!));
+    if (rolAgregado) {
+      await intentar(() => repositorio.quitarRol(usuarioId!, configuracion.rol));
+    }
     if (perfilCreado) await intentar(() => repositorio.eliminarPerfil(usuarioId!));
     if (usuarioCreado) await intentar(() => repositorio.eliminarUsuario(usuarioId!));
 
@@ -102,23 +134,26 @@ export async function prepararEmpleadoLocalE2E(
 
   try {
     if (!usuarioId) {
-      usuarioId = (await repositorio.crearUsuario(EMAIL_EMPLEADO_E2E, PASSWORD_EMPLEADO_E2E)).id;
+      usuarioId = (await repositorio.crearUsuario(configuracion.email, configuracion.password)).id;
       usuarioCreado = true;
       // GoTrue puede disparar un trigger que crea `profiles` junto con auth.users.
       // Releer evita insertar el mismo PK y también toma cualquier relación que
       // el proyecto agregue automáticamente en el futuro.
-      estado = await repositorio.leerEstado(EMAIL_EMPLEADO_E2E);
+      estado = await repositorio.leerEstado(configuracion.email);
       if (estado.usuario?.id !== usuarioId) {
-        throw new Error("Auth creó el empleado E2E pero no pudo releer la misma identidad.");
+        throw new Error("Auth creó el usuario E2E pero no pudo releer la misma identidad.");
       }
     }
 
     if (!estado.perfil) {
-      await repositorio.crearPerfil(usuarioId, sucursales[0].id);
+      await repositorio.crearPerfil(usuarioId, sucursales[0].id, {
+        username: configuracion.username,
+        nombreCompleto: configuracion.nombreCompleto,
+      });
       perfilCreado = true;
       sucursalPerfilAnterior = null;
     } else {
-      if (!estado.perfil.activo) throw new Error(`${EMAIL_EMPLEADO_E2E} está inactivo.`);
+      if (!estado.perfil.activo) throw new Error(`${configuracion.email} está inactivo.`);
       // Guardar siempre la sucursal original: los escenarios pueden cambiarla
       // a una relación agregada por este bootstrap. El teardown debe restaurar
       // la original antes de intentar retirar esa relación.
@@ -129,13 +164,13 @@ export async function prepararEmpleadoLocalE2E(
     }
 
     if (estado.roles.length === 0) {
-      await repositorio.agregarRol(usuarioId);
+      await repositorio.agregarRol(usuarioId, configuracion.rol);
       rolAgregado = true;
     } else if (
-      !estado.roles.includes("empleado") ||
-      estado.roles.some((rol) => rol !== "empleado")
+      !estado.roles.includes(configuracion.rol) ||
+      estado.roles.some((rol) => rol !== configuracion.rol)
     ) {
-      throw new Error(`${EMAIL_EMPLEADO_E2E} existe con un rol distinto de empleado.`);
+      throw new Error(`${configuracion.email} existe con un rol distinto de ${configuracion.rol}.`);
     }
 
     const asignadas = new Set(estado.sucursalesAsignadas);
@@ -157,6 +192,18 @@ export async function prepararEmpleadoLocalE2E(
     }
     throw error;
   }
+}
+
+export function prepararEmpleadoLocalE2E(
+  repositorio: RepositorioEmpleadoLocalE2E,
+): Promise<LimpiarEmpleadoLocalE2E> {
+  return prepararUsuarioLocalE2E(repositorio, EMPLEADO_E2E);
+}
+
+export function prepararAdminLocalE2E(
+  repositorio: RepositorioEmpleadoLocalE2E,
+): Promise<LimpiarEmpleadoLocalE2E> {
+  return prepararUsuarioLocalE2E(repositorio, ADMIN_E2E);
 }
 
 type EntornoSupabaseEmpleadoE2E = {
@@ -261,11 +308,11 @@ export function crearRepositorioEmpleadoLocalHttp(
         email_confirm: true,
       });
     },
-    async crearPerfil(usuarioId, sucursalId) {
+    async crearPerfil(usuarioId, sucursalId, perfil) {
       await request("POST", "/rest/v1/profiles", {
         id: usuarioId,
-        username: "empleado-e2e",
-        nombre_completo: "Empleado E2E",
+        username: perfil.username,
+        nombre_completo: perfil.nombreCompleto,
         sucursal_id: sucursalId,
         activo: true,
       });
@@ -275,8 +322,8 @@ export function crearRepositorioEmpleadoLocalHttp(
         sucursal_id: sucursalId,
       });
     },
-    async agregarRol(usuarioId) {
-      await request("POST", "/rest/v1/user_roles", { user_id: usuarioId, role: "empleado" });
+    async agregarRol(usuarioId, rol) {
+      await request("POST", "/rest/v1/user_roles", { user_id: usuarioId, role: rol });
     },
     async agregarSucursal(usuarioId, sucursalId) {
       await request("POST", "/rest/v1/profile_sucursales", {
@@ -293,10 +340,10 @@ export function crearRepositorioEmpleadoLocalHttp(
         })}`,
       );
     },
-    async quitarRol(usuarioId) {
+    async quitarRol(usuarioId, rol) {
       await request(
         "DELETE",
-        `/rest/v1/user_roles?${parametros({ user_id: `eq.${usuarioId}`, role: "eq.empleado" })}`,
+        `/rest/v1/user_roles?${parametros({ user_id: `eq.${usuarioId}`, role: `eq.${rol}` })}`,
       );
     },
     async eliminarPerfil(usuarioId) {

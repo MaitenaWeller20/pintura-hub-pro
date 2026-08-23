@@ -9,7 +9,12 @@
  */
 import type { FullConfig } from "@playwright/test";
 
-import { crearRepositorioEmpleadoLocalHttp, prepararEmpleadoLocalE2E } from "./empleado-local";
+import {
+  crearRepositorioEmpleadoLocalHttp,
+  prepararAdminLocalE2E,
+  prepararEmpleadoLocalE2E,
+  type LimpiarEmpleadoLocalE2E,
+} from "./empleado-local";
 
 type EntornoServidorE2E = {
   NODE_ENV?: string;
@@ -114,9 +119,41 @@ export default async function verificarServidor(config: FullConfig) {
     );
   }
 
-  // Un reset limpio sólo tiene los datos de catálogo. Las pruebas de permisos y
-  // multisucursal necesitan un empleado autenticable; el teardown que devuelve
-  // esta función borra sólo lo creado o agregado por esta corrida.
+  // Un reset limpio sólo tiene los datos de catálogo. La suite histórica entra
+  // con admin@local.test y los escenarios de permisos usan además un empleado
+  // en ambas sucursales. Ambos fixtures se crean acá y el teardown revierte
+  // sólo lo creado o agregado por esta corrida.
   const repositorioEmpleado = crearRepositorioEmpleadoLocalHttp(process.env);
-  return prepararEmpleadoLocalE2E(repositorioEmpleado);
+  const limpiezas: LimpiarEmpleadoLocalE2E[] = [];
+  try {
+    limpiezas.push(await prepararAdminLocalE2E(repositorioEmpleado));
+    limpiezas.push(await prepararEmpleadoLocalE2E(repositorioEmpleado));
+  } catch (error) {
+    const errores: unknown[] = [error];
+    for (const limpiar of [...limpiezas].reverse()) {
+      try {
+        await limpiar();
+      } catch (cleanupError) {
+        errores.push(cleanupError);
+      }
+    }
+    if (errores.length > 1) {
+      throw new AggregateError(errores, "Falló el bootstrap E2E y también su limpieza.");
+    }
+    throw error;
+  }
+
+  return async () => {
+    const errores: unknown[] = [];
+    for (const limpiar of [...limpiezas].reverse()) {
+      try {
+        await limpiar();
+      } catch (error) {
+        errores.push(error);
+      }
+    }
+    if (errores.length > 0) {
+      throw new AggregateError(errores, "No se pudieron limpiar todos los usuarios locales E2E.");
+    }
+  };
 }

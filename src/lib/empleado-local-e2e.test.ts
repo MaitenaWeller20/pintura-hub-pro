@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  EMAIL_ADMIN_E2E,
   EMAIL_EMPLEADO_E2E,
+  prepararAdminLocalE2E,
   prepararEmpleadoLocalE2E,
   type EstadoEmpleadoLocalE2E,
   type RepositorioEmpleadoLocalE2E,
@@ -29,9 +31,9 @@ function repositorioEnMemoria(estadoInicial: EstadoEmpleadoLocalE2E) {
       if (!estado.perfil) throw new Error("perfil ausente");
       estado.perfil.sucursalId = sucursalId;
     },
-    async agregarRol(usuarioId) {
-      llamadas.push(`agregar-rol:${usuarioId}`);
-      estado.roles.push("empleado");
+    async agregarRol(usuarioId, rol) {
+      llamadas.push(`agregar-rol:${usuarioId}:${rol}`);
+      estado.roles.push(rol);
     },
     async agregarSucursal(usuarioId, sucursalId) {
       llamadas.push(`agregar-sucursal:${usuarioId}:${sucursalId}`);
@@ -44,9 +46,9 @@ function repositorioEnMemoria(estadoInicial: EstadoEmpleadoLocalE2E) {
       }
       estado.sucursalesAsignadas = estado.sucursalesAsignadas.filter((id) => id !== sucursalId);
     },
-    async quitarRol(usuarioId) {
-      llamadas.push(`quitar-rol:${usuarioId}`);
-      estado.roles = estado.roles.filter((rol) => rol !== "empleado");
+    async quitarRol(usuarioId, rolObjetivo) {
+      llamadas.push(`quitar-rol:${usuarioId}:${rolObjetivo}`);
+      estado.roles = estado.roles.filter((rol) => rol !== rolObjetivo);
     },
     async eliminarPerfil(usuarioId) {
       llamadas.push(`eliminar-perfil:${usuarioId}`);
@@ -66,6 +68,30 @@ const SUCURSALES = [
 ];
 
 describe("bootstrap del empleado local E2E", () => {
+  it("crea y limpia el admin requerido por la suite desde un reset vacío", async () => {
+    const { repo, estado, llamadas } = repositorioEnMemoria({
+      usuario: null,
+      perfil: null,
+      roles: [],
+      sucursales: SUCURSALES,
+      sucursalesAsignadas: [],
+    });
+
+    const limpiar = await prepararAdminLocalE2E(repo);
+
+    expect(estado.usuario).toEqual({ id: "usuario-e2e" });
+    expect(estado.perfil).toEqual({ activo: true, sucursalId: "sucursal-ohiggins" });
+    expect(estado.roles).toEqual(["admin"]);
+    expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins", "sucursal-general-paz"]);
+    expect(llamadas[0]).toBe(`leer:${EMAIL_ADMIN_E2E}`);
+
+    await limpiar();
+    expect(estado.usuario).toBeNull();
+    expect(estado.perfil).toBeNull();
+    expect(estado.roles).toEqual([]);
+    expect(estado.sucursalesAsignadas).toEqual([]);
+  });
+
   it("crea el fixture faltante, lo asocia a ambas sucursales y lo limpia completo", async () => {
     const { repo, estado, llamadas } = repositorioEnMemoria({
       usuario: null,

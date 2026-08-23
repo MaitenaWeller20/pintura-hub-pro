@@ -12,6 +12,7 @@ import { fmtDate, fmtMoney } from "@/lib/format";
 import type { ColaFiscalFila } from "@/lib/fiscal/cola.functions";
 import { clasificarInteraccionCola, presentarEstadoColaFiscal } from "@/lib/fiscal/cola-ui";
 import { EstadoFiscalPill } from "./estado-fiscal-pill";
+import { ValidezFiscal } from "./validez-fiscal";
 
 function fecha(value: string | null): string {
   if (!value) return "—";
@@ -196,8 +197,8 @@ export function ColaFiscalTabla({
                     </TableCell>
                     <TableCell className="align-top">
                       <EstadoFiscalPill estado={row.afip_estado} />
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {row.afip_validez ?? "Validez pendiente"}
+                      <p className="mt-2">
+                        <ValidezFiscal validez={row.afip_validez} compacta />
                       </p>
                       {row.claim_vencido || row.venta_antigua ? (
                         <p className="mt-1 flex items-center gap-1 text-xs font-medium text-warning">

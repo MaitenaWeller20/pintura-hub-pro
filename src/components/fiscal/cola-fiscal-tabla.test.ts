@@ -53,6 +53,20 @@ function render(accionesHabilitadas: boolean): string {
   );
 }
 
+function renderVentaAntigua(esAdmin: boolean): string {
+  return renderToStaticMarkup(
+    createElement(ColaFiscalTabla, {
+      filas: [{ ...FILA, venta_antigua: true }],
+      esAdmin,
+      loading: false,
+      updating: false,
+      accionesHabilitadas: true,
+      onRetry: vi.fn(),
+      onAccion: vi.fn(),
+    }),
+  );
+}
+
 describe("interactividad de filas fiscales", () => {
   it("mantiene visibles pero inertes los datos placeholder", () => {
     const html = render(false);
@@ -65,5 +79,12 @@ describe("interactividad de filas fiscales", () => {
     const html = render(true);
     expect(html).toContain("Actualizando");
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>.*Facturar/s);
+  });
+
+  it("no ofrece la emisión demorada a un empleado y la conserva para admin", () => {
+    expect(renderVentaAntigua(false)).toMatch(
+      /<button[^>]*disabled=""[^>]*>.*Requiere administrador/s,
+    );
+    expect(renderVentaAntigua(true)).not.toMatch(/<button[^>]*disabled=""[^>]*>.*Facturar/s);
   });
 });

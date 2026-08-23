@@ -24,6 +24,24 @@ test("tabs y paginación navegan sólo sobre identificadores propios del fixture
   await expect(tabs.getByRole("tab", { name: /Pendientes/ })).toBeVisible();
   await expect(tabs.getByRole("tab", { name: /A revisar/ })).toBeVisible();
   await expect(tabs.getByRole("tab", { name: /Emitidas/ })).toBeVisible();
+  for (const panel of ["pendientes", "revisar", "emitidas", "historial"]) {
+    await expect(page.locator(`#cola-panel-${panel}`)).toHaveCount(1);
+  }
+  const pendientes = tabs.getByRole("tab", { name: /Pendientes/ });
+  await expect(pendientes).toHaveAttribute("aria-controls", "cola-panel-pendientes");
+  await pendientes.focus();
+  await page.keyboard.press("End");
+  await expect(tabs.getByRole("tab", { name: /Historial/ })).toBeFocused();
+  await expect(tabs.getByRole("tab", { name: /Historial/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Home");
+  await expect(pendientes).toBeFocused();
+  await expect(page.getByRole("tabpanel")).toHaveAttribute(
+    "aria-labelledby",
+    "cola-tab-pendientes",
+  );
   await expect(page.getByText(/28 registros · página 1 de 2/)).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(25);
   await expect(page.locator("tbody")).toContainText("V-T13-E2E-001");
@@ -49,7 +67,7 @@ test("filtros por documento/estado y limpieza conservan una consulta navegable",
   const aprobadaPropia = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
   await expect(aprobadaPropia).toBeVisible();
   await expect(aprobadaPropia).toContainText("T13-E2E RECEPTOR CONGELADO");
-  await expect(aprobadaPropia).toContainText("PRODUCCION");
+  await expect(aprobadaPropia).toContainText("Producción · validez legal");
   await page.getByRole("button", { name: /Limpiar/i }).click();
   await expect(page).not.toHaveURL(/documento=/);
 });
@@ -61,6 +79,7 @@ test("ventas encuentra el receptor congelado por CUIT formateado", async ({ page
   const venta = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
   await expect(venta).toBeVisible();
   await expect(venta).toContainText("T13-E2E RECEPTOR CONGELADO");
+  await expect(venta).toContainText("Producción · validez legal");
 });
 
 test("mapea todos los estados operativos y reserva incidentes para administrador", async ({
@@ -74,6 +93,14 @@ test("mapea todos los estados operativos y reserva incidentes para administrador
   await expect(cuerpo).toContainText(/Liberar claim verificado|Procesando/);
   await expect(cuerpo).toContainText(/Ver incidente|Liberar claim verificado/);
   await expect(cuerpo).toContainText(/Corregible|Conciliar|Bloqueado|Legacy/);
+
+  const bloqueado = page.locator("tbody tr", { hasText: "V-T13-E2E-BLOQUEADO" });
+  await bloqueado.getByRole("button", { name: "Ver incidente", exact: true }).click();
+  const incidente = page.getByTestId("dialogo-incidente-fiscal");
+  await expect(incidente).toBeVisible();
+  await expect(incidente).toContainText(/sólo lectura/i);
+  await expect(incidente).toContainText(/no.*reemite/i);
+  await incidente.getByTestId("cerrar-incidente-fiscal").click();
 
   await page.getByRole("tab", { name: /Historial/ }).click();
   await expect(page.locator("tbody")).toContainText("Cancelado");
@@ -93,6 +120,16 @@ test("empleado queda forzado a su sucursal y ve incidentes como Requiere adminis
   const reconciliar = page.locator("tbody tr", { hasText: "V-T13-E2E-RECONCILIAR" });
   await expect(reconciliar).toContainText("Requiere administrador");
   await expect(reconciliar.getByRole("button")).toBeDisabled();
+});
+
+test("empleado no puede confirmar ni facturar una venta fuera de ventana", async ({ page }) => {
+  await ingresar(page, "fiscalEmpleado");
+  await page.goto(`/facturacion/cola?venta=${fixture.ventaAntiguaId}`);
+  const antigua = page.locator("tbody tr", { hasText: "V-T13-E2E-028" });
+  await expect(antigua).toContainText("Requiere administrador");
+  await expect(antigua.getByRole("button", { name: "Requiere administrador" })).toBeDisabled();
+  await expect(page.getByTestId("dialogo-emision-fiscal")).toHaveCount(0);
+  await expect(page.getByLabel(/Confirmo emitir fuera del plazo/i)).toHaveCount(0);
 });
 
 test("venta exacta abre el mismo diálogo y muestra total, cobrado y saldo separados", async ({
@@ -120,6 +157,10 @@ test("la NC hereda receptor y referencia original en modo sólo lectura", async 
   await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
   await expect(dialogo).toContainText("T13-E2E RECEPTOR CONGELADO", { timeout: 20_000 });
   await expect(dialogo).toContainText(/comprobante original/i);
+  await expect(dialogo).toContainText("Domicilio fiscal receptor");
+  await expect(dialogo).toContainText("Factura A");
+  await expect(dialogo).toContainText(`PV ${String(fixture.puntoVenta).padStart(5, "0")}`);
+  await expect(dialogo).toContainText("00913001");
 });
 
 test("APROBADO abre detalle fiscal descargable y restaura el foco al salir", async ({ page }) => {
@@ -131,6 +172,8 @@ test("APROBADO abre detalle fiscal descargable y restaura el foco al salir", asy
   const dialogo = page.getByTestId("dialogo-detalle-venta");
   await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText("T13-E2E RECEPTOR CONGELADO");
+  await expect(dialogo).toContainText("Producción · validez legal");
+  await expect(dialogo).toContainText("Domicilio fiscal receptor");
   const descarga = page.waitForEvent("download");
   await dialogo.getByRole("button", { name: "PDF" }).click();
   await descarga;

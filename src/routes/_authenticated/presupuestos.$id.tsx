@@ -367,6 +367,7 @@ function DetallePresupuesto() {
             tipoComprobante: "VENTA",
           }}
           favoritos={favoritosFiscales}
+          puedeConfirmarVentaAntigua={cu.isAdmin}
           returnFocusRef={botonConvertirRef}
           onOpenChange={(open) => {
             if (open) return;

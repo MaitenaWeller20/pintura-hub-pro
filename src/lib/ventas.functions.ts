@@ -321,14 +321,24 @@ export const convertirPresupuestoEnVenta = createServerFn({ method: "POST" })
     }),
   );
 
+export const anulacionVentaInputSchema = z
+  .object({
+    venta_id: z.string().uuid(),
+    idempotency_key: z.string().uuid(),
+  })
+  .strict();
+
+export type AnulacionVentaInput = z.infer<typeof anulacionVentaInputSchema>;
+
 export const anularVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ venta_id: z.string().uuid() }).parse(d))
+  .inputValidator((d: unknown) => anulacionVentaInputSchema.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
     const { data: r, error } = await supabase.rpc("anular_venta", {
       p_venta_id: data.venta_id,
+      p_idempotency_key: data.idempotency_key,
     });
 
     if (error) throw new Error(error.message);

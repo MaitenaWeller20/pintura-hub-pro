@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  anulacionVentaInputSchema,
   ejecutarCreacionNotaSegunFlags,
   ejecutarConversionPresupuestoSegunFlags,
   ventaInputSchema,
@@ -26,6 +27,22 @@ describe("entrada de venta neutral", () => {
     expect(ventaInputSchema.parse(VENTA_BASE).tipo_comprobante).toBe("VENTA");
     expect(() =>
       ventaInputSchema.parse({ ...VENTA_BASE, tipo_comprobante: "FACTURA_LIBRE" }),
+    ).toThrow();
+  });
+});
+
+describe("anulación idempotente", () => {
+  const ventaId = "75000000-0000-4000-8000-000000000001";
+  const clave = "75000000-0000-4000-8000-000000000002";
+
+  it("exige una clave UUID estable además de la venta", () => {
+    expect(anulacionVentaInputSchema.parse({ venta_id: ventaId, idempotency_key: clave })).toEqual({
+      venta_id: ventaId,
+      idempotency_key: clave,
+    });
+    expect(() => anulacionVentaInputSchema.parse({ venta_id: ventaId })).toThrow();
+    expect(() =>
+      anulacionVentaInputSchema.parse({ venta_id: ventaId, idempotency_key: "otra" }),
     ).toThrow();
   });
 });

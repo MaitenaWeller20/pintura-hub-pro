@@ -41,6 +41,7 @@ const receptorSchema = z.discriminatedUnion("origen", [
 ]);
 
 const legacyInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
+const incidenteInputSchema = legacyInputSchema;
 const v2BaseInputSchema = z
   .object({
     venta_id: z.string().uuid(),
@@ -169,6 +170,53 @@ const mantenimiento = () => ({
   estado: "MANTENIMIENTO" as const,
   mensaje: "La escritura fiscal está temporalmente en mantenimiento.",
 });
+
+type VentaIncidenteFiscal = {
+  id: string;
+  afip_estado: string;
+  afip_fase: string | null;
+  afip_error: string | null;
+  afip_error_clase: string | null;
+  afip_error_codigo: string | null;
+  afip_error_fase: string | null;
+  afip_ultimo_error_at: string | null;
+};
+
+function registro(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function diferenciasIncidente(value: unknown): string[] {
+  const resumen = registro(value);
+  const diagnostico = registro(resumen?.diagnostico);
+  const diferencias = registro(diagnostico?.diferencias);
+  if (!Array.isArray(diferencias?.campos)) return [];
+  return [...new Set(diferencias.campos)]
+    .filter((campo): campo is string => typeof campo === "string" && campo.trim().length > 0)
+    .map((campo) => campo.trim().slice(0, 160))
+    .sort();
+}
+
+/** Proyección mínima: nunca entrega SOAP, credenciales ni el resumen privado completo. */
+export function proyectarIncidenteFiscal(
+  venta: VentaIncidenteFiscal,
+  intento: { resultado: string | null; respuesta_resumen: unknown } | null,
+) {
+  return {
+    venta_id: venta.id,
+    estado: venta.afip_estado,
+    fase: venta.afip_fase,
+    mensaje: venta.afip_error,
+    clase: venta.afip_error_clase,
+    codigo: venta.afip_error_codigo,
+    fase_error: venta.afip_error_fase,
+    fecha: venta.afip_ultimo_error_at,
+    diferencias: diferenciasIncidente(intento?.respuesta_resumen),
+    legacy: venta.afip_estado === "PENDIENTE" || venta.afip_estado === "ERROR",
+  };
+}
 
 export async function ejecutarFachadaEmisionPostBorrador<T>(
   _input: z.infer<typeof postBorradorInputSchema>,
@@ -338,6 +386,40 @@ export const liberarClaimFiscal = createServerFn({ method: "POST" })
         ventaIdAutorizada: data.venta_id,
       }),
     });
+  });
+
+export const consultarIncidenteFiscal = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => incidenteInputSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    const permiso = await autorizarVenta(context, {
+      ventaId: data.venta_id,
+      accion: "CONCILIAR",
+      confirmaVentaAntigua: false,
+    });
+    if (!permiso.esAdmin) throw new Error("El incidente fiscal exige un administrador.");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const [ventaResult, intentoResult] = await Promise.all([
+      supabaseAdmin
+        .from("ventas")
+        .select(
+          "id,afip_estado,afip_fase,afip_error,afip_error_clase,afip_error_codigo,afip_error_fase,afip_ultimo_error_at",
+        )
+        .eq("id", data.venta_id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("emision_fiscal_intentos")
+        .select("resultado,respuesta_resumen")
+        .eq("venta_id", data.venta_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    if (ventaResult.error || !ventaResult.data) {
+      throw new Error("No se pudo leer el incidente fiscal seleccionado.");
+    }
+    if (intentoResult.error) throw new Error("No se pudo leer la auditoría del incidente fiscal.");
+    return proyectarIncidenteFiscal(ventaResult.data, intentoResult.data);
   });
 
 export const previsualizarEmisionFiscal = createServerFn({ method: "POST" })

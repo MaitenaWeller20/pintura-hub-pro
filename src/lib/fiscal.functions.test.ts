@@ -3,6 +3,7 @@ import {
   emitirInputSchema,
   ejecutarFachadaEmisionPostBorrador,
   postBorradorInputSchema,
+  proyectarIncidenteFiscal,
 } from "./fiscal.functions";
 
 const INPUT = {
@@ -127,5 +128,62 @@ describe("fachada post-borrador", () => {
       }),
     ).resolves.toEqual({ estado: "APROBADO" });
     expect(ejecuciones).toBe(1);
+  });
+});
+
+describe("detalle readonly de un incidente fiscal", () => {
+  it("conserva diferencias únicas del último intento sin exponer el resumen crudo", () => {
+    expect(
+      proyectarIncidenteFiscal(
+        {
+          id: INPUT.venta_id,
+          afip_estado: "BLOQUEADO",
+          afip_fase: "REQUEST_INICIADO",
+          afip_error: "La respuesta no coincide con la reserva.",
+          afip_error_clase: "INTEGRIDAD",
+          afip_error_codigo: "RESPUESTA_DIVERGENTE",
+          afip_error_fase: "RESPUESTA_RECIBIDA",
+          afip_ultimo_error_at: "2026-08-23T15:00:00.000Z",
+        },
+        {
+          resultado: "BLOQUEADO",
+          respuesta_resumen: {
+            diagnostico: {
+              diferencias: { campos: ["importeTotal", "receptor.docNroArca", "importeTotal"] },
+            },
+            soap_crudo: "NO DEBE SALIR",
+          },
+        },
+      ),
+    ).toEqual({
+      venta_id: INPUT.venta_id,
+      estado: "BLOQUEADO",
+      fase: "REQUEST_INICIADO",
+      mensaje: "La respuesta no coincide con la reserva.",
+      clase: "INTEGRIDAD",
+      codigo: "RESPUESTA_DIVERGENTE",
+      fase_error: "RESPUESTA_RECIBIDA",
+      fecha: "2026-08-23T15:00:00.000Z",
+      diferencias: ["importeTotal", "receptor.docNroArca"],
+      legacy: false,
+    });
+  });
+
+  it("marca un incidente legacy sin inventar diferencias", () => {
+    expect(
+      proyectarIncidenteFiscal(
+        {
+          id: INPUT.venta_id,
+          afip_estado: "ERROR",
+          afip_fase: null,
+          afip_error: "Error heredado",
+          afip_error_clase: null,
+          afip_error_codigo: null,
+          afip_error_fase: null,
+          afip_ultimo_error_at: null,
+        },
+        null,
+      ),
+    ).toMatchObject({ legacy: true, diferencias: [] });
   });
 });

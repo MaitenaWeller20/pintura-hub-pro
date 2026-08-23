@@ -426,8 +426,10 @@ export async function construirPreviewBorradorFiscalProvisional(
     sucursal_nombre: contexto.sucursal.nombre,
     punto_venta: contexto.pv.numero,
     modo: contexto.pv.modo,
+    afip_validez: MOCK ? "SIMULADA" : contexto.pv.modo,
     letra,
     cbte_tipo: confirmacionFingerprint.cbteTipo,
+    cbte_asoc: null,
     razon_letra: `La condición ${receptor.condicionIva} determina letra ${letra}.`,
     fecha_comercial: input.fechaComercial,
     fecha_fiscal: fechaFiscal,
@@ -1196,7 +1198,17 @@ export async function previsualizarVentaFiscalExistente(input: {
     sucursal_nombre: sucursalNombre,
     punto_venta: preparacion.puntoVenta,
     modo: preparacion.modo,
+    afip_validez: preparacion.validez,
     cbte_tipo: preparacion.cbteTipo,
+    cbte_asoc: vista.original
+      ? {
+          tipo: vista.original.identidad.cbteTipo,
+          letra: vista.original.letra,
+          punto_venta: vista.original.identidad.puntoVenta,
+          numero: vista.original.identidad.numero,
+          fecha: vista.original.fechaComprobante,
+        }
+      : null,
     demora_dias: demoraDias,
     advertencia_demora:
       demoraDias > 5

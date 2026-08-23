@@ -219,7 +219,8 @@ test("el diálogo compartido separa comprador/receptor, deriva A y bloquea el do
   await expect(dialogo).toContainText(`CUIT ${fixture.emisorCuit}`);
   await expect(dialogo).toContainText(fixture.sucursalPrincipalNombre);
   await expect(dialogo).toContainText(`PV ${String(fixture.puntoVenta).padStart(5, "0")}`);
-  await expect(dialogo).toContainText("Producción");
+  await expect(dialogo).toContainText("Simulada · sin validez legal");
+  await expect(dialogo).not.toContainText("Producción · validez legal");
   await expect(dialogo).not.toContainText(/Emisor de la sucursal|a confirmar|Ambiente a confirmar/);
   await confirmarHastaCerrar(dialogo);
 

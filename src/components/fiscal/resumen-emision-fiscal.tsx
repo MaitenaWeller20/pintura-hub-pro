@@ -1,6 +1,7 @@
 import { AlertTriangle, ArrowDown, ReceiptText } from "lucide-react";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
+import { letraDeCbteTipo, tituloDeCbteTipo } from "@/lib/fiscal/codigos";
 import type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
 
 export type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
@@ -31,6 +32,25 @@ function PasoIdentidad({
   );
 }
 
+function tituloDocumento(cbteTipo: number): string {
+  const titulo = tituloDeCbteTipo(cbteTipo).toLocaleLowerCase("es-AR");
+  return `${titulo.charAt(0).toLocaleUpperCase("es-AR")}${titulo.slice(1)}`;
+}
+
+function etiquetaValidez(preview: PreviewEmisionFiscal): {
+  texto: string;
+  detalle: string;
+  tone: "success" | "warning";
+} {
+  if (preview.afip_validez === "PRODUCCION") {
+    return { texto: "Producción", detalle: "validez legal", tone: "success" };
+  }
+  if (preview.afip_validez === "SIMULADA") {
+    return { texto: "Simulada", detalle: "sin validez legal", tone: "warning" };
+  }
+  return { texto: "Homologación", detalle: "sin validez legal", tone: "warning" };
+}
+
 export function ResumenEmisionFiscal({
   preview,
   comprador,
@@ -40,6 +60,7 @@ export function ResumenEmisionFiscal({
   comprador: string;
   requiereSegundaConfirmacion?: boolean;
 }) {
+  const validez = etiquetaValidez(preview);
   return (
     <section aria-labelledby="resumen-fiscal-titulo" className="rounded-xl border border-border">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-3">
@@ -50,11 +71,11 @@ export function ResumenEmisionFiscal({
           </h3>
         </div>
         <div className="flex items-center gap-2">
-          <StatusPill tone={preview.modo === "PRODUCCION" ? "success" : "warning"}>
-            {preview.modo === "PRODUCCION" ? "Producción" : "Homologación"}
+          <StatusPill tone={validez.tone}>
+            {validez.texto} · {validez.detalle}
           </StatusPill>
           <span className="rounded-md bg-primary px-2.5 py-1 text-sm font-bold text-primary-foreground">
-            Factura {preview.letra}
+            {tituloDocumento(preview.cbte_tipo)} {preview.letra}
           </span>
         </div>
       </div>
@@ -70,7 +91,7 @@ export function ResumenEmisionFiscal({
           <PasoIdentidad
             etiqueta="Receptor fiscal"
             principal={preview.receptor.razonSocial}
-            detalle={`${preview.receptor.tipoDocumento} ${preview.receptor.numeroDocumento ?? "sin identificar"} · ${preview.receptor.condicionIva}`}
+            detalle={`${preview.receptor.tipoDocumento} ${preview.receptor.numeroDocumento ?? "sin identificar"} · ${preview.receptor.condicionIva} · Domicilio fiscal: ${preview.receptor.domicilio ?? "no informado"}`}
           />
           <ArrowDown aria-hidden className="ml-4 h-3 w-3 text-muted-foreground" />
           <PasoIdentidad
@@ -79,6 +100,20 @@ export function ResumenEmisionFiscal({
             detalle={`CUIT ${preview.emisor_cuit} · ${preview.sucursal_nombre} · PV ${String(preview.punto_venta).padStart(5, "0")}`}
           />
         </div>
+
+        {preview.cbte_asoc ? (
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Comprobante asociado (CbteAsoc)
+            </p>
+            <p className="mt-1 font-medium">
+              {tituloDocumento(preview.cbte_asoc.tipo)} {letraDeCbteTipo(preview.cbte_asoc.tipo)} ·
+              PV {String(preview.cbte_asoc.punto_venta).padStart(5, "0")} · N°{" "}
+              {String(preview.cbte_asoc.numero).padStart(8, "0")} ·{" "}
+              {fechaArgentina(preview.cbte_asoc.fecha)}
+            </p>
+          </div>
+        ) : null}
 
         <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           {preview.razon_letra}

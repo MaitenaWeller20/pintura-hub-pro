@@ -99,6 +99,7 @@ export type FixtureFiscal = {
   productoId: string;
   presupuestoId: string;
   ventaPendienteId: string;
+  ventaAntiguaId: string;
   ventaAprobadaId: string;
   ventaCanceladaId: string;
   notaCreditoId: string;
@@ -1129,7 +1130,10 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       numero_comprobante: `V-T13-E2E-${String(index + 1).padStart(3, "0")}`,
       tipo_comprobante: "VENTA" as const,
       condicion_venta: "CONTADO" as const,
-      fecha: new Date(new Date(fechas.instante("12:00")).getTime() - index * 60_000).toISOString(),
+      fecha: new Date(
+        new Date(fechas.instante("12:00")).getTime() -
+          (index === 27 ? 20 * 24 * 60 * 60_000 : index * 60_000),
+      ).toISOString(),
       subtotal_sin_iva: 100,
       iva_total: 21,
       total: 121,
@@ -1646,6 +1650,7 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       productoId: PRODUCTO_ID,
       presupuestoId: PRESUPUESTO_ID,
       ventaPendienteId: uuidVenta(1),
+      ventaAntiguaId: uuidVenta(28),
       ventaAprobadaId: VENTA_APROBADA_ID,
       ventaCanceladaId: uuidVenta(34),
       notaCreditoId: VENTA_NC_ID,

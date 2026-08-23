@@ -180,6 +180,7 @@ describe("receptor fiscal congelado en el listado", () => {
         tipoDocumento: "CUIT",
         numeroDocumento: "30714199664",
         condicionIva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "Belgrano 500, Córdoba",
       },
     },
     // Un favorito vivo no puede alterar lo que muestra, busca ni exporta la venta emitida.
@@ -195,6 +196,7 @@ describe("receptor fiscal congelado en el listado", () => {
       tipoDocumento: "CUIT",
       numeroDocumento: "30714199664",
       condicionIva: "RESPONSABLE_INSCRIPTO",
+      domicilio: "Belgrano 500, Córdoba",
     });
     expect(receptorFiscalDifiereDelComprador(venta)).toBe(true);
   });

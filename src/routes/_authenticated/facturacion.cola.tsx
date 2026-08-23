@@ -18,6 +18,14 @@ import {
   type ResultadoEmisionFiscalUi,
 } from "@/components/fiscal/dialogo-emision-contract";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { DialogoDetalleVenta, type VentaDetalle } from "@/components/ventas/dialogo-detalle-venta";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -34,6 +42,7 @@ import {
   debeRefrescarCola,
   huellaConsultaCola,
   normalizarBusquedaCola,
+  navegarTabColaPorTecla,
   presentarEstadoColaFiscal,
   presentarResultadoCola,
   resolverSeleccionColaFiscal,
@@ -45,6 +54,7 @@ import {
 } from "@/lib/fiscal/cola-ui";
 import {
   emitirComprobante,
+  consultarIncidenteFiscal,
   liberarClaimFiscal,
   previsualizarEmisionFiscal,
   reconciliarComprobante,
@@ -173,7 +183,11 @@ function BannerResultado({
   const requiereAdministrador = fila
     ? accionFila(fila, esAdmin) === "Requiere administrador"
     : false;
-  const vista = presentarResultadoCola(search.resultado, requiereAdministrador);
+  const vista = presentarResultadoCola(
+    search.resultado,
+    requiereAdministrador,
+    fila?.tipo_comprobante,
+  );
   const aprobada = search.resultado === "factura_aprobada";
 
   return (
@@ -233,6 +247,7 @@ function ColaFiscalPage() {
   const emitir = useServerFn(emitirComprobante);
   const reconciliar = useServerFn(reconciliarComprobante);
   const liberar = useServerFn(liberarClaimFiscal);
+  const consultarIncidente = useServerFn(consultarIncidenteFiscal);
   const [seleccion, setSeleccion] = useState<SeleccionColaFiscal<ColaFiscalFila> | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [mensajeAccion, setMensajeAccion] = useState<string | null>(null);
@@ -240,7 +255,14 @@ function ColaFiscalPage() {
     ventaId: string;
     permitirDescarga: boolean;
   } | null>(null);
+  const [incidenteSeleccionado, setIncidenteSeleccionado] = useState<{
+    ventaId: string;
+    numeroComercial: string;
+    legacy: boolean;
+    diferenciasIniciales: string[];
+  } | null>(null);
   const returnFocusRef = useRef<HTMLButtonElement>(null);
+  const tabRefs = useRef<Partial<Record<TabColaFiscal, HTMLButtonElement>>>({});
 
   const inputCola = {
     tab: search.tab,
@@ -311,6 +333,11 @@ function ColaFiscalPage() {
       return data as unknown as VentaDetalle;
     },
   });
+  const incidente = useQuery({
+    queryKey: ["incidente-fiscal", incidenteSeleccionado?.ventaId ?? null],
+    enabled: incidenteSeleccionado !== null,
+    queryFn: () => consultarIncidente({ data: { venta_id: incidenteSeleccionado?.ventaId ?? "" } }),
+  });
   const filaResultado = search.venta
     ? filas.find((fila) => fila.venta_id === search.venta)
     : undefined;
@@ -346,6 +373,14 @@ function ColaFiscalPage() {
     },
     onSuccess: async (result, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
+      if (result.estado === "BLOQUEADO") {
+        setIncidenteSeleccionado({
+          ventaId: variables.row.venta_id,
+          numeroComercial: variables.row.numero_comprobante,
+          legacy: false,
+          diferenciasIniciales: result.diferencias,
+        });
+      }
       setMensajeAccion(
         variables.nombre === "Liberar claim verificado"
           ? "El claim verificado fue liberado."
@@ -365,6 +400,18 @@ function ColaFiscalPage() {
     setDetalleSeleccionado(null);
     returnFocusRef.current?.focus();
   };
+
+  const cerrarIncidente = () => {
+    setIncidenteSeleccionado(null);
+    returnFocusRef.current?.focus();
+  };
+
+  const diferenciasIncidente = [
+    ...new Set([
+      ...(incidenteSeleccionado?.diferenciasIniciales ?? []),
+      ...(incidente.data?.diferencias ?? []),
+    ]),
+  ].sort();
 
   return (
     <div className="space-y-4">
@@ -430,9 +477,16 @@ function ColaFiscalPage() {
         {TABS.map((tab) => (
           <button
             key={tab.value}
+            id={`cola-tab-${tab.value}`}
+            ref={(node) => {
+              if (node) tabRefs.current[tab.value] = node;
+              else delete tabRefs.current[tab.value];
+            }}
             type="button"
             role="tab"
             aria-selected={search.tab === tab.value}
+            aria-controls={`cola-panel-${tab.value}`}
+            tabIndex={search.tab === tab.value ? 0 : -1}
             className={`flex min-h-11 items-center justify-between gap-2 rounded-lg px-3 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
               search.tab === tab.value
                 ? "bg-primary text-primary-foreground"
@@ -441,6 +495,13 @@ function ColaFiscalPage() {
             onClick={() =>
               void cambiarSearch({ tab: tab.value, venta: undefined, resultado: undefined })
             }
+            onKeyDown={(event) => {
+              const siguiente = navegarTabColaPorTecla(tab.value, event.key);
+              if (!siguiente) return;
+              event.preventDefault();
+              tabRefs.current[siguiente]?.focus();
+              void cambiarSearch({ tab: siguiente, venta: undefined, resultado: undefined });
+            }}
           >
             <span>{tab.label}</span>
             <span className="font-mono text-xs tabular-nums">
@@ -450,96 +511,125 @@ function ColaFiscalPage() {
         ))}
       </div>
 
-      <ColaFiscalFiltros
-        key={`${search.desde ?? ""}|${search.hasta ?? ""}|${search.sucursal ?? ""}|${search.emisor ?? ""}|${search.documento ?? ""}|${search.estado ?? ""}`}
-        initial={search}
-        esAdmin={esAdmin}
-        sucursales={cola.data?.filtrosDisponibles.sucursales ?? []}
-        emisores={cola.data?.filtrosDisponibles.emisores ?? []}
-        disabled={cola.isLoading}
-        onAplicar={(filtros) =>
-          void cambiarSearch({ ...filtros, venta: undefined, resultado: undefined })
-        }
-        onLimpiar={() =>
-          void cambiarSearch({
-            desde: undefined,
-            hasta: undefined,
-            sucursal: undefined,
-            emisor: undefined,
-            documento: undefined,
-            estado: undefined,
-            venta: undefined,
-            resultado: undefined,
-          })
-        }
-      />
-
-      <ColaFiscalTabla
-        filas={filas}
-        esAdmin={esAdmin}
-        loading={cola.isLoading}
-        updating={cola.isFetching && !cola.isLoading}
-        accionesHabilitadas={accionesHabilitadas}
-        accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
-        error={cola.error ? mensajeError(cola.error, "No se pudo cargar la cola fiscal.") : null}
-        onRetry={() => void cola.refetch()}
-        onAccion={(row, nombre, disparador) => {
-          if (!accionesHabilitadas) return;
-          setErrorAccion(null);
-          setMensajeAccion(null);
-          const interaccion = clasificarInteraccionCola(nombre);
-          if (interaccion === "EMISION") {
-            returnFocusRef.current = disparador;
-            setSeleccion({ fila: row, huellaConsulta });
-            return;
+      <section
+        id={`cola-panel-${search.tab}`}
+        role="tabpanel"
+        aria-labelledby={`cola-tab-${search.tab}`}
+        tabIndex={0}
+        className="space-y-4"
+      >
+        <ColaFiscalFiltros
+          key={`${search.desde ?? ""}|${search.hasta ?? ""}|${search.sucursal ?? ""}|${search.emisor ?? ""}|${search.documento ?? ""}|${search.estado ?? ""}`}
+          initial={search}
+          esAdmin={esAdmin}
+          sucursales={cola.data?.filtrosDisponibles.sucursales ?? []}
+          emisores={cola.data?.filtrosDisponibles.emisores ?? []}
+          disabled={cola.isLoading}
+          onAplicar={(filtros) =>
+            void cambiarSearch({ ...filtros, venta: undefined, resultado: undefined })
           }
-          if (interaccion === "DETALLE_DESCARGA" || interaccion === "DETALLE_LECTURA") {
-            returnFocusRef.current = disparador;
-            setDetalleSeleccionado({
-              ventaId: row.venta_id,
-              permitirDescarga: interaccion === "DETALLE_DESCARGA",
-            });
-            return;
+          onLimpiar={() =>
+            void cambiarSearch({
+              desde: undefined,
+              hasta: undefined,
+              sucursal: undefined,
+              emisor: undefined,
+              documento: undefined,
+              estado: undefined,
+              venta: undefined,
+              resultado: undefined,
+            })
           }
-          if (interaccion !== "TRANSICION") return;
-          accion.mutate({ row, nombre });
-        }}
-      />
+        />
 
-      <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 text-sm sm:flex-row">
-        <p className="text-muted-foreground">
-          {cola.data?.total ?? 0} registros · página {cola.data?.page ?? search.page} de{" "}
-          {Math.max(cola.data?.paginas ?? 0, 1)}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={search.page <= 1 || cola.isLoading || !accionesHabilitadas}
-            onClick={() => void cambiarSearch({ page: search.page - 1 })}
-          >
-            <ChevronLeft /> Anterior
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={
-              search.page >= (cola.data?.paginas ?? 0) || cola.isLoading || !accionesHabilitadas
+        <ColaFiscalTabla
+          filas={filas}
+          esAdmin={esAdmin}
+          loading={cola.isLoading}
+          updating={cola.isFetching && !cola.isLoading}
+          accionesHabilitadas={accionesHabilitadas}
+          accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
+          error={cola.error ? mensajeError(cola.error, "No se pudo cargar la cola fiscal.") : null}
+          onRetry={() => void cola.refetch()}
+          onAccion={(row, nombre, disparador) => {
+            if (!accionesHabilitadas) return;
+            setErrorAccion(null);
+            setMensajeAccion(null);
+            const interaccion = clasificarInteraccionCola(nombre);
+            if (interaccion === "EMISION") {
+              returnFocusRef.current = disparador;
+              setSeleccion({ fila: row, huellaConsulta });
+              return;
             }
-            onClick={() => void cambiarSearch({ page: search.page + 1 })}
-          >
-            Siguiente <ChevronRight />
-          </Button>
+            if (interaccion === "DETALLE_DESCARGA" || interaccion === "DETALLE_LECTURA") {
+              returnFocusRef.current = disparador;
+              setDetalleSeleccionado({
+                ventaId: row.venta_id,
+                permitirDescarga: interaccion === "DETALLE_DESCARGA",
+              });
+              return;
+            }
+            if (interaccion === "INCIDENTE_LECTURA") {
+              returnFocusRef.current = disparador;
+              setIncidenteSeleccionado({
+                ventaId: row.venta_id,
+                numeroComercial: row.numero_comprobante,
+                legacy: nombre === "Ver incidente legacy",
+                diferenciasIniciales: [],
+              });
+              return;
+            }
+            if (interaccion !== "TRANSICION") return;
+            returnFocusRef.current = disparador;
+            accion.mutate({ row, nombre });
+          }}
+        />
+
+        <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 text-sm sm:flex-row">
+          <p className="text-muted-foreground">
+            {cola.data?.total ?? 0} registros · página {cola.data?.page ?? search.page} de{" "}
+            {Math.max(cola.data?.paginas ?? 0, 1)}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={search.page <= 1 || cola.isLoading || !accionesHabilitadas}
+              onClick={() => void cambiarSearch({ page: search.page - 1 })}
+            >
+              <ChevronLeft /> Anterior
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={
+                search.page >= (cola.data?.paginas ?? 0) || cola.isLoading || !accionesHabilitadas
+              }
+              onClick={() => void cambiarSearch({ page: search.page + 1 })}
+            >
+              Siguiente <ChevronRight />
+            </Button>
+          </div>
         </div>
-      </div>
+      </section>
+      {TABS.filter((tab) => tab.value !== search.tab).map((tab) => (
+        <section
+          key={tab.value}
+          id={`cola-panel-${tab.value}`}
+          role="tabpanel"
+          aria-labelledby={`cola-tab-${tab.value}`}
+          hidden
+        />
+      ))}
 
       {seleccionada && accionesHabilitadas ? (
         <DialogoEmisionFiscal
           open
           contexto={contextoDialogo(seleccionada)}
           favoritos={favoritos.data ?? []}
+          puedeConfirmarVentaAntigua={esAdmin}
           returnFocusRef={returnFocusRef}
           onOpenChange={(open) => {
             if (!open) setSeleccion(null);
@@ -598,6 +688,89 @@ function ColaFiscalPage() {
           onClose={cerrarDetalle}
         />
       ) : null}
+      <Dialog
+        open={incidenteSeleccionado !== null}
+        onOpenChange={(open) => {
+          if (!open) cerrarIncidente();
+        }}
+      >
+        <DialogContent
+          data-testid="dialogo-incidente-fiscal"
+          onCloseAutoFocus={(event) => {
+            if (!returnFocusRef.current) return;
+            event.preventDefault();
+            returnFocusRef.current.focus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Incidente fiscal · sólo lectura</DialogTitle>
+            <DialogDescription>
+              Venta {incidenteSeleccionado?.numeroComercial}. Revisá el diagnóstico; esta vista no
+              reemite, libera ni modifica el comprobante.
+            </DialogDescription>
+          </DialogHeader>
+          {incidente.isPending ? (
+            <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Cargando diagnóstico…
+            </p>
+          ) : incidente.error ? (
+            <div role="alert" className="space-y-2 text-sm text-destructive">
+              <p>{mensajeError(incidente.error, "No se pudo cargar el incidente fiscal.")}</p>
+              <Button type="button" variant="outline" onClick={() => void incidente.refetch()}>
+                Reintentar lectura
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <dl className="grid gap-2 rounded-lg border border-border p-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-muted-foreground">Estado / fase</dt>
+                  <dd className="font-medium">
+                    {incidente.data?.estado ?? "A revisar"} · {incidente.data?.fase ?? "sin fase"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Código</dt>
+                  <dd className="font-mono text-xs">
+                    {[incidente.data?.clase, incidente.data?.codigo].filter(Boolean).join(" · ") ||
+                      "sin código"}
+                  </dd>
+                </div>
+              </dl>
+              <p className="rounded-lg bg-muted/40 p-3">
+                {incidente.data?.mensaje ??
+                  (incidenteSeleccionado?.legacy
+                    ? "Incidente heredado sin diagnóstico estructurado."
+                    : "El incidente no informó un mensaje adicional.")}
+              </p>
+              <div>
+                <h3 className="font-semibold">Diferencias detectadas</h3>
+                {diferenciasIncidente.length ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 font-mono text-xs">
+                    {diferenciasIncidente.map((diferencia) => (
+                      <li key={diferencia}>{diferencia}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    No hay diferencias estructuradas registradas.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="cerrar-incidente-fiscal"
+              onClick={cerrarIncidente}
+            >
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -392,6 +392,10 @@ describe("preview autoritativa de una nota de crédito", () => {
     const base = preparacion();
     const originalPreparacion = {
       ...base,
+      receptor: {
+        ...base.receptor,
+        domicilio: "DOMICILIO RECEPTOR CONGELADO",
+      },
       contexto: {
         ...base.contexto,
         emisorImpreso: {
@@ -545,6 +549,15 @@ describe("preview autoritativa de una nota de crédito", () => {
 
     expect(preview.emisor_razon_social).toBe("EMISOR ORIGINAL CONGELADO");
     expect(preview.sucursal_nombre).toBe("SUCURSAL ORIGINAL CONGELADA");
+    expect(preview.afip_validez).toBe(original.identidad.validez);
+    expect(preview.receptor.domicilio).toBe("DOMICILIO RECEPTOR CONGELADO");
+    expect(preview.cbte_asoc).toEqual({
+      tipo: original.identidad.cbteTipo,
+      letra: original.letra,
+      punto_venta: original.identidad.puntoVenta,
+      numero: original.identidad.numero,
+      fecha: original.fechaComprobante,
+    });
     expect(preview.confirmacion_autoritativa).toMatchObject({
       emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
       sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",

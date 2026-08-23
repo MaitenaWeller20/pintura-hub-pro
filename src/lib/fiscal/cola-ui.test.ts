@@ -8,6 +8,7 @@ import {
   debeRefrescarCola,
   huellaConsultaCola,
   normalizarBusquedaCola,
+  navegarTabColaPorTecla,
   presentarResultadoCola,
   presentarEstadoColaFiscal,
   resolverSeleccionColaFiscal,
@@ -35,6 +36,14 @@ const casos: Caso[] = [
     estado: "SIN_FACTURAR",
     tab: "pendientes",
     empleado: "Facturar",
+    admin: "Facturar",
+  },
+  {
+    nombre: "venta antigua sin facturar",
+    estado: "SIN_FACTURAR",
+    ventaAntigua: true,
+    tab: "pendientes",
+    empleado: "Requiere administrador",
     admin: "Facturar",
   },
   {
@@ -140,6 +149,8 @@ describe("presentación de estados de la cola fiscal", () => {
   it("abre detalle descargable para APROBADO y detalle readonly para CANCELADO", () => {
     expect(clasificarInteraccionCola("Ver/descargar")).toBe("DETALLE_DESCARGA");
     expect(clasificarInteraccionCola("Ver")).toBe("DETALLE_LECTURA");
+    expect(clasificarInteraccionCola("Ver incidente")).toBe("INCIDENTE_LECTURA");
+    expect(clasificarInteraccionCola("Ver incidente legacy")).toBe("INCIDENTE_LECTURA");
     expect(clasificarInteraccionCola("Facturar")).toBe("EMISION");
     expect(clasificarInteraccionCola("Procesando")).toBeNull();
     expect(clasificarInteraccionCola("Requiere administrador")).toBeNull();
@@ -205,6 +216,17 @@ describe("presentación de estados de la cola fiscal", () => {
 });
 
 describe("URL de la cola fiscal", () => {
+  it.each([
+    ["pendientes", "ArrowRight", "revisar"],
+    ["pendientes", "ArrowLeft", "historial"],
+    ["historial", "ArrowRight", "pendientes"],
+    ["emitidas", "Home", "pendientes"],
+    ["revisar", "End", "historial"],
+    ["revisar", "Enter", null],
+  ] as const)("navega tabs desde %s con %s", (actual, tecla, esperado) => {
+    expect(navegarTabColaPorTecla(actual, tecla)).toBe(esperado);
+  });
+
   it("normaliza sólo el contrato público y elimina parámetros desconocidos", () => {
     expect(
       normalizarBusquedaCola({
@@ -327,16 +349,23 @@ describe("actualización y resultado autoritativos", () => {
   });
 
   it("explica el resultado parcial sin invitar a repetir venta ni cobro", () => {
-    expect(presentarResultadoCola("venta_creada_factura_pendiente", false)).toEqual({
+    expect(presentarResultadoCola("venta_creada_factura_pendiente", false, "NOTA_CREDITO")).toEqual(
+      {
+        titulo: "La venta quedó registrada",
+        detalle:
+          "No repitas la venta ni el cobro recién enviado. La nota de crédito quedó pendiente en la cola.",
+        requiereAdministrador: false,
+      },
+    );
+    expect(presentarResultadoCola("venta_creada_requiere_revision", true, "NOTA_DEBITO")).toEqual({
       titulo: "La venta quedó registrada",
-      detalle:
-        "No repitas la venta ni el cobro recién enviado. La factura quedó pendiente en la cola.",
-      requiereAdministrador: false,
-    });
-    expect(presentarResultadoCola("venta_creada_requiere_revision", true)).toEqual({
-      titulo: "La venta quedó registrada",
-      detalle: "No repitas la venta ni el cobro recién enviado. La factura quedó a revisar.",
+      detalle: "No repitas la venta ni el cobro recién enviado. La nota de débito quedó a revisar.",
       requiereAdministrador: true,
+    });
+    expect(presentarResultadoCola("factura_aprobada", false, "NOTA_CREDITO")).toEqual({
+      titulo: "Nota de crédito autorizada",
+      detalle: "ARCA autorizó la nota de crédito de esta venta.",
+      requiereAdministrador: false,
     });
   });
 

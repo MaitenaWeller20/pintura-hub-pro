@@ -57,7 +57,9 @@ const PREVIEW = {
   sucursal_nombre: "Casa Central",
   punto_venta: 5,
   modo: "PRODUCCION",
+  afip_validez: "PRODUCCION",
   cbte_tipo: 1,
+  cbte_asoc: null,
   demora_dias: 0,
   advertencia_demora: null,
   confirmacion_factura_a_permitida: true,
@@ -76,8 +78,10 @@ const PREVIEW_PROVISIONAL = {
   sucursal_nombre: "Casa Central",
   punto_venta: 5,
   modo: "PRODUCCION",
+  afip_validez: "PRODUCCION",
   letra: "A",
   cbte_tipo: 1,
+  cbte_asoc: null,
   razon_letra: "La condición determina letra A.",
   fecha_comercial: "2026-08-23T15:00:00.000Z",
   fecha_fiscal: "2026-08-23",
@@ -132,6 +136,34 @@ describe("contrato runtime del diálogo fiscal", () => {
         sucursal_nombre: "Sucursal cambiada",
       }),
     ).toThrow(/previsualizaci.n fiscal/i);
+  });
+
+  it("exige validez explícita y una asociación fiscal completa cuando corresponde", () => {
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({ ...PREVIEW, afip_validez: undefined }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        cbte_asoc: { tipo: 1, punto_venta: 5, numero: 41 },
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+    expect(
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        cbte_tipo: 3,
+        letra: "A",
+        cbte_asoc: {
+          tipo: 1,
+          letra: "A",
+          punto_venta: 5,
+          numero: 41,
+          fecha: "2026-08-20",
+        },
+        confirmacion_autoritativa: { ...CONFIRMACION, cbteTipo: 3 },
+        huella_confirmacion: crearHuellaConfirmacionFiscal({ ...CONFIRMACION, cbteTipo: 3 }),
+      }).cbte_asoc,
+    ).toEqual({ tipo: 1, letra: "A", punto_venta: 5, numero: 41, fecha: "2026-08-20" });
   });
 
   it("conserva el contrato estricto de preview provisional para el cierre inmediato", () => {

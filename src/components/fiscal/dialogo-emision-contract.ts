@@ -18,6 +18,16 @@ const cae = z
   .string()
   .regex(/^\d{14}$/)
   .refine((value) => value !== "00000000000000");
+const validezFiscal = z.enum(["PRODUCCION", "HOMOLOGACION", "SIMULADA"]);
+const cbteAsocSchema = z
+  .object({
+    tipo: z.number().int().positive(),
+    letra: z.enum(["A", "B", "C"]),
+    punto_venta: z.number().int().positive(),
+    numero: z.number().int().positive(),
+    fecha,
+  })
+  .strict();
 
 const receptorConfirmadoSchema = z
   .object({
@@ -76,7 +86,9 @@ const previewAutoritativaSchema = z
     sucursal_nombre: textoSemantico,
     punto_venta: z.number().int().positive(),
     modo: z.enum(["PRODUCCION", "HOMOLOGACION"]),
+    afip_validez: validezFiscal,
     cbte_tipo: z.number().int().positive(),
+    cbte_asoc: cbteAsocSchema.nullable(),
     demora_dias: z.number().int().nonnegative(),
     advertencia_demora: z.string().min(1).nullable(),
     confirmacion_factura_a_permitida: z.boolean(),
@@ -97,8 +109,10 @@ const previewProvisionalSchema = z
     sucursal_nombre: textoSemantico,
     punto_venta: z.number().int().positive(),
     modo: z.enum(["PRODUCCION", "HOMOLOGACION"]),
+    afip_validez: validezFiscal,
     letra: z.enum(["A", "B", "C"]),
     cbte_tipo: z.number().int().positive(),
+    cbte_asoc: cbteAsocSchema.nullable(),
     razon_letra: z.string().min(1),
     fecha_comercial: z.string().datetime({ offset: true }),
     fecha_fiscal: fecha,
@@ -249,6 +263,16 @@ function confirmacionProvisional(preview: PreviewProvisional): ConfirmacionFisca
 }
 
 function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
+  const validezEsperada = preview.afip_validez === "SIMULADA" ? "SIMULADA" : preview.modo;
+  if (preview.afip_validez !== validezEsperada) {
+    throw new Error("El ambiente y la validez fiscal de la preview son incoherentes.");
+  }
+  if (preview.cbte_asoc) {
+    validarFechaIsoCalendario(preview.cbte_asoc.fecha, "La fecha del comprobante asociado");
+    if (letraDeCbteTipo(preview.cbte_asoc.tipo) !== preview.cbte_asoc.letra) {
+      throw new Error("El comprobante asociado no coincide con su letra fiscal.");
+    }
+  }
   if (preview.autoritativo) {
     const visible = confirmacionVisibleAutoritativa(preview);
     validarConfirmacionSemantica(preview.confirmacion_autoritativa);

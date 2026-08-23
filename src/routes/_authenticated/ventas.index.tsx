@@ -25,6 +25,7 @@ import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
 import { SectionCard } from "@/components/app/section-card";
 import { EstadoFiscalPill } from "@/components/fiscal/estado-fiscal-pill";
+import { ValidezFiscal } from "@/components/fiscal/validez-fiscal";
 import { DialogoDetalleVenta, type VentaDetalle } from "@/components/ventas/dialogo-detalle-venta";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { Plus, Eye, Ban, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
@@ -48,6 +49,11 @@ import {
   receptorFiscalDifiereDelComprador,
   ventaCoincideBusqueda,
 } from "@/lib/ventas-ui";
+import {
+  crearIntentoAnulacion,
+  solicitudAnulacion,
+  type IntentoAnulacion,
+} from "@/lib/anulacion-venta-ui";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -114,7 +120,7 @@ function VentasList() {
   const [pagoFilter, setPagoFilter] = useState("all");
   const [q, setQ] = useState("");
   const [verVenta, setVerVenta] = useState<VentaDetalle | null>(null);
-  const [anularDlg, setAnularDlg] = useState<any>(null);
+  const [anularDlg, setAnularDlg] = useState<IntentoAnulacion<VentaDetalle> | null>(null);
   const anularFn = useServerFn(anularVenta);
 
   const { data: sucs = [] } = useQuery({
@@ -181,11 +187,12 @@ function VentasList() {
   });
 
   const anular = useMutation({
-    mutationFn: async (id: string) => anularFn({ data: { venta_id: id } }),
-    onSuccess: (_r, id) => {
+    mutationFn: async (intento: IntentoAnulacion<VentaDetalle>) =>
+      anularFn({ data: solicitudAnulacion(intento) }),
+    onSuccess: (_r, intento) => {
       // Si el comprobante estaba declarado, la anulación todavía no terminó: falta
       // emitirle la NC a AFIP. Que el toast lo diga, no un "listo" que engañe.
-      const anulada = ventas.find((v: any) => v.id === id);
+      const anulada = intento.venta;
       if (anulada?.cae && !anulada?.afip_simulado) {
         toast.warning("Venta anulada. Falta emitir la nota de crédito en AFIP.", {
           duration: 10000,
@@ -194,9 +201,20 @@ function VentasList() {
         toast.success("Venta anulada");
       }
       qc.invalidateQueries({ queryKey: ["ventas"] });
+      qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });
       setAnularDlg(null);
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: (e: Error) => {
+      // La RPC es idempotente. Si se perdió la respuesta después del commit,
+      // conservar este diálogo conserva también la clave: el siguiente click
+      // recupera la misma NC en vez de intentar crear otra.
+      qc.invalidateQueries({ queryKey: ["ventas"] });
+      qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });
+      toast.error(
+        `No se pudo confirmar la respuesta de la anulación. Reintentá desde este mismo diálogo para recuperar la operación; no abras otra anulación. ${e.message}`,
+        { duration: 12000 },
+      );
+    },
   });
 
   // Sólo interesa el flag de modo simulado, para no avisar de un plazo que en
@@ -379,7 +397,12 @@ function VentasList() {
             </TableCell>
             <TableCell>
               {cu?.facturacionV2Habilitada ? (
-                <EstadoFiscalPill estado={v.afip_estado} />
+                <div className="space-y-1">
+                  <EstadoFiscalPill estado={v.afip_estado} />
+                  <div>
+                    <ValidezFiscal validez={v.afip_validez} compacta />
+                  </div>
+                </div>
               ) : (
                 <EstadoAfip venta={v} mock={mockMode} />
               )}
@@ -443,7 +466,7 @@ function VentasList() {
                   variant="ghost"
                   aria-label={`Anular ${v.numero_comprobante}`}
                   title="Anular"
-                  onClick={() => setAnularDlg(v)}
+                  onClick={() => setAnularDlg(crearIntentoAnulacion(v))}
                 >
                   <Ban className="h-3.5 w-3.5 text-destructive" />
                 </Button>
@@ -455,32 +478,36 @@ function VentasList() {
 
       <DialogoDetalleVenta venta={verVenta} onClose={() => setVerVenta(null)} />
 
-      <Dialog open={!!anularDlg} onOpenChange={(v) => !v && setAnularDlg(null)}>
+      <Dialog
+        open={!!anularDlg}
+        onOpenChange={(open) => !open && !anular.isPending && setAnularDlg(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Anular {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? "nota de crédito" : "venta"}
+              Anular{" "}
+              {anularDlg?.venta.tipo_comprobante === "NOTA_CREDITO" ? "nota de crédito" : "venta"}
             </DialogTitle>
           </DialogHeader>
           {/* Anular una nota interna NO genera otra nota: la revierte. Decir lo
               contrario haría buscar en el listado un comprobante que no existe. */}
-          {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? (
+          {anularDlg?.venta.tipo_comprobante === "NOTA_CREDITO" ? (
             <p className="text-sm">
-              ¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se va a revertir
-              todo lo que hizo: sale de nuevo el stock que había devuelto, se le saca el crédito al
-              cliente y la plata devuelta vuelve a la caja de hoy. No se genera ningún comprobante
-              nuevo.
+              ¿Confirmás anular <strong>{anularDlg?.venta.numero_comprobante}</strong>? Se va a
+              revertir todo lo que hizo: sale de nuevo el stock que había devuelto, se le saca el
+              crédito al cliente y la plata devuelta vuelve a la caja de hoy. No se genera ningún
+              comprobante nuevo.
             </p>
           ) : (
             <p className="text-sm">
-              ¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se generará una
-              nota de crédito y se devolverá el stock automáticamente.
+              ¿Confirmás anular <strong>{anularDlg?.venta.numero_comprobante}</strong>? Se generará
+              una nota de crédito y se devolverá el stock automáticamente.
             </p>
           )}
           {/* Si el comprobante ya se declaró, anularlo acá NO lo anula ante AFIP:
               eso lo hace la nota de crédito, que es un segundo paso y hay que
               emitirla. Mientras tanto AFIP sigue teniendo la factura como válida. */}
-          {anularDlg?.cae && !anularDlg?.afip_simulado && (
+          {anularDlg?.venta.cae && !anularDlg?.venta.afip_simulado && (
             <div className="flex items-start gap-2 p-3 rounded border border-warning/40 bg-warning/5 text-sm">
               <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
               <div>
@@ -492,13 +519,17 @@ function VentasList() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAnularDlg(null)}>
+            <Button
+              variant="outline"
+              onClick={() => setAnularDlg(null)}
+              disabled={anular.isPending}
+            >
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              onClick={() => anular.mutate(anularDlg.id)}
-              disabled={anular.isPending}
+              onClick={() => anularDlg && anular.mutate(anularDlg)}
+              disabled={anular.isPending || !anularDlg}
             >
               Anular
             </Button>

@@ -5,6 +5,7 @@ export type ReceptorFiscalCongeladoListado = {
   tipoDocumento: string | null;
   numeroDocumento: string | null;
   condicionIva: string | null;
+  domicilio: string | null;
 };
 
 type VentaConReceptorCongelado = {
@@ -37,6 +38,7 @@ export function leerReceptorFiscalCongelado(
       textoSnapshot(receptor.numero_documento) ??
       textoSnapshot(receptor.cuit_dni),
     condicionIva: textoSnapshot(receptor.condicionIva) ?? textoSnapshot(receptor.condicion_iva),
+    domicilio: textoSnapshot(receptor.domicilio),
   };
 }
 

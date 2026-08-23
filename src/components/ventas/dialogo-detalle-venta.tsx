@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { DataTable } from "@/components/app/data-table";
 import { EstadoFiscalPill } from "@/components/fiscal/estado-fiscal-pill";
+import { ValidezFiscal } from "@/components/fiscal/validez-fiscal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -207,6 +208,9 @@ export function DialogoDetalleVenta({
               </div>
               <div className="space-y-1">
                 <strong>Estado fiscal:</strong> <EstadoFiscalPill estado={venta.afip_estado} />
+                <div className="mt-1">
+                  <ValidezFiscal validez={venta.afip_validez} compacta />
+                </div>
                 {fiscal ? <p className="font-medium">{fiscal}</p> : null}
                 {venta.afip_fecha_comprobante ? (
                   <p className="text-xs text-muted-foreground">
@@ -221,6 +225,9 @@ export function DialogoDetalleVenta({
                     {[receptor.tipoDocumento, receptor.numeroDocumento, receptor.condicionIva]
                       .filter(Boolean)
                       .join(" · ")}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Domicilio fiscal: {receptor.domicilio ?? "no informado"}
                   </p>
                 </div>
               ) : null}

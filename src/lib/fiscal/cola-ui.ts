@@ -19,6 +19,7 @@ export type BusquedaColaFiscal = {
 };
 
 const TABS = new Set<TabColaFiscal>(["pendientes", "revisar", "emitidas", "historial"]);
+const ORDEN_TABS: readonly TabColaFiscal[] = ["pendientes", "revisar", "emitidas", "historial"];
 const RESULTADOS = new Set<ResultadoColaFiscal>([
   "venta_creada_factura_pendiente",
   "venta_creada_requiere_revision",
@@ -95,6 +96,15 @@ export function normalizarBusquedaCola(raw: Record<string, unknown>): BusquedaCo
     ...(venta ? { venta } : {}),
     ...(resultado ? { resultado } : {}),
   };
+}
+
+export function navegarTabColaPorTecla(actual: TabColaFiscal, tecla: string): TabColaFiscal | null {
+  if (tecla === "Home") return ORDEN_TABS[0];
+  if (tecla === "End") return ORDEN_TABS[ORDEN_TABS.length - 1];
+  if (tecla !== "ArrowLeft" && tecla !== "ArrowRight") return null;
+  const indice = ORDEN_TABS.indexOf(actual);
+  const delta = tecla === "ArrowRight" ? 1 : -1;
+  return ORDEN_TABS[(indice + delta + ORDEN_TABS.length) % ORDEN_TABS.length];
 }
 
 const REINICIA_PAGINA = new Set([
@@ -205,11 +215,18 @@ export function resolverSeleccionColaFiscal<T extends { venta_id: string }>(inpu
 export function presentarResultadoCola(
   resultado: ResultadoColaFiscal,
   requiereAdministrador: boolean,
+  tipoComprobante = "VENTA",
 ): { titulo: string; detalle: string; requiereAdministrador: boolean } {
+  const documento =
+    tipoComprobante === "NOTA_CREDITO"
+      ? "nota de crédito"
+      : tipoComprobante === "NOTA_DEBITO"
+        ? "nota de débito"
+        : "factura";
   if (resultado === "factura_aprobada") {
     return {
-      titulo: "Factura autorizada",
-      detalle: "ARCA autorizó el comprobante de esta venta.",
+      titulo: `${documento.charAt(0).toUpperCase()}${documento.slice(1)} autorizada`,
+      detalle: `ARCA autorizó la ${documento} de esta venta.`,
       requiereAdministrador: false,
     };
   }
@@ -217,8 +234,8 @@ export function presentarResultadoCola(
     titulo: "La venta quedó registrada",
     detalle:
       resultado === "venta_creada_requiere_revision"
-        ? "No repitas la venta ni el cobro recién enviado. La factura quedó a revisar."
-        : "No repitas la venta ni el cobro recién enviado. La factura quedó pendiente en la cola.",
+        ? `No repitas la venta ni el cobro recién enviado. La ${documento} quedó a revisar.`
+        : `No repitas la venta ni el cobro recién enviado. La ${documento} quedó pendiente en la cola.`,
     requiereAdministrador: resultado === "venta_creada_requiere_revision" && requiereAdministrador,
   };
 }
@@ -232,7 +249,8 @@ export type InteraccionColaFiscal =
   | "EMISION"
   | "TRANSICION"
   | "DETALLE_DESCARGA"
-  | "DETALLE_LECTURA";
+  | "DETALLE_LECTURA"
+  | "INCIDENTE_LECTURA";
 
 export function clasificarInteraccionCola(accion: string): InteraccionColaFiscal | null {
   if (accion === "Facturar" || accion === "Corregir/reintentar") return "EMISION";
@@ -241,6 +259,9 @@ export function clasificarInteraccionCola(accion: string): InteraccionColaFiscal
   }
   if (accion === "Ver/descargar") return "DETALLE_DESCARGA";
   if (accion === "Ver") return "DETALLE_LECTURA";
+  if (accion === "Ver incidente" || accion === "Ver incidente legacy") {
+    return "INCIDENTE_LECTURA";
+  }
   return null;
 }
 
@@ -255,7 +276,10 @@ export function presentarEstadoColaFiscal(input: {
 }): PresentacionEstadoColaFiscal {
   switch (input.estado) {
     case "SIN_FACTURAR":
-      return { tab: "pendientes", accion: "Facturar" };
+      return {
+        tab: "pendientes",
+        accion: input.ventaAntigua && !input.esAdmin ? "Requiere administrador" : "Facturar",
+      };
 
     case "EMITIENDO": {
       if (!input.claimVencido) {

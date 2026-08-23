@@ -17,6 +17,7 @@ import {
   type ReceptorHeredadoVista,
 } from "./receptor-fiscal-form";
 import { ResumenEmisionFiscal, type PreviewEmisionFiscal } from "./resumen-emision-fiscal";
+import { textoValidezFiscal } from "@/lib/fiscal/validez-ui";
 import {
   cambiarReceptorConfirmacion,
   crearControlSolicitudPreview,
@@ -132,6 +133,7 @@ export function DialogoEmisionFiscal({
   contexto,
   favoritos,
   returnFocusRef,
+  puedeConfirmarVentaAntigua = false,
   onOpenChange,
   onPrevisualizar,
   onConfirmar,
@@ -141,6 +143,7 @@ export function DialogoEmisionFiscal({
   contexto: ContextoDialogoEmision;
   favoritos: ReceptorFiscalFavorito[];
   returnFocusRef?: RefObject<HTMLElement | null>;
+  puedeConfirmarVentaAntigua?: boolean;
   onOpenChange(open: boolean): void;
   onPrevisualizar(receptor: SelectorReceptorFiscal): Promise<unknown>;
   onConfirmar(input: {
@@ -255,7 +258,7 @@ export function DialogoEmisionFiscal({
   const puedeEmitir =
     preview !== null &&
     confirmacion.huellaConfirmacion !== null &&
-    (!preview.advertencia_demora || confirmaVentaAntigua) &&
+    (!preview.advertencia_demora || (puedeConfirmarVentaAntigua && confirmaVentaAntigua)) &&
     !(preview.letra === "A" && !preview.confirmacion_factura_a_permitida) &&
     (receptor.origen !== "MANUAL" || confirmacion.confirmaDatosManuales);
 
@@ -319,7 +322,7 @@ export function DialogoEmisionFiscal({
                   <p className="text-xs text-muted-foreground">
                     CUIT {preview.emisor_cuit} · {preview.sucursal_nombre} · PV{" "}
                     {String(preview.punto_venta).padStart(5, "0")} ·{" "}
-                    {preview.modo === "PRODUCCION" ? "Producción" : "Homologación"}
+                    {textoValidezFiscal(preview.afip_validez)}
                   </p>
                 </>
               ) : (
@@ -356,7 +359,7 @@ export function DialogoEmisionFiscal({
             </div>
           )}
 
-          {preview?.advertencia_demora ? (
+          {preview?.advertencia_demora && puedeConfirmarVentaAntigua ? (
             <label className="flex min-h-11 items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
               <input
                 type="checkbox"
@@ -367,6 +370,13 @@ export function DialogoEmisionFiscal({
               />
               <span>Confirmo emitir esta venta demorada con la fecha fiscal informada.</span>
             </label>
+          ) : preview?.advertencia_demora ? (
+            <p
+              role="alert"
+              className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm font-medium text-warning"
+            >
+              Esta venta demorada sólo puede ser confirmada y emitida por un administrador.
+            </p>
           ) : null}
 
           <div aria-live="polite" aria-atomic="true">

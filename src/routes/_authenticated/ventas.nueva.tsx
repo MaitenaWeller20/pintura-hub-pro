@@ -1330,6 +1330,7 @@ function NuevaVenta() {
             tipoComprobante: "VENTA",
           }}
           favoritos={favoritosFiscales}
+          puedeConfirmarVentaAntigua={cu?.isAdmin === true}
           returnFocusRef={botonFacturarRef}
           onOpenChange={(open) => {
             setDialogoFiscalAbierto(open);

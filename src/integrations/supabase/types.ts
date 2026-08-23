@@ -2771,6 +2771,8 @@ export type Database = {
           afip_ultimo_error_at: string | null
           afip_validez: string | null
           afip_version: number
+          anulacion_idempotency_key: string | null
+          anulacion_idempotency_payload_hash: string | null
           cae: string | null
           cae_vencimiento: string | null
           caja_sesion_id: string | null
@@ -2823,6 +2825,8 @@ export type Database = {
           afip_ultimo_error_at?: string | null
           afip_validez?: string | null
           afip_version?: number
+          anulacion_idempotency_key?: string | null
+          anulacion_idempotency_payload_hash?: string | null
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null
@@ -2875,6 +2879,8 @@ export type Database = {
           afip_ultimo_error_at?: string | null
           afip_validez?: string | null
           afip_version?: number
+          anulacion_idempotency_key?: string | null
+          anulacion_idempotency_payload_hash?: string | null
           cae?: string | null
           cae_vencimiento?: string | null
           caja_sesion_id?: string | null

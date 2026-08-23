@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { autorizarContextoColaFiscal, evaluarPermisoFiscal } from "./permiso.server";
+import {
+  autorizarAdministradorFiscal,
+  autorizarContextoColaFiscal,
+  evaluarPermisoFiscal,
+} from "./permiso.server";
 
 const base = {
   venta: { id: "venta", sucursalId: "sucursal-a", diasAntiguedad: 0 },
@@ -28,12 +32,12 @@ describe("permiso fiscal server", () => {
     ).toThrow(mensaje);
   });
 
-  it("admin puede operar otra sucursal, pero conciliación/liberación y venta vieja no empleado", () => {
+  it("admin activo puede operar otra sucursal, pero conciliación/liberación y venta vieja no empleado", () => {
     expect(
       evaluarPermisoFiscal({
         ...base,
         esAdmin: true,
-        perfil: null,
+        perfil: { activo: true, puedeFacturar: false, sucursalId: null },
         venta: { ...base.venta, sucursalId: "otra" },
         accion: "CONCILIAR",
         confirmaVentaAntigua: false,
@@ -59,7 +63,7 @@ describe("permiso fiscal server", () => {
         ...base,
         venta: { ...base.venta, diasAntiguedad: 6 },
         esAdmin: true,
-        perfil: null,
+        perfil: { activo: true, puedeFacturar: false, sucursalId: null },
         accion: "EMITIR",
         confirmaVentaAntigua: false,
       }),
@@ -70,7 +74,7 @@ describe("permiso fiscal server", () => {
         ...base,
         venta: { ...base.venta, diasAntiguedad: 6 },
         esAdmin: true,
-        perfil: null,
+        perfil: { activo: true, puedeFacturar: false, sucursalId: null },
         accion: "EMITIR",
         confirmaVentaAntigua: true,
       }),
@@ -84,6 +88,21 @@ describe("permiso fiscal server", () => {
         confirmaVentaAntigua: false,
       }),
     ).toMatchObject({ esAdmin: false });
+  });
+
+  it.each([
+    [null, /perfil fiscal/i],
+    [{ activo: false, puedeFacturar: true, sucursalId: null }, /inactivo/i],
+  ])("rechaza también al admin si su perfil no está activo", (perfil, mensaje) => {
+    expect(() =>
+      evaluarPermisoFiscal({
+        ...base,
+        esAdmin: true,
+        perfil,
+        accion: "CONCILIAR",
+        confirmaVentaAntigua: false,
+      }),
+    ).toThrow(mensaje);
   });
 });
 
@@ -122,7 +141,7 @@ describe("contexto user-bound de cola y favoritos", () => {
     ).rejects.toThrow(mensaje);
   });
 
-  it("rechaza sucursal deshabilitada y deja al admin sin filtro forzado", async () => {
+  it("rechaza sucursal deshabilitada y deja al admin activo sin filtro forzado", async () => {
     await expect(
       autorizarContextoColaFiscal({
         userId: "user",
@@ -158,10 +177,60 @@ describe("contexto user-bound de cola y favoritos", () => {
         userId: "admin",
         lecturas: {
           consultarEsAdmin: async () => true,
-          cargarPerfil: async () => null,
+          cargarPerfil: async () => ({
+            activo: true,
+            puedeFacturar: false,
+            sucursalId: null,
+          }),
           cargarSucursal: async () => null,
         },
       }),
     ).resolves.toEqual({ userId: "admin", esAdmin: true, sucursalId: null });
+  });
+
+  it.each([
+    [null, /perfil/i],
+    [{ activo: false, puedeFacturar: false, sucursalId: null }, /inactivo/i],
+  ])("no permite que un admin sin perfil activo lea la cola", async (perfil, mensaje) => {
+    await expect(
+      autorizarContextoColaFiscal({
+        userId: "admin",
+        lecturas: {
+          consultarEsAdmin: async () => true,
+          cargarPerfil: async () => perfil,
+          cargarSucursal: async () => null,
+        },
+      }),
+    ).rejects.toThrow(mensaje);
+  });
+});
+
+describe("administrador fiscal activo", () => {
+  it("autoriza únicamente al admin que conserva un perfil activo", async () => {
+    await expect(
+      autorizarAdministradorFiscal({
+        userId: "admin",
+        lecturas: {
+          consultarEsAdmin: async () => true,
+          cargarPerfil: async () => ({ activo: true }),
+        },
+      }),
+    ).resolves.toEqual({ userId: "admin", esAdmin: true });
+  });
+
+  it.each([
+    [true, null, /perfil/i],
+    [true, { activo: false }, /inactivo/i],
+    [false, { activo: true }, /administrador/i],
+  ])("rechaza rol=%s perfil=%o", async (esAdmin, perfil, mensaje) => {
+    await expect(
+      autorizarAdministradorFiscal({
+        userId: "actor",
+        lecturas: {
+          consultarEsAdmin: async () => esAdmin,
+          cargarPerfil: async () => perfil,
+        },
+      }),
+    ).rejects.toThrow(mensaje);
   });
 });

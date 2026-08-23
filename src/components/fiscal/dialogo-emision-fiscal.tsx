@@ -32,7 +32,7 @@ import {
 import {
   despacharRespuestaConfirmacionFiscal,
   parsePreviewEmisionFiscal,
-  type RespuestaReconfirmacion,
+  reconfirmarPreviewEmisionFiscal,
   type ResultadoEmisionFiscalUi,
 } from "./dialogo-emision-contract";
 
@@ -65,66 +65,6 @@ function selectorListo(
     domicilio: value.domicilio.trim() ? value.domicilio : null,
     guardar_para_proximas: value.guardar_para_proximas,
     confirma_datos_manuales: true,
-  };
-}
-
-function previewReconfirmada(
-  anterior: PreviewEmisionFiscal,
-  respuesta: RespuestaReconfirmacion,
-): PreviewEmisionFiscal {
-  const autoritativa = respuesta.confirmacion_autoritativa;
-  if (anterior.autoritativo) {
-    return {
-      ...anterior,
-      total: autoritativa.importe,
-      // La respuesta autoritativa sólo confirma el importe fiscal. No se deriva
-      // un saldo en el navegador: el servidor lo volverá a presentar al emitir.
-      saldo: anterior.saldo,
-      fecha_fiscal: autoritativa.fechaFiscal,
-      receptor: autoritativa.receptor,
-      letra: autoritativa.letra,
-      razon_letra: `La condición ${autoritativa.receptor.condicionIva} determina letra ${autoritativa.letra}.`,
-      emisor_cuit: autoritativa.emisorCuit,
-      emisor_razon_social: autoritativa.emisorRazonSocial,
-      sucursal_id: autoritativa.sucursalId,
-      sucursal_nombre: autoritativa.sucursalNombre,
-      punto_venta: autoritativa.puntoVenta,
-      modo: autoritativa.modo,
-      cbte_tipo: autoritativa.cbteTipo,
-      confirmacion_autoritativa: autoritativa,
-      huella_confirmacion: respuesta.huella_confirmacion,
-    };
-  }
-  return {
-    ...anterior,
-    total: autoritativa.importe,
-    saldo: anterior.saldo,
-    fecha_fiscal: autoritativa.fechaFiscal,
-    receptor: autoritativa.receptor,
-    letra: autoritativa.letra,
-    razon_letra: `La condición ${autoritativa.receptor.condicionIva} determina letra ${autoritativa.letra}.`,
-    emisor_cuit: autoritativa.emisorCuit,
-    emisor_razon_social: autoritativa.emisorRazonSocial,
-    sucursal_id: autoritativa.sucursalId,
-    sucursal_nombre: autoritativa.sucursalNombre,
-    punto_venta: autoritativa.puntoVenta,
-    modo: autoritativa.modo,
-    cbte_tipo: autoritativa.cbteTipo,
-    huella_confirmacion: respuesta.huella_confirmacion,
-    confirmacion_provisional: {
-      version: 1,
-      importe: autoritativa.importe,
-      emisor_cuit: autoritativa.emisorCuit,
-      emisor_razon_social: autoritativa.emisorRazonSocial,
-      sucursal_id: autoritativa.sucursalId,
-      sucursal_nombre: autoritativa.sucursalNombre,
-      punto_venta: autoritativa.puntoVenta,
-      modo: autoritativa.modo,
-      letra: autoritativa.letra,
-      cbte_tipo: autoritativa.cbteTipo,
-      fecha_fiscal: autoritativa.fechaFiscal,
-      receptor: autoritativa.receptor,
-    },
   };
 }
 
@@ -234,7 +174,7 @@ export function DialogoEmisionFiscal({
       });
       despacharRespuestaConfirmacionFiscal(respuesta, {
         onReconfirmacion(resultado) {
-          setPreview(previewReconfirmada(preview, resultado));
+          setPreview(reconfirmarPreviewEmisionFiscal(preview, resultado));
           setConfirmacion((actual) =>
             registrarReconfirmacion(actual, resultado.huella_confirmacion),
           );

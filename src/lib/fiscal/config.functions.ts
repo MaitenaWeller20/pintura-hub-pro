@@ -27,6 +27,7 @@ import {
 } from "./cert";
 import { decryptString, encryptString } from "./crypto";
 import { MOCK, ultimoAutorizado } from "./arca";
+import { autorizarAdministradorFiscal } from "./permiso.server";
 
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -34,9 +35,27 @@ async function admin() {
 }
 
 async function exigirAdmin(supabase: SupabaseClient<Database>, userId: string) {
-  const { data, error } = await supabase.rpc("is_admin", { _user_id: userId });
-  if (error) throw new Error(`No se pudo verificar el permiso de administrador: ${error.message}`);
-  if (!data) throw new Error("Sólo un administrador puede tocar la configuración fiscal.");
+  await autorizarAdministradorFiscal({
+    userId,
+    lecturas: {
+      async consultarEsAdmin(id) {
+        const { data, error } = await supabase.rpc("is_admin", { _user_id: id });
+        if (error || typeof data !== "boolean") {
+          throw new Error("No se pudo verificar el permiso de administrador.");
+        }
+        return data;
+      },
+      async cargarPerfil(id) {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("activo")
+          .eq("id", id)
+          .maybeSingle();
+        if (error) throw new Error("No se pudo verificar el perfil del administrador.");
+        return data;
+      },
+    },
+  });
 }
 
 export type ConfigFiscalPublica = {
@@ -250,8 +269,10 @@ export const generarCsr = createServerFn({ method: "POST" })
     z.object({ emisor_id: z.string().uuid(), ambiente: ambienteSchema }).parse(d),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await exigirAdmin(context.supabase, context.userId);
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
 
     const [{ data: emisor, error: emisorError }, { data: credencial, error: credError }] =
       await Promise.all([
@@ -319,8 +340,10 @@ export const guardarCertificado = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await exigirAdmin(context.supabase, context.userId);
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
 
     const { data: credencial, error: credError } = await sb
       .from("credenciales_arca")
@@ -415,8 +438,10 @@ export const guardarHabilitacionCredencial = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
-    await exigirAdmin(context.supabase, context.userId);
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
     if (data.habilitada && MOCK) {
       throw new Error(
         "No se puede habilitar una credencial mientras el modo simulado está activo.",

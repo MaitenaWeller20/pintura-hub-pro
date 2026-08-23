@@ -19,3 +19,16 @@ export function solicitudAnulacion<T extends { id: string }>(intento: IntentoAnu
     idempotency_key: intento.idempotencyKey,
   };
 }
+
+type ReferenciaBloqueoAnulacion = { current: boolean };
+
+/** Cierra la ventana entre un doble click y el próximo render de React. */
+export function adquirirBloqueoAnulacion(bloqueo: ReferenciaBloqueoAnulacion): boolean {
+  if (bloqueo.current) return false;
+  bloqueo.current = true;
+  return true;
+}
+
+export function liberarBloqueoAnulacion(bloqueo: ReferenciaBloqueoAnulacion): void {
+  bloqueo.current = false;
+}

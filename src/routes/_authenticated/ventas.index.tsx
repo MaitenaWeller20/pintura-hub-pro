@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Button } from "@/components/ui/button";
@@ -45,12 +45,17 @@ import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import { numeroFiscal } from "@/lib/fiscal/comprobante-pdf";
 import {
   camposExportacionReceptorFiscal,
+  describirCaeLegacy,
   leerReceptorFiscalCongelado,
+  puedeOfrecerEmisionLegacy,
   receptorFiscalDifiereDelComprador,
+  requiereAdvertenciaAnulacionProduccion,
   ventaCoincideBusqueda,
 } from "@/lib/ventas-ui";
 import {
+  adquirirBloqueoAnulacion,
   crearIntentoAnulacion,
+  liberarBloqueoAnulacion,
   solicitudAnulacion,
   type IntentoAnulacion,
 } from "@/lib/anulacion-venta-ui";
@@ -88,6 +93,10 @@ const ANULABLES = [
  * que va a fallar.
  */
 function sePuedeAnular(v: any, generadasPorAnulacion: Set<string>): boolean {
+  // La RPC sólo puede derivar una NC automática desde evidencia de producción.
+  // Un CAE de prueba no se ofrece como anulable porque homologación/simulación
+  // no pueden presentarse como comprobantes con validez legal.
+  if (v.cae && !requiereAdvertenciaAnulacionProduccion(v)) return false;
   if (ANULABLES.includes(v.tipo_comprobante)) return true;
   return (
     v.tipo_comprobante === "NOTA_CREDITO" &&
@@ -121,6 +130,8 @@ function VentasList() {
   const [q, setQ] = useState("");
   const [verVenta, setVerVenta] = useState<VentaDetalle | null>(null);
   const [anularDlg, setAnularDlg] = useState<IntentoAnulacion<VentaDetalle> | null>(null);
+  const anulandoRef = useRef(false);
+  const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
 
   const { data: sucs = [] } = useQuery({
@@ -193,7 +204,7 @@ function VentasList() {
       // Si el comprobante estaba declarado, la anulación todavía no terminó: falta
       // emitirle la NC a AFIP. Que el toast lo diga, no un "listo" que engañe.
       const anulada = intento.venta;
-      if (anulada?.cae && !anulada?.afip_simulado) {
+      if (requiereAdvertenciaAnulacionProduccion(anulada)) {
         toast.warning("Venta anulada. Falta emitir la nota de crédito en AFIP.", {
           duration: 10000,
         });
@@ -215,7 +226,19 @@ function VentasList() {
         { duration: 12000 },
       );
     },
+    onSettled: () => {
+      liberarBloqueoAnulacion(anulandoRef);
+      setAnulacionBloqueada(false);
+    },
   });
+
+  const confirmarAnulacion = () => {
+    if (!anularDlg || !adquirirBloqueoAnulacion(anulandoRef)) return;
+    setAnulacionBloqueada(true);
+    anular.mutate(anularDlg);
+  };
+
+  const bloqueoAnulacion = anulacionBloqueada || anular.isPending;
 
   // Sólo interesa el flag de modo simulado, para no avisar de un plazo que en
   // mock no se aplica. La respuesta pública no contiene claves ni certificados.
@@ -411,6 +434,7 @@ function VentasList() {
               <Button
                 size="sm"
                 variant="ghost"
+                className="min-h-11 min-w-11"
                 aria-label={`Ver detalle de ${v.numero_comprobante}`}
                 title="Ver detalle"
                 onClick={() => setVerVenta(v)}
@@ -422,6 +446,11 @@ function VentasList() {
                   son documentos internos: no van a AFIP. */}
               {v.estado === "ACTIVA" &&
                 cu?.facturacionLegacyHabilitada &&
+                puedeOfrecerEmisionLegacy({
+                  puedeFacturar: cu.puedeFacturar,
+                  isAdmin: cu.isAdmin,
+                  fecha: v.fecha,
+                }) &&
                 ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO"].includes(
                   v.tipo_comprobante,
                 ) &&
@@ -430,6 +459,7 @@ function VentasList() {
                   <Button
                     size="sm"
                     variant="ghost"
+                    className="min-h-11 min-w-11"
                     aria-label={`Emitir ${v.numero_comprobante} en AFIP`}
                     title="Emitir en AFIP"
                     onClick={() => emitir.mutate(v.id)}
@@ -451,6 +481,7 @@ function VentasList() {
                 <Button
                   size="sm"
                   variant="ghost"
+                  className="min-h-11 min-w-11"
                   aria-label={`Revisar y facturar ${v.numero_comprobante}`}
                   title="Revisar y facturar"
                   asChild
@@ -464,6 +495,7 @@ function VentasList() {
                 <Button
                   size="sm"
                   variant="ghost"
+                  className="min-h-11 min-w-11"
                   aria-label={`Anular ${v.numero_comprobante}`}
                   title="Anular"
                   onClick={() => setAnularDlg(crearIntentoAnulacion(v))}
@@ -480,9 +512,9 @@ function VentasList() {
 
       <Dialog
         open={!!anularDlg}
-        onOpenChange={(open) => !open && !anular.isPending && setAnularDlg(null)}
+        onOpenChange={(open) => !open && !bloqueoAnulacion && setAnularDlg(null)}
       >
-        <DialogContent>
+        <DialogContent closeDisabled={bloqueoAnulacion} aria-busy={bloqueoAnulacion}>
           <DialogHeader>
             <DialogTitle>
               Anular{" "}
@@ -507,7 +539,7 @@ function VentasList() {
           {/* Si el comprobante ya se declaró, anularlo acá NO lo anula ante AFIP:
               eso lo hace la nota de crédito, que es un segundo paso y hay que
               emitirla. Mientras tanto AFIP sigue teniendo la factura como válida. */}
-          {anularDlg?.venta.cae && !anularDlg?.venta.afip_simulado && (
+          {anularDlg?.venta && requiereAdvertenciaAnulacionProduccion(anularDlg.venta) && (
             <div className="flex items-start gap-2 p-3 rounded border border-warning/40 bg-warning/5 text-sm">
               <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
               <div>
@@ -522,14 +554,16 @@ function VentasList() {
             <Button
               variant="outline"
               onClick={() => setAnularDlg(null)}
-              disabled={anular.isPending}
+              disabled={bloqueoAnulacion}
+              className="min-h-11 min-w-11"
             >
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              onClick={() => anularDlg && anular.mutate(anularDlg)}
-              disabled={anular.isPending || !anularDlg}
+              onClick={confirmarAnulacion}
+              disabled={bloqueoAnulacion || !anularDlg}
+              className="min-h-11 min-w-11"
             >
               Anular
             </Button>
@@ -553,32 +587,16 @@ function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
     );
   }
   if (venta.cae) {
-    // Un CAE simulado se parece a uno real (14 dígitos) pero no vale nada. Que se
-    // note a simple vista: si no, en el listado conviven mezclados y no hay forma
-    // de saber cuáles se declararon de verdad.
-    if (venta.afip_simulado) {
-      return (
-        <div
-          className="text-xs space-y-0.5"
-          title="CAE generado en modo simulado: no se declaró a AFIP y no tiene validez legal."
-        >
-          <StatusPill tone="warning">
-            <span className="font-mono">{venta.cae}</span>
-          </StatusPill>
-          <div className="text-muted-foreground">simulado — sin validez</div>
-        </div>
-      );
-    }
+    // Un CAE de homologación o simulado también tiene 14 dígitos. La validez
+    // efectiva —no la apariencia del número— define color y texto.
+    const descripcion = describirCaeLegacy(venta);
+    if (!descripcion) return <StatusPill tone="neutral">Sin emitir</StatusPill>;
     return (
-      <div className="text-xs space-y-0.5">
-        <StatusPill tone="success">
+      <div className="space-y-0.5 text-xs" title={descripcion.title ?? undefined}>
+        <StatusPill tone={descripcion.tone}>
           <span className="font-mono">{venta.cae}</span>
         </StatusPill>
-        <div className="text-muted-foreground">
-          {venta.afip_modo === "HOMOLOGACION"
-            ? "homologación"
-            : `PV ${venta.afip_punto_venta}-${venta.afip_numero}`}
-        </div>
+        <div className="text-muted-foreground">{descripcion.detalle}</div>
       </div>
     );
   }

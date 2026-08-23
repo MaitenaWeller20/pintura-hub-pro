@@ -528,6 +528,11 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => legacyInputSchema.parse(value))
   .handler(async ({ data, context }) => {
+    await autorizarVenta(context, {
+      ventaId: data.venta_id,
+      accion: "PREVISUALIZAR",
+      confirmaVentaAntigua: false,
+    });
     const { data: venta, error } = await context.supabase
       .from("ventas")
       .select(

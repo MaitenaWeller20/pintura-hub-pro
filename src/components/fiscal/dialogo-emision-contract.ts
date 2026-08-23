@@ -170,6 +170,8 @@ const reconfirmacionSchema = z
   .object({
     estado: z.literal("RECONFIRMACION_REQUERIDA"),
     mensaje: z.string().min(1),
+    afip_validez: validezFiscal,
+    preview_autoritativa: previewAutoritativaSchema,
     huella_confirmacion: huella,
     confirmacion_autoritativa: confirmacionAutoritativaSchema,
   })
@@ -345,7 +347,23 @@ export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfi
   );
   if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") return respuesta;
   try {
+    validarPreviewSemantica(respuesta.preview_autoritativa);
     validarConfirmacionSemantica(respuesta.confirmacion_autoritativa);
+    const validezEsperada =
+      respuesta.afip_validez === "SIMULADA" ? "SIMULADA" : respuesta.confirmacion_autoritativa.modo;
+    if (respuesta.afip_validez !== validezEsperada) {
+      throw new Error("La validez no coincide con el ambiente reconfirmado.");
+    }
+    if (
+      respuesta.preview_autoritativa.afip_validez !== respuesta.afip_validez ||
+      respuesta.preview_autoritativa.huella_confirmacion !== respuesta.huella_confirmacion ||
+      !confirmacionesFiscalesIguales(
+        respuesta.preview_autoritativa.confirmacion_autoritativa,
+        respuesta.confirmacion_autoritativa,
+      )
+    ) {
+      throw new Error("La preview autoritativa no coincide con la reconfirmación.");
+    }
     if (
       !verificarHuellaConfirmacionFiscal(
         respuesta.confirmacion_autoritativa,
@@ -358,6 +376,14 @@ export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfi
   } catch {
     throw new Error("ARCA devolvió una respuesta fiscal desconocida o incompleta.");
   }
+}
+
+/** Sustituye toda la identidad visible por la tupla autoritativa reconfirmada. */
+export function reconfirmarPreviewEmisionFiscal(
+  _anterior: PreviewEmisionFiscal,
+  respuesta: RespuestaReconfirmacion,
+): PreviewEmisionFiscal {
+  return parsePreviewEmisionFiscalAutoritativa(respuesta.preview_autoritativa);
 }
 
 export function despacharRespuestaConfirmacionFiscal(

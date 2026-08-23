@@ -211,7 +211,7 @@ export function ColaFiscalTabla({
                       <Button
                         size="sm"
                         variant={accion === "Facturar" ? "default" : "outline"}
-                        className="min-h-11"
+                        className="min-h-11 min-w-11"
                         disabled={!accionesHabilitadas || !accionable || accionPendienteId != null}
                         onClick={(event) => onAccion(row, accion, event.currentTarget)}
                       >

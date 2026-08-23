@@ -34,6 +34,7 @@ describe("estado fiscal del usuario", () => {
   ])("mantiene loader, menú y guard administrativos con roles %o", (roles) => {
     const acceso = resolverAccesoFiscalUsuario({
       roles,
+      perfilActivo: true,
       puedeFacturarPerfil: false,
       settings: [
         {
@@ -50,6 +51,31 @@ describe("estado fiscal del usuario", () => {
   it("falla cerrado ante roles desconocidos y prioriza empleado sólo si no existe admin", () => {
     expect(resolverRolEfectivo([{ role: "dueño" }])).toBeNull();
     expect(resolverRolEfectivo([{ role: "empleado" }, { role: "basura" }])).toBe("empleado");
+  });
+
+  it("ignora roles y capacidad de un perfil ausente o inactivo", () => {
+    for (const perfilActivo of [false, null] as const) {
+      expect(
+        resolverAccesoFiscalUsuario({
+          roles: [{ role: "admin" }],
+          perfilActivo,
+          puedeFacturarPerfil: true,
+          settings: [
+            {
+              id: true,
+              facturacion_receptor_v2_enabled: true,
+              facturacion_legacy_writer_enabled: false,
+            },
+          ],
+        }),
+      ).toEqual({
+        role: null,
+        isAdmin: false,
+        puedeFacturar: false,
+        facturacionV2Habilitada: false,
+        facturacionLegacyHabilitada: false,
+      });
+    }
   });
 
   it("acepta una única configuración válida y deriva la capacidad por rol o perfil", () => {

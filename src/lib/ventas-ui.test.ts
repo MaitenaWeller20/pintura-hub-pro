@@ -3,10 +3,14 @@ import {
   confirmarCierreFiscalInmediato,
   camposExportacionReceptorFiscal,
   crearControlCreacionVenta,
+  describirCaeLegacy,
+  leerComprobanteAsociadoFiscal,
   leerReceptorFiscalCongelado,
   opcionesCierreVenta,
+  puedeOfrecerEmisionLegacy,
   receptorFiscalDifiereDelComprador,
   registrarVentaSinFactura,
+  requiereAdvertenciaAnulacionProduccion,
   resultadoColaDespuesDeEmision,
   resumirCierreVenta,
   textoBusquedaVenta,
@@ -227,6 +231,136 @@ describe("receptor fiscal congelado en el listado", () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("evidencia y validez fiscal legacy", () => {
+  it("presenta un CAE de homologacion como prueba sin validez legal", () => {
+    expect(
+      describirCaeLegacy({
+        cae: "74123456789012",
+        afip_validez: "HOMOLOGACION",
+        afip_modo: "HOMOLOGACION",
+        afip_simulado: false,
+        afip_punto_venta: 5,
+        afip_numero: 42,
+      }),
+    ).toEqual({
+      tone: "warning",
+      detalle: "homologación — sin validez legal",
+      title: "CAE obtenido en homologación: es una prueba y no tiene validez legal.",
+    });
+  });
+
+  it("la validez explícita manda sobre flags legacy contradictorios", () => {
+    expect(
+      describirCaeLegacy({
+        cae: "74123456789012",
+        afip_validez: "SIMULADA",
+        afip_modo: "PRODUCCION",
+        afip_simulado: false,
+        afip_punto_venta: 5,
+        afip_numero: 42,
+      }),
+    ).toMatchObject({ tone: "warning", detalle: "simulado — sin validez legal" });
+  });
+
+  it("sólo advierte que AFIP conserva validez cuando la emisión efectiva fue producción", () => {
+    const base = { cae: "74123456789012", afip_simulado: false };
+    expect(
+      requiereAdvertenciaAnulacionProduccion({
+        ...base,
+        afip_validez: "PRODUCCION",
+        afip_modo: "PRODUCCION",
+      }),
+    ).toBe(true);
+    expect(
+      requiereAdvertenciaAnulacionProduccion({
+        ...base,
+        afip_validez: "HOMOLOGACION",
+        afip_modo: "HOMOLOGACION",
+      }),
+    ).toBe(false);
+    expect(
+      requiereAdvertenciaAnulacionProduccion({
+        ...base,
+        afip_validez: "SIMULADA",
+        afip_modo: "PRODUCCION",
+      }),
+    ).toBe(false);
+  });
+
+  it("lee del snapshot la asociación fiscal exacta de una nota", () => {
+    expect(
+      leerComprobanteAsociadoFiscal({
+        version: 2,
+        cbtesAsoc: [
+          {
+            tipo: 1,
+            puntoVenta: 5,
+            numero: 913002,
+            cuit: "30714199664",
+            fecha: "2026-08-21",
+          },
+        ],
+      }),
+    ).toEqual({
+      tipo: 1,
+      puntoVenta: 5,
+      numero: 913002,
+      cuit: "30714199664",
+      fecha: "2026-08-21",
+      letra: "A",
+      titulo: "Factura",
+    });
+  });
+
+  it("rechaza asociaciones incompletas en lugar de inventar evidencia", () => {
+    expect(
+      leerComprobanteAsociadoFiscal({
+        cbtesAsoc: [{ tipo: 1, puntoVenta: 5, numero: 0, fecha: "21/08/2026" }],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("oferta de emisión legacy", () => {
+  const hoy = new Date("2026-08-23T15:00:00.000Z");
+
+  it("falla cerrado cuando el perfil no tiene capacidad fiscal", () => {
+    expect(
+      puedeOfrecerEmisionLegacy(
+        {
+          puedeFacturar: false,
+          isAdmin: false,
+          fecha: "2026-08-23T12:00:00.000Z",
+        },
+        hoy,
+      ),
+    ).toBe(false);
+  });
+
+  it("oculta una venta demorada a empleados y la conserva para administración", () => {
+    const antigua = "2026-08-16T12:00:00.000Z";
+    expect(
+      puedeOfrecerEmisionLegacy({ puedeFacturar: true, isAdmin: false, fecha: antigua }, hoy),
+    ).toBe(false);
+    expect(
+      puedeOfrecerEmisionLegacy({ puedeFacturar: true, isAdmin: true, fecha: antigua }, hoy),
+    ).toBe(true);
+  });
+
+  it("permite a un perfil habilitado emitir una venta dentro de ventana", () => {
+    expect(
+      puedeOfrecerEmisionLegacy(
+        {
+          puedeFacturar: true,
+          isAdmin: false,
+          fecha: "2026-08-22T12:00:00.000Z",
+        },
+        hoy,
+      ),
+    ).toBe(true);
   });
 });
 

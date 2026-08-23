@@ -1,4 +1,6 @@
 import type { SelectorReceptorFiscal } from "./fiscal/receptor";
+import { CBTE_INFO } from "./fiscal/codigos";
+import { requiereConfirmacionVentaDemorada } from "./fiscal/fecha";
 
 export type ReceptorFiscalCongeladoListado = {
   razonSocial: string;
@@ -20,6 +22,25 @@ function esRegistro(value: unknown): value is Record<string, unknown> {
 
 function textoSnapshot(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function enteroPositivo(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function fechaIsoCalendario(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const fecha = new Date(Date.UTC(year, month - 1, day));
+  return (
+    fecha.getUTCFullYear() === year &&
+    fecha.getUTCMonth() === month - 1 &&
+    fecha.getUTCDate() === day
+  );
 }
 
 /** Lee sólo la copia inmutable de la emisión; nunca reconsulta el favorito vivo. */
@@ -100,6 +121,134 @@ export function camposExportacionReceptorFiscal(venta: VentaConReceptorCongelado
       ? [receptor.tipoDocumento, receptor.numeroDocumento].filter(Boolean).join(" ")
       : "—",
   };
+}
+
+export type ComprobanteAsociadoFiscalListado = {
+  tipo: number;
+  puntoVenta: number;
+  numero: number;
+  cuit: string;
+  fecha: string;
+  letra: "A" | "B" | "C";
+  titulo: "Factura" | "Nota de crédito" | "Nota de débito" | "Recibo";
+};
+
+/** Lee la evidencia inmutable CbteAsoc de una nota sin reconsultar el original vivo. */
+export function leerComprobanteAsociadoFiscal(
+  snapshot: unknown,
+): ComprobanteAsociadoFiscalListado | null {
+  if (!esRegistro(snapshot) || !Array.isArray(snapshot.cbtesAsoc)) return null;
+  if (snapshot.cbtesAsoc.length !== 1 || !esRegistro(snapshot.cbtesAsoc[0])) return null;
+  const asociado = snapshot.cbtesAsoc[0];
+  if (
+    !enteroPositivo(asociado.tipo) ||
+    !enteroPositivo(asociado.puntoVenta) ||
+    !enteroPositivo(asociado.numero) ||
+    !fechaIsoCalendario(asociado.fecha) ||
+    typeof asociado.cuit !== "string" ||
+    !/^\d{11}$/.test(asociado.cuit)
+  ) {
+    return null;
+  }
+  const info = CBTE_INFO[asociado.tipo];
+  if (!info) return null;
+  const titulo = [1, 6, 11].includes(asociado.tipo)
+    ? "Factura"
+    : [3, 8, 13].includes(asociado.tipo)
+      ? "Nota de crédito"
+      : [2, 7, 12].includes(asociado.tipo)
+        ? "Nota de débito"
+        : asociado.tipo === 15
+          ? "Recibo"
+          : null;
+  if (!titulo) return null;
+  return {
+    tipo: asociado.tipo,
+    puntoVenta: asociado.puntoVenta,
+    numero: asociado.numero,
+    cuit: asociado.cuit,
+    fecha: asociado.fecha,
+    letra: info.letra,
+    titulo,
+  };
+}
+
+export type ValidezFiscalVenta = "PRODUCCION" | "HOMOLOGACION" | "SIMULADA";
+
+type VentaConValidezFiscal = {
+  cae?: string | null;
+  afip_validez?: unknown;
+  afip_modo?: unknown;
+  afip_simulado?: boolean | null;
+  afip_punto_venta?: number | null;
+  afip_numero?: number | null;
+};
+
+/** Prioriza la marca explícita v2 y conserva fallbacks para comprobantes legacy. */
+export function validezFiscalVenta(venta: VentaConValidezFiscal): ValidezFiscalVenta | null {
+  if (
+    venta.afip_validez === "PRODUCCION" ||
+    venta.afip_validez === "HOMOLOGACION" ||
+    venta.afip_validez === "SIMULADA"
+  ) {
+    return venta.afip_validez;
+  }
+  if (venta.afip_simulado === true) return "SIMULADA";
+  if (venta.afip_modo === "PRODUCCION" || venta.afip_modo === "HOMOLOGACION") {
+    return venta.afip_modo;
+  }
+  return null;
+}
+
+export type DescripcionCaeLegacy = {
+  tone: "success" | "warning";
+  detalle: string;
+  title: string | null;
+};
+
+export function describirCaeLegacy(venta: VentaConValidezFiscal): DescripcionCaeLegacy | null {
+  if (!venta.cae) return null;
+  const validez = validezFiscalVenta(venta);
+  if (validez === "SIMULADA") {
+    return {
+      tone: "warning",
+      detalle: "simulado — sin validez legal",
+      title: "CAE generado en modo simulado: no se declaró a AFIP y no tiene validez legal.",
+    };
+  }
+  if (validez === "HOMOLOGACION") {
+    return {
+      tone: "warning",
+      detalle: "homologación — sin validez legal",
+      title: "CAE obtenido en homologación: es una prueba y no tiene validez legal.",
+    };
+  }
+  return {
+    tone: "success",
+    detalle:
+      venta.afip_punto_venta && venta.afip_numero
+        ? `PV ${venta.afip_punto_venta}-${venta.afip_numero}`
+        : "Producción",
+    title: validez === "PRODUCCION" ? "Comprobante con validez legal ante AFIP." : null,
+  };
+}
+
+export function requiereAdvertenciaAnulacionProduccion(venta: VentaConValidezFiscal): boolean {
+  return !!venta.cae && validezFiscalVenta(venta) === "PRODUCCION";
+}
+
+/**
+ * El emisor legacy no abre la reconfirmación administrativa del flujo v2. Por
+ * eso un empleado no debe recibir el botón cuando la venta ya es demorada.
+ */
+export function puedeOfrecerEmisionLegacy(
+  input: { puedeFacturar: boolean; isAdmin: boolean; fecha: string | Date },
+  hoy: Date = new Date(),
+): boolean {
+  if (!input.puedeFacturar) return false;
+  const fecha = input.fecha instanceof Date ? input.fecha : new Date(input.fecha);
+  if (!Number.isFinite(fecha.getTime()) || !Number.isFinite(hoy.getTime())) return false;
+  return input.isAdmin || !requiereConfirmacionVentaDemorada(fecha, () => hoy);
 }
 
 export type AccionCierreVenta =

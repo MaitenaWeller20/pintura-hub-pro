@@ -41,6 +41,50 @@ export type PreparacionEmisionFiscal = {
   fechaComprobante: string;
   confirmacionAutoritativa: ConfirmacionFiscalPostBorrador;
   huellaConfirmacion: string;
+  reconfirmacion: {
+    fechaComercial: string;
+    pagado: string;
+    saldo: string;
+    comprador: string | null;
+    cbteAsoc: {
+      tipo: number;
+      letra: "A" | "B" | "C";
+      puntoVenta: number;
+      numero: number;
+      fecha: string;
+    } | null;
+    demoraDias: number;
+    advertenciaDemora: string | null;
+    confirmacionFacturaAPermitida: boolean;
+  };
+};
+
+export type PreviewFiscalAutoritativaReconfirmacion = {
+  autoritativo: true;
+  venta_id: string;
+  fecha_comercial: string;
+  fecha_fiscal: string;
+  total: string;
+  pagado: string;
+  saldo: string;
+  comprador: string | null;
+  receptor: ConfirmacionFiscalPostBorrador["receptor"];
+  letra: "A" | "B" | "C";
+  razon_letra: string;
+  emisor_cuit: string;
+  emisor_razon_social: string;
+  sucursal_id: string;
+  sucursal_nombre: string;
+  punto_venta: number;
+  modo: "PRODUCCION" | "HOMOLOGACION";
+  afip_validez: PreparacionEmisionFiscal["validez"];
+  cbte_tipo: number;
+  cbte_asoc: PreparacionEmisionFiscal["reconfirmacion"]["cbteAsoc"];
+  demora_dias: number;
+  advertencia_demora: string | null;
+  confirmacion_factura_a_permitida: boolean;
+  confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
+  huella_confirmacion: string;
 };
 
 export type ReservaFiscalPersistida = {
@@ -88,6 +132,8 @@ export type ResultadoEmisionFiscal =
   | {
       estado: "RECONFIRMACION_REQUERIDA";
       mensaje: string;
+      afip_validez: PreparacionEmisionFiscal["validez"];
+      preview_autoritativa: PreviewFiscalAutoritativaReconfirmacion;
       huella_confirmacion: string;
       confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
     };
@@ -301,11 +347,41 @@ async function liberarPreflightParaReconfirmar(
       throw error;
     }
   }
+  const confirmacion = copiarConfirmacionFiscal(preparacion.confirmacionAutoritativa);
+  const vista = preparacion.reconfirmacion;
   return {
     estado: "RECONFIRMACION_REQUERIDA",
     mensaje: "Los datos fiscales cambiaron; revisalos y confirmá nuevamente.",
+    afip_validez: preparacion.validez,
     huella_confirmacion: preparacion.huellaConfirmacion,
-    confirmacion_autoritativa: copiarConfirmacionFiscal(preparacion.confirmacionAutoritativa),
+    confirmacion_autoritativa: confirmacion,
+    preview_autoritativa: {
+      autoritativo: true,
+      venta_id: preparacion.ventaId,
+      fecha_comercial: vista.fechaComercial,
+      fecha_fiscal: confirmacion.fechaFiscal,
+      total: confirmacion.importe,
+      pagado: vista.pagado,
+      saldo: vista.saldo,
+      comprador: vista.comprador,
+      receptor: confirmacion.receptor,
+      letra: confirmacion.letra,
+      razon_letra: `La condición ${confirmacion.receptor.condicionIva} determina letra ${confirmacion.letra}.`,
+      emisor_cuit: confirmacion.emisorCuit,
+      emisor_razon_social: confirmacion.emisorRazonSocial,
+      sucursal_id: confirmacion.sucursalId,
+      sucursal_nombre: confirmacion.sucursalNombre,
+      punto_venta: confirmacion.puntoVenta,
+      modo: confirmacion.modo,
+      afip_validez: preparacion.validez,
+      cbte_tipo: confirmacion.cbteTipo,
+      cbte_asoc: vista.cbteAsoc,
+      demora_dias: vista.demoraDias,
+      advertencia_demora: vista.advertenciaDemora,
+      confirmacion_factura_a_permitida: vista.confirmacionFacturaAPermitida,
+      confirmacion_autoritativa: confirmacion,
+      huella_confirmacion: preparacion.huellaConfirmacion,
+    },
   };
 }
 

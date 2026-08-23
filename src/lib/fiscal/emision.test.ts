@@ -213,6 +213,16 @@ class FiscalDouble {
           fechaComprobante: "2026-08-22",
           confirmacionAutoritativa,
           huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
+          reconfirmacion: {
+            fechaComercial: "2026-08-22T12:00:00.000Z",
+            pagado: "121.00",
+            saldo: "0.00",
+            comprador: "20000000-0000-4000-8000-000000000001",
+            cbteAsoc: null,
+            demoraDias: 0,
+            advertenciaDemora: null,
+            confirmacionFacturaAPermitida: true,
+          },
         };
         return preparacion;
       },
@@ -408,6 +418,7 @@ describe("ejecutarEmisionFiscal", () => {
 
     expect(resultado).toMatchObject({
       estado: "RECONFIRMACION_REQUERIDA",
+      afip_validez: "PRODUCCION",
       huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacionMutada),
       confirmacion_autoritativa: confirmacionMutada,
     });

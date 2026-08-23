@@ -8,10 +8,12 @@ PSQL=(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1)
 
 EMPLEADO_ID="a4180000-0000-4000-8000-000000000001"
 ADMIN_ID="a4180000-0000-4000-8000-000000000002"
+SIN_PERFIL_ID="a4180000-0000-4000-8000-000000000003"
 CLIENTE_ID="b4180000-0000-4000-8000-000000000001"
 PRODUCTO_ID="c4180000-0000-4000-8000-000000000001"
 VENTA_ID="d4180000-0000-4000-8000-000000000001"
 REMITO_ID="e4180000-0000-4000-8000-000000000001"
+RECEPTOR_ID="f4180000-0000-4000-8000-000000000001"
 
 q() { "${PSQL[@]}" -qAtc "$1"; }
 ORIGEN_ID="$(q "SELECT id FROM public.sucursales WHERE activa ORDER BY numero LIMIT 1")"
@@ -57,6 +59,24 @@ BEGIN
 END;
 \$\$;
 
+CREATE OR REPLACE FUNCTION pg_temp.assert_command_rows(
+  p_sql text,p_expected bigint,p_message text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS \$\$
+DECLARE
+  v_rows bigint;
+BEGIN
+  EXECUTE p_sql;
+  GET DIAGNOSTICS v_rows=ROW_COUNT;
+  IF v_rows IS DISTINCT FROM p_expected THEN
+    RAISE EXCEPTION 'FALLO: % — esperaba % filas, obtuvo %',p_message,p_expected,v_rows;
+  END IF;
+  RAISE NOTICE '✓ %',p_message;
+END;
+\$\$;
+
 SELECT pg_temp.assert_true(
   (SELECT pg_catalog.count(*)=3 AND pg_catalog.bool_and(p.prosecdef)
      FROM pg_catalog.pg_proc AS p
@@ -78,11 +98,15 @@ INSERT INTO auth.users(
   (
     '$ADMIN_ID','00000000-0000-0000-0000-000000000000',
     'authenticated','authenticated','t17-inactivo-admin@local.test','x',now(),now(),now()
+  ),
+  (
+    '$SIN_PERFIL_ID','00000000-0000-0000-0000-000000000000',
+    'authenticated','authenticated','t17-sin-perfil-admin@local.test','x',now(),now(),now()
   );
 
 UPDATE public.profiles
    SET username='t17_inactivo_empleado',nombre_completo='Empleado inactivo T17',
-       sucursal_id='$DESTINO_ID',activo=false
+       sucursal_id='$DESTINO_ID',activo=false,permite_venta_sin_stock=true
  WHERE id='$EMPLEADO_ID';
 UPDATE public.profiles
    SET username='t17_inactivo_admin',nombre_completo='Admin inactivo T17',
@@ -91,9 +115,10 @@ UPDATE public.profiles
 
 INSERT INTO public.profile_sucursales(profile_id,sucursal_id)
 VALUES ('$EMPLEADO_ID','$DESTINO_ID');
-DELETE FROM public.user_roles WHERE user_id IN ('$EMPLEADO_ID','$ADMIN_ID');
+DELETE FROM public.profiles WHERE id='$SIN_PERFIL_ID';
+DELETE FROM public.user_roles WHERE user_id IN ('$EMPLEADO_ID','$ADMIN_ID','$SIN_PERFIL_ID');
 INSERT INTO public.user_roles(user_id,role)
-VALUES ('$ADMIN_ID','admin');
+VALUES ('$ADMIN_ID','admin'),('$SIN_PERFIL_ID','admin');
 
 INSERT INTO public.clientes(id,razon_social,tipo,activo,sucursal_habitual_id)
 VALUES ('$CLIENTE_ID','CLIENTE PERFIL INACTIVO T17','CONSUMIDOR_FINAL',true,'$DESTINO_ID');
@@ -120,9 +145,21 @@ INSERT INTO public.remitos(
 );
 INSERT INTO public.remito_items(remito_id,producto_id,cantidad)
 VALUES ('$REMITO_ID','$PRODUCTO_ID',1);
+INSERT INTO public.receptores_fiscales(
+  id,sucursal_id,creado_por,tipo_documento,numero_documento,
+  razon_social,condicion_iva,domicilio
+) VALUES (
+  '$RECEPTOR_ID','$DESTINO_ID','$ADMIN_ID','CUIT','30714199664',
+  'RECEPTOR PERFIL INACTIVO T17','RESPONSABLE_INSCRIPTO','DOMICILIO T17'
+);
 
 SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims='{"sub":"$EMPLEADO_ID","role":"authenticated"}';
+
+SELECT pg_temp.assert_true(
+  public.puede_vender_sin_stock('$EMPLEADO_ID')=false,
+  'un empleado inactivo no conserva la capacidad de vender sin stock'
+);
 
 SELECT pg_temp.assert_raises(
   \$q\$SELECT * FROM public.anular_venta('$VENTA_ID')\$q\$,
@@ -142,6 +179,44 @@ SELECT pg_temp.assert_raises(
 
 SET LOCAL request.jwt.claims='{"sub":"$ADMIN_ID","role":"authenticated"}';
 
+SELECT pg_temp.assert_true(
+  public.is_admin('$ADMIN_ID')=false,
+  'un rol admin con perfil inactivo no es un administrador efectivo'
+);
+SELECT pg_temp.assert_true(
+  public.current_sucursal_id() IS NULL,
+  'un perfil inactivo no conserva sucursal efectiva'
+);
+SELECT pg_temp.assert_true(
+  public.puede_facturar('$ADMIN_ID')=false,
+  'un admin inactivo no conserva capacidad fiscal'
+);
+SELECT pg_temp.assert_raises(
+  \$q\$SELECT * FROM public.cola_fiscal_lectura('pendientes',1,10,NULL::date,NULL::date,NULL::uuid,NULL::uuid,NULL::text,NULL::text,NULL::uuid)\$q\$,
+  'perfil fiscal está inactivo o no existe',
+  'un admin inactivo no puede leer la cola fiscal'
+);
+SELECT pg_temp.assert_raises(
+  \$q\$SELECT public.guardar_receptor_fiscal_desde_venta('$VENTA_ID')\$q\$,
+  'Perfil o sucursal sin capacidad fiscal activa',
+  'un admin inactivo no puede guardar receptores fiscales'
+);
+SELECT pg_temp.assert_raises(
+  \$q\$SELECT public.desactivar_receptor_fiscal('$RECEPTOR_ID')\$q\$,
+  'No puede desactivar este favorito fiscal',
+  'un admin inactivo no puede desactivar receptores fiscales'
+);
+SELECT pg_temp.assert_raises(
+  \$q\$SELECT public.administrar_puede_facturar('$EMPLEADO_ID',true)\$q\$,
+  'Sólo un administrador',
+  'un admin inactivo no puede administrar la capacidad fiscal'
+);
+SELECT pg_temp.assert_command_rows(
+  \$q\$UPDATE public.settings SET updated_at=pg_catalog.clock_timestamp() WHERE id=true\$q\$,
+  0,
+  'un admin inactivo no puede actualizar settings por PostgREST'
+);
+
 SELECT pg_temp.assert_raises(
   \$q\$SELECT * FROM public.anular_venta('$VENTA_ID')\$q\$,
   'perfil autenticado no existe o está inactivo',
@@ -157,7 +232,32 @@ SELECT pg_temp.assert_raises(
   'perfil autenticado no existe o está inactivo',
   'un admin inactivo no puede rechazar remitos con un JWT todavía vigente'
 );
+SELECT pg_temp.assert_raises(
+  \$q\$UPDATE public.profiles SET activo=true WHERE id='$ADMIN_ID'\$q\$,
+  'Sólo un administrador puede activar o desactivar un usuario',
+  'un admin inactivo no puede auto-reactivarse con su JWT todavía vigente'
+);
 
+SET LOCAL request.jwt.claims='{"sub":"$SIN_PERFIL_ID","role":"authenticated"}';
+SELECT pg_temp.assert_true(
+  public.is_admin('$SIN_PERFIL_ID')=false,
+  'un rol admin sin perfil tampoco es administrador efectivo'
+);
+SELECT pg_temp.assert_raises(
+  \$q\$SELECT * FROM public.cola_fiscal_lectura('pendientes',1,10,NULL::date,NULL::date,NULL::uuid,NULL::uuid,NULL::text,NULL::text,NULL::uuid)\$q\$,
+  'perfil fiscal está inactivo o no existe',
+  'un admin sin perfil no puede leer la cola fiscal'
+);
+
+RESET ROLE;
+SET LOCAL request.jwt.claims='{}';
+SET LOCAL ROLE service_role;
+UPDATE public.profiles SET activo=true WHERE id='$ADMIN_ID';
+SELECT pg_temp.assert_true(
+  (SELECT activo FROM public.profiles WHERE id='$ADMIN_ID'),
+  'service_role interno sin JWT conserva el canal para reactivar perfiles'
+);
+UPDATE public.profiles SET activo=false WHERE id='$ADMIN_ID';
 RESET ROLE;
 SELECT pg_temp.assert_true(
   (SELECT estado='ACTIVA' FROM public.ventas WHERE id='$VENTA_ID')

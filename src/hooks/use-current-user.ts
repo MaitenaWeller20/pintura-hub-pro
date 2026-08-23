@@ -10,6 +10,7 @@ export interface ProfileWithRole {
     username: string;
     nombre_completo: string | null;
     sucursal_id: string | null;
+    activo: boolean;
     puede_facturar: boolean;
   };
   /** Qué secciones del menú ve. `null` = las de siempre. Ver src/lib/secciones.ts. */
@@ -74,9 +75,19 @@ export function resolverEstadoFiscalUsuario(input: {
 
 export function resolverAccesoFiscalUsuario(input: {
   roles: readonly unknown[] | null | undefined;
+  perfilActivo: boolean | null | undefined;
   puedeFacturarPerfil: boolean;
   settings: unknown;
 }) {
+  if (input.perfilActivo !== true) {
+    return {
+      role: null,
+      isAdmin: false,
+      puedeFacturar: false,
+      facturacionV2Habilitada: false,
+      facturacionLegacyHabilitada: false,
+    } as const;
+  }
   const role = resolverRolEfectivo(input.roles);
   const isAdmin = role === "admin";
   return {
@@ -97,7 +108,11 @@ export async function cargarAccesoFiscalActual() {
   const [{ data: roles }, { data: profile }, { data: settings, error: settingsError }] =
     await Promise.all([
       supabase.from("user_roles").select("role").eq("user_id", auth.user.id),
-      supabase.from("profiles").select("puede_facturar").eq("id", auth.user.id).maybeSingle(),
+      supabase
+        .from("profiles")
+        .select("activo,puede_facturar")
+        .eq("id", auth.user.id)
+        .maybeSingle(),
       supabase
         .from("settings")
         .select("id,facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
@@ -105,6 +120,7 @@ export async function cargarAccesoFiscalActual() {
     ]);
   const acceso = resolverAccesoFiscalUsuario({
     roles,
+    perfilActivo: profile?.activo,
     puedeFacturarPerfil: profile?.puede_facturar === true,
     settings: settingsError ? [] : settings,
   });
@@ -137,7 +153,7 @@ export function useCurrentUser() {
         supabase
           .from("profiles")
           .select(
-            "id, username, nombre_completo, sucursal_id, secciones, permite_venta_sin_stock, puede_facturar",
+            "id, username, nombre_completo, sucursal_id, activo, secciones, permite_venta_sin_stock, puede_facturar",
           )
           .eq("id", user.id)
           .maybeSingle(),
@@ -168,6 +184,7 @@ export function useCurrentUser() {
       }
       const fiscal = resolverAccesoFiscalUsuario({
         roles,
+        perfilActivo: prof?.activo,
         puedeFacturarPerfil: prof?.puede_facturar === true,
         settings: errorSettings ? [] : settings,
       });
@@ -179,12 +196,14 @@ export function useCurrentUser() {
             username: user.email ?? "",
             nombre_completo: null,
             sucursal_id: null,
+            activo: false,
             puede_facturar: false,
           },
           secciones: prof?.secciones ?? null,
           sucursal,
           sucursalesHabilitadas,
-          puedeVenderSinStock: fiscal.isAdmin || prof?.permite_venta_sin_stock === true,
+          puedeVenderSinStock:
+            prof?.activo === true && (fiscal.isAdmin || prof?.permite_venta_sin_stock === true),
           ...fiscal,
         });
         setLoading(false);

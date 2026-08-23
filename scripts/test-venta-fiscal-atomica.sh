@@ -720,12 +720,18 @@ SELECT
     WHERE producto_id='c4000000-0000-0000-0000-000000000001'
       AND sucursal_id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1)) AS stock,
   (SELECT count(*) FROM public.ventas) AS ventas_count;
-SELECT * FROM public.anular_venta((SELECT venta_id FROM t_cancel_neutral));
+CREATE TEMP TABLE t_cancel_neutral_result AS
+SELECT * FROM public.anular_venta(
+  (SELECT venta_id FROM t_cancel_neutral),
+  'e4000000-0000-0000-0000-000000000051'
+);
 SELECT pg_temp.assert_true(
   (SELECT v.estado='ANULADA' AND v.afip_estado='CANCELADO'
        AND v.venta_anulada_por IS NULL
+       AND v.anulacion_idempotency_key='e4000000-0000-0000-0000-000000000051'
+       AND v.anulacion_idempotency_payload_hash ~ '^[0-9a-f]{64}$'
      FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_cancel_neutral)),
-  'anular una VENTA sin CAE cancela intención y venta sin crear nota'
+  'anular una VENTA sin CAE cancela intención y persiste el replay sin crear nota'
 );
 SELECT pg_temp.assert_true(
   (SELECT count(*) FROM public.ventas)=(SELECT ventas_count FROM t_cancel_neutral_before)
@@ -739,13 +745,28 @@ SELECT pg_temp.assert_true(
         WHERE venta_id=(SELECT venta_id FROM t_cancel_neutral)),
   'la anulación sin CAE revierte stock y deuda exactamente una vez'
 );
+SELECT pg_temp.assert_true(
+  (SELECT pg_catalog.count(*)=1
+     FROM public.anular_venta(
+       (SELECT venta_id FROM t_cancel_neutral),
+       'e4000000-0000-0000-0000-000000000051'
+     ) AS r
+    WHERE r.nc_id=(SELECT venta_id FROM t_cancel_neutral)
+      AND r.nc_numero=(SELECT numero_comprobante FROM public.ventas
+                        WHERE id=(SELECT venta_id FROM t_cancel_neutral))),
+  'reintentar la cancelación neutral con la misma clave recupera el mismo resultado'
+);
 DO $$
 BEGIN
   BEGIN
-    PERFORM * FROM public.anular_venta((SELECT venta_id FROM t_cancel_neutral));
-    RAISE EXCEPTION 'la segunda anulación fue aceptada';
+    PERFORM * FROM public.anular_venta(
+      (SELECT venta_id FROM t_cancel_neutral),
+      'e4000000-0000-0000-0000-000000000052'
+    );
+    RAISE EXCEPTION 'la segunda anulación con otra clave fue aceptada';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM='la segunda anulación fue aceptada' OR SQLERRM NOT LIKE '%ya fue anulada%' THEN
+    IF SQLERRM='la segunda anulación con otra clave fue aceptada'
+       OR SQLERRM NOT LIKE '%ya fue anulada%' THEN
       RAISE;
     END IF;
   END;

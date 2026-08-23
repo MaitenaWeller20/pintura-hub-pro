@@ -30,7 +30,7 @@ import {
 } from "@/lib/fiscal/comprobante-pdf";
 import type { DatosFiscalesPreparados } from "@/lib/fiscal/impresion";
 import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
-import { leerReceptorFiscalCongelado, receptorFiscalDifiereDelComprador } from "@/lib/ventas-ui";
+import { leerComprobanteAsociadoFiscal, leerReceptorFiscalCongelado } from "@/lib/ventas-ui";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
@@ -145,13 +145,13 @@ export function DialogoDetalleVenta({
   };
 
   const receptor = venta ? leerReceptorFiscalCongelado(venta.afip_snapshot) : null;
+  const comprobanteAsociado = venta ? leerComprobanteAsociadoFiscal(venta.afip_snapshot) : null;
   const fiscal = venta ? descripcionFiscal(venta) : null;
-  const mostrarReceptorSeparado = !!venta && !!receptor && receptorFiscalDifiereDelComprador(venta);
 
   return (
     <Dialog open={!!venta} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="max-h-[90vh] max-w-3xl overflow-auto"
+        className="max-h-[calc(100dvh-1rem)] max-w-3xl sm:max-h-[calc(100dvh-2rem)]"
         data-testid="dialogo-detalle-venta"
         onCloseAutoFocus={(event) => {
           if (!returnFocusRef?.current) return;
@@ -218,9 +218,9 @@ export function DialogoDetalleVenta({
                   </p>
                 ) : null}
               </div>
-              {mostrarReceptorSeparado ? (
+              {receptor ? (
                 <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
-                  <strong>Receptor fiscal congelado:</strong> {receptor.razonSocial}
+                  <strong>Receptor fiscal de la emisión:</strong> {receptor.razonSocial}
                   <p className="text-xs text-muted-foreground">
                     {[receptor.tipoDocumento, receptor.numeroDocumento, receptor.condicionIva]
                       .filter(Boolean)
@@ -231,13 +231,42 @@ export function DialogoDetalleVenta({
                   </p>
                 </div>
               ) : null}
-              {venta.tipo_comprobante === "NOTA_CREDITO" && venta.afip_cbte_asoc_id ? (
+              {comprobanteAsociado ? (
                 <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
-                  <strong>Receptor heredado del comprobante original.</strong>
-                  <p className="text-xs text-muted-foreground">
-                    La nota conserva el receptor y la referencia fiscal original; no se pueden
-                    editar.
+                  <strong>Comprobante fiscal asociado:</strong> {comprobanteAsociado.titulo}{" "}
+                  {comprobanteAsociado.letra}
+                  <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-4">
+                    <div>
+                      <dt className="text-muted-foreground">CbteTipo</dt>
+                      <dd className="font-mono">{comprobanteAsociado.tipo}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Punto de venta</dt>
+                      <dd className="font-mono">
+                        {String(comprobanteAsociado.puntoVenta).padStart(5, "0")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Número</dt>
+                      <dd className="font-mono">
+                        {String(comprobanteAsociado.numero).padStart(8, "0")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Fecha</dt>
+                      <dd>{comprobanteAsociado.fecha.split("-").reverse().join("/")}</dd>
+                    </div>
+                  </dl>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    CUIT emisor {comprobanteAsociado.cuit}. La nota conserva esta referencia y el
+                    receptor fiscal del original; no se pueden editar.
                   </p>
+                </div>
+              ) : (venta.tipo_comprobante === "NOTA_CREDITO" ||
+                  venta.tipo_comprobante === "NOTA_DEBITO") &&
+                venta.afip_cbte_asoc_id ? (
+                <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm sm:col-span-2">
+                  La asociación fiscal exacta se congela y se muestra al emitir la nota.
                 </div>
               ) : null}
             </div>
@@ -265,6 +294,7 @@ export function DialogoDetalleVenta({
                   <Button
                     type="button"
                     variant="outline"
+                    className="min-h-11 min-w-11"
                     onClick={() => void detalleQuery.refetch()}
                     disabled={detalleQuery.isFetching}
                   >
@@ -273,7 +303,12 @@ export function DialogoDetalleVenta({
                     ) : null}
                     Reintentar
                   </Button>
-                  <Button type="button" variant="ghost" onClick={onClose}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 min-w-11"
+                    onClick={onClose}
+                  >
                     Cerrar
                   </Button>
                 </div>

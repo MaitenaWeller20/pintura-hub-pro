@@ -865,6 +865,27 @@ export function crearDependenciasEmisionFiscalServer(input: {
         simulado: original?.identidad.simulado ?? MOCK,
         validez: original?.identidad.validez ?? (MOCK ? "SIMULADA" : contexto.pv.modo),
         fechaComprobante,
+        reconfirmacion: {
+          fechaComercial: lectura.venta.fechaComercial,
+          pagado: lectura.venta.totalPagado,
+          saldo: lectura.venta.saldo,
+          comprador: lectura.venta.clienteId,
+          cbteAsoc: original
+            ? {
+                tipo: original.identidad.cbteTipo,
+                letra: original.letra,
+                puntoVenta: original.identidad.puntoVenta,
+                numero: original.identidad.numero,
+                fecha: original.fechaComprobante,
+              }
+            : null,
+          demoraDias: diasDesdeHoyAr(new Date(lectura.venta.fechaComercial)),
+          advertenciaDemora:
+            diasDesdeHoyAr(new Date(lectura.venta.fechaComercial)) > 5
+              ? "La venta comercial tiene más de cinco días; un administrador debe confirmar la emisión con fecha fiscal actual."
+              : null,
+          confirmacionFacturaAPermitida: facturaAPermitida(letra, contexto),
+        },
       };
       const confirmacionAutoritativa: ConfirmacionFiscalPostBorrador = {
         version: 1,

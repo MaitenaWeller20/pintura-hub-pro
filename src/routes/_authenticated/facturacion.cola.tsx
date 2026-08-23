@@ -716,7 +716,12 @@ function ColaFiscalPage() {
           ) : incidente.error ? (
             <div role="alert" className="space-y-2 text-sm text-destructive">
               <p>{mensajeError(incidente.error, "No se pudo cargar el incidente fiscal.")}</p>
-              <Button type="button" variant="outline" onClick={() => void incidente.refetch()}>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 min-w-11"
+                onClick={() => void incidente.refetch()}
+              >
                 Reintentar lectura
               </Button>
             </div>
@@ -763,6 +768,7 @@ function ColaFiscalPage() {
             <Button
               type="button"
               variant="outline"
+              className="min-h-11 min-w-11"
               data-testid="cerrar-incidente-fiscal"
               onClick={cerrarIncidente}
             >

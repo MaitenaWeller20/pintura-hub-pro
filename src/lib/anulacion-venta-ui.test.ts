@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { crearIntentoAnulacion, solicitudAnulacion } from "./anulacion-venta-ui";
+import {
+  adquirirBloqueoAnulacion,
+  crearIntentoAnulacion,
+  liberarBloqueoAnulacion,
+  solicitudAnulacion,
+} from "./anulacion-venta-ui";
 
 describe("reintento de anulación", () => {
   it("genera una clave al abrir y reutiliza exactamente la misma solicitud", () => {
@@ -14,5 +19,16 @@ describe("reintento de anulación", () => {
     });
     expect(solicitudAnulacion(intento)).toEqual(solicitudAnulacion(intento));
     expect(generar).toHaveBeenCalledOnce();
+  });
+
+  it("el lock sincrónico acepta sólo el primer disparo hasta que termina", () => {
+    const bloqueo = { current: false };
+
+    expect(adquirirBloqueoAnulacion(bloqueo)).toBe(true);
+    expect(adquirirBloqueoAnulacion(bloqueo)).toBe(false);
+    expect(bloqueo.current).toBe(true);
+
+    liberarBloqueoAnulacion(bloqueo);
+    expect(adquirirBloqueoAnulacion(bloqueo)).toBe(true);
   });
 });

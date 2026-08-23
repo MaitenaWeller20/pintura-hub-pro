@@ -6,8 +6,12 @@ import {
   parseRespuestaConfirmacionFiscal,
   parseResultadoConciliacionFiscal,
   parseResultadoLiberacionFiscal,
+  reconfirmarPreviewEmisionFiscal,
 } from "./dialogo-emision-contract";
-import { crearHuellaConfirmacionFiscal } from "@/lib/fiscal/confirmacion";
+import {
+  crearHuellaConfirmacionFiscal,
+  type ConfirmacionFiscalPostBorrador,
+} from "@/lib/fiscal/confirmacion";
 
 const HUELLA_CONFIRMACION = "9d5026caa845681a6d62da9ccd828217c554c8d2822531c5399931e733a0bae9";
 
@@ -108,6 +112,39 @@ const PREVIEW_PROVISIONAL = {
   },
   advertencia: "Se revalidará contra la venta persistida.",
 } as const;
+
+function respuestaReconfirmacion(
+  confirmacion: ConfirmacionFiscalPostBorrador = CONFIRMACION,
+  cambiosPreview: Record<string, unknown> = {},
+) {
+  const huella = crearHuellaConfirmacionFiscal(confirmacion);
+  const preview = {
+    ...PREVIEW,
+    ...cambiosPreview,
+    total: confirmacion.importe,
+    fecha_fiscal: confirmacion.fechaFiscal,
+    receptor: confirmacion.receptor,
+    letra: confirmacion.letra,
+    emisor_cuit: confirmacion.emisorCuit,
+    emisor_razon_social: confirmacion.emisorRazonSocial,
+    sucursal_id: confirmacion.sucursalId,
+    sucursal_nombre: confirmacion.sucursalNombre,
+    punto_venta: confirmacion.puntoVenta,
+    modo: confirmacion.modo,
+    afip_validez: confirmacion.modo,
+    cbte_tipo: confirmacion.cbteTipo,
+    confirmacion_autoritativa: confirmacion,
+    huella_confirmacion: huella,
+  };
+  return {
+    estado: "RECONFIRMACION_REQUERIDA" as const,
+    mensaje: "Revisá los cambios.",
+    afip_validez: confirmacion.modo,
+    preview_autoritativa: preview,
+    huella_confirmacion: huella,
+    confirmacion_autoritativa: confirmacion,
+  };
+}
 
 describe("contrato runtime del diálogo fiscal", () => {
   it("acepta sólo la preview autoritativa completa", () => {
@@ -350,19 +387,8 @@ describe("contrato runtime del diálogo fiscal", () => {
   });
 
   it("acepta una reconfirmación completa con la huella canónica exacta", () => {
-    expect(
-      parseRespuestaConfirmacionFiscal({
-        estado: "RECONFIRMACION_REQUERIDA",
-        mensaje: "Revisá los cambios.",
-        huella_confirmacion: HUELLA_CONFIRMACION,
-        confirmacion_autoritativa: CONFIRMACION,
-      }),
-    ).toEqual({
-      estado: "RECONFIRMACION_REQUERIDA",
-      mensaje: "Revisá los cambios.",
-      huella_confirmacion: HUELLA_CONFIRMACION,
-      confirmacion_autoritativa: CONFIRMACION,
-    });
+    const respuesta = respuestaReconfirmacion();
+    expect(parseRespuestaConfirmacionFiscal(respuesta)).toEqual(respuesta);
   });
 
   it.each([
@@ -382,10 +408,68 @@ describe("contrato runtime del diálogo fiscal", () => {
       parseRespuestaConfirmacionFiscal({
         estado: "RECONFIRMACION_REQUERIDA",
         mensaje: "Revisá los cambios.",
+        afip_validez: "PRODUCCION",
         huella_confirmacion: HUELLA_CONFIRMACION,
         confirmacion_autoritativa: tupla,
       }),
     ).toThrow(/respuesta fiscal/i);
+  });
+
+  it("reemplaza modo y validez juntos cuando la reconfirmación cambia de ambiente", () => {
+    const confirmacion = { ...CONFIRMACION, modo: "HOMOLOGACION" as const };
+    const respuesta = parseRespuestaConfirmacionFiscal(respuestaReconfirmacion(confirmacion));
+    expect(respuesta.estado).toBe("RECONFIRMACION_REQUERIDA");
+    if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") throw new Error("Respuesta inesperada");
+    expect(reconfirmarPreviewEmisionFiscal(PREVIEW, respuesta)).toMatchObject({
+      autoritativo: true,
+      modo: "HOMOLOGACION",
+      afip_validez: "HOMOLOGACION",
+      confirmacion_autoritativa: { modo: "HOMOLOGACION" },
+    });
+  });
+
+  it("sustituye toda la preview por el estado autoritativo después de crear la venta", () => {
+    const respuesta = parseRespuestaConfirmacionFiscal(
+      respuestaReconfirmacion(CONFIRMACION, {
+        venta_id: "10000000-0000-4000-8000-000000000099",
+        pagado: "20.00",
+        saldo: "101.00",
+        comprador: null,
+        demora_dias: 7,
+        advertencia_demora: "Venta antigua reconfirmada por el servidor.",
+        confirmacion_factura_a_permitida: false,
+        cbte_asoc: {
+          tipo: 1,
+          letra: "A",
+          punto_venta: 5,
+          numero: 19,
+          fecha: "2026-08-20",
+        },
+      }),
+    );
+    if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") throw new Error("Respuesta inesperada");
+    expect(reconfirmarPreviewEmisionFiscal(PREVIEW_PROVISIONAL, respuesta)).toMatchObject({
+      autoritativo: true,
+      venta_id: "10000000-0000-4000-8000-000000000099",
+      pagado: "20.00",
+      saldo: "101.00",
+      comprador: null,
+      demora_dias: 7,
+      advertencia_demora: "Venta antigua reconfirmada por el servidor.",
+      confirmacion_factura_a_permitida: false,
+      cbte_asoc: { tipo: 1, punto_venta: 5, numero: 19, fecha: "2026-08-20" },
+    });
+  });
+
+  it("rechaza una validez vieja o ausente en la reconfirmación", () => {
+    const confirmacion = { ...CONFIRMACION, modo: "HOMOLOGACION" as const };
+    const base = respuestaReconfirmacion(confirmacion);
+    const sinValidez = { ...base } as Record<string, unknown>;
+    delete sinValidez.afip_validez;
+    expect(() => parseRespuestaConfirmacionFiscal(sinValidez)).toThrow(/respuesta fiscal/i);
+    expect(() => parseRespuestaConfirmacionFiscal({ ...base, afip_validez: "PRODUCCION" })).toThrow(
+      /respuesta fiscal/i,
+    );
   });
 
   it("acepta sólo estados de emisión conocidos y completos", () => {
@@ -498,6 +582,7 @@ describe("contrato runtime del diálogo fiscal", () => {
         {
           estado: "RECONFIRMACION_REQUERIDA",
           mensaje: "Revisá los cambios.",
+          afip_validez: "PRODUCCION",
           huella_confirmacion: HUELLA_CONFIRMACION,
           confirmacion_autoritativa: { ...CONFIRMACION, fechaFiscal: "2026-02-31" },
         },

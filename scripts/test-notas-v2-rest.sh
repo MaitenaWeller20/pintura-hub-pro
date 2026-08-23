@@ -9,7 +9,14 @@ TMP_DIR="$(mktemp -d)"
 USUARIO_ID="a1310000-0000-4000-8000-000000000001"
 CLIENTE_ID="b1310000-0000-4000-8000-000000000001"
 ORIGINAL_ID="c1310000-0000-4000-8000-000000000001"
-ND_ID="d1310000-0000-4000-8000-000000000001"
+PRODUCTO_ID="b1310000-0000-4000-8000-000000000002"
+NC_ID="d1310000-0000-4000-8000-000000000001"
+ND_ID="d1310000-0000-4000-8000-000000000002"
+SUCURSAL_ID=""
+SEQ_NC_EXISTIA="0"
+SEQ_NC_ANTES="0"
+SEQ_ND_EXISTIA="0"
+SEQ_ND_ANTES="0"
 
 q() { "${PSQL[@]}" -qAtc "$1"; }
 
@@ -51,9 +58,44 @@ UPDATE public.settings
        facturacion_legacy_writer_enabled=('$LEGACY_ANTES'='1')
  WHERE id=true;
 DELETE FROM public.emision_fiscal_intentos WHERE venta_id IN ('$ORIGINAL_ID','$ND_ID');
-DELETE FROM public.ventas WHERE id IN ('$ORIGINAL_ID','$ND_ID');
+CREATE TEMP TABLE IF NOT EXISTS pg_temp.ventas_notas_rest AS
+SELECT id FROM public.ventas
+ WHERE id='$ORIGINAL_ID'
+    OR idempotency_key IN ('$NC_ID','$ND_ID')
+    OR observaciones LIKE 'T13-%-REST-NO-DEBE-PERSISTIR';
+DELETE FROM public.cuenta_corriente_movimientos
+ WHERE venta_id IN (SELECT id FROM pg_temp.ventas_notas_rest);
+DELETE FROM public.stock_movimientos
+ WHERE referencia_id IN (SELECT id FROM pg_temp.ventas_notas_rest);
+DELETE FROM public.venta_pagos
+ WHERE venta_id IN (SELECT id FROM pg_temp.ventas_notas_rest);
+DELETE FROM public.venta_items
+ WHERE venta_id IN (SELECT id FROM pg_temp.ventas_notas_rest);
+DELETE FROM public.ventas
+ WHERE id IN (SELECT id FROM pg_temp.ventas_notas_rest);
+DELETE FROM public.caja_sesiones AS cs
+ WHERE (cs.abierta_por='$USUARIO_ID' OR cs.cerrada_por='$USUARIO_ID')
+   AND NOT EXISTS (SELECT 1 FROM public.ventas v WHERE v.caja_sesion_id=cs.id)
+   AND NOT EXISTS (SELECT 1 FROM public.caja_movimientos cm WHERE cm.caja_sesion_id=cs.id);
+DELETE FROM public.stock_sucursal WHERE producto_id='$PRODUCTO_ID';
+DELETE FROM public.productos WHERE id='$PRODUCTO_ID';
 DELETE FROM public.clientes WHERE id='$CLIENTE_ID';
 DELETE FROM auth.users WHERE id='$USUARIO_ID';
+SQL
+}
+
+restaurar_secuencias() {
+  [[ -n "$SUCURSAL_ID" ]] || return 0
+  "${PSQL[@]}" >/dev/null <<SQL
+DELETE FROM public.comprobante_secuencias
+ WHERE sucursal_id='$SUCURSAL_ID'
+   AND tipo IN ('NOTA_CREDITO','NOTA_DEBITO');
+INSERT INTO public.comprobante_secuencias(sucursal_id,tipo,ultimo_numero)
+SELECT '$SUCURSAL_ID','NOTA_CREDITO','$SEQ_NC_ANTES'
+ WHERE '$SEQ_NC_EXISTIA'='1';
+INSERT INTO public.comprobante_secuencias(sucursal_id,tipo,ultimo_numero)
+SELECT '$SUCURSAL_ID','NOTA_DEBITO','$SEQ_ND_ANTES'
+ WHERE '$SEQ_ND_EXISTIA'='1';
 SQL
 }
 
@@ -63,22 +105,29 @@ cleanup() {
   set +e
   limpiar_sql
   local limpieza=$?
+  restaurar_secuencias
+  local secuencias=$?
   local residuos
-  residuos="$(q "SELECT (SELECT count(*) FROM auth.users WHERE id='$USUARIO_ID') + (SELECT count(*) FROM public.clientes WHERE id='$CLIENTE_ID') + (SELECT count(*) FROM public.ventas WHERE id IN ('$ORIGINAL_ID','$ND_ID'))" 2>/dev/null)"
+  residuos="$(q "SELECT (SELECT count(*) FROM auth.users WHERE id='$USUARIO_ID') + (SELECT count(*) FROM public.clientes WHERE id='$CLIENTE_ID') + (SELECT count(*) FROM public.productos WHERE id='$PRODUCTO_ID') + (SELECT count(*) FROM public.ventas WHERE id='$ORIGINAL_ID' OR idempotency_key IN ('$NC_ID','$ND_ID'))" 2>/dev/null)"
   local auditoria=$?
   rm -r "$TMP_DIR"
   local temporal=$?
   set -e
-  if [[ "$limpieza" -ne 0 || "$auditoria" -ne 0 || "$temporal" -ne 0 || "$residuos" != "0" ]]; then
-    echo "✗ falló el cleanup REST de ND (${limpieza}/${auditoria}/${temporal}; residuos=${residuos:-desconocidos})" >&2
+  if [[ "$limpieza" -ne 0 || "$secuencias" -ne 0 || "$auditoria" -ne 0 || "$temporal" -ne 0 || "$residuos" != "0" ]]; then
+    echo "✗ falló el cleanup REST de notas (${limpieza}/${secuencias}/${auditoria}/${temporal}; residuos=${residuos:-desconocidos})" >&2
     exit 1
   fi
-  echo "✓ cleanup REST de ND: 0 residuos"
+  echo "✓ cleanup REST de notas: 0 residuos"
   exit "$previo"
 }
 trap cleanup EXIT
 
 limpiar_sql
+SUCURSAL_ID="$(q "SELECT id FROM public.sucursales ORDER BY numero LIMIT 1")"
+SEQ_NC_EXISTIA="$(q "SELECT count(*) FROM public.comprobante_secuencias WHERE sucursal_id='$SUCURSAL_ID' AND tipo='NOTA_CREDITO'")"
+SEQ_NC_ANTES="$(q "SELECT COALESCE(max(ultimo_numero),0) FROM public.comprobante_secuencias WHERE sucursal_id='$SUCURSAL_ID' AND tipo='NOTA_CREDITO'")"
+SEQ_ND_EXISTIA="$(q "SELECT count(*) FROM public.comprobante_secuencias WHERE sucursal_id='$SUCURSAL_ID' AND tipo='NOTA_DEBITO'")"
+SEQ_ND_ANTES="$(q "SELECT COALESCE(max(ultimo_numero),0) FROM public.comprobante_secuencias WHERE sucursal_id='$SUCURSAL_ID' AND tipo='NOTA_DEBITO'")"
 "${PSQL[@]}" >/dev/null <<SQL
 INSERT INTO auth.users(
   id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at
@@ -93,6 +142,13 @@ UPDATE public.profiles
 INSERT INTO public.user_roles(user_id,role) VALUES ('$USUARIO_ID','admin');
 INSERT INTO public.clientes(id,razon_social,tipo,condicion_cta_cte,activo)
 VALUES ('$CLIENTE_ID','T13 NOTAS REST CLIENTE','RESPONSABLE_INSCRIPTO',true,true);
+INSERT INTO public.productos(
+  id,codigo,nombre,precio_sin_iva,iva_porcentaje,activo,archivado
+) VALUES (
+  '$PRODUCTO_ID','T13-NOTAS-REST-PROD','T13 producto REST para notas',100,21,true,false
+);
+INSERT INTO public.stock_sucursal(producto_id,sucursal_id,cantidad)
+SELECT '$PRODUCTO_ID',s.id,10 FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
@@ -108,14 +164,16 @@ UPDATE public.settings
 SQL
 
 estado_comercial() {
-  q "SELECT concat_ws('|',
-    (SELECT count(*) FROM public.ventas),
-    (SELECT count(*) FROM public.venta_items),
-    (SELECT count(*) FROM public.venta_pagos),
-    (SELECT count(*) FROM public.stock_movimientos),
-    (SELECT count(*) FROM public.caja_movimientos),
-    (SELECT count(*) FROM public.cuenta_corriente_movimientos),
-    (SELECT COALESCE(sum(ultimo_numero),0) FROM public.comprobante_secuencias))"
+  q "SELECT md5(concat_ws('|',
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.ventas AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.venta_items AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.venta_pagos AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.stock_movimientos AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.producto_id,t.sucursal_id),'') FROM public.stock_sucursal AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.caja_movimientos AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.caja_sesiones AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.cuenta_corriente_movimientos AS t),
+    (SELECT COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.sucursal_id,t.tipo),'') FROM public.comprobante_secuencias AS t)))"
 }
 ANTES="$(estado_comercial)"
 
@@ -139,42 +197,81 @@ process.stdout.write(`${header}.${payload}.${signature}`);
 NODE
 } 2>/dev/null)"
 
-PAYLOAD="$(jq -nc \
+payload_nota() {
+  local tipo="$1" idempotencia="$2" observacion="$3"
+  jq -nc \
   --arg sucursal "$(q "SELECT id FROM public.sucursales ORDER BY numero LIMIT 1")" \
-  --arg cliente "$CLIENTE_ID" --arg original "$ORIGINAL_ID" --arg idempotencia "$ND_ID" '
+  --arg cliente "$CLIENTE_ID" --arg producto "$PRODUCTO_ID" \
+  --arg original "$ORIGINAL_ID" --arg idempotencia "$idempotencia" \
+  --arg tipo "$tipo" --arg observacion "$observacion" '
   {
-    p_sucursal_id:$sucursal,p_cliente_id:$cliente,p_tipo_comprobante:"NOTA_DEBITO",
+    p_sucursal_id:$sucursal,p_cliente_id:$cliente,p_tipo_comprobante:$tipo,
     p_condicion_venta:"CTA_CTE",
-    p_items:[{producto_id:null,descripcion:"Recargo REST",cantidad:1,precio_unitario_sin_iva:100,iva_porcentaje:21}],
-    p_pagos:[],p_percepciones:0,p_observaciones:"T13-ND-REST-NO-DEBE-PERSISTIR",
+    p_items:(if $tipo=="NOTA_CREDITO"
+      then [{producto_id:$producto,cantidad:1}]
+      else [{producto_id:null,descripcion:"Recargo REST",cantidad:1,precio_unitario_sin_iva:100,iva_porcentaje:21}]
+      end),
+    p_pagos:[],p_percepciones:0,p_observaciones:$observacion,
     p_nombre_obra:null,p_fecha:null,p_cbte_asoc_id:$original,p_idempotency_key:$idempotencia
-  }')"
-
-HTTP_CODE="$(curl --silent --show-error --connect-timeout 1 --max-time 5 \
-  --output "$TMP_DIR/respuesta.json" --write-out '%{http_code}' \
-  --request POST "${API_URL%/}/rest/v1/rpc/crear_venta" \
-  --header "apikey: $ANON_KEY" \
-  --header "Authorization: Bearer $JWT" \
-  --header "Content-Type: application/json" \
-  --data "$PAYLOAD")"
-
-if [[ "$HTTP_CODE" -lt 400 || "$HTTP_CODE" -ge 500 ]]; then
-  echo "✗ la ND REST esperaba rechazo 4xx y obtuvo HTTP $HTTP_CODE" >&2
-  exit 1
-fi
-jq -e '.message | contains("nota de débito nueva queda fuera de alcance fiscal")' \
-  "$TMP_DIR/respuesta.json" >/dev/null || {
-  echo "✗ el rechazo REST no contiene el mensaje estable de alcance" >&2
-  exit 1
+  }'
 }
+
+post_nota_rechazada() {
+  local nombre="$1" tipo="$2" idempotencia="$3" observacion="$4" mensaje="$5"
+  local http_code
+  http_code="$(curl --silent --show-error --connect-timeout 1 --max-time 5 \
+    --output "$TMP_DIR/${nombre}.json" --write-out '%{http_code}' \
+    --request POST "${API_URL%/}/rest/v1/rpc/crear_venta" \
+    --header "apikey: $ANON_KEY" \
+    --header "Authorization: Bearer $JWT" \
+    --header "Content-Type: application/json" \
+    --data "$(payload_nota "$tipo" "$idempotencia" "$observacion")")"
+  if [[ "$http_code" -lt 400 || "$http_code" -ge 500 ]]; then
+    echo "✗ $nombre esperaba rechazo 4xx y obtuvo HTTP $http_code" >&2
+    exit 1
+  fi
+  jq -e --arg mensaje "$mensaje" '.message | ascii_downcase | contains($mensaje)' \
+    "$TMP_DIR/${nombre}.json" >/dev/null || {
+    echo "✗ $nombre no contiene el mensaje estable esperado" >&2
+    exit 1
+  }
+  echo "✓ $nombre rechazada por REST autenticado local (HTTP $http_code)"
+}
+
+post_nota_rechazada \
+  "NC v2 directa" "NOTA_CREDITO" "$NC_ID" \
+  "T13-NC-REST-NO-DEBE-PERSISTIR" \
+  "nota de crédito v2 se crea exclusivamente mediante anular_venta"
+post_nota_rechazada \
+  "ND v2 directa" "NOTA_DEBITO" "$ND_ID" \
+  "T13-ND-REST-NO-DEBE-PERSISTIR" \
+  "nota de débito nueva queda fuera de alcance fiscal"
 [[ "$(estado_comercial)" == "$ANTES" ]] || {
   echo "✗ el rechazo REST modificó venta, ítems, pagos, stock, caja, deuda o secuencia" >&2
   exit 1
 }
-[[ "$(q "SELECT count(*) FROM public.ventas WHERE id='$ND_ID' OR observaciones='T13-ND-REST-NO-DEBE-PERSISTIR'")" == "0" ]] || {
-  echo "✗ el rechazo REST dejó una ND" >&2
+[[ "$(q "SELECT count(*) FROM public.ventas WHERE idempotency_key IN ('$NC_ID','$ND_ID') OR observaciones LIKE 'T13-%-REST-NO-DEBE-PERSISTIR'")" == "0" ]] || {
+  echo "✗ el rechazo REST dejó una NC/ND" >&2
   exit 1
 }
 
-echo "✓ REST autenticado local rechaza ND v2 con HTTP $HTTP_CODE"
+"${PSQL[@]}" -q >/dev/null <<'SQL'
+UPDATE public.settings
+   SET facturacion_receptor_v2_enabled=false,
+       facturacion_legacy_writer_enabled=false
+ WHERE id=true;
+SQL
+post_nota_rechazada \
+  "NC en mantenimiento" "NOTA_CREDITO" "$NC_ID" \
+  "T13-NC-REST-NO-DEBE-PERSISTIR" \
+  "escritor fiscal legacy está deshabilitado"
+post_nota_rechazada \
+  "ND en mantenimiento" "NOTA_DEBITO" "$ND_ID" \
+  "T13-ND-REST-NO-DEBE-PERSISTIR" \
+  "escritor fiscal legacy está deshabilitado"
+[[ "$(estado_comercial)" == "$ANTES" ]] || {
+  echo "✗ mantenimiento REST alteró la huella comercial exacta" >&2
+  exit 1
+}
+
 echo "✓ REST no deja mutaciones comerciales ni avanza la secuencia"

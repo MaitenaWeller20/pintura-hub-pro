@@ -384,9 +384,25 @@ function ColaFiscalPage() {
       <div aria-live="polite">
         {errorAccion ? <p className="text-sm font-medium text-destructive">{errorAccion}</p> : null}
         {detalleVenta.error ? (
-          <p className="text-sm font-medium text-destructive">
-            {mensajeError(detalleVenta.error, "No se pudo cargar el detalle de la venta.")}
-          </p>
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/35 bg-destructive/5 p-3"
+            role="alert"
+          >
+            <p className="mr-auto text-sm font-medium text-destructive">
+              {mensajeError(detalleVenta.error, "No se pudo cargar el detalle de la venta.")}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={detalleVenta.isFetching}
+              onClick={() => void detalleVenta.refetch()}
+            >
+              Reintentar detalle
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setDetalleSeleccionado(null)}>
+              Cerrar detalle
+            </Button>
+          </div>
         ) : null}
         {mensajeAccion ? <p className="text-sm font-medium text-success">{mensajeAccion}</p> : null}
       </div>

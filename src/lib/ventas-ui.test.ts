@@ -10,6 +10,7 @@ import {
   resultadoColaDespuesDeEmision,
   resumirCierreVenta,
   textoBusquedaVenta,
+  ventaCoincideBusqueda,
 } from "./ventas-ui";
 
 const FLAGS_V2 = {
@@ -206,6 +207,12 @@ describe("receptor fiscal congelado en el listado", () => {
       "Receptor fiscal": "RECEPTOR FISCAL CONGELADO",
       "Documento receptor fiscal": "CUIT 30714199664",
     });
+  });
+
+  it("encuentra un CUIT congelado aunque la búsqueda use guiones", () => {
+    expect(ventaCoincideBusqueda(venta, "30-71419966-4")).toBe(true);
+    expect(ventaCoincideBusqueda(venta, "receptor fiscal")).toBe(true);
+    expect(ventaCoincideBusqueda(venta, "favorito vivo mutado")).toBe(false);
   });
 
   it("no duplica al receptor cuando coincide con el comprador comercial", () => {

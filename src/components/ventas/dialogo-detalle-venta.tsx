@@ -32,6 +32,7 @@ import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/l
 import { leerReceptorFiscalCongelado, receptorFiscalDifiereDelComprador } from "@/lib/ventas-ui";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
+import { cargarDetalleVentaCompleto } from "./detalle-venta";
 
 type VentaRow = Database["public"]["Tables"]["ventas"]["Row"];
 type ItemVenta = Database["public"]["Tables"]["venta_items"]["Row"];
@@ -83,22 +84,34 @@ export function DialogoDetalleVenta({
   returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [imprimiendo, setImprimiendo] = useState(false);
-  const { data: detalle } = useQuery({
+  const detalleQuery = useQuery({
     queryKey: ["venta-detail", venta?.id],
     enabled: !!venta,
     queryFn: async () => {
-      if (!venta) return { items: [] as ItemVenta[], pagos: [] as PagoVenta[] };
-      const [{ data: items = [] }, { data: pagos = [] }] = await Promise.all([
-        supabase.from("venta_items").select("*").eq("venta_id", venta.id),
-        supabase.from("venta_pagos").select("*").eq("venta_id", venta.id),
-      ]);
-      return { items: items ?? [], pagos: pagos ?? [] };
+      if (!venta) throw new Error("No hay una venta seleccionada para cargar el detalle.");
+      return cargarDetalleVentaCompleto<ItemVenta, PagoVenta>({
+        cargarItems: async () => {
+          const { data, error } = await supabase
+            .from("venta_items")
+            .select("*")
+            .eq("venta_id", venta.id);
+          return { data, error };
+        },
+        cargarPagos: async () => {
+          const { data, error } = await supabase
+            .from("venta_pagos")
+            .select("*")
+            .eq("venta_id", venta.id);
+          return { data, error };
+        },
+      });
     },
   });
+  const detalle = detalleQuery.data;
   const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
 
   const imprimir = async () => {
-    if (!venta || imprimiendo) return;
+    if (!venta || !detalle || imprimiendo) return;
     setImprimiendo(true);
     try {
       const resultado = await prepararDescargaVenta<
@@ -109,7 +122,7 @@ export function DialogoDetalleVenta({
       >(
         {
           venta,
-          items: detalle?.items ?? [],
+          items: detalle.items,
         },
         {
           cargarFiscal: async () => {
@@ -155,7 +168,13 @@ export function DialogoDetalleVenta({
                     size="sm"
                     variant="outline"
                     onClick={imprimir}
-                    disabled={imprimiendo}
+                    disabled={
+                      imprimiendo ||
+                      detalleQuery.isPending ||
+                      detalleQuery.isFetching ||
+                      !!detalleQuery.error ||
+                      !detalle
+                    }
                     className="min-h-11 sm:min-h-9"
                   >
                     {imprimiendo ? (
@@ -216,97 +235,137 @@ export function DialogoDetalleVenta({
               ) : null}
             </div>
 
-            <div className="mt-2">
-              <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
-                {(detalle?.items ?? []).map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-mono text-xs">{item.codigo}</TableCell>
-                    <TableCell>{item.descripcion}</TableCell>
-                    <TableCell className="text-right">{item.cantidad}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {fmtMoney(item.precio_unitario_sin_iva)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {fmtMoney(item.subtotal_con_iva)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </DataTable>
-            </div>
+            {detalleQuery.isPending ? (
+              <div className="flex min-h-24 items-center justify-center gap-2" role="status">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                <span className="text-sm text-muted-foreground">Cargando detalle completo…</span>
+              </div>
+            ) : detalleQuery.error ? (
+              <div
+                className="space-y-3 rounded-lg border border-destructive/35 bg-destructive/5 p-4"
+                role="alert"
+                data-testid="error-detalle-venta"
+              >
+                <p className="text-sm font-medium text-destructive">
+                  {detalleQuery.error instanceof Error
+                    ? detalleQuery.error.message
+                    : "No se pudo cargar el detalle completo de la venta."}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  La descarga permanece deshabilitada hasta recuperar ítems y pagos.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void detalleQuery.refetch()}
+                    disabled={detalleQuery.isFetching}
+                  >
+                    {detalleQuery.isFetching ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : null}
+                    Reintentar
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={onClose}>
+                    Cerrar
+                  </Button>
+                </div>
+              </div>
+            ) : detalle ? (
+              <>
+                <div className="mt-2">
+                  <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
+                    {detalle.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-mono text-xs">{item.codigo}</TableCell>
+                        <TableCell>{item.descripcion}</TableCell>
+                        <TableCell className="text-right">{item.cantidad}</TableCell>
+                        <TableCell className="text-right font-mono">
+                          {fmtMoney(item.precio_unitario_sin_iva)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {fmtMoney(item.subtotal_con_iva)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </DataTable>
+                </div>
 
-            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Card className="p-3">
-                <h4 className="mb-2 text-sm font-semibold">Pagos</h4>
-                {venta.condicion_venta === "CTA_CTE" ? (
-                  <p className="text-xs text-muted-foreground">
-                    Venta a cuenta corriente. Los cobros se registran en{" "}
-                    <Link to="/cuentas-corrientes" className="text-primary underline">
-                      Cuentas Corrientes
-                    </Link>
-                    .
-                  </p>
-                ) : (detalle?.pagos ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground">Sin pagos registrados.</p>
-                ) : (
-                  <ul className="space-y-1 text-sm">
-                    {detalle?.pagos.map((pago) => {
-                      const descripcion = detallePago(pago.detalle);
-                      return (
-                        <li key={pago.id} className="flex justify-between gap-3">
-                          <span>
-                            {formaPagoLabel[pago.forma_pago]}
-                            {descripcion ? ` (${descripcion})` : ""}
-                          </span>
-                          <span className="font-mono">{fmtMoney(pago.monto)}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </Card>
-              <Card className="p-3">
-                <h4 className="mb-2 text-sm font-semibold">Totales</h4>
-                <ul className="space-y-1 text-sm">
-                  <li className="flex justify-between">
-                    <span>Subtotal:</span>
-                    <span className="font-mono">{fmtMoney(venta.subtotal_sin_iva)}</span>
-                  </li>
-                  <li className="flex justify-between">
-                    <span>IVA:</span>
-                    <span className="font-mono">{fmtMoney(venta.iva_total)}</span>
-                  </li>
-                  <li className="flex justify-between">
-                    <span>Percepciones:</span>
-                    <span className="font-mono">{fmtMoney(venta.percepciones)}</span>
-                  </li>
-                  <li className="mt-1 flex justify-between border-t border-border pt-1 font-bold">
-                    <span>TOTAL:</span>
-                    <span className="font-mono">{fmtMoney(venta.total)}</span>
-                  </li>
-                  {venta.condicion_venta === "CTA_CTE" ? (
-                    <li className="flex justify-between text-warning">
-                      <span>Condición:</span>
-                      <span>A cuenta corriente</span>
-                    </li>
-                  ) : (
-                    <>
-                      <li className="flex justify-between text-success">
-                        <span>Pagado:</span>
-                        <span className="font-mono">{fmtMoney(venta.total_pagado)}</span>
+                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Card className="p-3">
+                    <h4 className="mb-2 text-sm font-semibold">Pagos</h4>
+                    {venta.condicion_venta === "CTA_CTE" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Venta a cuenta corriente. Los cobros se registran en{" "}
+                        <Link to="/cuentas-corrientes" className="text-primary underline">
+                          Cuentas Corrientes
+                        </Link>
+                        .
+                      </p>
+                    ) : detalle.pagos.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">Sin pagos registrados.</p>
+                    ) : (
+                      <ul className="space-y-1 text-sm">
+                        {detalle.pagos.map((pago) => {
+                          const descripcion = detallePago(pago.detalle);
+                          return (
+                            <li key={pago.id} className="flex justify-between gap-3">
+                              <span>
+                                {formaPagoLabel[pago.forma_pago]}
+                                {descripcion ? ` (${descripcion})` : ""}
+                              </span>
+                              <span className="font-mono">{fmtMoney(pago.monto)}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </Card>
+                  <Card className="p-3">
+                    <h4 className="mb-2 text-sm font-semibold">Totales</h4>
+                    <ul className="space-y-1 text-sm">
+                      <li className="flex justify-between">
+                        <span>Subtotal:</span>
+                        <span className="font-mono">{fmtMoney(venta.subtotal_sin_iva)}</span>
                       </li>
-                      {Number(venta.total) - Number(venta.total_pagado) > 0.01 ? (
-                        <li className="flex justify-between text-destructive">
-                          <span>Pendiente:</span>
-                          <span className="font-mono">
-                            {fmtMoney(Number(venta.total) - Number(venta.total_pagado))}
-                          </span>
+                      <li className="flex justify-between">
+                        <span>IVA:</span>
+                        <span className="font-mono">{fmtMoney(venta.iva_total)}</span>
+                      </li>
+                      <li className="flex justify-between">
+                        <span>Percepciones:</span>
+                        <span className="font-mono">{fmtMoney(venta.percepciones)}</span>
+                      </li>
+                      <li className="mt-1 flex justify-between border-t border-border pt-1 font-bold">
+                        <span>TOTAL:</span>
+                        <span className="font-mono">{fmtMoney(venta.total)}</span>
+                      </li>
+                      {venta.condicion_venta === "CTA_CTE" ? (
+                        <li className="flex justify-between text-warning">
+                          <span>Condición:</span>
+                          <span>A cuenta corriente</span>
                         </li>
-                      ) : null}
-                    </>
-                  )}
-                </ul>
-              </Card>
-            </div>
+                      ) : (
+                        <>
+                          <li className="flex justify-between text-success">
+                            <span>Pagado:</span>
+                            <span className="font-mono">{fmtMoney(venta.total_pagado)}</span>
+                          </li>
+                          {Number(venta.total) - Number(venta.total_pagado) > 0.01 ? (
+                            <li className="flex justify-between text-destructive">
+                              <span>Pendiente:</span>
+                              <span className="font-mono">
+                                {fmtMoney(Number(venta.total) - Number(venta.total_pagado))}
+                              </span>
+                            </li>
+                          ) : null}
+                        </>
+                      )}
+                    </ul>
+                  </Card>
+                </div>
+              </>
+            ) : null}
             {venta.observaciones ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 <strong>Obs:</strong> {venta.observaciones}

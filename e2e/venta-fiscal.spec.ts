@@ -386,6 +386,16 @@ test("dos pestañas sobre la misma venta no repiten efectos comerciales", async 
       paginas.map((page) => page.getByRole("button", { name: "Facturar" }).click()),
     );
     const dialogos = paginas.map((page) => page.getByTestId("dialogo-emision-fiscal"));
+    await Promise.all(
+      dialogos.map((dialogo) =>
+        receptorManual(dialogo, {
+          tipo: "CUIT",
+          numero: "20345678906",
+          razon: "T13-E2E COMPRADOR PAGINACIÓN",
+          iva: "CONSUMIDOR_FINAL",
+        }),
+      ),
+    );
     await Promise.all(dialogos.map(revisar));
     await Promise.all(
       dialogos.map((dialogo) =>

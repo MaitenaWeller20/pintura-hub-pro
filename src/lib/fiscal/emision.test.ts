@@ -138,6 +138,7 @@ class FiscalDouble {
   throwPayload: unknown | null = null;
   throwTransitionOnce: AccionTransicionFiscal | null = null;
   conflictosSecuenciaRestantes = 0;
+  reservaAjenaActiva = false;
   commitThenThrowOnce: AccionTransicionFiscal | null = null;
   preparedSnapshot: SnapshotFiscalV2 | null = null;
   nextClaim = 1;
@@ -271,6 +272,13 @@ class FiscalDouble {
         }
         if (claimToken !== this.claim) throw new Error("TOKEN_INCORRECTO");
         if (accion === "RESERVAR") {
+          if (this.reservaAjenaActiva) {
+            this.version += 1;
+            this.claim = null;
+            this.numero = null;
+            this.persistedSnapshot = null;
+            return this.confirmarTransicion(accion, "ERROR_CORREGIBLE", null);
+          }
           this.numero = payload.numero_propuesto as number;
           this.persistedSnapshot = structuredClone(payload.snapshot as SnapshotFiscalV2);
           this.ultimoLocal = Math.max(this.ultimoLocal, this.numero);
@@ -734,7 +742,7 @@ describe("ejecutarEmisionFiscal", () => {
     doble.persistedSnapshot = null;
     await ejecutarEmisionFiscal(
       {
-        ventaId: "71000000-0000-4000-8000-000000000002",
+        ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
@@ -775,6 +783,31 @@ describe("ejecutarEmisionFiscal", () => {
     expect(doble.receptoresPreparados).toHaveLength(2);
     expect(doble.payloadsCae).toHaveLength(1);
     expect(acciones(doble)).not.toContain("ERROR_CORREGIBLE");
+  });
+
+  it("una reserva ajena activa libera el segundo claim como busy sin número ni ARCA", async () => {
+    const doble = new FiscalDouble();
+    doble.reservaAjenaActiva = true;
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
+      },
+      doble.deps(),
+    );
+
+    expect(resultado).toEqual({
+      estado: "EN_CURSO",
+      mensaje: "Otra emisión de la misma identidad fiscal está en curso.",
+    });
+    expect(doble.estadoActual).toBe("ERROR_CORREGIBLE");
+    expect(doble.claim).toBeNull();
+    expect(doble.numero).toBeNull();
+    expect(doble.payloadsCae).toHaveLength(0);
+    expect(acciones(doble)).toEqual(["RECLAMAR", "RESERVAR"]);
   });
 
   it("ediciones vivas posteriores a RESERVAR no cambian el payload persistido", async () => {

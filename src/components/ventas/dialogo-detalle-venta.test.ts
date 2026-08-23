@@ -1,5 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
+import { cargarDetalleVentaCompleto } from "./detalle-venta";
 import { prepararDescargaVenta, requiereDatosFiscalesVenta } from "./preparar-descarga-venta";
+
+describe("lectura completa del detalle comercial", () => {
+  it("propaga el error de ítems en vez de convertirlo en una lista vacía", async () => {
+    await expect(
+      cargarDetalleVentaCompleto({
+        cargarItems: async () => ({ data: null, error: { message: "items no disponibles" } }),
+        cargarPagos: async () => ({ data: [{ id: "pago-1" }], error: null }),
+      }),
+    ).rejects.toThrow("No se pudieron cargar los ítems de la venta: items no disponibles");
+  });
+
+  it("propaga el error de pagos en vez de habilitar un PDF con detalle incompleto", async () => {
+    await expect(
+      cargarDetalleVentaCompleto({
+        cargarItems: async () => ({ data: [{ id: "item-1" }], error: null }),
+        cargarPagos: async () => ({ data: null, error: { message: "pagos no disponibles" } }),
+      }),
+    ).rejects.toThrow("No se pudieron cargar los pagos de la venta: pagos no disponibles");
+  });
+
+  it("entrega el detalle sólo cuando ambas lecturas están completas", async () => {
+    await expect(
+      cargarDetalleVentaCompleto({
+        cargarItems: async () => ({ data: [{ id: "item-1" }], error: null }),
+        cargarPagos: async () => ({ data: [{ id: "pago-1" }], error: null }),
+      }),
+    ).resolves.toEqual({ items: [{ id: "item-1" }], pagos: [{ id: "pago-1" }] });
+  });
+});
 
 describe("descarga fail-closed del detalle de venta", () => {
   it.each([

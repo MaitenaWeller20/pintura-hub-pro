@@ -19,16 +19,20 @@ test("tabs y paginación navegan sólo sobre identificadores propios del fixture
   page,
 }) => {
   await ingresar(page, "fiscalAdmin");
-  await page.goto("/facturacion/cola");
+  await page.goto(`/facturacion/cola?documento=${encodeURIComponent(fixture.documentoCola)}`);
   const tabs = page.getByRole("tablist", { name: /estados de la cola/i });
   await expect(tabs.getByRole("tab", { name: /Pendientes/ })).toBeVisible();
   await expect(tabs.getByRole("tab", { name: /A revisar/ })).toBeVisible();
   await expect(tabs.getByRole("tab", { name: /Emitidas/ })).toBeVisible();
+  await expect(page.getByText(/28 registros · página 1 de 2/)).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(25);
   await expect(page.locator("tbody")).toContainText("V-T13-E2E-001");
   await expect(page.locator("tbody")).not.toContainText("V-T13-E2E-028");
   await expect(page.getByRole("button", { name: /Siguiente/ })).toBeEnabled();
   await page.getByRole("button", { name: /Siguiente/ }).click();
   await expect(page).toHaveURL(/page=2/);
+  await expect(page.getByText(/28 registros · página 2 de 2/)).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(3);
   await expect(page.locator("tbody")).toContainText("V-T13-E2E-028");
 });
 
@@ -48,6 +52,15 @@ test("filtros por documento/estado y limpieza conservan una consulta navegable",
   await expect(aprobadaPropia).toContainText("PRODUCCION");
   await page.getByRole("button", { name: /Limpiar/i }).click();
   await expect(page).not.toHaveURL(/documento=/);
+});
+
+test("ventas encuentra el receptor congelado por CUIT formateado", async ({ page }) => {
+  await ingresar(page, "fiscalAdmin");
+  await page.goto("/ventas");
+  await page.getByPlaceholder("Buscar comprobante, comprador o receptor…").fill("30-71419966-4");
+  const venta = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  await expect(venta).toBeVisible();
+  await expect(venta).toContainText("T13-E2E RECEPTOR CONGELADO");
 });
 
 test("mapea todos los estados operativos y reserva incidentes para administrador", async ({
@@ -122,6 +135,43 @@ test("APROBADO abre detalle fiscal descargable y restaura el foco al salir", asy
   await dialogo.getByRole("button", { name: "PDF" }).click();
   await descarga;
   await page.keyboard.press("Escape");
+  await expect(dialogo).not.toBeVisible();
+  await expect(abrir).toBeFocused();
+});
+
+test("un detalle incompleto bloquea el PDF y permite reintentar o cerrar desde la cola", async ({
+  page,
+}) => {
+  await ingresar(page, "fiscalAdmin");
+  let bloquearItems = true;
+  await page.route(/\/rest\/v1\/venta_items\?/, async (route) => {
+    const url = new URL(route.request().url());
+    if (bloquearItems && url.searchParams.get("venta_id") === `eq.${fixture.ventaAprobadaId}`) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "T13_E2E",
+          message: "ITEMS_E2E_INDISPONIBLES",
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto(`/facturacion/cola?tab=emitidas&venta=${fixture.ventaAprobadaId}`);
+  const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  const abrir = fila.getByRole("button", { name: "Ver/descargar" });
+  await abrir.click();
+  const dialogo = page.getByTestId("dialogo-detalle-venta");
+  await expect(dialogo.getByRole("alert")).toContainText("ITEMS_E2E_INDISPONIBLES");
+  await expect(dialogo.getByRole("button", { name: "PDF" })).toBeDisabled();
+  bloquearItems = false;
+  await dialogo.getByRole("button", { name: "Reintentar" }).click();
+  await expect(dialogo).toContainText("Producto congelado al emitir");
+  await expect(dialogo.getByRole("button", { name: "PDF" })).toBeEnabled();
+  await dialogo.getByRole("button", { name: "Cerrar" }).click();
   await expect(dialogo).not.toBeVisible();
   await expect(abrir).toBeFocused();
 });

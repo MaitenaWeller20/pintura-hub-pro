@@ -31,6 +31,9 @@ const EMAIL_EMPLEADO = "t13-empleado@local.test";
 const PASSWORD_EMPLEADO = "t13-empleado-1234";
 const CLIENTE_COMPRADOR_ID = "e2130000-0000-4000-8000-000000000001";
 const CLIENTE_OTRO_ID = "e2130000-0000-4000-8000-000000000002";
+const CLIENTE_COLA_ID = "e2130000-0000-4000-8000-000000000015";
+const DOCUMENTO_COLA = "20-34567890-6";
+const DOCUMENTO_COLA_DIGITOS = "20345678906";
 const PRODUCTO_ID = "e2130000-0000-4000-8000-000000000003";
 const PRODUCTOS_BUSQUEDA = Array.from({ length: 12 }, (_, index) => ({
   id: `e2134000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
@@ -92,6 +95,7 @@ export type FixtureFiscal = {
   fechaFiscal: string;
   fechaFiscalVisible: string;
   clienteCompradorId: string;
+  documentoCola: string;
   productoId: string;
   presupuestoId: string;
   ventaPendienteId: string;
@@ -504,7 +508,7 @@ async function auditarAusenciaFixtureFiscal(): Promise<void> {
         sb
           .from("clientes")
           .select("id", { count: "exact", head: true })
-          .in("id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID]),
+          .in("id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID, CLIENTE_COLA_ID]),
         "clientes E2E",
       ),
       contar(
@@ -646,7 +650,7 @@ async function limpiarDatos() {
           sb
             .from("receptores_fiscales")
             .delete()
-            .in("cliente_comercial_id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID]),
+            .in("cliente_comercial_id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID, CLIENTE_COLA_ID]),
           "No se pudieron limpiar los receptores del cliente E2E",
         ),
     ],
@@ -694,7 +698,10 @@ async function limpiarDatos() {
       "los clientes E2E",
       () =>
         exigirOperacion(
-          sb.from("clientes").delete().in("id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID]),
+          sb
+            .from("clientes")
+            .delete()
+            .in("id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID, CLIENTE_COLA_ID]),
           "No se pudieron limpiar los clientes E2E",
         ),
     ],
@@ -1028,6 +1035,12 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
             tipo: "CONSUMIDOR_FINAL",
             cuit_dni: null,
           },
+          {
+            id: CLIENTE_COLA_ID,
+            razon_social: `${PREFIJO_FISCAL_E2E} COMPRADOR PAGINACIÓN`,
+            tipo: "CONSUMIDOR_FINAL",
+            cuit_dni: DOCUMENTO_COLA_DIGITOS,
+          },
         ])
       ).error,
       "No se pudieron crear los compradores E2E",
@@ -1111,7 +1124,7 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
     const pendientes = Array.from({ length: 28 }, (_, index) => ({
       id: uuidVenta(index + 1),
       sucursal_id: principal.id,
-      cliente_id: CLIENTE_COMPRADOR_ID,
+      cliente_id: CLIENTE_COLA_ID,
       usuario_id: empleado.id,
       numero_comprobante: `V-T13-E2E-${String(index + 1).padStart(3, "0")}`,
       tipo_comprobante: "VENTA" as const,
@@ -1629,6 +1642,7 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       fechaFiscal: fechas.hoy,
       fechaFiscalVisible: fechas.visible,
       clienteCompradorId: CLIENTE_COMPRADOR_ID,
+      documentoCola: DOCUMENTO_COLA,
       productoId: PRODUCTO_ID,
       presupuestoId: PRESUPUESTO_ID,
       ventaPendienteId: uuidVenta(1),

@@ -56,7 +56,7 @@ export function receptorFiscalDifiereDelComprador(venta: VentaConReceptorCongela
   );
 }
 
-export function textoBusquedaVenta(venta: VentaConReceptorCongelado): string {
+function camposBusquedaVenta(venta: VentaConReceptorCongelado): string[] {
   const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
   return [
     venta.numero_comprobante,
@@ -66,10 +66,25 @@ export function textoBusquedaVenta(venta: VentaConReceptorCongelado): string {
     receptor?.tipoDocumento,
     receptor?.numeroDocumento,
     receptor?.condicionIva,
-  ]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .join(" ")
-    .toLocaleLowerCase("es-AR");
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+export function textoBusquedaVenta(venta: VentaConReceptorCongelado): string {
+  return camposBusquedaVenta(venta).join(" ").toLocaleLowerCase("es-AR");
+}
+
+export function ventaCoincideBusqueda(venta: VentaConReceptorCongelado, busqueda: string): boolean {
+  const consulta = busqueda.trim().toLocaleLowerCase("es-AR");
+  if (!consulta) return true;
+  if (textoBusquedaVenta(venta).includes(consulta)) return true;
+
+  const soloDocumentoFormateado = /^[0-9\s./-]+$/.test(consulta);
+  const digitos = consulta.replace(/\D/g, "");
+  return (
+    soloDocumentoFormateado &&
+    digitos.length > 0 &&
+    camposBusquedaVenta(venta).some((campo) => campo.replace(/\D/g, "").includes(digitos))
+  );
 }
 
 export function camposExportacionReceptorFiscal(venta: VentaConReceptorCongelado): {

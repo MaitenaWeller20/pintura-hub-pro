@@ -657,6 +657,17 @@ export async function ejecutarEmisionFiscal(
           ultimo_local_observado: secuencia.ultimoLocal,
         },
       });
+      if (
+        estado.afip_estado === "ERROR_CORREGIBLE" &&
+        estado.afip_fase === null &&
+        estado.afip_claim_token === null &&
+        estado.afip_numero === null
+      ) {
+        return {
+          estado: "EN_CURSO",
+          mensaje: "Otra emisión de la misma identidad fiscal está en curso.",
+        };
+      }
       break;
     } catch (error) {
       const persistido = await recargarEstado(input.ventaId, deps);

@@ -88,6 +88,15 @@ VALUES (
   'b1300000-0000-4000-8000-000000000001','T13 NOTAS CLIENTE',
   'RESPONSABLE_INSCRIPTO',true,true
 );
+INSERT INTO public.productos(
+  id,codigo,nombre,precio_sin_iva,iva_porcentaje,activo,archivado
+) VALUES (
+  'b1300000-0000-4000-8000-000000000002','T13-NOTAS-PROD',
+  'T13 producto para notas',100,21,true,false
+);
+INSERT INTO public.stock_sucursal(producto_id,sucursal_id,cantidad)
+SELECT 'b1300000-0000-4000-8000-000000000002',s.id,10
+  FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
@@ -100,8 +109,28 @@ SELECT
   'CTA_CTE',100,21,0,121,0,'PENDIENTE','T13-ND-ORIGINAL','PENDIENTE'
 FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
 
+CREATE OR REPLACE FUNCTION pg_temp.huella_comercial_notas()
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path=''
+AS $$
+  SELECT pg_catalog.md5(pg_catalog.concat_ws('|',
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.ventas AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.venta_items AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.venta_pagos AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.stock_movimientos AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.producto_id,t.sucursal_id),'') FROM public.stock_sucursal AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.caja_movimientos AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.caja_sesiones AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.id),'') FROM public.cuenta_corriente_movimientos AS t),
+    (SELECT COALESCE(pg_catalog.string_agg(pg_catalog.to_jsonb(t)::text,'|' ORDER BY t.sucursal_id,t.tipo),'') FROM public.comprobante_secuencias AS t)
+  ));
+$$;
+
 CREATE TEMP TABLE t_antes AS
 SELECT
+  pg_temp.huella_comercial_notas() AS huella,
   (SELECT count(*) FROM public.ventas) AS ventas,
   (SELECT count(*) FROM public.venta_items) AS items,
   (SELECT count(*) FROM public.venta_pagos) AS pagos,
@@ -114,6 +143,29 @@ UPDATE public.settings
    SET facturacion_receptor_v2_enabled=true,
        facturacion_legacy_writer_enabled=false
  WHERE id=true;
+
+SET LOCAL ROLE authenticated;
+
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM public.crear_venta(
+      (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+      'b1300000-0000-4000-8000-000000000001','NOTA_CREDITO','CTA_CTE',
+      '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb,
+      '[]'::jsonb,0,'T13-NC-V2-NO-DEBE-PERSISTIR',NULL,NULL,
+      'c1300000-0000-4000-8000-000000000001',
+      'd1300000-0000-4000-8000-000000000000'
+    );
+    RAISE EXCEPTION 'FALLO: la RPC aceptó una NC directa durante v2';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'FALLO:%' THEN RAISE; END IF;
+    IF SQLERRM NOT ILIKE '%nota de crédito v2 se crea exclusivamente mediante anular_venta%' THEN
+      RAISE EXCEPTION 'FALLO: rechazo NC v2 inesperado: %',SQLERRM;
+    END IF;
+  END;
+END;
+$$;
 
 DO $$
 BEGIN
@@ -136,6 +188,8 @@ BEGIN
 END;
 $$;
 
+RESET ROLE;
+
 SELECT pg_temp.assert_true(
   NOT EXISTS (
     SELECT 1 FROM public.ventas WHERE observaciones='T13-ND-NO-DEBE-PERSISTIR'
@@ -155,11 +209,71 @@ SELECT pg_temp.assert_true(
      FROM t_antes AS a),
   'el rechazo conserva venta, ítems, pagos, stock, caja, deuda y numeradores'
 );
+SELECT pg_temp.assert_true(
+  (SELECT huella=pg_temp.huella_comercial_notas() FROM t_antes),
+  'NC/ND v2 conservan la huella exacta de ventas, ítems, pagos, stock, caja, deuda y numeradores'
+);
+
+UPDATE public.settings
+   SET facturacion_receptor_v2_enabled=false,
+       facturacion_legacy_writer_enabled=false
+ WHERE id=true;
+
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  v_tipo public.tipo_comprobante;
+BEGIN
+  FOREACH v_tipo IN ARRAY ARRAY['NOTA_CREDITO','NOTA_DEBITO']::public.tipo_comprobante[]
+  LOOP
+    BEGIN
+      PERFORM * FROM public.crear_venta(
+        (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+        'b1300000-0000-4000-8000-000000000001',v_tipo,'CTA_CTE',
+        CASE WHEN v_tipo='NOTA_CREDITO'
+          THEN '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb
+          ELSE '[{"producto_id":null,"descripcion":"Recargo mantenimiento","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":21}]'::jsonb
+        END,
+        '[]'::jsonb,0,'T13-NOTA-MANTENIMIENTO-NO-DEBE-PERSISTIR',NULL,NULL,
+        'c1300000-0000-4000-8000-000000000001',
+        CASE WHEN v_tipo='NOTA_CREDITO'
+          THEN 'd1300000-0000-4000-8000-000000000010'::uuid
+          ELSE 'd1300000-0000-4000-8000-000000000011'::uuid
+        END
+      );
+      RAISE EXCEPTION 'FALLO: la RPC aceptó % con ambos writers apagados',v_tipo;
+    EXCEPTION WHEN OTHERS THEN
+      IF SQLERRM LIKE 'FALLO:%' THEN RAISE; END IF;
+      IF SQLERRM NOT ILIKE '%escritor fiscal legacy está deshabilitado%' THEN
+        RAISE EXCEPTION 'FALLO: rechazo de mantenimiento inesperado para %: %',v_tipo,SQLERRM;
+      END IF;
+    END;
+  END LOOP;
+END;
+$$;
+RESET ROLE;
+
+SELECT pg_temp.assert_true(
+  (SELECT huella=pg_temp.huella_comercial_notas() FROM t_antes),
+  'mantenimiento rechaza NC/ND sin alterar la huella comercial exacta'
+);
 
 UPDATE public.settings
    SET facturacion_receptor_v2_enabled=false,
        facturacion_legacy_writer_enabled=true
  WHERE id=true;
+
+SET LOCAL ROLE authenticated;
+
+CREATE TEMP TABLE t_legacy_nc AS
+SELECT * FROM public.crear_venta(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b1300000-0000-4000-8000-000000000001','NOTA_CREDITO','CTA_CTE',
+  '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T13-NC-LEGACY-PERMITIDA',NULL,NULL,
+  'c1300000-0000-4000-8000-000000000001',
+  'd1300000-0000-4000-8000-000000000012'
+);
 
 CREATE TEMP TABLE t_legacy_nd AS
 SELECT * FROM public.crear_venta(
@@ -169,6 +283,17 @@ SELECT * FROM public.crear_venta(
   '[]'::jsonb,0,'T13-ND-LEGACY-PERMITIDA',NULL,NULL,
   'c1300000-0000-4000-8000-000000000001',
   'd1300000-0000-4000-8000-000000000002'
+);
+RESET ROLE;
+SELECT pg_temp.assert_true(
+  EXISTS (
+    SELECT 1
+      FROM public.ventas AS v
+      JOIN t_legacy_nc AS creada ON creada.venta_id=v.id
+     WHERE v.tipo_comprobante='NOTA_CREDITO'
+       AND v.observaciones='T13-NC-LEGACY-PERMITIDA'
+  ),
+  'el writer legacy conserva la NC mientras v2 está desactivado'
 );
 SELECT pg_temp.assert_true(
   EXISTS (

@@ -46,7 +46,7 @@ import {
   camposExportacionReceptorFiscal,
   leerReceptorFiscalCongelado,
   receptorFiscalDifiereDelComprador,
-  textoBusquedaVenta,
+  ventaCoincideBusqueda,
 } from "@/lib/ventas-ui";
 import * as XLSX from "xlsx";
 
@@ -142,13 +142,7 @@ function VentasList() {
     },
   });
 
-  const filtered = useMemo(
-    () =>
-      ventas.filter(
-        (v: any) => !q || textoBusquedaVenta(v).includes(q.trim().toLocaleLowerCase("es-AR")),
-      ),
-    [ventas, q],
-  );
+  const filtered = useMemo(() => ventas.filter((v) => ventaCoincideBusqueda(v, q)), [ventas, q]);
 
   /**
    * Cuáles de las notas internas en pantalla las generó una ANULACIÓN.

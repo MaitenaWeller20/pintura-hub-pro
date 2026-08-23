@@ -358,6 +358,8 @@ export function generarComprobantePdf(
       for (const a of t.alicuotas) {
         linea(`IVA ${fmtNum(porcentajeDeIvaId(a.Id))}% s/ ${money(a.BaseImp)}`, money(a.Importe));
       }
+    } else if (t) {
+      linea("IVA", money(t.iva));
     } else {
       linea("IVA", money(venta.iva_total));
     }

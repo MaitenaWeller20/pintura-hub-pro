@@ -38,11 +38,30 @@ export function esPngDataUrlFiscal(value: unknown): value is string {
 
   let bytes: Uint8Array;
   try {
-    bytes = Uint8Array.from(Buffer.from(match[1], "base64"));
+    const binario = globalThis.atob(match[1]);
+    bytes = new Uint8Array(binario.length);
+    for (let index = 0; index < binario.length; index += 1) {
+      bytes[index] = binario.charCodeAt(index);
+    }
   } catch {
     return false;
   }
-  return FIRMA_PNG.every((byte, index) => bytes[index] === byte);
+  if (!FIRMA_PNG.every((byte, index) => bytes[index] === byte)) return false;
+
+  const vista = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset: number = FIRMA_PNG.length;
+  let primerChunk = true;
+  while (offset + 12 <= bytes.length) {
+    const longitud = vista.getUint32(offset, false);
+    const finChunk = offset + 12 + longitud;
+    if (finChunk > bytes.length) return false;
+    const tipo = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+    if (primerChunk && (tipo !== "IHDR" || longitud !== 13)) return false;
+    primerChunk = false;
+    offset = finChunk;
+    if (tipo === "IEND") return longitud === 0 && offset === bytes.length;
+  }
+  return false;
 }
 
 export function exigirPngDataUrlFiscal(value: unknown): string {

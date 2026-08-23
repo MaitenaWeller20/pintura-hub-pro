@@ -6,7 +6,7 @@ import {
   prepararDatosFiscalesImpresos,
   prepararDatosFiscalesLegacyMarcados,
 } from "./impresion";
-import { qrAfipDataUrlObligatorio, urlQrAfip } from "./qr";
+import { esPngDataUrlFiscal, qrAfipDataUrlObligatorio, urlQrAfip } from "./qr";
 import { crearSnapshotFiscalV2, type SnapshotFiscalV2 } from "./snapshot";
 import { resolverDatosFiscalesComprobanteDesdeFila } from "../fiscal.functions";
 
@@ -269,6 +269,44 @@ describe("fallback histórico marcado", () => {
     });
     expect(preparado.qrInput).toMatchObject({ fecha: "2020-02-03", importe: "1210.00" });
   });
+
+  it("usa la magnitud fiscal de una nota de crédito legacy cuyo total histórico es negativo", () => {
+    const {
+      afip_fecha_comprobante: _fechaFiscal,
+      afip_imp_total: _totalFiscal,
+      ...filaNotaCredito
+    } = filaLegacy;
+
+    const preparado = prepararDatosFiscalesLegacyMarcados({
+      fila: { ...filaNotaCredito, afip_cbte_tipo: 8 },
+      datosHistoricos: {
+        ...datosHistoricos,
+        cbte_tipo: 8,
+        totales: null,
+        fecha: "2020-02-03",
+        total: -1210,
+        sin_snapshot: true,
+      },
+    });
+
+    expect(preparado.qrInput).toMatchObject({ tipoCmp: 8, importe: "1210.00" });
+  });
+
+  it.each([
+    ["timestamp UTC de madrugada", "2020-02-04T01:30:00.000Z", "2020-02-03"],
+    ["timestamp UTC diurno", "2020-02-04T15:30:00.000Z", "2020-02-04"],
+    ["fecha canónica", "2020-02-04", "2020-02-04"],
+  ])("convierte %s al día fiscal de Córdoba", (_caso, fecha, esperada) => {
+    const { afip_fecha_comprobante: _fechaFiscal, ...filaSinFechaFiscal } = filaLegacy;
+
+    const preparado = prepararDatosFiscalesLegacyMarcados({
+      fila: filaSinFechaFiscal,
+      datosHistoricos: { ...datosHistoricos, fecha },
+    });
+
+    expect(preparado.fecha).toBe(esperada);
+    expect(preparado.qrInput.fecha).toBe(esperada);
+  });
 });
 
 describe("QR fiscal obligatorio", () => {
@@ -308,6 +346,18 @@ describe("QR fiscal obligatorio", () => {
     await expect(qrAfipDataUrlObligatorio(input)).rejects.toMatchObject({
       codigo: "QR_FISCAL_OBLIGATORIO",
     });
+  });
+
+  it("valida PNG en browser sin Buffer y rechaza basura, firma incorrecta y truncado", () => {
+    vi.stubGlobal("Buffer", undefined);
+    try {
+      expect(esPngDataUrlFiscal(QR_PNG)).toBe(true);
+      expect(esPngDataUrlFiscal("data:image/png;base64,not-a-png")).toBe(false);
+      expect(esPngDataUrlFiscal("data:image/png;base64,bm90LXBuZw==")).toBe(false);
+      expect(esPngDataUrlFiscal("data:image/png;base64,iVBORw0KGgo=")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

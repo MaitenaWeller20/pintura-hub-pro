@@ -6,6 +6,7 @@ import {
   LEYENDA_CREDITO_FISCAL_MONOTRIBUTO,
   type DatosFiscalesImpresos,
 } from "./impresion";
+import { esPngDataUrlFiscal } from "./qr";
 
 /**
  * El PDF es el papel que ve el cliente y que mira el contador. Lo que se
@@ -252,6 +253,41 @@ describe("totales fiscales completos", () => {
     expect(texto).toContain("$ 20,00");
     expect(texto).toContain("$ 1.380,00");
     expect(texto).not.toContain("$ 999.999,00");
+  });
+
+  it("usa el IVA congelado aunque el snapshot no tenga alícuotas", () => {
+    const fiscalPuroExentoNoGravado: DatosFiscalesImpresos = {
+      ...fiscalBase,
+      lineas: [
+        { ...items[0], codigo: "EX-001", descripcion: "Operación exenta", subtotal_con_iva: 100 },
+        {
+          ...items[0],
+          codigo: "NG-001",
+          descripcion: "Operación no gravada",
+          subtotal_con_iva: 50,
+        },
+      ],
+      totales: {
+        neto: 0,
+        exento: 100,
+        no_gravado: 50,
+        iva: 0,
+        tributos: 0,
+        total: 150,
+        alicuotas: [],
+      },
+    };
+
+    const { doc } = generarComprobantePdf(
+      { ...venta, subtotal_sin_iva: 999, iva_total: 999, total: 999 },
+      items,
+      fiscalPuroExentoNoGravado,
+    );
+    const texto = textoDelPdf(doc);
+
+    expect(texto).toContain("Neto gravado $ 0,00 Exento $ 100,00 No gravado $ 50,00 IVA $ 0,00");
+    expect(texto).toContain("TOTAL $ 150,00");
+    expect(texto).not.toContain("$ 999,00");
   });
 });
 
@@ -532,11 +568,13 @@ describe("defensas del renderer fiscal", () => {
     );
   });
 
-  it("envuelve como error fiscal tipado un PNG con firma válida que addImage no puede leer", () => {
-    const pngTruncado = "data:image/png;base64,iVBORw0KGgo=";
+  it("envuelve como error fiscal tipado un PNG estructural que addImage no puede leer", () => {
+    const pngConIhdrInvalido =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAAAAAAAAAAAAAAAAAAAAAAAAElFTkQAAAAA";
 
+    expect(esPngDataUrlFiscal(pngConIhdrInvalido)).toBe(true);
     expect(() =>
-      generarComprobantePdf(venta, items, { ...fiscalBase, qr: pngTruncado }),
+      generarComprobantePdf(venta, items, { ...fiscalBase, qr: pngConIhdrInvalido }),
     ).toThrowError(expect.objectContaining({ codigo: "QR_FISCAL_OBLIGATORIO" }));
   });
 });

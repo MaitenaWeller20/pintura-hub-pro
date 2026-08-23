@@ -1,4 +1,5 @@
 import type { CondicionIva } from "./codigos";
+import { fmtFechaIsoAr } from "./fecha";
 import type { QrAfipInput } from "./qr";
 import { validarSnapshotFiscalV2, type SnapshotFiscalV2 } from "./snapshot";
 
@@ -156,8 +157,12 @@ function fechaCanonica(value: unknown, campo: string): string {
 }
 
 function fechaLegacy(value: unknown): string {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
-    return fechaCanonica(value.slice(0, 10), "legacy");
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return fechaCanonica(value, "legacy");
+  }
+  if (typeof value === "string") {
+    const timestamp = new Date(value);
+    if (Number.isFinite(timestamp.getTime())) return fmtFechaIsoAr(timestamp);
   }
   fallar(
     "COMPROBANTE_FISCAL_INCONSISTENTE",
@@ -172,6 +177,14 @@ function decimalCanonico(value: unknown, campo: string): string {
   }
   const [entera, decimal = ""] = raw.split(".");
   return `${BigInt(entera).toString()}.${decimal.padEnd(2, "0")}`;
+}
+
+function decimalCanonicoMagnitudLegacy(value: unknown): string {
+  const raw = typeof value === "number" && Number.isFinite(value) ? String(value) : value;
+  if (typeof raw !== "string" || !/^-?\d+(?:\.\d{1,2})?$/.test(raw)) {
+    fallar("COMPROBANTE_FISCAL_INCONSISTENTE", "El importe fiscal legacy es inválido.");
+  }
+  return decimalCanonico(raw.startsWith("-") ? raw.slice(1) : raw, "legacy");
 }
 
 function decimalSnapshot(value: string, campo: string): string {
@@ -464,7 +477,9 @@ export function prepararDatosFiscalesLegacyMarcados(input: unknown): DatosFiscal
     );
   }
   const totales = copiarTotalesLegacy(datos.totales);
-  const importe = decimalCanonico(fila.afip_imp_total ?? totales?.total ?? datos.total, "legacy");
+  const importe = decimalCanonicoMagnitudLegacy(
+    fila.afip_imp_total ?? totales?.total ?? datos.total,
+  );
   const modo = modoFiscal(fila.afip_modo ?? datos.modo);
   const simulado = Boolean(fila.afip_simulado ?? datos.simulado);
   const validez = validezFiscal(fila.afip_validez ?? (simulado ? "SIMULADA" : modo));

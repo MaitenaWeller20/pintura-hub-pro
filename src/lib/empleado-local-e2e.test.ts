@@ -80,10 +80,7 @@ describe("bootstrap del empleado local E2E", () => {
     expect(estado.usuario).toEqual({ id: "usuario-e2e" });
     expect(estado.perfil).toEqual({ activo: true, sucursalId: "sucursal-ohiggins" });
     expect(estado.roles).toEqual(["empleado"]);
-    expect(estado.sucursalesAsignadas).toEqual([
-      "sucursal-ohiggins",
-      "sucursal-general-paz",
-    ]);
+    expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins", "sucursal-general-paz"]);
 
     await limpiar();
     await limpiar();
@@ -92,7 +89,9 @@ describe("bootstrap del empleado local E2E", () => {
     expect(estado.perfil).toBeNull();
     expect(estado.roles).toEqual([]);
     expect(estado.sucursalesAsignadas).toEqual([]);
-    expect(llamadas.filter((llamada) => llamada === "eliminar-usuario:usuario-e2e")).toHaveLength(1);
+    expect(llamadas.filter((llamada) => llamada === "eliminar-usuario:usuario-e2e")).toHaveLength(
+      1,
+    );
     expect(llamadas[0]).toBe(`leer:${EMAIL_EMPLEADO_E2E}`);
   });
 
@@ -106,10 +105,7 @@ describe("bootstrap del empleado local E2E", () => {
     });
 
     const limpiar = await prepararEmpleadoLocalE2E(repo);
-    expect(estado.sucursalesAsignadas).toEqual([
-      "sucursal-ohiggins",
-      "sucursal-general-paz",
-    ]);
+    expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins", "sucursal-general-paz"]);
 
     await limpiar();
 
@@ -118,6 +114,23 @@ describe("bootstrap del empleado local E2E", () => {
     expect(estado.roles).toEqual(["empleado"]);
     expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins"]);
     expect(llamadas).not.toContain("eliminar-usuario:usuario-existente");
+  });
+
+  it("restaura la sucursal original aunque el E2E cambie la activa a la relación agregada", async () => {
+    const { repo, estado } = repositorioEnMemoria({
+      usuario: { id: "usuario-existente" },
+      perfil: { activo: true, sucursalId: "sucursal-ohiggins" },
+      roles: ["empleado"],
+      sucursales: SUCURSALES,
+      sucursalesAsignadas: ["sucursal-ohiggins"],
+    });
+
+    const limpiar = await prepararEmpleadoLocalE2E(repo);
+    await repo.actualizarSucursalPerfil("usuario-existente", "sucursal-general-paz");
+
+    await expect(limpiar()).resolves.toBeUndefined();
+    expect(estado.perfil?.sucursalId).toBe("sucursal-ohiggins");
+    expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins"]);
   });
 
   it("relee el perfil que crea automáticamente Auth antes de intentar insertarlo", async () => {

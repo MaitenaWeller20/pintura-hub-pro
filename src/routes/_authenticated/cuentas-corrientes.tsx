@@ -104,7 +104,7 @@ function CtaCtePage() {
       <PageHeader title="Cuentas Corrientes" subtitle="Deuda por cliente y por proveedor." />
 
       <Tabs defaultValue="clientes">
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 h-auto w-full flex-wrap justify-start gap-1 sm:w-fit sm:flex-nowrap">
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
           <TabsTrigger value="proveedores">Proveedores</TabsTrigger>
           {/* Tab aparte y no mezclado con el saldo de cuenta corriente, a

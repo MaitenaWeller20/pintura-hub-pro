@@ -113,8 +113,11 @@ export async function prepararEmpleadoLocalE2E(
       sucursalPerfilAnterior = null;
     } else {
       if (!estado.perfil.activo) throw new Error(`${EMAIL_EMPLEADO_E2E} está inactivo.`);
+      // Guardar siempre la sucursal original: los escenarios pueden cambiarla
+      // a una relación agregada por este bootstrap. El teardown debe restaurar
+      // la original antes de intentar retirar esa relación.
+      sucursalPerfilAnterior = estado.perfil.sucursalId;
       if (!sucursales.some((sucursal) => sucursal.id === estado.perfil!.sucursalId)) {
-        sucursalPerfilAnterior = estado.perfil.sucursalId;
         await repositorio.actualizarSucursalPerfil(usuarioId, sucursales[0].id);
       }
     }
@@ -262,11 +265,9 @@ export function crearRepositorioEmpleadoLocalHttp(
       });
     },
     async actualizarSucursalPerfil(usuarioId, sucursalId) {
-      await request(
-        "PATCH",
-        `/rest/v1/profiles?${parametros({ id: `eq.${usuarioId}` })}`,
-        { sucursal_id: sucursalId },
-      );
+      await request("PATCH", `/rest/v1/profiles?${parametros({ id: `eq.${usuarioId}` })}`, {
+        sucursal_id: sucursalId,
+      });
     },
     async agregarRol(usuarioId) {
       await request("POST", "/rest/v1/user_roles", { user_id: usuarioId, role: "empleado" });

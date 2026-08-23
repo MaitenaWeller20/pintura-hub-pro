@@ -58,7 +58,7 @@ INSERT INTO auth.users(
 ) VALUES (
   'a5000000-0000-0000-0000-000000000001',
   '00000000-0000-0000-0000-000000000000','authenticated','authenticated',
-  'admin@local.test','x',now(),now(),now()
+  'contado-admin@local.test','x',now(),now(),now()
 );
 UPDATE public.profiles
    SET username='t5-admin',nombre_completo='Admin test',
@@ -86,7 +86,7 @@ ITEMS="jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',2))
 
 venta() {  # condicion, pagos, tipo
   $PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'${3:-FACTURA_B}'::public.tipo_comprobante,
   '$1'::public.condicion_venta, $ITEMS, $2, 0, 'TEST-CONTADO', NULL, NULL, NULL, gen_random_uuid());
 SQL
@@ -130,7 +130,7 @@ chequear "la plata entró a la caja" "2420.00" \
 echo "── 4. Lo que NO se toca ──────────────────────────────────"
 # Cuenta corriente sin pagos: es exactamente para lo que está.
 $PSQL > /dev/null <<SQL
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA_B'::public.tipo_comprobante,
   'CTA_CTE'::public.condicion_venta, $ITEMS, '[]'::jsonb, 0, 'TEST-CONTADO', NULL, NULL, NULL, gen_random_uuid());
 SQL
@@ -145,7 +145,7 @@ if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un p
 
 # Un comprobante en cero no necesita cobro.
 out=$($PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FAC_INTERNA_CTA_CTE'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$CERO','cantidad',1)),
@@ -157,7 +157,7 @@ if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un c
 # Una nota de crédito a CUENTA CORRIENTE se acredita al saldo: no se paga en el
 # momento y no pide cobro.
 FAC=$($PSQL -tA <<SQL 2>&1 | tail -1
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT venta_id::text FROM public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA_B'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
@@ -166,7 +166,7 @@ SELECT venta_id::text FROM public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA
 SQL
 )
 out=$($PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_comprobante,
   'CTA_CTE'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
@@ -184,7 +184,7 @@ if echo "$out" | grep -qi "ERROR"; then echo "  ✗ rechazó una nota de crédit
 # afirmando lo contrario de lo que pasaba. Ahora se busca el mensaje que
 # corresponde.
 out=$($PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),

@@ -42,6 +42,68 @@ SELECT set_config('request.jwt.claims',
                     'role','authenticated')::text, false);
 SQL
 }
+
+cleanup() {
+  $PSQL <<'SQL' >/dev/null 2>&1 || true
+BEGIN;
+CREATE TEMP TABLE _ncsf_ventas_cleanup (
+  id uuid PRIMARY KEY
+) ON COMMIT DROP;
+
+INSERT INTO _ncsf_ventas_cleanup (id)
+SELECT id FROM public.ventas WHERE observaciones LIKE 'TEST-NCSF%';
+
+INSERT INTO _ncsf_ventas_cleanup (id)
+SELECT venta_anulada_por
+  FROM public.ventas
+ WHERE observaciones LIKE 'TEST-NCSF%'
+   AND venta_anulada_por IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+DELETE FROM public.emision_fiscal_intentos
+ WHERE venta_id IN (SELECT id FROM _ncsf_ventas_cleanup);
+DELETE FROM public.venta_pagos
+ WHERE venta_id IN (SELECT id FROM _ncsf_ventas_cleanup);
+DELETE FROM public.cuenta_corriente_movimientos
+ WHERE venta_id IN (SELECT id FROM _ncsf_ventas_cleanup);
+DELETE FROM public.venta_items
+ WHERE venta_id IN (SELECT id FROM _ncsf_ventas_cleanup);
+UPDATE public.ventas
+   SET venta_anulada_por=NULL,afip_cbte_asoc_id=NULL
+ WHERE id IN (SELECT id FROM _ncsf_ventas_cleanup);
+DELETE FROM public.ventas
+ WHERE id IN (SELECT id FROM _ncsf_ventas_cleanup);
+
+DELETE FROM public.stock_movimientos m USING public.productos p
+ WHERE p.id=m.producto_id AND p.codigo='NCSF-TEST';
+DELETE FROM public.stock_sucursal s USING public.productos p
+ WHERE p.id=s.producto_id AND p.codigo='NCSF-TEST';
+DELETE FROM public.productos WHERE codigo='NCSF-TEST';
+DELETE FROM public.clientes
+ WHERE razon_social IN ('CLIENTE NCSF TEST','OTRO CLIENTE NCSF');
+
+DELETE FROM public.caja_movimientos
+ WHERE caja_sesion_id IN (
+   SELECT id FROM public.caja_sesiones
+    WHERE abierta_por='a5000000-0000-0000-0000-000000000002'
+       OR cerrada_por='a5000000-0000-0000-0000-000000000002'
+ );
+DELETE FROM public.caja_sesiones
+ WHERE abierta_por='a5000000-0000-0000-0000-000000000002'
+    OR cerrada_por='a5000000-0000-0000-0000-000000000002';
+DELETE FROM public.user_roles
+ WHERE user_id='a5000000-0000-0000-0000-000000000002';
+DELETE FROM public.profiles
+ WHERE id='a5000000-0000-0000-0000-000000000002';
+DELETE FROM auth.users
+ WHERE id='a5000000-0000-0000-0000-000000000002';
+COMMIT;
+SQL
+}
+
+trap cleanup EXIT
+cleanup
+
 $PSQL <<'SQL' >/dev/null
 INSERT INTO auth.users(
   id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at
@@ -59,38 +121,11 @@ INSERT INTO public.user_roles(user_id,role)
 VALUES ('a5000000-0000-0000-0000-000000000002','admin')
 ON CONFLICT DO NOTHING;
 SQL
-MAIL=$(q "select u.email from auth.users u join public.user_roles r on r.user_id=u.id where r.role='admin' limit 1")
+MAIL=$(q "select u.email from auth.users u join public.user_roles r on r.user_id=u.id where u.id='a5000000-0000-0000-0000-000000000002' and r.role='admin'")
 [ -n "$MAIL" ] || { echo "No hay ningún admin en la base local. Corré ./scripts/crear-admin-local.sh"; exit 1; }
 
 echo "── Sembrando ─────────────────────────────────────────────"
 $PSQL <<'SQL' > /dev/null
-DELETE FROM public.caja_movimientos cm USING public.ventas v
- WHERE v.observaciones LIKE 'TEST-NCSF%'
-   AND cm.descripcion = 'Reversa de nota de crédito anulada ' || v.numero_comprobante;
-DELETE FROM public.venta_pagos vp USING public.ventas v
- WHERE v.id=vp.venta_id AND v.observaciones LIKE 'TEST-NCSF%';
-DELETE FROM public.cuenta_corriente_movimientos c USING public.ventas v
- WHERE v.id=c.venta_id AND v.observaciones LIKE 'TEST-NCSF%';
-DELETE FROM public.venta_items vi USING public.ventas v
- WHERE v.id=vi.venta_id AND v.observaciones LIKE 'TEST-NCSF%';
-UPDATE public.ventas SET venta_anulada_por = NULL WHERE observaciones LIKE 'TEST-NCSF%';
--- La NC que genera anular_venta no lleva la marca del test en observaciones:
--- se la encuentra por el vínculo con el remito que sí la lleva.
-DELETE FROM public.venta_pagos vp USING public.ventas nc
- WHERE nc.id = vp.venta_id AND nc.observaciones LIKE 'Reversión interna de %';
-DELETE FROM public.venta_items vi USING public.ventas nc
- WHERE nc.id = vi.venta_id AND nc.observaciones LIKE 'Reversión interna de %';
-DELETE FROM public.cuenta_corriente_movimientos c USING public.ventas nc
- WHERE nc.id = c.venta_id AND nc.observaciones LIKE 'Reversión interna de %';
-DELETE FROM public.ventas WHERE observaciones LIKE 'Reversión interna de %';
-DELETE FROM public.ventas WHERE observaciones LIKE 'TEST-NCSF%';
-DELETE FROM public.stock_movimientos m USING public.productos p
- WHERE p.id=m.producto_id AND p.codigo = 'NCSF-TEST';
-DELETE FROM public.stock_sucursal s USING public.productos p
- WHERE p.id=s.producto_id AND p.codigo = 'NCSF-TEST';
-DELETE FROM public.productos WHERE codigo = 'NCSF-TEST';
-DELETE FROM public.clientes WHERE razon_social IN ('CLIENTE NCSF TEST','OTRO CLIENTE NCSF');
-
 INSERT INTO public.clientes (razon_social, condicion_cta_cte)
 VALUES ('CLIENTE NCSF TEST', true), ('OTRO CLIENTE NCSF', true);
 INSERT INTO public.productos (codigo,nombre,precio_sin_iva,iva_porcentaje)

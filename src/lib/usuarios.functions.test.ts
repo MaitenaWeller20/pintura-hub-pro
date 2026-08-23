@@ -11,6 +11,7 @@ const OP_BAJA = "10000000-0000-4000-8000-000000000001";
 const OP_ALTA = "10000000-0000-4000-8000-000000000002";
 const OP_RECONCILIAR = "10000000-0000-4000-8000-000000000003";
 const OP_FAIL_SAFE = "10000000-0000-4000-8000-000000000004";
+const OP_BAJA_POSTERIOR = "10000000-0000-4000-8000-000000000005";
 
 describe("setPuedeFacturar", () => {
   it("rechaza a quien no es admin antes de intentar cambiar la capacidad", async () => {
@@ -555,10 +556,40 @@ describe("toggleUsuarioActivo", () => {
     expect(doble.forzarCalls).toBe(1);
     expect(doble.estado).toMatchObject({
       operacionId: OP_FAIL_SAFE,
+      activoDeseado: true,
       pendiente: true,
       perfilActivo: false,
     });
     expect(doble.authCalls).toHaveLength(9);
+
+    operaciones.finalizar = finalizarReal;
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+        operaciones,
+      ),
+    ).rejects.toThrow(/reemplazada.*estado más reciente/i);
+    expect(doble.estado).toMatchObject({
+      operacionId: OP_FAIL_SAFE,
+      activoDeseado: true,
+      pendiente: false,
+      perfilActivo: true,
+      authBloqueado: false,
+    });
+
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA_POSTERIOR },
+        operaciones,
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(doble.estado).toMatchObject({
+      operacionId: OP_BAJA_POSTERIOR,
+      activoDeseado: false,
+      pendiente: false,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
   });
 
   it("el retry de la misma intención adopta y finaliza la reconciliación fail-safe vigente", async () => {

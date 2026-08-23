@@ -324,18 +324,18 @@ export async function ejecutarToggleUsuarioActivo(
     "No se pudo iniciar el cambio de acceso",
   );
   if (iniciar.supersedida) {
-    if (iniciar.activoDeseado !== input.activo) {
+    // El cierre fail-safe usa una operación interna más nueva, pero preserva
+    // el desired más nuevo. Un retry con una clave anterior debe drenar esa
+    // reconciliación pendiente incluso si otro cambio invirtió la intención;
+    // después se informa superseded, sin afirmar que ganó el pedido viejo.
+    if (!iniciar.pendiente) {
+      if (iniciar.activoActual !== iniciar.activoDeseado) {
+        throw new Error("El acceso resuelto no coincide con la intención vigente");
+      }
+      if (iniciar.activoDeseado === input.activo) return { ok: true };
       throw new Error(
         "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
       );
-    }
-    // El cierre fail-safe usa una operación interna más nueva, pero preserva
-    // exactamente el desired del administrador. Un retry con la clave original
-    // debe adoptar esa reconciliación pendiente; de otro modo profile=false
-    // quedaría pendiente para siempre aunque el usuario repita la misma acción.
-    if (!iniciar.pendiente) {
-      if (iniciar.activoActual === iniciar.activoDeseado) return { ok: true };
-      throw new Error("El acceso resuelto no coincide con la intención vigente");
     }
   } else if (
     iniciar.operacionId !== input.operacion_id ||
@@ -354,7 +354,12 @@ export async function ejecutarToggleUsuarioActivo(
     () => operaciones.finalizar(input.user_id, iniciar.version, iniciar.operacionId),
     "No se pudo finalizar el cambio de acceso",
   );
-  if (final.aplicada) return { ok: true };
+  if (final.aplicada) {
+    if (final.activoDeseado === input.activo) return { ok: true };
+    throw new Error(
+      "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
+    );
+  }
 
   // Ya se tocó Auth con una intención vieja. Reparar siempre la versión que
   // devolvió el CAS, incluso cuando todavía está pendiente: el caller más
@@ -408,6 +413,7 @@ export async function ejecutarToggleUsuarioActivo(
     );
   }
 
+  if (final.activoDeseado === input.activo) return { ok: true };
   throw new Error(
     "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
   );

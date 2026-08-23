@@ -128,6 +128,40 @@ SELECT
     'execute'
   ) AS helper_service_role_temporal;
 
+-- ACL efectiva exacta de las tablas de remitos. `privilegios_efectivos` debe
+-- ser solamente SELECT y `acl_exacto=true` en las cuatro combinaciones.
+-- TRUNCATE se enumera expresamente: no alcanza con auditar INSERT/UPDATE/DELETE.
+WITH roles(rol) AS (
+  VALUES ('anon'::name),('authenticated'::name)
+), tablas(tabla) AS (
+  VALUES ('public.remitos'::regclass),('public.remito_items'::regclass)
+), privilegios(privilegio) AS (
+  VALUES
+    ('SELECT'),('INSERT'),('UPDATE'),('DELETE'),
+    ('TRUNCATE'),('REFERENCES'),('TRIGGER')
+), superficie AS (
+  SELECT
+    r.rol,
+    t.tabla,
+    p.privilegio,
+    pg_catalog.has_table_privilege(r.rol,t.tabla,p.privilegio) AS concedido
+  FROM roles AS r
+  CROSS JOIN tablas AS t
+  CROSS JOIN privilegios AS p
+)
+SELECT
+  s.rol,
+  s.tabla::text AS tabla,
+  pg_catalog.string_agg(
+    s.privilegio,',' ORDER BY s.privilegio
+  ) FILTER (WHERE s.concedido) AS privilegios_efectivos,
+  pg_catalog.bool_and(
+    s.concedido IS NOT DISTINCT FROM (s.privilegio='SELECT')
+  ) AS acl_exacto
+FROM superficie AS s
+GROUP BY s.rol,s.tabla
+ORDER BY s.rol,s.tabla::text;
+
 -- RLS y privilegios sensibles. `emision_fiscal_intentos` no es una API de navegador.
 SELECT
   c.relname AS tabla,

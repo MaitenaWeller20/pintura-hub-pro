@@ -182,6 +182,8 @@ done
     scripts/test-nota-credito-sin-factura.sh \
     scripts/test-caja-y-saldos.sh \
     scripts/test-crear-remito-atomico.sh \
+    scripts/test-remitos-acl.sh \
+    scripts/test-perfiles-inactivos-rpc.sh \
     scripts/test-conflictos-emision-rest.sh \
     scripts/test-notas-v2-rest.sh \
     scripts/test-notas-v2-scope.sh \

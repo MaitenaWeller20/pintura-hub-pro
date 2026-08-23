@@ -40,7 +40,8 @@ WITH requeridas(version,nombre) AS (
     ('20260823172000','perfil_activo_autorizacion_global'),
     ('20260823173000','anulacion_neutral_idempotente'),
     ('20260823174401','barrera_postgrest_perfiles_activos'),
-    ('20260823180500','toggle_usuario_activo_cas')
+    ('20260823180500','toggle_usuario_activo_cas'),
+    ('20260823182000','forzar_cierre_usuario_activo_fail_safe')
 )
 SELECT
   'LEDGER' AS control,
@@ -89,7 +90,8 @@ BEGIN
       ('20260823172000','perfil_activo_autorizacion_global'),
       ('20260823173000','anulacion_neutral_idempotente'),
       ('20260823174401','barrera_postgrest_perfiles_activos'),
-      ('20260823180500','toggle_usuario_activo_cas')
+      ('20260823180500','toggle_usuario_activo_cas'),
+      ('20260823182000','forzar_cierre_usuario_activo_fail_safe')
   )
   SELECT pg_catalog.string_agg(r.version||'_'||r.nombre,',' ORDER BY r.version)
     INTO v_faltantes
@@ -126,7 +128,8 @@ BEGIN
       ('20260823172000','perfil_activo_autorizacion_global'),
       ('20260823173000','anulacion_neutral_idempotente'),
       ('20260823174401','barrera_postgrest_perfiles_activos'),
-      ('20260823180500','toggle_usuario_activo_cas')
+      ('20260823180500','toggle_usuario_activo_cas'),
+      ('20260823182000','forzar_cierre_usuario_activo_fail_safe')
   )
   SELECT pg_catalog.string_agg(sm.version||'_'||sm.name,',' ORDER BY sm.version)
     INTO v_inesperadas
@@ -224,8 +227,8 @@ SELECT
     FROM acl AS a
   ),false) AS acl_exacto;
 
--- Alta/baja de usuarios instalada por #25. Las tablas no tienen superficie
--- directa y las únicas entradas son tres RPC service_role-only. La definición
+-- Alta/baja de usuarios instalada por #25/#26. Las tablas no tienen superficie
+-- directa y las únicas entradas son cuatro RPC service_role-only. La definición
 -- del pre-request debe consultar también el bloqueo/eliminación de GoTrue.
 WITH tablas AS (
   SELECT c.*
@@ -255,6 +258,10 @@ WITH tablas AS (
     (
       'reclamar_reconciliacion_usuario_activo',
       'p_profile_id uuid, p_version_observada bigint, p_operacion_id uuid'
+    ),
+    (
+      'forzar_cierre_usuario_activo_fail_safe',
+      'p_profile_id uuid, p_operacion_id uuid'
     )
 ), funciones AS (
   SELECT
@@ -293,7 +300,7 @@ SELECT
      WHERE pg_catalog.has_table_privilege(r.rol,t.oid,p.privilegio)
   ) AS tablas_sin_grants_directos,
   (
-    SELECT pg_catalog.count(*)=3 AND pg_catalog.bool_and(
+    SELECT pg_catalog.count(*)=4 AND pg_catalog.bool_and(
       pg_catalog.pg_get_function_identity_arguments(f.oid)=f.argumentos_esperados
       AND f.prosecdef
       AND f.provolatile='v'
@@ -302,7 +309,7 @@ SELECT
     FROM funciones AS f
   ) AS rpc_contrato_exacto,
   (
-    SELECT pg_catalog.count(*)=3 AND pg_catalog.bool_and(
+    SELECT pg_catalog.count(*)=4 AND pg_catalog.bool_and(
       pg_catalog.has_function_privilege('service_role',f.oid,'EXECUTE')
       AND NOT pg_catalog.has_function_privilege('anon',f.oid,'EXECUTE')
       AND NOT pg_catalog.has_function_privilege('authenticated',f.oid,'EXECUTE')
@@ -334,6 +341,43 @@ SELECT
       AND pg_catalog.strpos(definicion,'deleted_at')>0
     FROM pre_request
   ),false) AS pre_request_valida_auth;
+
+-- Estado durable del coordinador profile/GoTrue. Todos los conteos salvo
+-- `estados_total` deben ser cero antes de abrir tráfico. No se muestran IDs,
+-- emails ni claves de operación. Un pending reciente puede ser una transición
+-- en curso; uno vencido exige reintento/reconciliación administrativa.
+WITH estado AS (
+  SELECT
+    e.pendiente,
+    e.updated_at,
+    e.activo_deseado,
+    p.activo AS perfil_activo,
+    (
+      au.id IS NOT NULL
+      AND au.deleted_at IS NULL
+      AND (au.banned_until IS NULL OR au.banned_until<=pg_catalog.now())
+    ) AS auth_activo
+  FROM public.usuario_estado_acceso AS e
+  JOIN public.profiles AS p ON p.id=e.profile_id
+  LEFT JOIN auth.users AS au ON au.id=e.profile_id
+)
+SELECT
+  'ESTADO_TOGGLE_CAS' AS control,
+  pg_catalog.count(*) AS estados_total,
+  pg_catalog.count(*) FILTER (WHERE pendiente) AS pendientes,
+  pg_catalog.count(*) FILTER (
+    WHERE pendiente AND updated_at<pg_catalog.now()-interval '5 minutes'
+  ) AS pendientes_vencidas,
+  pg_catalog.count(*) FILTER (
+    WHERE pendiente AND perfil_activo
+  ) AS pendientes_publicadas,
+  pg_catalog.count(*) FILTER (
+    WHERE NOT pendiente AND perfil_activo IS DISTINCT FROM activo_deseado
+  ) AS divergencia_perfil,
+  pg_catalog.count(*) FILTER (
+    WHERE NOT pendiente AND auth_activo IS DISTINCT FROM activo_deseado
+  ) AS divergencia_auth
+FROM estado;
 
 -- Banderas. Antes del corte: false/true. Durante mantenimiento y rollback: false/false.
 SELECT

@@ -13,6 +13,8 @@ OP1="25250000-0000-4000-8000-000000000001"
 OP2="25250000-0000-4000-8000-000000000002"
 OP3="25250000-0000-4000-8000-000000000003"
 OP4="25250000-0000-4000-8000-000000000004"
+OP5="25250000-0000-4000-8000-000000000005"
+OP6="25250000-0000-4000-8000-000000000006"
 
 q() { "${PSQL[@]}" -qAtc "$1"; }
 
@@ -204,6 +206,50 @@ rpc_service final-reclamo finalizar_transicion_usuario_activo \
   "$(jq -nc --arg target "$TARGET_ID" --arg op "$OP4" \
     '{p_profile_id:$target,p_version:3,p_operacion_id:$op}')" >/dev/null
 echo "✓ reconciliación CAS conserva la intención más nueva"
+
+codigo="$(http force-authenticated-denegada POST \
+  "${API_URL%/}/rest/v1/rpc/forzar_cierre_usuario_activo_fail_safe" \
+  "$ANON_KEY" "$TARGET_JWT" \
+  "$(jq -nc --arg target "$TARGET_ID" --arg op "$OP5" \
+    '{p_profile_id:$target,p_operacion_id:$op}')")"
+if [[ "$codigo" == 2* ]]; then
+  echo "✗ authenticated pudo invocar la RPC fail-safe service_role-only" >&2
+  exit 1
+fi
+echo "✓ authenticated no puede forzar el cierre fail-safe (HTTP $codigo)"
+
+forzado="$(rpc_service force-fail-safe forzar_cierre_usuario_activo_fail_safe \
+  "$(jq -nc --arg target "$TARGET_ID" --arg op "$OP5" \
+    '{p_profile_id:$target,p_operacion_id:$op}')")"
+jq -e '.forzada==true and .supersedida==false and .version==4 and
+  .activo_deseado==true and .pendiente==true and .activo_actual==false' \
+  <<<"$forzado" >/dev/null
+replayForzado="$(rpc_service force-fail-safe-replay forzar_cierre_usuario_activo_fail_safe \
+  "$(jq -nc --arg target "$TARGET_ID" --arg op "$OP5" \
+    '{p_profile_id:$target,p_operacion_id:$op}')")"
+jq -e '.forzada==true and .replay==true and .version==4 and
+  .activo_deseado==true and .pendiente==true and .activo_actual==false' \
+  <<<"$replayForzado" >/dev/null
+echo "✓ cierre fail-safe es idempotente, preserva desired y deja el perfil pendiente"
+
+recuperado="$(rpc_service final-force finalizar_transicion_usuario_activo \
+  "$(jq -nc --arg target "$TARGET_ID" --arg op "$OP5" \
+    '{p_profile_id:$target,p_version:4,p_operacion_id:$op}')")"
+jq -e '.aplicada==true and .pendiente==false and .activo_actual==true' \
+  <<<"$recuperado" >/dev/null
+
+inicioPosterior="$(rpc_service inicio-posterior iniciar_transicion_usuario_activo \
+  "$(jq -nc --arg actor "$ACTOR_ID" --arg target "$TARGET_ID" --arg op "$OP6" \
+    '{p_actor_id:$actor,p_profile_id:$target,p_activo:false,p_operacion_id:$op}')")"
+jq -e '.version==5 and .activo_deseado==false and .pendiente==true and .activo_actual==false' \
+  <<<"$inicioPosterior" >/dev/null
+actualizar_auth auth-posterior "$TARGET_ID" 876000h
+finalPosterior="$(rpc_service final-posterior finalizar_transicion_usuario_activo \
+  "$(jq -nc --arg target "$TARGET_ID" --arg op "$OP6" \
+    '{p_profile_id:$target,p_version:5,p_operacion_id:$op}')")"
+jq -e '.aplicada==true and .pendiente==false and .activo_actual==false' \
+  <<<"$finalPosterior" >/dev/null
+echo "✓ un reintento/operación posterior recupera y finaliza el pending fail-safe"
 
 actualizar_auth bloquear-target "$TARGET_ID" 876000h
 codigo="$(http jwt-viejo-bloqueado GET \

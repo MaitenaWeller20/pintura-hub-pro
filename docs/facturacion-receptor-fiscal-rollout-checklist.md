@@ -54,6 +54,7 @@ ejecutar; cualquier diferencia exige detenerse y revisar un nuevo manifiesto.
 |    23 | `20260823173000_anulacion_neutral_idempotente.sql`               | `35e2c97613ad6c35ee7474a470804aa6f951eea0989cdecf3933ec5b74103d3b` |
 |    24 | `20260823174401_barrera_postgrest_perfiles_activos.sql`          | `865df1c382abc61caf79b973ad5b45b7258994b1732e4d131a16039eaf2f8c0a` |
 |    25 | `20260823180500_toggle_usuario_activo_cas.sql`                   | `aeaf6b67098ef8402049ae3adb63dbedd21ae0b6fa802df5bfcb24be2459e617` |
+|    26 | `20260823182000_forzar_cierre_usuario_activo_fail_safe.sql`      | `49d2f52c03b36b60fa59a4ceb2620d8c8199a02c9d8152f2722d9a00d8f1919c` |
 
 No forman parte del manifiesto `backfill_cola_fiscal` ni `retirar_escritor_fiscal_legacy`: sólo
 pueden crearse después de sus respectivos gates post-deployment.
@@ -109,15 +110,15 @@ real.
 - [ ] Se registró la duración máxima real de requests/functions/transactions: `__________`.
 - [ ] Se esperó al menos ese límite y la auditoría mostró que no quedan requests ni transacciones
       anteriores en curso.
-- [ ] Se aplicaron #4 a #25, desde `20260822161644_venta_fiscal_atomica.sql` hasta
-      `20260823180500_toggle_usuario_activo_cas.sql`, uno por transacción, con hashes y
+- [ ] Se aplicaron #4 a #26, desde `20260822161644_venta_fiscal_atomica.sql` hasta
+      `20260823182000_forzar_cierre_usuario_activo_fail_safe.sql`, uno por transacción, con hashes y
       postcondiciones verificados, y cada versión quedó registrada mediante `migration repair`.
 - [ ] La auditoría sólo lectura distingue esquema de ledger y terminó sin la excepción
-      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 25 filas.
+      `LEDGER_MIGRACIONES_INCOMPLETO`; `supabase migration list --linked` coincide con las 26 filas.
 - [ ] La postcondición de #24 confirmó que el rol `authenticator` tiene
       `pgrst.db_pre_request=public.validar_perfil_activo_postgrest`, que la función existe con su
       contrato y ACL esperados, y que PostgREST recargó la configuración.
-- [ ] La postcondición de #25 confirmó las dos tablas CAS sin grants directos, las tres RPC
+- [ ] La postcondición de #25/#26 confirmó las dos tablas CAS sin grants directos, las cuatro RPC
       `service_role`-only y el trigger que impide cambiar `profiles.activo` por fuera de una
       transición versionada.
 - [ ] El contrato REST global confirmó que un JWT `authenticated` con perfil inactivo o ausente
@@ -127,6 +128,12 @@ real.
 - [ ] El contrato CAS confirmó inicio/final idempotentes ante respuesta perdida, retry tardío
       supersedido, baja/alta concurrentes, reconciliación de la intención más nueva y cero perfiles
       publicados mientras GoTrue queda pendiente.
+- [ ] El cierre fail-safe de #26 conservó el estado deseado vigente, quedó idempotente por clave y,
+      al agotar carreras, dejó `profile=false/pending` sin informar éxito; un reintento posterior
+      pudo recuperar y finalizar el estado.
+- [ ] La auditoría `ESTADO_TOGGLE_CAS` dio cero en `pendientes_vencidas`,
+      `pendientes_publicadas`, `divergencia_perfil` y `divergencia_auth`. Cualquier pendiente
+      reciente se drenó o se dejó en mantenimiento con responsable explícito: `__________`.
 - [ ] Se registró que esta barrera cubre exclusivamente la Data API/PostgREST: no intercepta Auth,
       Storage, Realtime ni otros productos, que requieren controles propios si entran en alcance.
 - [ ] Se desplegó el cliente compatible sólo con autorización separada; ID: `__________`.

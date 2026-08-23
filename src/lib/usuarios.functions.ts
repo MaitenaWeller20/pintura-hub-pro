@@ -208,6 +208,10 @@ export type OperacionesToggleUsuario = {
     versionObservada: number,
     operacionId: string,
   ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  forzarCierreFailSafe(
+    userId: string,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
   actualizarAuth(
     userId: string,
     banDuration: "none" | "876000h",
@@ -224,6 +228,7 @@ type EstadoToggleUsuario = {
   aplicada: boolean;
   supersedida: boolean;
   reclamada: boolean;
+  forzada: boolean;
 };
 
 function mensajeErrorUsuario(error: unknown, fallback: string): string {
@@ -267,6 +272,7 @@ export async function ejecutarToggleUsuarioActivo(
       aplicada: value.aplicada === true,
       supersedida: value.supersedida === true,
       reclamada: value.reclamada === true,
+      forzada: value.forzada === true,
     };
   };
 
@@ -338,28 +344,56 @@ export async function ejecutarToggleUsuarioActivo(
   );
   if (final.aplicada) return { ok: true };
 
-  // Ya se tocó Auth con una intención vieja. Si el cambio más nuevo sigue
-  // pendiente, su perfil continúa cerrado y él mismo terminará la operación.
-  // Si ya estaba estable, reclamamos por CAS una reconciliación que conserva
-  // exactamente su desired más nuevo; nunca volvemos a imponer el pedido viejo.
-  for (let intento = 0; intento < 4 && !final.pendiente; intento += 1) {
-    const reconciliacionId = operaciones.generarOperacionId();
-    const reclamo = await rpcConReintento(
-      () => operaciones.reclamarReconciliacion(input.user_id, final.version, reconciliacionId),
-      "No se pudo reconciliar el cambio de acceso más reciente",
-    );
-    if (!reclamo.reclamada) {
-      final = reclamo;
+  // Ya se tocó Auth con una intención vieja. Reparar siempre la versión que
+  // devolvió el CAS, incluso cuando todavía está pendiente: el caller más
+  // nuevo puede estar pausado entre su escritura en GoTrue y el COMMIT DB.
+  // Cada escritura externa se confirma con version+operacion; si entretanto
+  // apareció una versión posterior, se repite con esa intención y nunca se
+  // vuelve a imponer el pedido original.
+  let reconciliada = false;
+  for (let intento = 0; intento < 8; intento += 1) {
+    if (!final.pendiente) {
+      const reconciliacionId = operaciones.generarOperacionId();
+      final = await rpcConReintento(
+        () => operaciones.reclamarReconciliacion(input.user_id, final.version, reconciliacionId),
+        "No se pudo reconciliar el cambio de acceso más reciente",
+      );
       continue;
     }
-    if (!reclamo.pendiente) break;
 
-    await actualizarAuthValidado(reclamo.activoDeseado ? "none" : "876000h");
+    await actualizarAuthValidado(final.activoDeseado ? "none" : "876000h");
     final = await rpcConReintento(
-      () => operaciones.finalizar(input.user_id, reclamo.version, reconciliacionId),
-      "No se pudo cerrar la reconciliación del acceso",
+      () => operaciones.finalizar(input.user_id, final.version, final.operacionId),
+      "No se pudo confirmar la reconciliación del acceso",
     );
-    if (final.aplicada) break;
+    if (final.aplicada) {
+      reconciliada = true;
+      break;
+    }
+  }
+
+  if (!reconciliada) {
+    // Con churn sostenido no se adivina un ganador ni se espera para siempre.
+    // La primitiva fail-safe toma el desired vigente bajo lock, crea una
+    // reconciliación más nueva y deja profile=false/pending. El administrador
+    // ve el error y reintenta; jamás se informa éxito con Auth ambiguo.
+    let cerrada = false;
+    for (let intento = 0; intento < 3 && !cerrada; intento += 1) {
+      const cierreId = operaciones.generarOperacionId();
+      final = await rpcConReintento(
+        () => operaciones.forzarCierreFailSafe(input.user_id, cierreId),
+        "No se pudo cerrar el acceso después de cambios concurrentes",
+      );
+      cerrada = final.forzada && final.pendiente && !final.activoActual;
+    }
+    if (!cerrada) {
+      throw new Error(
+        "El acceso quedó en un estado ambiguo y no se pudo cerrar automáticamente; requiere revisión administrativa.",
+      );
+    }
+    throw new Error(
+      "La operación fue reemplazada varias veces. El acceso quedó cerrado y pendiente; reintentá la misma acción para reconciliarlo.",
+    );
   }
 
   throw new Error(
@@ -403,6 +437,12 @@ export const toggleUsuarioActivo = createServerFn({ method: "POST" })
         return supabaseAdmin.rpc("reclamar_reconciliacion_usuario_activo", {
           p_profile_id: targetUserId,
           p_version_observada: versionObservada,
+          p_operacion_id: operacionId,
+        });
+      },
+      async forzarCierreFailSafe(targetUserId, operacionId) {
+        return supabaseAdmin.rpc("forzar_cierre_usuario_activo_fail_safe", {
+          p_profile_id: targetUserId,
           p_operacion_id: operacionId,
         });
       },

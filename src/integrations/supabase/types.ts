@@ -3631,6 +3631,10 @@ export type Database = {
       }
       fiscal_json_canonico: { Args: { p_value: Json }; Returns: string }
       fiscal_snapshot_hash: { Args: { p_snapshot: Json }; Returns: string }
+      forzar_cierre_usuario_activo_fail_safe: {
+        Args: { p_operacion_id: string; p_profile_id: string }
+        Returns: Json
+      }
       guardar_extraccion_ingreso: {
         Args: {
           p_archivo_path?: string

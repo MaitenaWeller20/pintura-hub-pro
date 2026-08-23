@@ -36,6 +36,13 @@ import {
 } from "@/lib/usuarios.functions";
 import { GRUPOS, SECCIONES_DEFAULT, SECCIONES_OTORGABLES } from "@/lib/secciones";
 import { faltanteUsuario, generarPassword, PASSWORD_MINIMO } from "@/lib/alta-usuario";
+import {
+  almacenSesionToggleUsuario,
+  estadoInicialToggleUsuario,
+  objetivoToggleUsuario,
+  RegistroOperacionesToggleUsuario,
+  type EstadoToggleUsuario,
+} from "@/lib/usuario-toggle-durable";
 
 export const Route = createFileRoute("/_authenticated/usuarios")({
   ssr: false,
@@ -54,6 +61,13 @@ function UsuariosPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [togglesPendientes, setTogglesPendientes] = useState<Set<string>>(() => new Set());
+  const [registroToggles] = useState(
+    () =>
+      new RegistroOperacionesToggleUsuario(almacenSesionToggleUsuario(), () => crypto.randomUUID()),
+  );
+  const [estadosToggle, setEstadosToggle] = useState<Record<string, EstadoToggleUsuario>>(() =>
+    estadoInicialToggleUsuario(registroToggles),
+  );
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
 
@@ -106,12 +120,30 @@ function UsuariosPage() {
     mutationFn: async (d) => toggle({ data: d }),
     onMutate: (d) => {
       setTogglesPendientes((actuales) => new Set(actuales).add(d.user_id));
+      setEstadosToggle((actuales) => ({
+        ...actuales,
+        [d.user_id]: { tipo: "pendiente", activoDeseado: d.activo },
+      }));
     },
-    onSuccess: () => {
+    onSuccess: async (_data, variables) => {
+      registroToggles.confirmarExito(variables.user_id, variables.activo);
       toast.success("Estado actualizado");
-      qc.invalidateQueries({ queryKey: ["usuarios"] });
+      await qc.invalidateQueries({ queryKey: ["usuarios"] });
+      setEstadosToggle((actuales) => {
+        const siguientes = { ...actuales };
+        delete siguientes[variables.user_id];
+        return siguientes;
+      });
     },
-    onError: (e: any) => toast.error(e.message),
+    onError: async (error, variables) => {
+      const tipo = registroToggles.resolverError(variables.user_id, variables.activo, error);
+      setEstadosToggle((actuales) => ({
+        ...actuales,
+        [variables.user_id]: { tipo, activoDeseado: variables.activo },
+      }));
+      toast.error(error.message);
+      await qc.invalidateQueries({ queryKey: ["usuarios"] });
+    },
     onSettled: (_data, _error, variables) => {
       setTogglesPendientes((actuales) => {
         const siguientes = new Set(actuales);
@@ -190,11 +222,29 @@ function UsuariosPage() {
               {u.sucursal?.nombre ?? "—"}
             </TableCell>
             <TableCell>
-              {u.activo ? (
-                <StatusPill tone="success">Activo</StatusPill>
-              ) : (
-                <StatusPill tone="neutral">Inactivo</StatusPill>
-              )}
+              <div className="space-y-1">
+                {u.activo ? (
+                  <StatusPill tone="success">Activo</StatusPill>
+                ) : (
+                  <StatusPill tone="neutral">Inactivo</StatusPill>
+                )}
+                {estadosToggle[u.id]?.tipo === "pendiente" && (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    Aplicando {estadosToggle[u.id].activoDeseado ? "activación" : "desactivación"}…
+                  </p>
+                )}
+                {estadosToggle[u.id]?.tipo === "requiere_reintento" && (
+                  <p className="text-xs text-amber-700" role="status">
+                    Requiere reintentar la{" "}
+                    {estadosToggle[u.id].activoDeseado ? "activación" : "desactivación"}
+                  </p>
+                )}
+                {estadosToggle[u.id]?.tipo === "supersedida" && (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    Reemplazada por un cambio más nuevo
+                  </p>
+                )}
+              </div>
             </TableCell>
             <TableCell className="flex gap-1">
               {/* El permiso de venta sin stock vivía acá como un ícono cuyo
@@ -221,16 +271,23 @@ function UsuariosPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                title={u.activo ? "Desactivar" : "Activar"}
+                title={
+                  estadosToggle[u.id]?.tipo === "requiere_reintento"
+                    ? `Reintentar ${estadosToggle[u.id].activoDeseado ? "activación" : "desactivación"}`
+                    : u.activo
+                      ? "Desactivar"
+                      : "Activar"
+                }
                 disabled={togglesPendientes.has(u.id)}
                 aria-busy={togglesPendientes.has(u.id)}
-                onClick={() =>
+                onClick={() => {
+                  const activo = objetivoToggleUsuario(u.activo, estadosToggle[u.id]);
                   togg.mutate({
                     user_id: u.id,
-                    activo: !u.activo,
-                    operacion_id: crypto.randomUUID(),
-                  })
-                }
+                    activo,
+                    operacion_id: registroToggles.obtenerOCrear(u.id, activo),
+                  });
+                }}
               >
                 {togglesPendientes.has(u.id) ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

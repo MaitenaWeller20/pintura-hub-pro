@@ -10,6 +10,7 @@ const EMPLEADO = "e0000000-0000-4000-8000-000000000002";
 const OP_BAJA = "10000000-0000-4000-8000-000000000001";
 const OP_ALTA = "10000000-0000-4000-8000-000000000002";
 const OP_RECONCILIAR = "10000000-0000-4000-8000-000000000003";
+const OP_FAIL_SAFE = "10000000-0000-4000-8000-000000000004";
 
 describe("setPuedeFacturar", () => {
   it("rechaza a quien no es admin antes de intentar cambiar la capacidad", async () => {
@@ -91,8 +92,10 @@ class ToggleCasDouble {
   ids = [OP_RECONCILIAR];
   iniciarCalls = 0;
   finalizarCalls = 0;
+  forzarCalls = 0;
   authCalls: Array<"none" | "876000h"> = [];
   antesDeAuth: ((ban: "none" | "876000h") => Promise<void>) | null = null;
+  antesDeFinalizar: ((version: number, operacionId: string) => Promise<void>) | null = null;
   operacionesConsumidas = new Map<string, { version: number; activoDeseado: boolean }>();
 
   private respuesta(extra: Record<string, unknown> = {}) {
@@ -137,6 +140,7 @@ class ToggleCasDouble {
       },
       finalizar: async (_userId, version, operacionId) => {
         this.finalizarCalls += 1;
+        await this.antesDeFinalizar?.(version, operacionId);
         if (this.estado.version === version && this.estado.operacionId === operacionId) {
           if (this.estado.pendiente) {
             this.estado.perfilActivo = this.estado.activoDeseado;
@@ -170,6 +174,33 @@ class ToggleCasDouble {
           reclamada = true;
         }
         return { data: this.respuesta({ reclamada }), error: null };
+      },
+      forzarCierreFailSafe: async (_userId, operacionId) => {
+        this.forzarCalls += 1;
+        const consumida = this.operacionesConsumidas.get(operacionId);
+        if (consumida) {
+          const vigente =
+            consumida.version === this.estado.version && this.estado.operacionId === operacionId;
+          if (!vigente) {
+            return {
+              data: this.respuesta({ forzada: false, supersedida: true, replay: true }),
+              error: null,
+            };
+          }
+        } else {
+          this.estado.version += 1;
+          this.estado.operacionId = operacionId;
+          this.operacionesConsumidas.set(operacionId, {
+            version: this.estado.version,
+            activoDeseado: this.estado.activoDeseado,
+          });
+        }
+        this.estado.pendiente = true;
+        this.estado.perfilActivo = false;
+        return {
+          data: this.respuesta({ forzada: true, supersedida: false, replay: !!consumida }),
+          error: null,
+        };
       },
       actualizarAuth: async (_userId, banDuration) => {
         this.authCalls.push(banDuration);
@@ -379,6 +410,80 @@ describe("toggleUsuarioActivo", () => {
     expect(doble.authCalls).toEqual(["876000h", "none", "none"]);
   });
 
+  it("una alta vieja repara la baja nueva aunque la transición más reciente todavía esté pendiente", async () => {
+    const doble = new ToggleCasDouble();
+    doble.estado.perfilActivo = false;
+    doble.estado.activoDeseado = false;
+    doble.estado.authBloqueado = true;
+
+    let liberarAltaVieja!: () => void;
+    let avisarAltaVieja!: () => void;
+    const altaViejaEnAuth = new Promise<void>((resolve) => {
+      avisarAltaVieja = resolve;
+    });
+    const altaViejaPuedeEscribir = new Promise<void>((resolve) => {
+      liberarAltaVieja = resolve;
+    });
+    doble.antesDeAuth = async (banDuration) => {
+      if (banDuration === "none" && doble.authCalls.length === 1) {
+        avisarAltaVieja();
+        await altaViejaPuedeEscribir;
+      }
+    };
+
+    let liberarFinalBaja!: () => void;
+    let avisarFinalBaja!: () => void;
+    const bajaEscribioAuth = new Promise<void>((resolve) => {
+      avisarFinalBaja = resolve;
+    });
+    const bajaPuedeFinalizar = new Promise<void>((resolve) => {
+      liberarFinalBaja = resolve;
+    });
+    let primerFinalBaja = true;
+    doble.antesDeFinalizar = async (version, operacionId) => {
+      if (version === 2 && operacionId === OP_BAJA && primerFinalBaja) {
+        primerFinalBaja = false;
+        avisarFinalBaja();
+        await bajaPuedeFinalizar;
+      }
+    };
+
+    const operaciones = doble.operaciones();
+    const altaVieja = ejecutarToggleUsuarioActivo(
+      { user_id: EMPLEADO, activo: true, operacion_id: OP_ALTA },
+      operaciones,
+    );
+    await altaViejaEnAuth;
+
+    const bajaNueva = ejecutarToggleUsuarioActivo(
+      { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+      operaciones,
+    );
+    await bajaEscribioAuth;
+    expect(doble.estado).toMatchObject({
+      version: 2,
+      activoDeseado: false,
+      pendiente: true,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+
+    // La escritura vieja ocurre después del ban nuevo pero antes de su COMMIT DB.
+    liberarAltaVieja();
+    await expect(altaVieja).rejects.toThrow(/reemplazada.*estado más reciente/i);
+    liberarFinalBaja();
+    await expect(bajaNueva).resolves.toEqual({ ok: true });
+
+    expect(doble.estado).toMatchObject({
+      version: 2,
+      activoDeseado: false,
+      pendiente: false,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+    expect(doble.authCalls).toEqual(["none", "876000h", "876000h"]);
+  });
+
   it("un retry tardío con una clave vieja queda supersedido sin tocar Auth ni revivir su intención", async () => {
     const doble = new ToggleCasDouble();
     const operaciones = doble.operaciones();
@@ -406,5 +511,53 @@ describe("toggleUsuarioActivo", () => {
       perfilActivo: true,
       authBloqueado: false,
     });
+  });
+
+  it("agota el churn de versiones en estado fail-closed y exige reintento", async () => {
+    const doble = new ToggleCasDouble();
+    doble.ids = [OP_FAIL_SAFE];
+    const operaciones = doble.operaciones();
+    const finalizarReal = operaciones.finalizar;
+    operaciones.finalizar = async (...args) => {
+      await finalizarReal(...args);
+      // Cada confirmación pierde contra una intención posterior. La intención
+      // alterna para demostrar que la reparación nunca repone el pedido viejo.
+      const nuevaId = `30000000-0000-4000-8000-${String(doble.estado.version + 1).padStart(12, "0")}`;
+      doble.estado.version += 1;
+      doble.estado.activoDeseado = !doble.estado.activoDeseado;
+      doble.estado.operacionId = nuevaId;
+      doble.estado.pendiente = true;
+      doble.estado.perfilActivo = false;
+      doble.operacionesConsumidas.set(nuevaId, {
+        version: doble.estado.version,
+        activoDeseado: doble.estado.activoDeseado,
+      });
+      return {
+        data: {
+          version: doble.estado.version,
+          activo_deseado: doble.estado.activoDeseado,
+          operacion_id: doble.estado.operacionId,
+          pendiente: true,
+          activo_actual: false,
+          aplicada: false,
+          supersedida: true,
+        },
+        error: null,
+      };
+    };
+
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+        operaciones,
+      ),
+    ).rejects.toThrow(/cerrado y pendiente.*reintent/i);
+    expect(doble.forzarCalls).toBe(1);
+    expect(doble.estado).toMatchObject({
+      operacionId: OP_FAIL_SAFE,
+      pendiente: true,
+      perfilActivo: false,
+    });
+    expect(doble.authCalls).toHaveLength(9);
   });
 });

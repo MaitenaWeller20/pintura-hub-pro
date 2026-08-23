@@ -175,7 +175,7 @@ no constituye una ventana de convivencia; el cliente actual requiere el contrato
 
 La instalación manual debe detenerse antes de la #4 y entrar en una ventana de mantenimiento real:
 impedir nuevas escrituras comerciales, drenar requests y transacciones de todas las instancias
-anteriores, aplicar #4 a #25 en orden, desplegar el cliente compatible con autorización separada y
+anteriores, aplicar #4 a #26 en orden, desplegar el cliente compatible con autorización separada y
 mantener el bloqueo hasta comprobarlo y drenar las instancias viejas. Si no se puede demostrar el
 mantenimiento o el drenaje, se aborta. No se expone el helper a `authenticated` como atajo; el
 permiso transitorio de `service_role` se retira sólo junto con el escritor fiscal legado, en un gate
@@ -187,7 +187,11 @@ JWT `authenticated` que siga siendo criptográficamente válido queda rechazado 
 inactivo o ya no existe, antes de acceder a tablas, vistas o RPC. La #25 suma el estado de Auth a
 ese control: también rechaza al usuario eliminado o bloqueado y serializa cada alta/baja con una
 versión y una clave idempotente. El perfil permanece inactivo hasta que GoTrue confirma el mismo
-estado; una respuesta vieja o supersedida no puede ganar sobre el pedido más reciente.
+estado; una respuesta vieja o supersedida no puede ganar sobre el pedido más reciente. La #26
+agrega el cierre de último recurso: si demasiados cambios concurrentes impiden confirmar el estado,
+preserva la intención más nueva, deja el perfil inactivo y pendiente y obliga a reintentar. La
+pantalla conserva la clave del intento ambiguo y lo muestra como pendiente; no informa éxito ni
+genera una clave distinta con cada clic.
 
 La barrera de #24/#25 no se ejecuta en GoTrue/Auth, Storage, Realtime ni otros productos de Supabase.
 No debe presentarse como un cierre universal de sesión: esos caminos necesitan su propio control si

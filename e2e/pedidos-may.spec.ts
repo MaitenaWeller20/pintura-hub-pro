@@ -15,7 +15,7 @@ test.afterAll(async () => {
   await limpiarFixturesFiscales();
 });
 test.beforeEach(async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
 });
 
 /** Los dígitos del primer CUIT de 11 que aparezca en la grilla de clientes. */

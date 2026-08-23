@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ejecutarFachadaEmisionPostBorrador, postBorradorInputSchema } from "./fiscal.functions";
+import {
+  emitirInputSchema,
+  ejecutarFachadaEmisionPostBorrador,
+  postBorradorInputSchema,
+} from "./fiscal.functions";
 
 const INPUT = {
   venta_id: "71000000-0000-4000-8000-000000000001",
@@ -10,6 +14,18 @@ const INPUT = {
 };
 
 describe("fachada post-borrador", () => {
+  it("exige una huella canónica en toda emisión v2 regular", () => {
+    const v2 = {
+      venta_id: INPUT.venta_id,
+      receptor: INPUT.receptor,
+      confirma_venta_antigua: false,
+      huella_confirmacion: INPUT.huella_confirmacion_provisional,
+    };
+    expect(emitirInputSchema.parse(v2)).toEqual(v2);
+    expect(() => emitirInputSchema.parse({ ...v2, huella_confirmacion: undefined })).toThrow();
+    expect(() => emitirInputSchema.parse({ ...v2, huella_confirmacion: "a" })).toThrow();
+  });
+
   it("rechaza claves desconocidas y huellas no canónicas antes del handler", () => {
     expect(postBorradorInputSchema).toBeDefined();
     expect(postBorradorInputSchema.parse(INPUT)).toEqual(INPUT);

@@ -84,6 +84,9 @@ function previewReconfirmada(
       letra: autoritativa.letra,
       razon_letra: `La condición ${autoritativa.receptor.condicionIva} determina letra ${autoritativa.letra}.`,
       emisor_cuit: autoritativa.emisorCuit,
+      emisor_razon_social: autoritativa.emisorRazonSocial,
+      sucursal_id: autoritativa.sucursalId,
+      sucursal_nombre: autoritativa.sucursalNombre,
       punto_venta: autoritativa.puntoVenta,
       modo: autoritativa.modo,
       cbte_tipo: autoritativa.cbteTipo,
@@ -100,6 +103,9 @@ function previewReconfirmada(
     letra: autoritativa.letra,
     razon_letra: `La condición ${autoritativa.receptor.condicionIva} determina letra ${autoritativa.letra}.`,
     emisor_cuit: autoritativa.emisorCuit,
+    emisor_razon_social: autoritativa.emisorRazonSocial,
+    sucursal_id: autoritativa.sucursalId,
+    sucursal_nombre: autoritativa.sucursalNombre,
     punto_venta: autoritativa.puntoVenta,
     modo: autoritativa.modo,
     cbte_tipo: autoritativa.cbteTipo,
@@ -108,6 +114,9 @@ function previewReconfirmada(
       version: 1,
       importe: autoritativa.importe,
       emisor_cuit: autoritativa.emisorCuit,
+      emisor_razon_social: autoritativa.emisorRazonSocial,
+      sucursal_id: autoritativa.sucursalId,
+      sucursal_nombre: autoritativa.sucursalNombre,
       punto_venta: autoritativa.puntoVenta,
       modo: autoritativa.modo,
       letra: autoritativa.letra,
@@ -304,19 +313,20 @@ export function DialogoEmisionFiscal({
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Emisión
               </p>
-              <p className="font-semibold">{contexto.emisor.razonSocial}</p>
-              <p className="text-xs text-muted-foreground">
-                CUIT {contexto.emisor.cuit} · {contexto.sucursal.nombre} · PV{" "}
-                {contexto.sucursal.puntoVenta == null
-                  ? "a confirmar"
-                  : String(contexto.sucursal.puntoVenta).padStart(5, "0")}{" "}
-                ·{" "}
-                {contexto.sucursal.modo === "PRODUCCION"
-                  ? "Producción"
-                  : contexto.sucursal.modo === "HOMOLOGACION"
-                    ? "Homologación"
-                    : "Ambiente a confirmar"}
-              </p>
+              {preview ? (
+                <>
+                  <p className="font-semibold">{preview.emisor_razon_social}</p>
+                  <p className="text-xs text-muted-foreground">
+                    CUIT {preview.emisor_cuit} · {preview.sucursal_nombre} · PV{" "}
+                    {String(preview.punto_venta).padStart(5, "0")} ·{" "}
+                    {preview.modo === "PRODUCCION" ? "Producción" : "Homologación"}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  El servidor resolverá emisor, sucursal, punto de venta y ambiente al revisar.
+                </p>
+              )}
             </div>
           </section>
 
@@ -338,8 +348,6 @@ export function DialogoEmisionFiscal({
             <ResumenEmisionFiscal
               preview={preview}
               comprador={contexto.comprador.razonSocial}
-              emisor={contexto.emisor.razonSocial}
-              sucursal={contexto.sucursal.nombre}
               requiereSegundaConfirmacion={confirmacion.requiereSegundaConfirmacion}
             />
           ) : (

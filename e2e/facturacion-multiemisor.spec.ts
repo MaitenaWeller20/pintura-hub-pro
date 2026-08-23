@@ -9,7 +9,7 @@ test.afterAll(async () => {
 });
 
 test.beforeEach(async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/facturacion/configuracion");
 });
 
@@ -28,7 +28,8 @@ test("separa CSR, certificado y PV por CUIT", async ({ page }) => {
   await expect(grupo).toContainText(/configuración en curso|falta generar csr/i);
 
   await expect(aplicaciones.getByRole("button", { name: /CSR de producción/i })).toHaveCount(1);
-  await expect(grupo.getByRole("button", { name: /CSR de producción/i })).toHaveCount(1);
+  await expect(grupo.getByRole("button", { name: /^Deshabilitar producción$/i })).toHaveCount(1);
+  await expect(grupo.getByRole("button", { name: /CSR de producción/i })).toHaveCount(0);
 });
 
 test("un PV inválido no se puede guardar", async ({ page }) => {

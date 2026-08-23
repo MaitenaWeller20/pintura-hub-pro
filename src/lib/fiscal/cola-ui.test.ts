@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   actualizarBusquedaCola,
+  clasificarInteraccionCola,
   crearActualizadorBusquedaCola,
   accionesColaHabilitadas,
   cerrarResultadoCola,
@@ -136,6 +137,14 @@ const casos: Caso[] = [
 ];
 
 describe("presentación de estados de la cola fiscal", () => {
+  it("abre detalle descargable para APROBADO y detalle readonly para CANCELADO", () => {
+    expect(clasificarInteraccionCola("Ver/descargar")).toBe("DETALLE_DESCARGA");
+    expect(clasificarInteraccionCola("Ver")).toBe("DETALLE_LECTURA");
+    expect(clasificarInteraccionCola("Facturar")).toBe("EMISION");
+    expect(clasificarInteraccionCola("Procesando")).toBeNull();
+    expect(clasificarInteraccionCola("Requiere administrador")).toBeNull();
+  });
+
   it.each(casos)("clasifica $nombre y ofrece sólo la acción segura", (caso) => {
     const entrada = {
       estado: caso.estado,

@@ -11,6 +11,7 @@ import {
 } from "./emision";
 import type { SelectorReceptorFiscal } from "./receptor";
 import type { SnapshotFiscalV2 } from "./snapshot";
+import { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
 
 const MANUAL_A: SelectorReceptorFiscal = {
   origen: "MANUAL",
@@ -30,6 +31,57 @@ const MANUAL_B: SelectorReceptorFiscal = {
 };
 
 const ORIGINAL: SelectorReceptorFiscal = { origen: "COMPROBANTE_ORIGINAL" };
+
+const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
+  version: 1,
+  importe: "1210.00",
+  emisorCuit: "30714199664",
+  emisorRazonSocial: "EMISOR",
+  sucursalId: "71000000-0000-4000-8000-000000000301",
+  sucursalNombre: "Sucursal",
+  puntoVenta: 5,
+  modo: "PRODUCCION",
+  letra: "A",
+  cbteTipo: 1,
+  fechaFiscal: "2026-08-22",
+  receptor: {
+    razonSocial: "RECEPTOR A",
+    domicilio: "Domicilio A",
+    tipoDocumento: "CUIT",
+    numeroDocumento: "30714199664",
+    docTipoArca: 80,
+    docNroArca: "30714199664",
+    condicionIva: "RESPONSABLE_INSCRIPTO",
+    origen: "MANUAL",
+    origenId: null,
+    verificadoArcaAt: null,
+  },
+};
+
+function confirmacionPara(
+  tipo: FiscalDouble["tipo"],
+  receptor: SelectorReceptorFiscal,
+): ConfirmacionFiscalPostBorrador {
+  const confirmacion = structuredClone(CONFIRMACION_BASE);
+  confirmacion.cbteTipo = tipo === "NOTA_CREDITO" ? 3 : 1;
+  if (receptor.origen === "MANUAL") {
+    confirmacion.receptor = {
+      ...confirmacion.receptor,
+      razonSocial: receptor.razon_social,
+      domicilio: receptor.domicilio,
+      tipoDocumento: receptor.tipo_documento,
+      numeroDocumento: receptor.numero_documento,
+      docNroArca: receptor.numero_documento ?? "0",
+    };
+  } else if (receptor.origen === "COMPROBANTE_ORIGINAL") {
+    confirmacion.receptor.razonSocial = "ORIGINAL";
+  }
+  return confirmacion;
+}
+
+function huellaPara(doble: FiscalDouble, receptor: SelectorReceptorFiscal): string {
+  return crearHuellaConfirmacionFiscal(confirmacionPara(doble.tipo, receptor));
+}
 
 type TransitionCall = {
   accion: AccionTransicionFiscal;
@@ -85,6 +137,7 @@ class FiscalDouble {
   throwSolicitud: unknown | null = null;
   throwPayload: unknown | null = null;
   throwTransitionOnce: AccionTransicionFiscal | null = null;
+  conflictosSecuenciaRestantes = 0;
   commitThenThrowOnce: AccionTransicionFiscal | null = null;
   preparedSnapshot: SnapshotFiscalV2 | null = null;
   nextClaim = 1;
@@ -146,6 +199,7 @@ class FiscalDouble {
       autorizarConciliacion: async () => undefined,
       prepararEmision: async ({ receptor }) => {
         this.receptoresPreparados.push(structuredClone(receptor));
+        const confirmacionAutoritativa = confirmacionPara(this.tipo, receptor);
         const preparacion: PreparacionEmisionFiscal = {
           ventaId: "71000000-0000-4000-8000-000000000001",
           tipoComprobante: this.tipo === "NOTA_CREDITO" ? "NOTA_CREDITO" : "VENTA",
@@ -156,6 +210,8 @@ class FiscalDouble {
           simulado: this.simulado,
           validez: this.simulado ? "SIMULADA" : "PRODUCCION",
           fechaComprobante: "2026-08-22",
+          confirmacionAutoritativa,
+          huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
         };
         return preparacion;
       },
@@ -185,6 +241,15 @@ class FiscalDouble {
       },
       transicionar: async ({ accion, claimToken, payload }) => {
         this.calls.push({ accion, claimToken, payload: structuredClone(payload) });
+        if (accion === "RESERVAR" && this.conflictosSecuenciaRestantes > 0) {
+          this.conflictosSecuenciaRestantes -= 1;
+          this.ultimoLocal += 1;
+          const error = new Error(
+            `EMISION_FISCAL_SECUENCIA_OBSOLETA: observado ${payload.ultimo_local_observado}, vigente ${this.ultimoLocal}`,
+          ) as Error & { code: string };
+          error.code = "PT409";
+          throw error;
+        }
         if (this.throwTransitionOnce === accion) {
           this.throwTransitionOnce = null;
           throw new Error(`persistencia ${accion}`);
@@ -270,6 +335,13 @@ class FiscalDouble {
         return this.solicitud;
       },
       esConflictoClaim: (error) => (error as Error)?.name === "ClaimFiscalConflict",
+      esConflictoSecuencia: (error) => {
+        const value = error as { code?: string; message?: string };
+        return (
+          value.code === "PT409" &&
+          (value.message ?? "").startsWith("EMISION_FISCAL_SECUENCIA_OBSOLETA")
+        );
+      },
       consultarComprobanteCompleto: async () => this.remote,
       consultarUltimoAutorizado: async () => this.ultimoRemoto,
       decidirConciliacion: () => this.decision,
@@ -282,6 +354,62 @@ function acciones(doble: FiscalDouble): string[] {
 }
 
 describe("ejecutarEmisionFiscal", () => {
+  it.each([
+    [
+      "receptor",
+      (c: ConfirmacionFiscalPostBorrador) => (c.receptor.razonSocial = "RECEPTOR MUTADO"),
+    ],
+    [
+      "favorito",
+      (c: ConfirmacionFiscalPostBorrador) => {
+        c.receptor.origen = "FAVORITO";
+        c.receptor.origenId = "71000000-0000-4000-8000-000000000099";
+      },
+    ],
+    [
+      "configuración de emisor",
+      (c: ConfirmacionFiscalPostBorrador) => (c.emisorCuit = "30717322467"),
+    ],
+    [
+      "razón social del emisor",
+      (c: ConfirmacionFiscalPostBorrador) => (c.emisorRazonSocial = "EMISOR MUTADO"),
+    ],
+    ["sucursal", (c: ConfirmacionFiscalPostBorrador) => (c.sucursalNombre = "SUCURSAL MUTADA")],
+    ["punto de venta", (c: ConfirmacionFiscalPostBorrador) => (c.puntoVenta = 6)],
+  ])("tras claim rechaza una mutación de %s y no reserva ni llama ARCA", async (_caso, mutar) => {
+    const doble = new FiscalDouble();
+    const deps = doble.deps();
+    const preparar = deps.prepararEmision;
+    const confirmacionMutada = structuredClone(CONFIRMACION_BASE);
+    mutar(confirmacionMutada);
+    deps.prepararEmision = async (input) =>
+      Object.assign(await preparar(input), {
+        confirmacionAutoritativa: confirmacionMutada,
+        huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionMutada),
+      });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+      } as never,
+      deps,
+    );
+
+    expect(resultado).toMatchObject({
+      estado: "RECONFIRMACION_REQUERIDA",
+      huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacionMutada),
+      confirmacion_autoritativa: confirmacionMutada,
+    });
+    expect(acciones(doble)).toEqual(["RECLAMAR", "ERROR_CORREGIBLE"]);
+    expect(doble.payloadsCae).toHaveLength(0);
+    expect(doble.numero).toBeNull();
+    expect(doble.claim).toBeNull();
+    expect(doble.receptoresPreparados).toHaveLength(1);
+  });
+
   it("persiste cada fase y consume la versión recién devuelta antes de aprobar", async () => {
     const doble = new FiscalDouble();
 
@@ -290,6 +418,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -315,6 +444,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -333,6 +463,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -354,6 +485,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -374,6 +506,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -396,6 +529,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -433,6 +567,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -456,6 +591,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -481,6 +617,7 @@ describe("ejecutarEmisionFiscal", () => {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_A,
           confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
         },
         doble.deps(),
       );
@@ -503,6 +640,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       doble.deps(),
     );
@@ -554,6 +692,7 @@ describe("ejecutarEmisionFiscal", () => {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_A,
           confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
         },
         deps,
       ),
@@ -562,6 +701,7 @@ describe("ejecutarEmisionFiscal", () => {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_B,
           confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_B),
         },
         deps,
       ),
@@ -584,6 +724,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       deps,
     );
@@ -596,6 +737,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000002",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       deps,
     );
@@ -606,6 +748,33 @@ describe("ejecutarEmisionFiscal", () => {
         .map((call) => call.payload.numero_propuesto),
     ).toEqual([1, 2]);
     expect(doble.ultimoRemoto).toBe(0);
+  });
+
+  it("un PT409 de secuencia reconstruye el preflight con el mismo claim y reserva el número siguiente", async () => {
+    const doble = new FiscalDouble();
+    doble.simulado = true;
+    doble.conflictosSecuenciaRestantes = 1;
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
+      },
+      doble.deps(),
+    );
+
+    expect(resultado).toMatchObject({ estado: "APROBADO", numero: 2 });
+    const reservas = doble.calls.filter((call) => call.accion === "RESERVAR");
+    expect(reservas.map((call) => call.claimToken)).toEqual([
+      doble.calls[0].claimToken,
+      doble.calls[0].claimToken,
+    ]);
+    expect(reservas.map((call) => call.payload.numero_propuesto)).toEqual([1, 2]);
+    expect(doble.receptoresPreparados).toHaveLength(2);
+    expect(doble.payloadsCae).toHaveLength(1);
+    expect(acciones(doble)).not.toContain("ERROR_CORREGIBLE");
   });
 
   it("ediciones vivas posteriores a RESERVAR no cambian el payload persistido", async () => {
@@ -624,6 +793,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       deps,
     );
@@ -644,6 +814,7 @@ describe("ejecutarEmisionFiscal", () => {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: ORIGINAL,
           confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, ORIGINAL),
         },
         doble.deps(),
       ),
@@ -662,6 +833,7 @@ describe("ejecutarEmisionFiscal", () => {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_A,
           confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
         },
         doble.deps(),
       ),
@@ -673,6 +845,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: ORIGINAL,
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, ORIGINAL),
       },
       doble.deps(),
     );
@@ -692,6 +865,7 @@ describe("ejecutarEmisionFiscal", () => {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: { ...MANUAL_A, guardar_para_proximas: true },
         confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
       deps,
     );

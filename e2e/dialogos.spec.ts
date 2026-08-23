@@ -32,7 +32,7 @@ test.describe("diálogos en pantalla baja", () => {
     await limpiarFixturesFiscales();
   });
   test.beforeEach(async ({ page }) => {
-    await ingresar(page);
+    await ingresar(page, "fiscalAdmin");
   });
 
   for (const d of DIALOGOS) {

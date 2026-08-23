@@ -6,6 +6,9 @@ export type ConfirmacionFiscalPostBorrador = {
   version: 1;
   importe: string;
   emisorCuit: string;
+  emisorRazonSocial: string;
+  sucursalId: string;
+  sucursalNombre: string;
   puntoVenta: number;
   modo: "PRODUCCION" | "HOMOLOGACION";
   letra: Letra;
@@ -21,6 +24,9 @@ export function copiarConfirmacionFiscal(
     version: 1,
     importe: confirmacion.importe,
     emisorCuit: confirmacion.emisorCuit,
+    emisorRazonSocial: confirmacion.emisorRazonSocial,
+    sucursalId: confirmacion.sucursalId,
+    sucursalNombre: confirmacion.sucursalNombre,
     puntoVenta: confirmacion.puntoVenta,
     modo: confirmacion.modo,
     letra: confirmacion.letra,

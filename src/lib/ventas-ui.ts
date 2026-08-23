@@ -1,5 +1,90 @@
 import type { SelectorReceptorFiscal } from "./fiscal/receptor";
 
+export type ReceptorFiscalCongeladoListado = {
+  razonSocial: string;
+  tipoDocumento: string | null;
+  numeroDocumento: string | null;
+  condicionIva: string | null;
+};
+
+type VentaConReceptorCongelado = {
+  numero_comprobante?: string | null;
+  cliente?: { razon_social?: string | null; cuit_dni?: string | null } | null;
+  afip_snapshot?: unknown;
+};
+
+function esRegistro(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textoSnapshot(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+/** Lee sólo la copia inmutable de la emisión; nunca reconsulta el favorito vivo. */
+export function leerReceptorFiscalCongelado(
+  snapshot: unknown,
+): ReceptorFiscalCongeladoListado | null {
+  if (!esRegistro(snapshot) || !esRegistro(snapshot.receptor)) return null;
+  const receptor = snapshot.receptor;
+  const razonSocial = textoSnapshot(receptor.razonSocial) ?? textoSnapshot(receptor.razon_social);
+  if (!razonSocial) return null;
+  return {
+    razonSocial,
+    tipoDocumento: textoSnapshot(receptor.tipoDocumento) ?? textoSnapshot(receptor.tipo_documento),
+    numeroDocumento:
+      textoSnapshot(receptor.numeroDocumento) ??
+      textoSnapshot(receptor.numero_documento) ??
+      textoSnapshot(receptor.cuit_dni),
+    condicionIva: textoSnapshot(receptor.condicionIva) ?? textoSnapshot(receptor.condicion_iva),
+  };
+}
+
+function normalizarIdentidad(value: string | null | undefined): string {
+  return (value ?? "").replace(/\W/g, "").toLocaleLowerCase("es-AR");
+}
+
+export function receptorFiscalDifiereDelComprador(venta: VentaConReceptorCongelado): boolean {
+  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  if (!receptor) return false;
+  const comprador = normalizarIdentidad(venta.cliente?.razon_social);
+  const documentoComprador = normalizarIdentidad(venta.cliente?.cuit_dni);
+  return (
+    comprador !== normalizarIdentidad(receptor.razonSocial) ||
+    (!!receptor.numeroDocumento &&
+      documentoComprador !== normalizarIdentidad(receptor.numeroDocumento))
+  );
+}
+
+export function textoBusquedaVenta(venta: VentaConReceptorCongelado): string {
+  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  return [
+    venta.numero_comprobante,
+    venta.cliente?.razon_social,
+    venta.cliente?.cuit_dni,
+    receptor?.razonSocial,
+    receptor?.tipoDocumento,
+    receptor?.numeroDocumento,
+    receptor?.condicionIva,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLocaleLowerCase("es-AR");
+}
+
+export function camposExportacionReceptorFiscal(venta: VentaConReceptorCongelado): {
+  "Receptor fiscal": string;
+  "Documento receptor fiscal": string;
+} {
+  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  return {
+    "Receptor fiscal": receptor?.razonSocial ?? "—",
+    "Documento receptor fiscal": receptor?.numeroDocumento
+      ? [receptor.tipoDocumento, receptor.numeroDocumento].filter(Boolean).join(" ")
+      : "—",
+  };
+}
+
 export type AccionCierreVenta =
   | { id: "REGISTRAR_Y_FACTURAR"; etiqueta: "Registrar venta y facturar" }
   | { id: "REGISTRAR_SIN_FACTURAR"; etiqueta: "Registrar sin facturar" }
@@ -27,21 +112,27 @@ export function opcionesCierreVenta(input: EntradaCierreVenta): DecisionCierreVe
     throw new Error("La configuración fiscal es inválida: ambos escritores están activos.");
   }
 
-  if (!TIPOS_POSITIVOS.has(input.tipoComprobante)) {
-    return {
-      tipoPersistido: input.tipoComprobante,
-      bloqueado: false,
-      explicacion: null,
-      acciones: [{ id: "REGISTRAR_UNICO", etiqueta: "Guardar" }],
-    };
-  }
-
-  if (input.facturacionLegacyHabilitada) {
+  if (input.facturacionLegacyHabilitada && TIPOS_POSITIVOS.has(input.tipoComprobante)) {
     return {
       tipoPersistido: input.tipoComprobante,
       bloqueado: false,
       explicacion: null,
       acciones: [{ id: "REGISTRAR_LEGACY", etiqueta: "Guardar" }],
+    };
+  }
+
+  // El cierre dual pertenece exclusivamente al contrato neutral VENTA. Una
+  // A/B/C residual durante el rollout v2 no se transforma silenciosamente en
+  // VENTA ni abre el diálogo fiscal; la barrera de servidor decidirá su alcance.
+  if (
+    !TIPOS_POSITIVOS.has(input.tipoComprobante) ||
+    (input.facturacionV2Habilitada && input.tipoComprobante !== "VENTA")
+  ) {
+    return {
+      tipoPersistido: input.tipoComprobante,
+      bloqueado: false,
+      explicacion: null,
+      acciones: [{ id: "REGISTRAR_UNICO", etiqueta: "Guardar" }],
     };
   }
 

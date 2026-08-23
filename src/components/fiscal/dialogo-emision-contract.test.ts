@@ -9,7 +9,7 @@ import {
 } from "./dialogo-emision-contract";
 import { crearHuellaConfirmacionFiscal } from "@/lib/fiscal/confirmacion";
 
-const HUELLA_CONFIRMACION = "ec47af3f3b2d8a8b0e853d3302da871df5ff862e61b20e18a3e0ea6ba39e0b6b";
+const HUELLA_CONFIRMACION = "9d5026caa845681a6d62da9ccd828217c554c8d2822531c5399931e733a0bae9";
 
 const RECEPTOR = {
   razonSocial: "APLICACIONES Y SERVICIOS S.R.L.",
@@ -28,6 +28,9 @@ const CONFIRMACION = {
   version: 1,
   importe: "121.00",
   emisorCuit: "30714199664",
+  emisorRazonSocial: "EMISOR AUTORITATIVO S.A.",
+  sucursalId: "30000000-0000-4000-8000-000000000001",
+  sucursalNombre: "Casa Central",
   puntoVenta: 5,
   modo: "PRODUCCION",
   letra: "A",
@@ -49,6 +52,9 @@ const PREVIEW = {
   letra: "A",
   razon_letra: "La condición determina letra A.",
   emisor_cuit: "30714199664",
+  emisor_razon_social: "EMISOR AUTORITATIVO S.A.",
+  sucursal_id: "30000000-0000-4000-8000-000000000001",
+  sucursal_nombre: "Casa Central",
   punto_venta: 5,
   modo: "PRODUCCION",
   cbte_tipo: 1,
@@ -65,6 +71,9 @@ const PREVIEW_PROVISIONAL = {
   comprador: "20000000-0000-4000-8000-000000000001",
   receptor: RECEPTOR,
   emisor_cuit: "30714199664",
+  emisor_razon_social: "EMISOR AUTORITATIVO S.A.",
+  sucursal_id: "30000000-0000-4000-8000-000000000001",
+  sucursal_nombre: "Casa Central",
   punto_venta: 5,
   modo: "PRODUCCION",
   letra: "A",
@@ -83,6 +92,9 @@ const PREVIEW_PROVISIONAL = {
     version: 1,
     importe: "121.00",
     emisor_cuit: "30714199664",
+    emisor_razon_social: "EMISOR AUTORITATIVO S.A.",
+    sucursal_id: "30000000-0000-4000-8000-000000000001",
+    sucursal_nombre: "Casa Central",
     punto_venta: 5,
     modo: "PRODUCCION",
     letra: "A",
@@ -105,6 +117,21 @@ describe("contrato runtime del diálogo fiscal", () => {
     ).toThrow(/previsualizaci.n fiscal/i);
     expect(() => parsePreviewEmisionFiscal({ ...PREVIEW, campo_inventado: true })).toThrow();
     expect(() => parsePreviewEmisionFiscal({ ...PREVIEW, total: "-1.00" })).toThrow();
+  });
+
+  it("exige la identidad visual autoritativa exacta del emisor y la sucursal", () => {
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({ ...PREVIEW, emisor_razon_social: undefined }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({ ...PREVIEW, sucursal_nombre: "" }),
+    ).toThrow(/previsualizaci.n fiscal/i);
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        sucursal_nombre: "Sucursal cambiada",
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
   });
 
   it("conserva el contrato estricto de preview provisional para el cierre inmediato", () => {

@@ -42,6 +42,12 @@ import {
 } from "@/lib/fiscal/fecha";
 import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import { numeroFiscal } from "@/lib/fiscal/comprobante-pdf";
+import {
+  camposExportacionReceptorFiscal,
+  leerReceptorFiscalCongelado,
+  receptorFiscalDifiereDelComprador,
+  textoBusquedaVenta,
+} from "@/lib/ventas-ui";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -139,11 +145,7 @@ function VentasList() {
   const filtered = useMemo(
     () =>
       ventas.filter(
-        (v: any) =>
-          !q ||
-          `${v.numero_comprobante} ${v.cliente?.razon_social ?? ""}`
-            .toLowerCase()
-            .includes(q.toLowerCase()),
+        (v: any) => !q || textoBusquedaVenta(v).includes(q.trim().toLocaleLowerCase("es-AR")),
       ),
     [ventas, q],
   );
@@ -235,7 +237,8 @@ function VentasList() {
         Tipo: tipoComprobanteLabel[v.tipo_comprobante],
         Fecha: v.fecha,
         Sucursal: v.sucursal?.nombre,
-        Cliente: v.cliente?.razon_social,
+        Comprador: v.cliente?.razon_social,
+        ...camposExportacionReceptorFiscal(v),
         Subtotal: v.subtotal_sin_iva,
         IVA: v.iva_total,
         Total: v.total,
@@ -276,7 +279,7 @@ function VentasList() {
       <SectionCard>
         <div className="flex flex-wrap gap-2">
           <Input
-            placeholder="Buscar comprobante o cliente…"
+            placeholder="Buscar comprobante, comprador o receptor…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="max-w-xs"
@@ -355,7 +358,14 @@ function VentasList() {
             </TableCell>
             <TableCell>{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
             <TableCell className="text-xs">{fmtDateTime(v.fecha)}</TableCell>
-            <TableCell>{v.cliente?.razon_social}</TableCell>
+            <TableCell>
+              <p>{v.cliente?.razon_social}</p>
+              {receptorFiscalDifiereDelComprador(v) ? (
+                <p className="text-xs text-muted-foreground" data-testid={`receptor-${v.id}`}>
+                  → {leerReceptorFiscalCongelado(v.afip_snapshot)?.razonSocial}
+                </p>
+              ) : null}
+            </TableCell>
             {cu?.isAdmin && (
               <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>
             )}
@@ -381,7 +391,13 @@ function VentasList() {
               )}
             </TableCell>
             <TableCell>
-              <Button size="sm" variant="ghost" onClick={() => setVerVenta(v)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Ver detalle de ${v.numero_comprobante}`}
+                title="Ver detalle"
+                onClick={() => setVerVenta(v)}
+              >
                 <Eye className="h-3.5 w-3.5" />
               </Button>
               {/* Sólo se factura lo que es un comprobante fiscal. Los remitos, la
@@ -397,6 +413,7 @@ function VentasList() {
                   <Button
                     size="sm"
                     variant="ghost"
+                    aria-label={`Emitir ${v.numero_comprobante} en AFIP`}
                     title="Emitir en AFIP"
                     onClick={() => emitir.mutate(v.id)}
                     disabled={emitir.isPending}
@@ -414,14 +431,26 @@ function VentasList() {
               ["VENTA", "NOTA_CREDITO"].includes(v.tipo_comprobante) &&
               !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
               !v.cae ? (
-                <Button size="sm" variant="ghost" title="Revisar y facturar" asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Revisar y facturar ${v.numero_comprobante}`}
+                  title="Revisar y facturar"
+                  asChild
+                >
                   <a href={`/facturacion/cola?venta=${encodeURIComponent(v.id)}`}>
                     <FileCheck2 className="h-3.5 w-3.5 text-primary" />
                   </a>
                 </Button>
               ) : null}
               {v.estado === "ACTIVA" && sePuedeAnular(v, generadasPorAnulacion) && (
-                <Button size="sm" variant="ghost" onClick={() => setAnularDlg(v)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Anular ${v.numero_comprobante}`}
+                  title="Anular"
+                  onClick={() => setAnularDlg(v)}
+                >
                   <Ban className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               )}

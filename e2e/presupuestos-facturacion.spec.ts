@@ -21,7 +21,7 @@ test.afterAll(async () => {
 });
 
 async function abrirConversion(page: Page): Promise<Locator> {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto(`/presupuestos/${fixture.presupuestoId}`);
   await page.getByTestId("convertir").click();
   const dialogo = page.getByRole("dialog", { name: "Convertir en venta" });

@@ -24,13 +24,17 @@ test.afterAll(async () => {
   await limpiarFixturesFiscales();
 });
 
-test("usuarios: la lista carga con los usuarios que hay", async ({ page }) => {
-  await ingresar(page, "admin");
+test("usuarios: la lista carga las identidades descartables propias del fixture", async ({
+  page,
+}) => {
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/usuarios");
 
-  await expect(page.locator("tbody tr").first()).toBeVisible({ timeout: 15_000 });
-  const filas = await page.locator("tbody tr").count();
-  expect(filas, "la lista de usuarios vino vacía").toBeGreaterThan(0);
+  await expect(page.locator("tbody tr", { hasText: "t13-admin" })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.locator("tbody tr", { hasText: "t13-empleado" })).toBeVisible();
+  await expect(page.locator("tbody tr", { hasText: "t13-sin-capacidad" })).toBeVisible();
 
   // Si la consulta falla, la pantalla lo tiene que DECIR, no mostrar "no hay".
   await expect(page.locator("body")).not.toContainText(/no se pudo cargar la lista/i);
@@ -38,19 +42,19 @@ test("usuarios: la lista carga con los usuarios que hay", async ({ page }) => {
 });
 
 test("usuarios: cada fila muestra su rol y su sucursal", async ({ page }) => {
-  await ingresar(page, "admin");
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/usuarios");
   await expect(page.locator("tbody tr").first()).toBeVisible({ timeout: 15_000 });
 
   // Que el embed de sucursales resuelva: si se rompe, la columna queda en "—"
   // para todos y es la señal de que el join volvió a fallar.
-  const filaAdmin = page.locator("tbody tr", { hasText: "admin" }).first();
+  const filaAdmin = page.locator("tbody tr", { hasText: "t13-admin" });
   await expect(filaAdmin).toContainText(/admin/);
   await expect(filaAdmin).toContainText(/CasaForma/);
 });
 
 test("usuarios: un admin puede otorgar y retirar la capacidad fiscal", async ({ page }) => {
-  await ingresar(page, "admin");
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/usuarios");
   const fila = page.locator("tbody tr", { hasText: "t13-sin-capacidad" });
   await expect(fila).toBeVisible();

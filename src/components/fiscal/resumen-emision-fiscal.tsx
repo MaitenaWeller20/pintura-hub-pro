@@ -34,14 +34,10 @@ function PasoIdentidad({
 export function ResumenEmisionFiscal({
   preview,
   comprador,
-  emisor,
-  sucursal,
   requiereSegundaConfirmacion = false,
 }: {
   preview: PreviewEmisionFiscal;
   comprador: string;
-  emisor: string;
-  sucursal: string;
   requiereSegundaConfirmacion?: boolean;
 }) {
   return (
@@ -79,8 +75,8 @@ export function ResumenEmisionFiscal({
           <ArrowDown aria-hidden className="ml-4 h-3 w-3 text-muted-foreground" />
           <PasoIdentidad
             etiqueta="Emisor"
-            principal={emisor}
-            detalle={`CUIT ${preview.emisor_cuit} · ${sucursal} · PV ${String(preview.punto_venta).padStart(5, "0")}`}
+            principal={preview.emisor_razon_social}
+            detalle={`CUIT ${preview.emisor_cuit} · ${preview.sucursal_nombre} · PV ${String(preview.punto_venta).padStart(5, "0")}`}
           />
         </div>
 

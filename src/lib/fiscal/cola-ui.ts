@@ -228,6 +228,22 @@ export type PresentacionEstadoColaFiscal = {
   accion: string;
 };
 
+export type InteraccionColaFiscal =
+  | "EMISION"
+  | "TRANSICION"
+  | "DETALLE_DESCARGA"
+  | "DETALLE_LECTURA";
+
+export function clasificarInteraccionCola(accion: string): InteraccionColaFiscal | null {
+  if (accion === "Facturar" || accion === "Corregir/reintentar") return "EMISION";
+  if (accion === "Verificar con ARCA" || accion === "Liberar claim verificado") {
+    return "TRANSICION";
+  }
+  if (accion === "Ver/descargar") return "DETALLE_DESCARGA";
+  if (accion === "Ver") return "DETALLE_LECTURA";
+  return null;
+}
+
 export function presentarEstadoColaFiscal(input: {
   estado: string;
   fase: string | null;

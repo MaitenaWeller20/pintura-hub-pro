@@ -30,7 +30,7 @@ test.describe("se puede usar en pantalla chica", () => {
     await limpiarFixturesFiscales();
   });
   test.beforeEach(async ({ page }) => {
-    await ingresar(page);
+    await ingresar(page, "fiscalAdmin");
   });
 
   test("ninguna pantalla se desborda a lo ancho", async ({ page }) => {

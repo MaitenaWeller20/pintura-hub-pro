@@ -246,6 +246,20 @@ assert_eq "el 409 de secuencia no deja una reserva parcial" \
           JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id
          WHERE v.id='$VENTA_SECUENCIA_DOS'")"
 
+crear_snapshot "$VENTA_SECUENCIA_DOS" 2
+post_rpc reserva-dos \
+  "$(payload_reserva "$VENTA_SECUENCIA_DOS" "$TOKEN_SECUENCIA_DOS" 2 1)"
+meta_reserva_dos="$(<"$TMP_DIR/reserva-dos.meta")"
+assert_eq "la segunda venta reserva tras refrescar con el mismo claim" \
+  "200" "${meta_reserva_dos%%|*}"
+assert_rapido "la reserva reconstruida no queda retenida" "$meta_reserva_dos"
+assert_eq "dos ventas de la misma identidad reciben números consecutivos distintos" \
+  "1|2|2|2" \
+  "$(q "SELECT concat_ws('|',min(v.afip_numero),max(v.afip_numero),count(DISTINCT v.afip_numero),count(i.id))
+          FROM public.ventas v
+          JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id
+         WHERE v.id IN ('$VENTA_SECUENCIA_UNO','$VENTA_SECUENCIA_DOS')")"
+
 assert_eq "PostgREST no deja transacciones abortadas ociosas" "0" \
   "$(q "SELECT count(*) FROM pg_stat_activity
          WHERE datname=current_database()
@@ -253,4 +267,4 @@ assert_eq "PostgREST no deja transacciones abortadas ociosas" "0" \
            AND state LIKE 'idle in transaction%'
            AND query ILIKE '%transicionar_emision_fiscal%'")"
 
-echo "Contrato REST fiscal local: 14 checks OK; cero requests ARCA."
+echo "Contrato REST fiscal local: 17 checks OK; cero requests ARCA."

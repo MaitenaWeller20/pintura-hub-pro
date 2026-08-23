@@ -18,6 +18,8 @@ import {
   type ResultadoEmisionFiscalUi,
 } from "@/components/fiscal/dialogo-emision-contract";
 import { Button } from "@/components/ui/button";
+import { DialogoDetalleVenta, type VentaDetalle } from "@/components/ventas/dialogo-detalle-venta";
+import { supabase } from "@/integrations/supabase/client";
 import {
   listarColaFiscal,
   listarReceptoresFiscales,
@@ -26,6 +28,7 @@ import {
 import {
   accionesColaHabilitadas,
   actualizarBusquedaCola,
+  clasificarInteraccionCola,
   cerrarResultadoCola,
   crearActualizadorBusquedaCola,
   debeRefrescarCola,
@@ -209,6 +212,7 @@ function BannerResultado({
         variant="ghost"
         className="min-h-11 min-w-11 shrink-0"
         aria-label="Cerrar resultado"
+        title="Cerrar resultado"
         onClick={onCerrar}
       >
         <X />
@@ -232,6 +236,10 @@ function ColaFiscalPage() {
   const [seleccion, setSeleccion] = useState<SeleccionColaFiscal<ColaFiscalFila> | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [mensajeAccion, setMensajeAccion] = useState<string | null>(null);
+  const [detalleSeleccionado, setDetalleSeleccionado] = useState<{
+    ventaId: string;
+    permitirDescarga: boolean;
+  } | null>(null);
   const returnFocusRef = useRef<HTMLButtonElement>(null);
 
   const inputCola = {
@@ -287,6 +295,20 @@ function ColaFiscalPage() {
     queryFn: () =>
       listarFavoritos({ data: { sucursal_id: seleccionada?.sucursal_id ?? undefined } }),
     enabled: seleccionada !== null,
+  });
+  const detalleVenta = useQuery({
+    queryKey: ["venta-detalle-cola", detalleSeleccionado?.ventaId ?? null],
+    enabled: detalleSeleccionado !== null,
+    queryFn: async () => {
+      if (!detalleSeleccionado) throw new Error("No hay una venta seleccionada para ver.");
+      const { data, error } = await supabase
+        .from("ventas")
+        .select("*, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)")
+        .eq("id", detalleSeleccionado.ventaId)
+        .single();
+      if (error || !data) throw new Error("No se pudo cargar el detalle de la venta.");
+      return data as unknown as VentaDetalle;
+    },
   });
   const filaResultado = search.venta
     ? filas.find((fila) => fila.venta_id === search.venta)
@@ -361,6 +383,11 @@ function ColaFiscalPage() {
 
       <div aria-live="polite">
         {errorAccion ? <p className="text-sm font-medium text-destructive">{errorAccion}</p> : null}
+        {detalleVenta.error ? (
+          <p className="text-sm font-medium text-destructive">
+            {mensajeError(detalleVenta.error, "No se pudo cargar el detalle de la venta.")}
+          </p>
+        ) : null}
         {mensajeAccion ? <p className="text-sm font-medium text-success">{mensajeAccion}</p> : null}
       </div>
 
@@ -429,11 +456,21 @@ function ColaFiscalPage() {
           if (!accionesHabilitadas) return;
           setErrorAccion(null);
           setMensajeAccion(null);
-          if (nombre === "Facturar" || nombre === "Corregir/reintentar") {
+          const interaccion = clasificarInteraccionCola(nombre);
+          if (interaccion === "EMISION") {
             returnFocusRef.current = disparador;
             setSeleccion({ fila: row, huellaConsulta });
             return;
           }
+          if (interaccion === "DETALLE_DESCARGA" || interaccion === "DETALLE_LECTURA") {
+            returnFocusRef.current = disparador;
+            setDetalleSeleccionado({
+              ventaId: row.venta_id,
+              permitirDescarga: interaccion === "DETALLE_DESCARGA",
+            });
+            return;
+          }
+          if (interaccion !== "TRANSICION") return;
           accion.mutate({ row, nombre });
         }}
       />
@@ -488,12 +525,13 @@ function ColaFiscalPage() {
               return parsePreviewEmisionFiscalAutoritativa(respuesta);
             })
           }
-          onConfirmar={async ({ receptor, confirmaVentaAntigua }) => {
+          onConfirmar={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
             const resultado = await emitir({
               data: {
                 venta_id: seleccionada.venta_id,
                 receptor,
                 confirma_venta_antigua: confirmaVentaAntigua,
+                huella_confirmacion: huellaConfirmacion,
               },
             });
             if (esMantenimiento(resultado)) throw new Error(resultado.mensaje);
@@ -519,6 +557,14 @@ function ColaFiscalPage() {
               });
             }
           }}
+        />
+      ) : null}
+      {detalleSeleccionado ? (
+        <DialogoDetalleVenta
+          venta={detalleVenta.data ?? null}
+          permitirDescarga={detalleSeleccionado.permitirDescarga}
+          returnFocusRef={returnFocusRef}
+          onClose={() => setDetalleSeleccionado(null)}
         />
       ) : null}
     </div>

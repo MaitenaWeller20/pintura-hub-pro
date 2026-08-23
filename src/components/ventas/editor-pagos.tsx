@@ -231,6 +231,7 @@ export function EditorPagos({
                     variant="ghost"
                     className="min-h-11 min-w-11"
                     aria-label="Eliminar pago"
+                    title="Eliminar pago"
                     disabled={disabled}
                     onClick={() => onChange(pagos.filter((item) => item.id !== pago.id))}
                   >

@@ -387,13 +387,14 @@ function DetallePresupuesto() {
               return respuesta;
             })
           }
-          onConfirmar={async ({ receptor, confirmaVentaAntigua }) => {
+          onConfirmar={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
             try {
               const respuesta = await emitirFiscal({
                 data: {
                   venta_id: ventaParaFacturar.id,
                   receptor,
                   confirma_venta_antigua: confirmaVentaAntigua,
+                  huella_confirmacion: huellaConfirmacion,
                 },
               });
               if (esMantenimiento(respuesta)) {

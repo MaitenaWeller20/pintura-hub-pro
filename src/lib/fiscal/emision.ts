@@ -1,5 +1,10 @@
 import type { SelectorReceptorFiscal } from "./receptor";
 import type { SnapshotFiscalV2 } from "./snapshot";
+import {
+  copiarConfirmacionFiscal,
+  crearHuellaConfirmacionFiscal,
+  type ConfirmacionFiscalPostBorrador,
+} from "./confirmacion";
 
 export type AccionTransicionFiscal =
   | "RECLAMAR"
@@ -34,6 +39,8 @@ export type PreparacionEmisionFiscal = {
   simulado: boolean;
   validez: "PRODUCCION" | "HOMOLOGACION" | "SIMULADA";
   fechaComprobante: string;
+  confirmacionAutoritativa: ConfirmacionFiscalPostBorrador;
+  huellaConfirmacion: string;
 };
 
 export type ReservaFiscalPersistida = {
@@ -77,7 +84,13 @@ export type ResultadoEmisionFiscal =
   | { estado: "ERROR_CORREGIBLE"; mensaje: string }
   | { estado: "RECONCILIAR"; mensaje: string }
   | { estado: "BLOQUEADO"; diferencias: string[] }
-  | { estado: "EN_CURSO"; mensaje: string };
+  | { estado: "EN_CURSO"; mensaje: string }
+  | {
+      estado: "RECONFIRMACION_REQUERIDA";
+      mensaje: string;
+      huella_confirmacion: string;
+      confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
+    };
 
 export type DependenciasEmisionFiscal = {
   generarClaimToken(): string;
@@ -117,6 +130,7 @@ export type DependenciasEmisionFiscal = {
   crearPayloadCae(snapshot: SnapshotFiscalV2): unknown;
   solicitarCae(reserva: ReservaFiscalPersistida, payload: unknown): Promise<SolicitudCaeFiscal>;
   esConflictoClaim(error: unknown): boolean;
+  esConflictoSecuencia(error: unknown): boolean;
   consultarComprobanteCompleto(reserva: ReservaFiscalPersistida): Promise<unknown | null>;
   consultarUltimoAutorizado(reserva: ReservaFiscalPersistida): Promise<number>;
   decidirConciliacion(input: {
@@ -136,6 +150,7 @@ type InputEmision = {
   ventaId: string;
   receptor: SelectorReceptorFiscal;
   confirmaVentaAntigua: boolean;
+  huellaConfirmacion: string;
 };
 
 const RESUMEN_AUSENCIA = {
@@ -248,6 +263,54 @@ async function marcarPreflightCorregible(
     estado: "ERROR_CORREGIBLE",
     mensaje: "La preparación fiscal falló antes de iniciar el request.",
   };
+}
+
+async function liberarPreflightParaReconfirmar(
+  ventaId: string,
+  claimToken: string,
+  version: number,
+  preparacion: PreparacionEmisionFiscal,
+  deps: DependenciasEmisionFiscal,
+): Promise<ResultadoEmisionFiscal> {
+  try {
+    await deps.transicionar({
+      ventaId,
+      accion: "ERROR_CORREGIBLE",
+      claimToken,
+      payload: {
+        ...errorEnmascarado(
+          "PREFLIGHT",
+          "RECONFIRMACION_REQUERIDA",
+          "Los datos fiscales cambiaron después de la confirmación.",
+          version,
+        ),
+        liberar_identidad: true,
+      },
+    });
+  } catch (error) {
+    const persistido = await recargarEstado(ventaId, deps);
+    if (
+      persistido.afip_estado !== "ERROR_CORREGIBLE" ||
+      persistido.afip_claim_token !== null ||
+      persistido.afip_numero !== null
+    ) {
+      throw error;
+    }
+  }
+  return {
+    estado: "RECONFIRMACION_REQUERIDA",
+    mensaje: "Los datos fiscales cambiaron; revisalos y confirmá nuevamente.",
+    huella_confirmacion: preparacion.huellaConfirmacion,
+    confirmacion_autoritativa: copiarConfirmacionFiscal(preparacion.confirmacionAutoritativa),
+  };
+}
+
+function huellaCanonicaPreparacion(preparacion: PreparacionEmisionFiscal): string {
+  const huella = crearHuellaConfirmacionFiscal(preparacion.confirmacionAutoritativa);
+  if (preparacion.huellaConfirmacion !== huella) {
+    throw new Error("La preparación fiscal devolvió una huella autoritativa inconsistente.");
+  }
+  return huella;
 }
 
 async function marcarReconciliacion(
@@ -547,6 +610,16 @@ export async function ejecutarEmisionFiscal(
       ventaId: input.ventaId,
       receptor: input.receptor,
     });
+    const huellaAutoritativa = huellaCanonicaPreparacion(preparacion);
+    if (input.huellaConfirmacion !== huellaAutoritativa) {
+      return liberarPreflightParaReconfirmar(
+        input.ventaId,
+        claimToken,
+        estado.afip_version,
+        preparacion,
+        deps,
+      );
+    }
     secuencia = await deps.consultarSecuencia(preparacion);
     deps.validarFechaFiscal(preparacion.fechaComprobante, secuencia.ultimaFechaRemota);
   } catch {
@@ -554,41 +627,73 @@ export async function ejecutarEmisionFiscal(
     return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
   }
 
-  const numero = preparacion.simulado ? secuencia.ultimoLocal + 1 : secuencia.ultimoRemoto + 1;
-  try {
-    const snapshot = await deps.crearSnapshot({
-      preparacion,
-      numero,
-      receptor: input.receptor,
-    });
-    estado = await deps.transicionar({
-      ventaId: input.ventaId,
-      accion: "RESERVAR",
-      claimToken,
-      payload: {
-        expected_version: estado.afip_version,
-        snapshot,
-        snapshot_hash: snapshot.hash,
-        numero_propuesto: numero,
-        fecha_comprobante: preparacion.fechaComprobante,
-        emisor_cuit: preparacion.emisorCuit,
-        punto_venta: preparacion.puntoVenta,
-        cbte_tipo: preparacion.cbteTipo,
-        modo: preparacion.modo,
-        simulado: preparacion.simulado,
-        validez: preparacion.validez,
-        ultimo_remoto: secuencia.ultimoRemoto,
-        ultimo_local_observado: secuencia.ultimoLocal,
-      },
-    });
-  } catch {
-    const persistido = await recargarEstado(input.ventaId, deps);
-    if (esFase(persistido, "EMITIENDO", "RESERVADO", claimToken, numero)) {
+  let numero = 0;
+  const maxIntentosReserva = 3;
+  for (let intentoReserva = 1; intentoReserva <= maxIntentosReserva; intentoReserva += 1) {
+    numero = preparacion.simulado ? secuencia.ultimoLocal + 1 : secuencia.ultimoRemoto + 1;
+    try {
+      const snapshot = await deps.crearSnapshot({
+        preparacion,
+        numero,
+        receptor: input.receptor,
+      });
+      estado = await deps.transicionar({
+        ventaId: input.ventaId,
+        accion: "RESERVAR",
+        claimToken,
+        payload: {
+          expected_version: estado.afip_version,
+          snapshot,
+          snapshot_hash: snapshot.hash,
+          numero_propuesto: numero,
+          fecha_comprobante: preparacion.fechaComprobante,
+          emisor_cuit: preparacion.emisorCuit,
+          punto_venta: preparacion.puntoVenta,
+          cbte_tipo: preparacion.cbteTipo,
+          modo: preparacion.modo,
+          simulado: preparacion.simulado,
+          validez: preparacion.validez,
+          ultimo_remoto: secuencia.ultimoRemoto,
+          ultimo_local_observado: secuencia.ultimoLocal,
+        },
+      });
+      break;
+    } catch (error) {
+      const persistido = await recargarEstado(input.ventaId, deps);
+      if (esFase(persistido, "EMITIENDO", "RESERVADO", claimToken, numero)) {
+        estado = persistido;
+        break;
+      }
+      if (persistido.afip_estado === "BLOQUEADO") {
+        return { estado: "BLOQUEADO", diferencias: ["secuencia"] };
+      }
+      const puedeReintentarSecuencia =
+        intentoReserva < maxIntentosReserva &&
+        deps.esConflictoSecuencia(error) &&
+        esFase(persistido, "EMITIENDO", "PREFLIGHT", claimToken);
+      if (!puedeReintentarSecuencia) {
+        return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
+      }
       estado = persistido;
-    } else if (persistido.afip_estado === "BLOQUEADO") {
-      return { estado: "BLOQUEADO", diferencias: ["secuencia"] };
-    } else {
-      return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
+      try {
+        preparacion = await deps.prepararEmision({
+          ventaId: input.ventaId,
+          receptor: input.receptor,
+        });
+        if (input.huellaConfirmacion !== huellaCanonicaPreparacion(preparacion)) {
+          return liberarPreflightParaReconfirmar(
+            input.ventaId,
+            claimToken,
+            estado.afip_version,
+            preparacion,
+            deps,
+          );
+        }
+        secuencia = await deps.consultarSecuencia(preparacion);
+        deps.validarFechaFiscal(preparacion.fechaComprobante, secuencia.ultimaFechaRemota);
+      } catch {
+        return marcarPreflightCorregible(input.ventaId, claimToken, estado.afip_version, deps);
+      }
     }
   }
   if (estado.afip_estado === "BLOQUEADO") {

@@ -89,40 +89,126 @@ export const ventaInputSchema = z.object({
   pagos: z.array(pagoSchema).default([]),
 });
 
+export type VentaInput = z.infer<typeof ventaInputSchema>;
+type ResultadoCreacionVenta = { id: string; numero: string; cta_cte: boolean };
+
+export async function ejecutarCreacionNotaSegunFlags(
+  input: Omit<VentaInput, "tipo_comprobante"> & {
+    tipo_comprobante: "NOTA_CREDITO" | "NOTA_DEBITO";
+  },
+  deps: {
+    cargarFlags(): Promise<FlagsFacturacion>;
+    crearRegular(input: VentaInput): Promise<ResultadoCreacionVenta>;
+    crearNotaCreditoTotal(originalId: string): Promise<ResultadoCreacionVenta>;
+  },
+): Promise<ResultadoCreacionVenta> {
+  const flags = await deps.cargarFlags();
+  if (flags.facturacion_receptor_v2_enabled && flags.facturacion_legacy_writer_enabled) {
+    throw new Error("La configuración fiscal es inválida: ambos escritores están activos.");
+  }
+  if (!flags.facturacion_receptor_v2_enabled && !flags.facturacion_legacy_writer_enabled) {
+    throw new Error("La facturación está en mantenimiento. No se registró ningún comprobante.");
+  }
+  if (flags.facturacion_receptor_v2_enabled) {
+    if (input.tipo_comprobante === "NOTA_DEBITO") {
+      throw new Error("La nota de débito nueva queda fuera de alcance fiscal.");
+    }
+    if (!input.cbte_asoc_id) {
+      throw new Error("La nota de crédito fiscal exige el comprobante original.");
+    }
+    return deps.crearNotaCreditoTotal(input.cbte_asoc_id);
+  }
+  return deps.crearRegular(input);
+}
+
+function normalizarVentaCreada(value: unknown): ResultadoCreacionVenta {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (typeof row !== "object" || row === null || Array.isArray(row)) {
+    throw new Error("El servidor no devolvió el comprobante creado.");
+  }
+  const valueRow = row as Record<string, unknown>;
+  const id = valueRow.venta_id ?? valueRow.nc_id;
+  const numero = valueRow.numero ?? valueRow.nc_numero;
+  if (typeof id !== "string" || typeof numero !== "string") {
+    throw new Error("El servidor devolvió un comprobante incompleto.");
+  }
+  return { id, numero, cta_cte: valueRow.es_cta_cte === true };
+}
+
 export const crearVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => ventaInputSchema.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-
-    const { data: r, error } = await supabase.rpc("crear_venta", {
-      p_sucursal_id: data.sucursal_id,
-      // El cast es por los tipos generados, no por la base: un parámetro `uuid`
-      // admite NULL, pero el generador de tipos de Supabase lo declara `string`
-      // porque sólo marca opcional lo que tiene DEFAULT — y `p_cliente_id` no
-      // puede tenerlo, ya que le siguen parámetros sin default. En un remito de
-      // obra va NULL a propósito y `crear_venta` resuelve la ficha de la obra.
-      p_cliente_id: (data.cliente_id ?? null) as unknown as string,
-      p_tipo_comprobante: data.tipo_comprobante,
-      p_condicion_venta: data.condicion_venta,
-      p_items: data.items,
-      p_pagos: data.pagos,
-      p_percepciones: data.percepciones ?? 0,
-      p_observaciones: data.observaciones ?? undefined,
-      p_nombre_obra: data.nombre_obra ?? undefined,
-      p_fecha: data.fecha ?? undefined,
-      p_cbte_asoc_id: data.cbte_asoc_id ?? undefined,
-      p_idempotency_key: data.idempotency_key ?? undefined,
-    });
-
-    if (error) throw new Error(error.message);
-
-    const row: any = Array.isArray(r) ? r[0] : r;
-    return {
-      id: row.venta_id as string,
-      numero: row.numero as string,
-      cta_cte: row.es_cta_cte as boolean,
+    const crearRegular = async (input: VentaInput) => {
+      const { data: result, error } = await supabase.rpc("crear_venta", {
+        p_sucursal_id: input.sucursal_id,
+        // El cast es por los tipos generados, no por la base: un parámetro `uuid`
+        // admite NULL, pero el generador de tipos de Supabase lo declara `string`.
+        p_cliente_id: (input.cliente_id ?? null) as unknown as string,
+        p_tipo_comprobante: input.tipo_comprobante,
+        p_condicion_venta: input.condicion_venta,
+        p_items: input.items,
+        p_pagos: input.pagos,
+        p_percepciones: input.percepciones ?? 0,
+        p_observaciones: input.observaciones ?? undefined,
+        p_nombre_obra: input.nombre_obra ?? undefined,
+        p_fecha: input.fecha ?? undefined,
+        p_cbte_asoc_id: input.cbte_asoc_id ?? undefined,
+        p_idempotency_key: input.idempotency_key ?? undefined,
+      });
+      if (error) throw new Error(error.message);
+      return normalizarVentaCreada(result);
     };
+
+    if (data.tipo_comprobante !== "NOTA_CREDITO" && data.tipo_comprobante !== "NOTA_DEBITO") {
+      return crearRegular(data);
+    }
+
+    return ejecutarCreacionNotaSegunFlags(
+      data as VentaInput & { tipo_comprobante: "NOTA_CREDITO" | "NOTA_DEBITO" },
+      {
+        cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(supabase as never),
+        crearRegular,
+        async crearNotaCreditoTotal(originalId) {
+          const { data: original, error: lecturaError } = await supabase
+            .from("ventas")
+            .select(
+              "id,tipo_comprobante,estado,afip_estado,afip_fase,afip_validez,afip_modo,afip_simulado,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_snapshot,afip_snapshot_hash,cae",
+            )
+            .eq("id", originalId)
+            .maybeSingle();
+          if (lecturaError || !original) {
+            throw new Error("No se pudo leer el comprobante original.");
+          }
+          if (
+            original.tipo_comprobante !== "VENTA" ||
+            original.estado !== "ACTIVA" ||
+            original.afip_estado !== "APROBADO" ||
+            original.afip_fase !== "PERSISTIDO" ||
+            original.afip_validez !== "PRODUCCION" ||
+            original.afip_modo !== "PRODUCCION" ||
+            original.afip_simulado ||
+            !original.cae ||
+            original.afip_numero == null ||
+            !original.afip_emisor_cuit ||
+            original.afip_punto_venta == null ||
+            original.afip_cbte_tipo == null ||
+            !original.afip_snapshot ||
+            !original.afip_snapshot_hash
+          ) {
+            throw new Error(
+              "La nota de crédito v2 exige una venta neutral aprobada con identidad fiscal real completa.",
+            );
+          }
+          const { data: result, error } = await supabase.rpc("anular_venta", {
+            p_venta_id: originalId,
+          });
+          if (error) throw new Error(error.message);
+          return normalizarVentaCreada(result);
+        },
+      },
+    );
   });
 
 const conversionBaseSchema = z.object({

@@ -4,7 +4,10 @@ import type { Locator, Page } from "@playwright/test";
 import { test, expect, ingresar } from "./apoyo";
 import {
   cantidadVentasDelProductoE2E,
+  configurarFlagsFacturacionFixture,
   leerEfectosVentaFixture,
+  leerHuellaComercialFixture,
+  leerReversionNotaCreditoFixture,
   limpiarFixturesFiscales,
   prepararFixturesFiscales,
   type FixtureFiscal,
@@ -73,7 +76,7 @@ async function confirmarHastaCerrar(dialogo: Locator) {
 test("la venta neutral ofrece exactamente cobrar/registrar y facturar o registrar sin facturar", async ({
   page,
 }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await cargarVentaBasica(page);
 
   await expect(page.getByTestId("registrar-y-facturar")).toHaveText(/Registrar venta y facturar/);
@@ -89,8 +92,97 @@ test("la venta neutral ofrece exactamente cobrar/registrar y facturar o registra
   await expect(resumen.getByText("$ 81,00", { exact: true })).toBeVisible();
 });
 
+test("una VENTA neutral aprobada genera una NC total y abre la cola con receptor heredado", async ({
+  page,
+}) => {
+  test.skip(ESCENARIO !== "OK", "La NC fiscal completa pertenece al escenario OK.");
+  const antes = await leerReversionNotaCreditoFixture(fixture.ventaOriginalNotaCreditoId);
+  expect(antes.original).toEqual({ estado: "ACTIVA", venta_anulada_por: null });
+  expect(antes.nota).toBeNull();
+  await ingresar(page, "fiscalAdmin");
+  await page.goto("/ventas/nueva");
+
+  await page.getByRole("combobox", { name: /Tipo comprobante/i }).click();
+  await page.getByRole("option", { name: "Nota de Crédito" }).click();
+  await page.getByRole("button", { name: "Buscar cliente…" }).click();
+  await page.getByPlaceholder("Nombre o CUIT…").last().fill("T13-E2E OTRO COMPRADOR");
+  await page.getByRole("button", { name: /T13-E2E OTRO COMPRADOR/ }).click();
+
+  await page.getByRole("combobox", { name: /Venta fiscal que revierte/i }).click();
+  await page.getByRole("option", { name: /V-T13-E2E-NC-ORIGINAL/ }).click();
+  await expect(page.getByText(/reversión total/i).first()).toBeVisible();
+  await expect(page.getByText("T13-E2E Producto fiscal")).toBeVisible();
+  await expect(page.getByTestId("venta-buscar-producto")).toBeDisabled();
+
+  await page.getByTestId("guardar-venta").click();
+  await expect(page).toHaveURL(
+    /\/facturacion\/cola\?venta=[0-9a-f-]+&resultado=venta_creada_factura_pendiente/,
+    { timeout: 20_000 },
+  );
+  const fila = page.locator("tbody tr", { hasText: /Nota de crédito/ });
+  await expect(fila).toContainText("Sin facturar");
+  await expect
+    .poll(async () => leerReversionNotaCreditoFixture(fixture.ventaOriginalNotaCreditoId))
+    .toMatchObject({
+      original: { estado: "ANULADA" },
+      nota: {
+        tipo_comprobante: "NOTA_CREDITO",
+        estado: "ACTIVA",
+        afip_estado: "SIN_FACTURAR",
+        afip_cbte_asoc_id: fixture.ventaOriginalNotaCreditoId,
+        total: -121,
+      },
+      itemsNota: 1,
+      pagosNota: 0,
+      movimientosStockOriginal: antes.movimientosStockOriginal + 1,
+      stockProducto: antes.stockProducto + 1,
+    });
+  const despues = await leerReversionNotaCreditoFixture(fixture.ventaOriginalNotaCreditoId);
+  expect(despues.original.venta_anulada_por).toBe(despues.nota?.id);
+  await fila.getByRole("button", { name: "Facturar" }).click();
+  const dialogo = page.getByTestId("dialogo-emision-fiscal");
+  await expect(dialogo).toContainText(/conservan el receptor del comprobante original/i);
+  await expect(dialogo.locator("fieldset")).toHaveAttribute("disabled", "");
+  await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
+  await expect(dialogo).toContainText("T13-E2E RECEPTOR NC HEREDADO", { timeout: 20_000 });
+});
+
+test("un cliente legacy obsoleto no puede guardar una ND después de activar v2", async ({
+  page,
+}) => {
+  test.skip(ESCENARIO !== "OK", "El fence comercial de ND pertenece al escenario OK.");
+  await configurarFlagsFacturacionFixture({ v2: false, legacy: true });
+  try {
+    await ingresar(page, "fiscalAdmin");
+    await page.goto("/ventas/nueva");
+    await page.getByRole("combobox", { name: /Tipo comprobante/i }).click();
+    await page.getByRole("option", { name: "Nota de Débito" }).click();
+    await page.getByRole("button", { name: "Buscar cliente…" }).click();
+    await page.getByPlaceholder("Nombre o CUIT…").last().fill("T13-E2E COMPRADOR");
+    await page.getByRole("button", { name: /T13-E2E COMPRADOR COMERCIAL/ }).click();
+    await page.getByRole("combobox", { name: /Factura que rectifica/i }).click();
+    await page.getByRole("option", { name: /V-T13-E2E-LEGACY-PEND/ }).click();
+    await page
+      .getByText("% sobre el total de la factura", { exact: true })
+      .locator("..")
+      .locator("input")
+      .fill("10");
+
+    const antes = await leerHuellaComercialFixture();
+    await configurarFlagsFacturacionFixture({ v2: true, legacy: false });
+    await page.getByTestId("guardar-venta").click();
+    await expect(page.locator("[data-sonner-toaster]")).toContainText(
+      /nota de débito.*fuera de alcance fiscal/i,
+    );
+    await expect(page).toHaveURL(/\/ventas\/nueva/);
+    await expect.poll(() => leerHuellaComercialFixture()).toEqual(antes);
+  } finally {
+    await configurarFlagsFacturacionFixture({ v2: true, legacy: false });
+  }
+});
+
 test("registrar sin facturar no abre receptor ni ARCA y crea una sola venta", async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   const antes = await cantidadVentasDelProductoE2E();
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-sin-facturar").dblclick();
@@ -107,7 +199,7 @@ test("el diálogo compartido separa comprador/receptor, deriva A y bloquea el do
   page,
 }) => {
   test.skip(ESCENARIO !== "OK", "La aprobación completa pertenece al escenario OK.");
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-y-facturar").click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
@@ -123,6 +215,12 @@ test("el diálogo compartido separa comprador/receptor, deriva A y bloquea el do
   await revisar(dialogo);
   await expect(dialogo).toContainText(/Factura A/i);
   await expect(dialogo).toContainText("T13-E2E RECEPTOR DISTINTO");
+  await expect(dialogo).toContainText(fixture.emisorRazonSocial);
+  await expect(dialogo).toContainText(`CUIT ${fixture.emisorCuit}`);
+  await expect(dialogo).toContainText(fixture.sucursalPrincipalNombre);
+  await expect(dialogo).toContainText(`PV ${String(fixture.puntoVenta).padStart(5, "0")}`);
+  await expect(dialogo).toContainText("Producción");
+  await expect(dialogo).not.toContainText(/Emisor de la sucursal|a confirmar|Ambiente a confirmar/);
   await confirmarHastaCerrar(dialogo);
 
   await expect(page).toHaveURL(/resultado=factura_aprobada/, { timeout: 25_000 });
@@ -132,7 +230,7 @@ test("el diálogo compartido separa comprador/receptor, deriva A y bloquea el do
 test("comercial, favorito CUIL y manual son fuentes explícitas; documento inválido no previsualiza", async ({
   page,
 }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-y-facturar").click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
@@ -157,7 +255,7 @@ test("comercial, favorito CUIL y manual son fuentes explícitas; documento invá
 });
 
 test("Escape devuelve foco y el diálogo queda contenido para teclado", async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await cargarVentaBasica(page);
   const boton = page.getByTestId("registrar-y-facturar");
   await boton.click();
@@ -190,7 +288,7 @@ test("resultado parcial: el timeout posterior al request conserva la venta y exi
     ESCENARIO !== "TIMEOUT_POST_REQUEST",
     "La incertidumbre posterior al request requiere su proceso TIMEOUT_POST_REQUEST.",
   );
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   const antes = await cantidadVentasDelProductoE2E();
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-y-facturar").click();
@@ -208,7 +306,7 @@ test("rechazo definitivo conserva la venta para corregir sin repetir el cobro", 
     ESCENARIO !== "RECHAZO_DEFINITIVO",
     "El rechazo fiscal requiere su proceso RECHAZO_DEFINITIVO.",
   );
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   const antes = await cantidadVentasDelProductoE2E();
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-y-facturar").click();
@@ -221,10 +319,10 @@ test("rechazo definitivo conserva la venta para corregir sin repetir el cobro", 
 
 test("bloquea PDF sin QR: QR_ERROR no descarga un documento interno", async ({ page }) => {
   test.skip(ESCENARIO !== "QR_ERROR", "La falla de QR requiere su proceso QR_ERROR.");
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/ventas");
   const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
-  await fila.getByRole("button").first().click();
+  await fila.getByRole("button", { name: "Ver detalle de V-T13-E2E-APROBADA" }).click();
   const dialogo = page.getByRole("dialog");
   let descargo = false;
   page.once("download", () => {
@@ -238,13 +336,13 @@ test("bloquea PDF sin QR: QR_ERROR no descarga un documento interno", async ({ p
 
 test("el PDF aprobado usa receptor y fecha congelados", async ({ page }, testInfo) => {
   test.skip(ESCENARIO !== "OK", "La descarga fiscal válida pertenece al escenario OK.");
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/ventas");
   const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
-  await fila.getByRole("button").first().click();
+  await fila.getByRole("button", { name: "Ver detalle de V-T13-E2E-APROBADA" }).click();
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toContainText("T13-E2E RECEPTOR CONGELADO");
-  await expect(dialogo).toContainText("23/08/2026");
+  await expect(dialogo).toContainText(fixture.fechaFiscalVisible);
   const descarga = page.waitForEvent("download");
   await dialogo.getByRole("button", { name: "PDF" }).click();
   const archivo = await descarga;
@@ -252,8 +350,26 @@ test("el PDF aprobado usa receptor y fecha congelados", async ({ page }, testInf
   await archivo.saveAs(ruta);
   const bytes = await readFile(ruta, "latin1");
   expect(bytes).toContain("T13-E2E RECEPTOR CONGELADO");
-  expect(bytes).toContain("23/08/2026");
+  expect(bytes).toContain(fixture.fechaFiscalVisible);
   expect(bytes).not.toContain("DOCUMENTO INTERNO");
+});
+
+test("el listado muestra y busca comprador → receptor fiscal desde el snapshot congelado", async ({
+  page,
+}) => {
+  test.skip(ESCENARIO !== "OK", "El receptor congelado aprobado pertenece al escenario OK.");
+  await ingresar(page, "fiscalAdmin");
+  await page.goto("/ventas");
+  const busqueda = page.getByPlaceholder("Buscar comprobante, comprador o receptor…");
+  await busqueda.fill("T13-E2E RECEPTOR CONGELADO");
+  const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  await expect(fila).toBeVisible();
+  await expect(fila).toContainText("T13-E2E OTRO COMPRADOR");
+  await expect(fila.getByTestId(`receptor-${fixture.ventaAprobadaId}`)).toHaveText(
+    "→ T13-E2E RECEPTOR CONGELADO",
+  );
+  await busqueda.fill("30714199664");
+  await expect(fila).toBeVisible();
 });
 
 test("dos pestañas sobre la misma venta no repiten efectos comerciales", async ({ browser }) => {
@@ -261,7 +377,7 @@ test("dos pestañas sobre la misma venta no repiten efectos comerciales", async 
   const contextos = await Promise.all([browser.newContext(), browser.newContext()]);
   try {
     const paginas = await Promise.all(contextos.map((contexto) => contexto.newPage()));
-    await Promise.all(paginas.map((page) => ingresar(page)));
+    await Promise.all(paginas.map((page) => ingresar(page, "fiscalAdmin")));
     await Promise.all(
       paginas.map((page) => page.goto(`/facturacion/cola?venta=${fixture.ventaPendienteId}`)),
     );

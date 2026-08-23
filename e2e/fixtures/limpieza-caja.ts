@@ -39,3 +39,13 @@ export function exigirSesionesCajaPropiasSinReferencias(
   }
   return sesiones.map(({ id }) => id);
 }
+
+export function exigirCeroResiduosFixture(conteos: Record<string, number>): void {
+  const residuos = Object.entries(conteos).filter(([, total]) => total !== 0);
+  if (residuos.length === 0) return;
+  throw new Error(
+    `El cleanup fiscal dejó residuos: ${residuos
+      .map(([recurso, total]) => `${recurso}=${total}`)
+      .join(", ")}.`,
+  );
+}

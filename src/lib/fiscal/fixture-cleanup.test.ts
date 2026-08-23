@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { exigirSesionesCajaPropiasSinReferencias } from "../../../e2e/fixtures/limpieza-caja";
+import {
+  exigirCeroResiduosFixture,
+  exigirSesionesCajaPropiasSinReferencias,
+} from "../../../e2e/fixtures/limpieza-caja";
 
 const sinReferencias = {
   ventas: 0,
@@ -40,5 +43,14 @@ describe("cleanup de cajas del fixture fiscal", () => {
         { "caja-con-venta": { ...sinReferencias, ventas: 1 } },
       ),
     ).toThrow(/ventas=1/i);
+  });
+});
+
+describe("auditoría final del fixture fiscal", () => {
+  it("acepta sólo ausencia total y enumera cada residuo", () => {
+    expect(() => exigirCeroResiduosFixture({ ventas: 0, auth: 0, perfiles: 0 })).not.toThrow();
+    expect(() => exigirCeroResiduosFixture({ ventas: 2, auth: 1, perfiles: 0 })).toThrow(
+      /ventas=2.*auth=1/i,
+    );
   });
 });

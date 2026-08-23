@@ -17,7 +17,7 @@ test.afterAll(async () => {
   await limpiarFixturesFiscales();
 });
 test.beforeEach(async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/facturacion/configuracion");
   await page.getByText(/identidad fiscal e impresos/i).waitFor({ timeout: 20_000 });
 });

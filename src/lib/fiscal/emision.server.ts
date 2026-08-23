@@ -141,6 +141,13 @@ export function esConflictoClaimFiscalServer(error: unknown): boolean {
   );
 }
 
+export function esConflictoSecuenciaFiscalServer(error: unknown): boolean {
+  const value = error as { code?: string; message?: string } | null;
+  return (
+    value?.code === "PT409" && (value.message ?? "").startsWith("EMISION_FISCAL_SECUENCIA_OBSOLETA")
+  );
+}
+
 type PreparacionInterna = {
   lectura: LecturaVentaFiscalExacta;
   contexto: ContextoFiscal;
@@ -198,49 +205,6 @@ export type EntradaPreviewBorradorFiscal = {
 };
 
 export { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
-
-export async function emitirPostBorradorConHuella(
-  input: {
-    ventaId: string;
-    receptor: SelectorReceptorFiscal;
-    confirmaVentaAntigua: boolean;
-    huellaProvisional: string;
-  },
-  deps: {
-    previsualizarVenta(): Promise<{
-      huella_confirmacion: string;
-      confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
-    }>;
-    emitir(): Promise<ResultadoEmisionFiscal>;
-  },
-): Promise<
-  | ResultadoEmisionFiscal
-  | {
-      estado: "RECONFIRMACION_REQUERIDA";
-      mensaje: string;
-      huella_confirmacion: string;
-      confirmacion_autoritativa: ConfirmacionFiscalPostBorrador;
-    }
-> {
-  if (!/^[0-9a-f]{64}$/.test(input.huellaProvisional)) {
-    throw new Error("La huella provisional no es un SHA-256 canónico.");
-  }
-  const preview = await deps.previsualizarVenta();
-  const huellaRecalculada = crearHuellaConfirmacionFiscal(preview.confirmacion_autoritativa);
-  if (
-    preview.huella_confirmacion !== huellaRecalculada ||
-    input.huellaProvisional !== huellaRecalculada
-  ) {
-    return {
-      estado: "RECONFIRMACION_REQUERIDA",
-      mensaje:
-        "La venta persistida difiere de la confirmación provisional; revisá la preview autoritativa antes de emitir.",
-      huella_confirmacion: huellaRecalculada,
-      confirmacion_autoritativa: copiarConfirmacionFiscal(preview.confirmacion_autoritativa),
-    };
-  }
-  return deps.emitir();
-}
 
 export type LecturasContextoArcaCongelado = {
   cargarEmisor(id: string): Promise<{ id: string; cuit: string | null } | null>;
@@ -440,6 +404,9 @@ export async function construirPreviewBorradorFiscalProvisional(
     version: 1,
     importe: totalTexto,
     emisorCuit: contexto.emisor.cuit,
+    emisorRazonSocial: contexto.emisorImpreso.razon_social,
+    sucursalId: contexto.sucursal.id,
+    sucursalNombre: contexto.sucursal.nombre,
     puntoVenta: contexto.pv.numero,
     modo: contexto.pv.modo,
     letra,
@@ -454,6 +421,9 @@ export async function construirPreviewBorradorFiscalProvisional(
     comprador: input.clienteId,
     receptor,
     emisor_cuit: contexto.emisor.cuit,
+    emisor_razon_social: contexto.emisorImpreso.razon_social,
+    sucursal_id: contexto.sucursal.id,
+    sucursal_nombre: contexto.sucursal.nombre,
     punto_venta: contexto.pv.numero,
     modo: contexto.pv.modo,
     letra,
@@ -475,6 +445,9 @@ export async function construirPreviewBorradorFiscalProvisional(
       version: 1 as const,
       importe: totalTexto,
       emisor_cuit: contexto.emisor.cuit,
+      emisor_razon_social: contexto.emisorImpreso.razon_social,
+      sucursal_id: contexto.sucursal.id,
+      sucursal_nombre: contexto.sucursal.nombre,
       punto_venta: contexto.pv.numero,
       modo: contexto.pv.modo,
       letra,
@@ -866,15 +839,16 @@ export function crearDependenciasEmisionFiscalServer(input: {
         );
       }
       const fechaComprobante = fechaFiscalHoyAr();
-      preparaciones.set(ventaId, {
+      const interna: PreparacionInterna = {
         lectura,
         contexto,
         direccionSucursal: await direccionSucursal(admin, lectura.venta.sucursalId),
         receptor: receptorConfirmado,
         letra,
         original,
-      });
-      return {
+      };
+      preparaciones.set(ventaId, interna);
+      const preparacionBase = {
         ventaId,
         tipoComprobante: tipo,
         emisorCuit: original?.identidad.emisorCuit ?? contexto.emisor.cuit,
@@ -884,6 +858,25 @@ export function crearDependenciasEmisionFiscalServer(input: {
         simulado: original?.identidad.simulado ?? MOCK,
         validez: original?.identidad.validez ?? (MOCK ? "SIMULADA" : contexto.pv.modo),
         fechaComprobante,
+      };
+      const confirmacionAutoritativa: ConfirmacionFiscalPostBorrador = {
+        version: 1,
+        importe: lectura.venta.total,
+        emisorCuit: preparacionBase.emisorCuit,
+        emisorRazonSocial: contexto.emisorImpreso.razon_social,
+        sucursalId: contexto.sucursal.id,
+        sucursalNombre: contexto.sucursal.nombre,
+        puntoVenta: preparacionBase.puntoVenta,
+        modo: preparacionBase.modo,
+        letra,
+        cbteTipo: preparacionBase.cbteTipo,
+        fechaFiscal: fechaComprobante,
+        receptor: proyectarReceptorFiscalConfirmado(receptorConfirmado),
+      };
+      return {
+        ...preparacionBase,
+        confirmacionAutoritativa,
+        huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
       };
     },
     async consultarSecuencia(preparacion: PreparacionEmisionFiscal) {
@@ -1022,6 +1015,9 @@ export function crearDependenciasEmisionFiscalServer(input: {
     esConflictoClaim(error) {
       return esConflictoClaimFiscalServer(error);
     },
+    esConflictoSecuencia(error) {
+      return esConflictoSecuenciaFiscalServer(error);
+    },
     async consultarComprobanteCompleto(reserva) {
       const contexto = await contextoReserva(reserva);
       return consultarComprobanteCompleto(
@@ -1136,6 +1132,9 @@ export async function previsualizarVentaFiscalExistente(input: {
     version: 1,
     importe: lectura.venta.total,
     emisorCuit: preparacion.emisorCuit,
+    emisorRazonSocial: vista.contexto.emisorImpreso.razon_social,
+    sucursalId: vista.contexto.sucursal.id,
+    sucursalNombre: vista.contexto.sucursal.nombre,
     puntoVenta: preparacion.puntoVenta,
     modo: preparacion.modo,
     letra: vista.letra,
@@ -1156,6 +1155,9 @@ export async function previsualizarVentaFiscalExistente(input: {
     letra: vista.letra,
     razon_letra: `La condición ${vista.receptor.condicionIva} determina letra ${vista.letra}.`,
     emisor_cuit: preparacion.emisorCuit,
+    emisor_razon_social: vista.contexto.emisorImpreso.razon_social,
+    sucursal_id: vista.contexto.sucursal.id,
+    sucursal_nombre: vista.contexto.sucursal.nombre,
     punto_venta: preparacion.puntoVenta,
     modo: preparacion.modo,
     cbte_tipo: preparacion.cbteTipo,

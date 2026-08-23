@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -21,7 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { fmtDocumento } from "@/lib/documento";
 import { datosFiscalesComprobante } from "@/lib/fiscal.functions";
-import { CBTE_INFO, esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
+import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import {
   generarComprobantePdf,
   numeroFiscal,
@@ -29,6 +29,7 @@ import {
 } from "@/lib/fiscal/comprobante-pdf";
 import type { DatosFiscalesPreparados } from "@/lib/fiscal/impresion";
 import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
+import { leerReceptorFiscalCongelado, receptorFiscalDifiereDelComprador } from "@/lib/ventas-ui";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 
@@ -41,49 +42,8 @@ export type VentaDetalle = VentaRow & {
   sucursal?: { nombre: string | null; telefono?: string | null } | null;
 };
 
-type ReceptorCongelado = {
-  razonSocial: string;
-  tipoDocumento: string | null;
-  numeroDocumento: string | null;
-  condicionIva: string | null;
-};
-
 function esRegistro(value: Json | undefined): value is { [key: string]: Json | undefined } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function texto(value: Json | undefined): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-function receptorCongelado(snapshot: Json | null): ReceptorCongelado | null {
-  if (!esRegistro(snapshot) || !esRegistro(snapshot.receptor)) return null;
-  const receptor = snapshot.receptor;
-  const razonSocial = texto(receptor.razonSocial) ?? texto(receptor.razon_social);
-  if (!razonSocial) return null;
-  return {
-    razonSocial,
-    tipoDocumento: texto(receptor.tipoDocumento) ?? texto(receptor.tipo_documento),
-    numeroDocumento:
-      texto(receptor.numeroDocumento) ??
-      texto(receptor.numero_documento) ??
-      texto(receptor.cuit_dni),
-    condicionIva: texto(receptor.condicionIva) ?? texto(receptor.condicion_iva),
-  };
-}
-
-function normalizarIdentidad(value: string | null | undefined): string {
-  return (value ?? "").replace(/\W/g, "").toLocaleLowerCase("es-AR");
-}
-
-function receptorDifiereDelComprador(venta: VentaDetalle, receptor: ReceptorCongelado): boolean {
-  const comprador = normalizarIdentidad(venta.cliente?.razon_social);
-  const documentoComprador = normalizarIdentidad(venta.cliente?.cuit_dni);
-  return (
-    comprador !== normalizarIdentidad(receptor.razonSocial) ||
-    (!!receptor.numeroDocumento &&
-      documentoComprador !== normalizarIdentidad(receptor.numeroDocumento))
-  );
 }
 
 function descripcionFiscal(venta: VentaDetalle): string | null {
@@ -114,9 +74,13 @@ function detallePago(detalle: Json): string | null {
 export function DialogoDetalleVenta({
   venta,
   onClose,
+  permitirDescarga = true,
+  returnFocusRef,
 }: {
   venta: VentaDetalle | null;
   onClose(): void;
+  permitirDescarga?: boolean;
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [imprimiendo, setImprimiendo] = useState(false);
   const { data: detalle } = useQuery({
@@ -146,10 +110,6 @@ export function DialogoDetalleVenta({
         {
           venta,
           items: detalle?.items ?? [],
-          requiereDatosFiscales:
-            !!venta.cae &&
-            esComprobanteFiscal(venta.tipo_comprobante) &&
-            !esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id),
         },
         {
           cargarFiscal: async () => {
@@ -170,33 +130,42 @@ export function DialogoDetalleVenta({
     }
   };
 
-  const receptor = venta ? receptorCongelado(venta.afip_snapshot) : null;
+  const receptor = venta ? leerReceptorFiscalCongelado(venta.afip_snapshot) : null;
   const fiscal = venta ? descripcionFiscal(venta) : null;
-  const mostrarReceptorSeparado =
-    !!venta && !!receptor && receptorDifiereDelComprador(venta, receptor);
+  const mostrarReceptorSeparado = !!venta && !!receptor && receptorFiscalDifiereDelComprador(venta);
 
   return (
     <Dialog open={!!venta} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-auto">
+      <DialogContent
+        className="max-h-[90vh] max-w-3xl overflow-auto"
+        data-testid="dialogo-detalle-venta"
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusRef?.current) return;
+          event.preventDefault();
+          returnFocusRef.current.focus();
+        }}
+      >
         {venta ? (
           <>
             <DialogHeader>
               <DialogTitle className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-center sm:justify-between">
                 <span>Venta {venta.numero_comprobante}</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={imprimir}
-                  disabled={imprimiendo}
-                  className="min-h-11 sm:min-h-9"
-                >
-                  {imprimiendo ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Printer className="mr-1 h-4 w-4" />
-                  )}
-                  PDF
-                </Button>
+                {permitirDescarga ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={imprimir}
+                    disabled={imprimiendo}
+                    className="min-h-11 sm:min-h-9"
+                  >
+                    {imprimiendo ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Printer className="mr-1 h-4 w-4" />
+                    )}
+                    PDF
+                  </Button>
+                ) : null}
               </DialogTitle>
               <DialogDescription>
                 Detalle comercial, pagos y estado fiscal de la venta seleccionada.

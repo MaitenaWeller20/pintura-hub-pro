@@ -18,6 +18,7 @@ suite("motor fiscal contra Supabase local", () => {
   let ejecutarEmisionFiscal: any;
   let ejecutarConciliacionFiscal: any;
   let crearSnapshotFiscalV2: any;
+  let crearHuellaConfirmacionFiscal: any;
   let restoreFetch: typeof fetch;
 
   async function cleanup() {
@@ -58,13 +59,15 @@ suite("motor fiscal contra Supabase local", () => {
       return restoreFetch(input, init);
     }) as typeof fetch;
 
-    const [{ createClient }, postgresModule, engine, snapshot, websocket] = await Promise.all([
-      import("@supabase/supabase-js"),
-      import("postgres"),
-      import("./emision"),
-      import("./snapshot"),
-      import("@/lib/ws-polyfill"),
-    ]);
+    const [{ createClient }, postgresModule, engine, snapshot, confirmacion, websocket] =
+      await Promise.all([
+        import("@supabase/supabase-js"),
+        import("postgres"),
+        import("./emision"),
+        import("./snapshot"),
+        import("./confirmacion"),
+        import("@/lib/ws-polyfill"),
+      ]);
     websocket.ensureNodeWebSocket();
     supabase = createClient(apiUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -73,6 +76,7 @@ suite("motor fiscal contra Supabase local", () => {
     ejecutarEmisionFiscal = engine.ejecutarEmisionFiscal;
     ejecutarConciliacionFiscal = engine.ejecutarConciliacionFiscal;
     crearSnapshotFiscalV2 = snapshot.crearSnapshotFiscalV2;
+    crearHuellaConfirmacionFiscal = confirmacion.crearHuellaConfirmacionFiscal;
 
     await cleanup();
     const [sucursal] = await sql`select id from public.sucursales order by numero limit 1`;
@@ -207,6 +211,29 @@ suite("motor fiscal contra Supabase local", () => {
     outcomes: Array<"OK" | "TIMEOUT">,
   ) {
     let arcaCalls = 0;
+    const confirmacionAutoritativa = {
+      version: 1 as const,
+      importe: "1210.00",
+      emisorCuit: "30717322467",
+      puntoVenta,
+      modo: "HOMOLOGACION" as const,
+      letra: "A" as const,
+      cbteTipo: 1,
+      fechaFiscal: "2026-08-22",
+      receptor: {
+        razonSocial: "RECEPTOR",
+        domicilio: null,
+        tipoDocumento: "CUIT" as const,
+        numeroDocumento: "30714199664",
+        docTipoArca: 80,
+        docNroArca: "30714199664",
+        condicionIva: "RESPONSABLE_INSCRIPTO" as const,
+        origen: "MANUAL" as const,
+        origenId: null,
+        verificadoArcaAt: null,
+      },
+    };
+    const huellaConfirmacion = crearHuellaConfirmacionFiscal(confirmacionAutoritativa);
     const transition = async ({ ventaId: id, accion, claimToken, payload }: any) => {
       const { data, error } = await supabase.rpc("transicionar_emision_fiscal", {
         p_venta_id: id,
@@ -236,6 +263,8 @@ suite("motor fiscal contra Supabase local", () => {
         simulado: true,
         validez: "SIMULADA",
         fechaComprobante: "2026-08-22",
+        confirmacionAutoritativa,
+        huellaConfirmacion,
       }),
       consultarSecuencia: async () => ({
         ultimoRemoto: 0,
@@ -287,6 +316,9 @@ suite("motor fiscal contra Supabase local", () => {
         return { resultado: "APROBADA", cae: "74123456789012", vencimiento: "2026-09-01" };
       },
       esConflictoClaim: (error: any) => error?.code === "40001",
+      esConflictoSecuencia: (error: any) =>
+        error?.code === "PT409" &&
+        String(error?.message ?? "").startsWith("EMISION_FISCAL_SECUENCIA_OBSOLETA"),
       consultarComprobanteCompleto: async () => null,
       consultarUltimoAutorizado: async () => 0,
       decidirConciliacion: ({ numeroReservado, ultimoRemoto }: any) =>
@@ -294,7 +326,7 @@ suite("motor fiscal contra Supabase local", () => {
           ? { accion: "REENVIAR_MISMO_NUMERO" }
           : { accion: "BLOQUEAR", diferencias: ["secuencia"] },
     };
-    return { dependencies, arcaCalls: () => arcaCalls, transition };
+    return { dependencies, arcaCalls: () => arcaCalls, transition, huellaConfirmacion };
   }
 
   it("aprueba, conserva lo comercial y hace coincidir los payloads TS con las allowlists", async () => {
@@ -318,6 +350,7 @@ suite("motor fiscal contra Supabase local", () => {
           confirma_datos_manuales: true,
         },
         confirmaVentaAntigua: false,
+        huellaConfirmacion: runtime.huellaConfirmacion,
       },
       runtime.dependencies,
     );
@@ -338,6 +371,7 @@ suite("motor fiscal contra Supabase local", () => {
         ventaId: ids.sales[1],
         receptor: { origen: "CLIENTE_COMERCIAL" },
         confirmaVentaAntigua: false,
+        huellaConfirmacion: runtime.huellaConfirmacion,
       },
       runtime.dependencies,
     );
@@ -358,6 +392,7 @@ suite("motor fiscal contra Supabase local", () => {
         ventaId: ids.sales[2],
         receptor: { origen: "CLIENTE_COMERCIAL" },
         confirmaVentaAntigua: false,
+        huellaConfirmacion: runtime.huellaConfirmacion,
       },
       runtime.dependencies,
     );
@@ -406,6 +441,7 @@ suite("motor fiscal contra Supabase local", () => {
         ventaId: ids.sales[4],
         receptor: { origen: "CLIENTE_COMERCIAL" },
         confirmaVentaAntigua: false,
+        huellaConfirmacion: runtime.huellaConfirmacion,
       },
       runtime.dependencies,
     );

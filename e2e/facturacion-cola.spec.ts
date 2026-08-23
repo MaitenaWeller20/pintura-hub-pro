@@ -15,33 +15,37 @@ test.afterAll(async () => {
   await limpiarFixturesFiscales();
 });
 
-test("tabs, conteos y paginación salen de la cola autoritativa", async ({ page }) => {
-  await ingresar(page);
+test("tabs y paginación navegan sólo sobre identificadores propios del fixture", async ({
+  page,
+}) => {
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/facturacion/cola");
   const tabs = page.getByRole("tablist", { name: /estados de la cola/i });
-  await expect(tabs.getByRole("tab", { name: /Pendientes/ })).toContainText(/2[89]|3\d/);
-  await expect(tabs.getByRole("tab", { name: /A revisar/ })).not.toContainText("—");
-  await expect(tabs.getByRole("tab", { name: /Emitidas/ })).not.toContainText("—");
-  await expect(page.locator("tbody tr")).toHaveCount(25);
-  await expect(page.getByText(/página 1 de 2/i)).toBeVisible();
+  await expect(tabs.getByRole("tab", { name: /Pendientes/ })).toBeVisible();
+  await expect(tabs.getByRole("tab", { name: /A revisar/ })).toBeVisible();
+  await expect(tabs.getByRole("tab", { name: /Emitidas/ })).toBeVisible();
+  await expect(page.locator("tbody")).toContainText("V-T13-E2E-001");
+  await expect(page.locator("tbody")).not.toContainText("V-T13-E2E-028");
+  await expect(page.getByRole("button", { name: /Siguiente/ })).toBeEnabled();
   await page.getByRole("button", { name: /Siguiente/ }).click();
   await expect(page).toHaveURL(/page=2/);
-  await expect(page.locator("tbody tr").first()).toBeVisible();
+  await expect(page.locator("tbody")).toContainText("V-T13-E2E-028");
 });
 
 test("filtros por documento/estado y limpieza conservan una consulta navegable", async ({
   page,
 }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/facturacion/cola?tab=emitidas");
   await page.getByLabel(/Documento receptor/i).fill("30-71419966-4");
   await page.getByRole("button", { name: /Aplicar filtros/i }).click();
   // La URL preserva lo que escribió el operador; el server normaliza a dígitos
   // antes de ejecutar la consulta autoritativa.
   await expect(page).toHaveURL(/documento=30-71419966-4/);
-  await expect(page.locator("tbody tr")).toHaveCount(1);
-  await expect(page.locator("tbody tr")).toContainText("T13-E2E RECEPTOR CONGELADO");
-  await expect(page.locator("tbody tr")).toContainText("SIMULADA");
+  const aprobadaPropia = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  await expect(aprobadaPropia).toBeVisible();
+  await expect(aprobadaPropia).toContainText("T13-E2E RECEPTOR CONGELADO");
+  await expect(aprobadaPropia).toContainText("PRODUCCION");
   await page.getByRole("button", { name: /Limpiar/i }).click();
   await expect(page).not.toHaveURL(/documento=/);
 });
@@ -49,7 +53,7 @@ test("filtros por documento/estado y limpieza conservan una consulta navegable",
 test("mapea todos los estados operativos y reserva incidentes para administrador", async ({
   page,
 }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto("/facturacion/cola?tab=revisar");
   const cuerpo = page.locator("tbody");
   await expect(cuerpo).toContainText("Corregir/reintentar");
@@ -67,7 +71,7 @@ test("mapea todos los estados operativos y reserva incidentes para administrador
 test("empleado queda forzado a su sucursal y ve incidentes como Requiere administrador", async ({
   page,
 }) => {
-  await ingresar(page, "empleado");
+  await ingresar(page, "fiscalEmpleado");
   await page.goto(`/facturacion/cola?tab=pendientes&sucursal=${fixture.sucursalAlternaId}`);
   await expect(page.locator("tbody")).not.toContainText("V-T13-E2E-OTRA");
   await expect(page.locator("tbody")).toContainText("V-T13-E2E-001");
@@ -81,7 +85,7 @@ test("empleado queda forzado a su sucursal y ve incidentes como Requiere adminis
 test("venta exacta abre el mismo diálogo y muestra total, cobrado y saldo separados", async ({
   page,
 }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto(`/facturacion/cola?venta=${fixture.ventaPendienteId}`);
   const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-001" });
   await expect(fila).toContainText(/\$\s*121/);
@@ -92,7 +96,7 @@ test("venta exacta abre el mismo diálogo y muestra total, cobrado y saldo separ
 });
 
 test("la NC hereda receptor y referencia original en modo sólo lectura", async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
   await page.goto(`/facturacion/cola?venta=${fixture.notaCreditoId}`);
   const fila = page.locator("tbody tr", { hasText: "NC-T13-E2E-PENDIENTE" });
   await fila.getByRole("button", { name: "Facturar" }).click();
@@ -103,4 +107,36 @@ test("la NC hereda receptor y referencia original en modo sólo lectura", async 
   await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
   await expect(dialogo).toContainText("T13-E2E RECEPTOR CONGELADO", { timeout: 20_000 });
   await expect(dialogo).toContainText(/comprobante original/i);
+});
+
+test("APROBADO abre detalle fiscal descargable y restaura el foco al salir", async ({ page }) => {
+  await ingresar(page, "fiscalAdmin");
+  await page.goto(`/facturacion/cola?tab=emitidas&venta=${fixture.ventaAprobadaId}`);
+  const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  const abrir = fila.getByRole("button", { name: "Ver/descargar" });
+  await abrir.click();
+  const dialogo = page.getByTestId("dialogo-detalle-venta");
+  await expect(dialogo).toBeVisible();
+  await expect(dialogo).toContainText("T13-E2E RECEPTOR CONGELADO");
+  const descarga = page.waitForEvent("download");
+  await dialogo.getByRole("button", { name: "PDF" }).click();
+  await descarga;
+  await page.keyboard.press("Escape");
+  await expect(dialogo).not.toBeVisible();
+  await expect(abrir).toBeFocused();
+});
+
+test("CANCELADO abre detalle readonly sin descarga y restaura el foco", async ({ page }) => {
+  await ingresar(page, "fiscalAdmin");
+  await page.goto(`/facturacion/cola?tab=historial&venta=${fixture.ventaCanceladaId}`);
+  const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-CANCELADO" });
+  const abrir = fila.getByRole("button", { name: "Ver", exact: true });
+  await abrir.click();
+  const dialogo = page.getByTestId("dialogo-detalle-venta");
+  await expect(dialogo).toBeVisible();
+  await expect(dialogo).toContainText(/estado fiscal/i);
+  await expect(dialogo.getByRole("button", { name: "PDF" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialogo).not.toBeVisible();
+  await expect(abrir).toBeFocused();
 });

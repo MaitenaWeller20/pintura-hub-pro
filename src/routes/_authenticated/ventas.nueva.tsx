@@ -254,23 +254,35 @@ function NuevaVenta() {
       setItems((prev) =>
         prev.some((it) => it.desde_factura) ? prev.filter((it) => !it.desde_factura) : prev,
       );
+      if (cu?.facturacionV2Habilitada && tipoComp === "NOTA_CREDITO") {
+        setPagos([]);
+        setPercepciones(0);
+      }
       return;
     }
     // La Nota de Débito NO trae productos: usa el recargo (R5). Sólo la NC precarga.
     if (tipoComp !== "NOTA_CREDITO") return;
-    const { data, error } = await supabase
-      .from("venta_items")
-      .select(
-        "producto_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,iva_porcentaje,descuento_porcentaje",
-      )
-      .eq("venta_id", facturaId);
+    const [itemsResult, pagosResult] = await Promise.all([
+      supabase
+        .from("venta_items")
+        .select(
+          "producto_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,iva_porcentaje,descuento_porcentaje",
+        )
+        .eq("venta_id", facturaId),
+      cu?.facturacionV2Habilitada
+        ? supabase
+            .from("venta_pagos")
+            .select("id,forma_pago,monto,detalle")
+            .eq("venta_id", facturaId)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
     if (pedido !== pedidoFacturaRef.current) return;
-    if (error) {
+    if (itemsResult.error || pagosResult.error) {
       toast.error("No se pudieron cargar los productos de la factura");
       return;
     }
     setItems(
-      (data ?? []).map((it: any) => ({
+      (itemsResult.data ?? []).map((it: any) => ({
         producto_id: it.producto_id,
         codigo: it.codigo,
         descripcion: it.descripcion,
@@ -282,7 +294,33 @@ function NuevaVenta() {
         desde_factura: true,
       })),
     );
-    toast.info("Se cargaron los productos de la factura. Editá o borrá los que no correspondan.");
+    if (cu?.facturacionV2Habilitada) {
+      const original = facturasDelCliente.find((venta) => venta.id === facturaId);
+      setPercepciones(Number(original?.percepciones ?? 0));
+      setCondVenta(original?.condicion_venta === "CTA_CTE" ? "CTA_CTE" : "CONTADO");
+      setPagos(
+        (pagosResult.data ?? []).flatMap((pago) =>
+          pago.forma_pago === "CTA_CTE"
+            ? []
+            : [
+                {
+                  id: pago.id,
+                  forma_pago: pago.forma_pago as PagoVentaEditable["forma_pago"],
+                  monto: Math.abs(Number(pago.monto)),
+                  detalle:
+                    typeof pago.detalle === "object" && pago.detalle !== null
+                      ? (pago.detalle as Record<string, unknown>)
+                      : {},
+                },
+              ],
+        ),
+      );
+    }
+    toast.info(
+      cu?.facturacionV2Habilitada
+        ? "Se cargó la reversión total del comprobante original."
+        : "Se cargaron los productos de la factura. Editá o borrá los que no correspondan.",
+    );
   };
 
   // Una nota de crédito RESTA (es una devolución). Lo mostramos con el mismo signo
@@ -302,6 +340,7 @@ function NuevaVenta() {
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
   const esNotaDebito = tipoComp === "NOTA_DEBITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
+  const esNotaCreditoV2 = esNotaCredito && !!cu?.facturacionV2Habilitada;
   const esFiscal = [
     "VENTA",
     "FACTURA_A",
@@ -326,17 +365,31 @@ function NuevaVenta() {
   // Ver seleccionarFacturaRectifica: descarta las respuestas que quedaron viejas.
   const pedidoFacturaRef = useRef(0);
   const { data: facturasDelCliente = [] } = useQuery({
-    queryKey: ["facturas-cliente", clienteId],
+    queryKey: ["facturas-cliente", clienteId, cu?.facturacionV2Habilitada ?? false],
     enabled: esNota && !!clienteId,
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from("ventas")
-        .select("id, numero_comprobante, tipo_comprobante, fecha, total")
+        .select(
+          "id,numero_comprobante,tipo_comprobante,fecha,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,condicion_venta,afip_estado,afip_fase,afip_validez,afip_modo,afip_simulado,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_snapshot_hash,cae",
+        )
         .eq("cliente_id", clienteId)
-        .in("tipo_comprobante", ["FACTURA_A", "FACTURA_B", "FACTURA_C"])
-        .eq("estado", "ACTIVA")
-        .order("fecha", { ascending: false })
-        .limit(30);
+        .eq("estado", "ACTIVA");
+      if (cu?.facturacionV2Habilitada) {
+        query = query
+          .eq("tipo_comprobante", "VENTA")
+          .eq("afip_estado", "APROBADO")
+          .eq("afip_fase", "PERSISTIDO")
+          .eq("afip_validez", "PRODUCCION")
+          .eq("afip_modo", "PRODUCCION")
+          .eq("afip_simulado", false)
+          .not("cae", "is", null)
+          .not("afip_numero", "is", null)
+          .not("afip_snapshot_hash", "is", null);
+      } else {
+        query = query.in("tipo_comprobante", ["FACTURA_A", "FACTURA_B", "FACTURA_C"]);
+      }
+      const { data } = await query.order("fecha", { ascending: false }).limit(30);
       return (data ?? []) as any[];
     },
   });
@@ -539,7 +592,14 @@ function NuevaVenta() {
         );
         return { accion, venta: { id: resultado.ventaId }, href: resultado.href };
       }
-      return { accion, venta: await crearVentaPersistida(idempotencyKey), href: null };
+      const venta = await crearVentaPersistida(idempotencyKey);
+      return {
+        accion,
+        venta,
+        href: esNotaCreditoV2
+          ? `/facturacion/cola?venta=${encodeURIComponent(venta.id)}&resultado=venta_creada_factura_pendiente`
+          : null,
+      };
     },
     onSuccess: (resultado) => {
       const r = resultado.venta;
@@ -764,7 +824,9 @@ function NuevaVenta() {
                     </>
                   )}
                   <SelectItem value="NOTA_CREDITO">Nota de Crédito</SelectItem>
-                  <SelectItem value="NOTA_DEBITO">Nota de Débito</SelectItem>
+                  {!cu?.facturacionV2Habilitada ? (
+                    <SelectItem value="NOTA_DEBITO">Nota de Débito</SelectItem>
+                  ) : null}
                   <SelectItem value="REMITO">Remito Cta Cte</SelectItem>
                   <SelectItem value="REMITO_OBRA">Remito de Obra (Cta Cte)</SelectItem>
                   <SelectItem value="FAC_INTERNA_CTA_CTE">Factura interna</SelectItem>
@@ -783,7 +845,7 @@ function NuevaVenta() {
               <Select
                 value={esFacInterna ? "CONTADO" : esCtaCte ? "CTA_CTE" : condVenta}
                 onValueChange={(v) => setCondVenta(v as any)}
-                disabled={esCtaCte || esFacInterna}
+                disabled={esCtaCte || esFacInterna || esNotaCreditoV2}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -868,13 +930,16 @@ function NuevaVenta() {
             )}
             {esNota && (
               <div className="col-span-2">
-                <Label>Factura que rectifica {esNotaDebito && "*"}</Label>
+                <Label htmlFor="comprobante-original">
+                  {esNotaCreditoV2 ? "Venta fiscal que revierte *" : "Factura que rectifica"}{" "}
+                  {esNotaDebito && "*"}
+                </Label>
                 <Select
-                  value={cbteAsocId || (esNotaCredito ? SIN_FACTURA : "")}
+                  value={cbteAsocId || (esNotaCredito && !esNotaCreditoV2 ? SIN_FACTURA : "")}
                   onValueChange={(v) => seleccionarFacturaRectifica(v === SIN_FACTURA ? "" : v)}
                   disabled={!clienteId}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="comprobante-original">
                     <SelectValue
                       placeholder={clienteId ? "Elegí la factura…" : "Elegí primero el cliente"}
                     />
@@ -883,9 +948,9 @@ function NuevaVenta() {
                     {/* La salida para la devolución cuya factura no está en el
                         sistema. Sólo para la NC: la ND necesita una factura
                         sobre la cual calcular el recargo. */}
-                    {esNotaCredito && (
+                    {esNotaCredito && !esNotaCreditoV2 ? (
                       <SelectItem value={SIN_FACTURA}>Sin factura — documento interno</SelectItem>
-                    )}
+                    ) : null}
                     {facturasDelCliente.map((f: any) => (
                       <SelectItem key={f.id} value={f.id}>
                         {f.numero_comprobante} · {fmtMoney(f.total)}
@@ -895,9 +960,11 @@ function NuevaVenta() {
                 </Select>
                 {clienteId && facturasDelCliente.length === 0 && (
                   <p className="text-[11px] text-warning mt-1">
-                    {esNotaCredito
-                      ? "Este cliente no tiene facturas cargadas. Podés hacerla igual, sin factura."
-                      : "Este cliente no tiene facturas activas, y una nota de débito recarga una factura. Cargá la factura primero."}
+                    {esNotaCreditoV2
+                      ? "No hay ventas neutrales aprobadas de producción disponibles para este cliente."
+                      : esNotaCredito
+                        ? "Este cliente no tiene facturas cargadas. Podés hacerla igual, sin factura."
+                        : "Este cliente no tiene facturas activas, y una nota de débito recarga una factura. Cargá la factura primero."}
                   </p>
                 )}
                 {/* Antes decía "AFIP exige que toda nota indique el comprobante
@@ -905,7 +972,12 @@ function NuevaVenta() {
                     asociado O el período, y este sistema todavía no manda el
                     período. Lo que importa que el usuario sepa no es la norma
                     sino qué le va a pasar al comprobante que está por guardar. */}
-                {esNotaCredito && !cbteAsocId ? (
+                {esNotaCreditoV2 ? (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    La nota es total: hereda receptor, emisor, identidad, productos, devolución y
+                    saldo del comprobante original. Esos datos son de sólo lectura.
+                  </p>
+                ) : esNotaCredito && !cbteAsocId ? (
                   <p className="text-[11px] text-warning mt-1">
                     Sin factura queda como <strong>documento interno</strong>: devuelve el stock y
                     la plata (o el saldo), pero no se manda a AFIP y no lleva CAE. Usalo cuando la
@@ -937,6 +1009,7 @@ function NuevaVenta() {
                 value={percepciones}
                 onValueChange={setPercepciones}
                 className="h-7 w-28 text-right"
+                disabled={esNotaCreditoV2}
               />
             </div>
             <div className="flex justify-between text-lg font-bold border-t border-border pt-2 mt-2">
@@ -1013,6 +1086,12 @@ function NuevaVenta() {
       {!esNotaDebito && (
         <SectionCard className="space-y-3">
           <h3 className="font-semibold text-sm">Productos</h3>
+          {esNotaCreditoV2 ? (
+            <p className="rounded-lg border border-info/30 bg-info/5 p-3 text-sm text-muted-foreground">
+              Reversión total: los renglones se copiaron del comprobante original y no se pueden
+              editar.
+            </p>
+          ) : null}
 
           {/* El buscador va ADENTRO de la tarjeta, no en un popover colgado del
               botón "Agregar". Ese botón está pegado al borde derecho, así que el
@@ -1026,7 +1105,7 @@ function NuevaVenta() {
               placeholder="Buscar producto por código o nombre…"
               value={prodQuery}
               onChange={(e) => setProdQuery(e.target.value)}
-              disabled={!effSucursal}
+              disabled={!effSucursal || esNotaCreditoV2}
               data-testid="venta-buscar-producto"
             />
           </div>
@@ -1036,15 +1115,18 @@ function NuevaVenta() {
             </p>
           )}
 
-          {!!effSucursal && prodQuery.trim().length > 0 && productosBusqueda.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {productosBusqueda.length === 1
-                ? "1 producto"
-                : `${productosBusqueda.length} productos`}
-              {productosBusqueda.length > 10 && " · scrolleá la lista para verlos todos"}
-            </p>
-          )}
-          {!!effSucursal && prodQuery.trim().length > 0 && (
+          {!esNotaCreditoV2 &&
+            !!effSucursal &&
+            prodQuery.trim().length > 0 &&
+            productosBusqueda.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {productosBusqueda.length === 1
+                  ? "1 producto"
+                  : `${productosBusqueda.length} productos`}
+                {productosBusqueda.length > 10 && " · scrolleá la lista para verlos todos"}
+              </p>
+            )}
+          {!esNotaCreditoV2 && !!effSucursal && prodQuery.trim().length > 0 && (
             /* La lista es alta a propósito: acá no hay diálogo que la limite y
                con 161 resultados hay que poder recorrerlos. */
             <div className="max-h-[min(60vh,32rem)] overflow-auto rounded-lg border border-border">
@@ -1145,6 +1227,7 @@ function NuevaVenta() {
                             className="h-8 w-20"
                             value={it.cantidad}
                             onValueChange={(v) => updateItem(i, "cantidad", v ?? 0)}
+                            disabled={esNotaCreditoV2}
                           />
                         </TableCell>
                         <TableCell>
@@ -1152,6 +1235,7 @@ function NuevaVenta() {
                             className="h-8 w-28"
                             value={it.precio_unitario_sin_iva}
                             onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v)}
+                            disabled={esNotaCreditoV2}
                           />
                           {pisado && (
                             <div
@@ -1167,12 +1251,20 @@ function NuevaVenta() {
                             className="h-8 w-20"
                             value={it.descuento_porcentaje}
                             onValueChange={(v) => updateItem(i, "descuento_porcentaje", v ?? 0)}
+                            disabled={esNotaCreditoV2}
                           />
                         </TableCell>
                         <TableCell className="text-xs">{it.iva_porcentaje}%</TableCell>
                         <TableCell className="text-right font-mono">{fmtMoney(sub)}</TableCell>
                         <TableCell>
-                          <Button size="sm" variant="ghost" onClick={() => removeItem(i)}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => removeItem(i)}
+                            disabled={esNotaCreditoV2}
+                            aria-label={`Quitar ${it.descripcion}`}
+                            title={`Quitar ${it.descripcion}`}
+                          >
                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
                           </Button>
                         </TableCell>
@@ -1188,7 +1280,17 @@ function NuevaVenta() {
 
       {!esCtaCte && (
         <SectionCard className="space-y-3">
-          <EditorPagos pagos={pagos} saldo={totales.saldo} onChange={setPagos} />
+          <EditorPagos
+            pagos={pagos}
+            saldo={totales.saldo}
+            disabled={esNotaCreditoV2}
+            emptyMessage={
+              esNotaCreditoV2
+                ? "El comprobante original no tuvo pagos inmediatos para revertir."
+                : undefined
+            }
+            onChange={setPagos}
+          />
         </SectionCard>
       )}
 

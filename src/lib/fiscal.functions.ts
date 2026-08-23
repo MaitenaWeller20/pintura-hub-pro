@@ -41,15 +41,18 @@ const receptorSchema = z.discriminatedUnion("origen", [
 ]);
 
 const legacyInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
-const v2InputSchema = z
+const v2BaseInputSchema = z
   .object({
     venta_id: z.string().uuid(),
     receptor: receptorSchema,
     confirma_venta_antigua: z.boolean(),
   })
   .strict();
-const emitirInputSchema = z.union([legacyInputSchema, v2InputSchema]);
-export const postBorradorInputSchema = v2InputSchema
+const v2InputSchema = v2BaseInputSchema
+  .extend({ huella_confirmacion: z.string().regex(/^[0-9a-f]{64}$/) })
+  .strict();
+export const emitirInputSchema = z.union([legacyInputSchema, v2InputSchema]);
+export const postBorradorInputSchema = v2BaseInputSchema
   .extend({
     huella_confirmacion_provisional: z.string().regex(/^[0-9a-f]{64}$/),
   })
@@ -224,6 +227,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
         ventaId: data.venta_id,
         receptor: data.receptor,
         confirmaVentaAntigua: data.confirma_venta_antigua,
+        huellaConfirmacion: data.huella_confirmacion,
       },
       deps,
     );
@@ -231,8 +235,8 @@ export const emitirComprobante = createServerFn({ method: "POST" })
 
 /**
  * Camino dedicado para una venta que acaba de nacer desde un borrador. La
- * huella no autoriza: auth, permiso y flags se verifican primero; recién luego
- * se compara una preview autoritativa y, si coincide, se delega al mismo motor.
+ * huella no autoriza: auth, permiso y flags se verifican primero. El motor la
+ * compara después del claim contra su única preparación autoritativa.
  */
 export const emitirComprobantePostBorrador = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -253,45 +257,24 @@ export const emitirComprobantePostBorrador = createServerFn({ method: "POST" })
         const [
           { supabaseAdmin },
           { ejecutarEmisionFiscal },
-          {
-            crearDependenciasEmisionFiscalServer,
-            emitirPostBorradorConHuella,
-            previsualizarVentaFiscalExistente,
-          },
+          { crearDependenciasEmisionFiscalServer },
         ] = await Promise.all([
           import("@/integrations/supabase/client.server"),
           import("./fiscal/emision"),
           import("./fiscal/emision.server"),
         ]);
-        return emitirPostBorradorConHuella(
+        return ejecutarEmisionFiscal(
           {
             ventaId: data.venta_id,
             receptor: data.receptor,
             confirmaVentaAntigua: data.confirma_venta_antigua,
-            huellaProvisional: data.huella_confirmacion_provisional,
+            huellaConfirmacion: data.huella_confirmacion_provisional,
           },
-          {
-            previsualizarVenta: () =>
-              previsualizarVentaFiscalExistente({
-                ventaId: data.venta_id,
-                receptor: data.receptor,
-                admin: supabaseAdmin,
-                usuario: context.supabase,
-              }),
-            emitir: () =>
-              ejecutarEmisionFiscal(
-                {
-                  ventaId: data.venta_id,
-                  receptor: data.receptor,
-                  confirmaVentaAntigua: data.confirma_venta_antigua,
-                },
-                crearDependenciasEmisionFiscalServer({
-                  admin: supabaseAdmin,
-                  usuario: context.supabase,
-                  ventaIdAutorizada: data.venta_id,
-                }),
-              ),
-          },
+          crearDependenciasEmisionFiscalServer({
+            admin: supabaseAdmin,
+            usuario: context.supabase,
+            ventaIdAutorizada: data.venta_id,
+          }),
         );
       },
     }),

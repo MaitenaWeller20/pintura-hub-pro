@@ -5,7 +5,7 @@ import {
   construirSnapshotFiscalDesdeLectura,
   crearHuellaConfirmacionFiscal,
   esConflictoClaimFiscalServer,
-  emitirPostBorradorConHuella,
+  esConflictoSecuenciaFiscalServer,
   observarUltimoNumeroFiscalLocal,
   proyectarReceptorFiscalConfirmado,
   type ConfirmacionFiscalPostBorrador,
@@ -38,6 +38,27 @@ describe("clasificación de contención fiscal REST", () => {
 
   it("mantiene compatibilidad temporal con 40001 durante el rollout", () => {
     expect(esConflictoClaimFiscalServer({ code: "40001", message: "legacy" })).toBe(true);
+  });
+
+  it("clasifica sólo el PT409 estable de secuencia como reintento de RESERVAR", () => {
+    expect(
+      esConflictoSecuenciaFiscalServer({
+        code: "PT409",
+        message: "EMISION_FISCAL_SECUENCIA_OBSOLETA: observado 0, vigente 1",
+      }),
+    ).toBe(true);
+    expect(
+      esConflictoSecuenciaFiscalServer({
+        code: "PT409",
+        message: "EMISION_FISCAL_VERSION_CONFLICT: esperado 0, vigente 1",
+      }),
+    ).toBe(false);
+    expect(
+      esConflictoSecuenciaFiscalServer({
+        code: "40001",
+        message: "EMISION_FISCAL_SECUENCIA_OBSOLETA: legacy",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -396,6 +417,9 @@ describe("preview provisional de borrador", () => {
       comprador: "71000000-0000-4000-8000-000000000401",
       letra: "B",
       emisor_cuit: "30714199664",
+      emisor_razon_social: "EMISOR",
+      sucursal_id: "71000000-0000-4000-8000-000000000301",
+      sucursal_nombre: "Sucursal",
       punto_venta: 5,
       modo: "HOMOLOGACION",
       cbte_tipo: 6,
@@ -411,6 +435,9 @@ describe("preview provisional de borrador", () => {
       version: 1,
       importe: "0.20",
       emisor_cuit: "30714199664",
+      emisor_razon_social: "EMISOR",
+      sucursal_id: "71000000-0000-4000-8000-000000000301",
+      sucursal_nombre: "Sucursal",
       punto_venta: 5,
       letra: "B",
       cbte_tipo: 6,
@@ -458,6 +485,9 @@ const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
   version: 1,
   importe: "0.20",
   emisorCuit: "30714199664",
+  emisorRazonSocial: "EMISOR",
+  sucursalId: "71000000-0000-4000-8000-000000000301",
+  sucursalNombre: "Sucursal",
   puntoVenta: 5,
   modo: "HOMOLOGACION",
   letra: "B",
@@ -489,6 +519,11 @@ function confirmacionesDistintas(): Array<[string, ConfirmacionFiscalPostBorrado
   return [
     cambiar("importe", (c) => (c.importe = "0.21")),
     cambiar("emisor CUIT", (c) => (c.emisorCuit = "30717322467")),
+    cambiar("razón social del emisor", (c) => (c.emisorRazonSocial = "OTRO EMISOR")),
+    cambiar("identidad de sucursal", (c) => {
+      c.sucursalId = "71000000-0000-4000-8000-000000000302";
+    }),
+    cambiar("nombre de sucursal", (c) => (c.sucursalNombre = "Otra sucursal")),
     cambiar("punto de venta", (c) => (c.puntoVenta = 6)),
     cambiar("modo", (c) => (c.modo = "PRODUCCION")),
     cambiar("letra", (c) => (c.letra = "A")),
@@ -510,7 +545,7 @@ function confirmacionesDistintas(): Array<[string, ConfirmacionFiscalPostBorrado
 describe("handshake post-creación del borrador", () => {
   it("produce SHA-256 canónico de la tupla completa", () => {
     expect(crearHuellaConfirmacionFiscal(CONFIRMACION_BASE)).toBe(
-      "9df51a2cdbd04aaa392561b214a01a6b8c200ba1762608f23c7fadb111848979",
+      "6ecf3ab99ba65e986269c2f0a56243c4087e4dfea9e95aedf3e0a3c73f08b19d",
     );
   });
 
@@ -519,69 +554,4 @@ describe("handshake post-creación del borrador", () => {
       crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
     );
   });
-
-  it("emite por el motor normal sólo cuando la preview autoritativa coincide exactamente", async () => {
-    let emisiones = 0;
-    const resultado = await emitirPostBorradorConHuella(
-      {
-        ventaId: "71000000-0000-4000-8000-000000000001",
-        receptor: { origen: "CLIENTE_COMERCIAL" },
-        confirmaVentaAntigua: false,
-        huellaProvisional: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
-      },
-      {
-        previsualizarVenta: async () => ({
-          huella_confirmacion: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
-          confirmacion_autoritativa: CONFIRMACION_BASE,
-        }),
-        emitir: async () => {
-          emisiones += 1;
-          return {
-            estado: "APROBADO" as const,
-            cae: "74123456789012",
-            numero: 1,
-            recuperado: false,
-            advertencias: [],
-          };
-        },
-      },
-    );
-
-    expect(resultado.estado).toBe("APROBADO");
-    expect(emisiones).toBe(1);
-  });
-
-  it.each(confirmacionesDistintas())(
-    "exige reconfirmación y deja cero claims/red si la venta persistida cambia %s",
-    async (_campo, autoritativa) => {
-      let claims = 0;
-      let red = 0;
-      const resultado = await emitirPostBorradorConHuella(
-        {
-          ventaId: "71000000-0000-4000-8000-000000000001",
-          receptor: { origen: "CLIENTE_COMERCIAL" },
-          confirmaVentaAntigua: false,
-          huellaProvisional: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
-        },
-        {
-          previsualizarVenta: async () => ({
-            huella_confirmacion: crearHuellaConfirmacionFiscal(autoritativa),
-            confirmacion_autoritativa: autoritativa,
-          }),
-          emitir: async () => {
-            claims += 1;
-            red += 1;
-            throw new Error("no debe emitir");
-          },
-        },
-      );
-
-      expect(resultado).toMatchObject({
-        estado: "RECONFIRMACION_REQUERIDA",
-        huella_confirmacion: crearHuellaConfirmacionFiscal(autoritativa),
-      });
-      expect(claims).toBe(0);
-      expect(red).toBe(0);
-    },
-  );
 });

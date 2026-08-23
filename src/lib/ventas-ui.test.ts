@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   confirmarCierreFiscalInmediato,
+  camposExportacionReceptorFiscal,
   crearControlCreacionVenta,
+  leerReceptorFiscalCongelado,
   opcionesCierreVenta,
+  receptorFiscalDifiereDelComprador,
   registrarVentaSinFactura,
   resultadoColaDespuesDeEmision,
   resumirCierreVenta,
+  textoBusquedaVenta,
 } from "./ventas-ui";
 
 const FLAGS_V2 = {
@@ -42,6 +46,9 @@ describe("decisión de cierre de venta", () => {
     });
 
     for (const tipoComprobante of [
+      "FACTURA_A",
+      "FACTURA_B",
+      "FACTURA_C",
       "REMITO",
       "REMITO_OBRA",
       "FAC_INTERNA_CTA_CTE",
@@ -158,6 +165,59 @@ describe("resumen y resultado fiscal", () => {
     ["TRANSPORTE_INCIERTO", "venta_creada_requiere_revision"],
   ] as const)("mapea %s al resultado de cola exacto", (estado, resultado) => {
     expect(resultadoColaDespuesDeEmision(estado)).toBe(resultado);
+  });
+});
+
+describe("receptor fiscal congelado en el listado", () => {
+  const venta = {
+    numero_comprobante: "V-0042",
+    cliente: { razon_social: "COMPRADOR COMERCIAL", cuit_dni: "30111222333" },
+    afip_snapshot: {
+      version: 2,
+      receptor: {
+        razonSocial: "RECEPTOR FISCAL CONGELADO",
+        tipoDocumento: "CUIT",
+        numeroDocumento: "30714199664",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+      },
+    },
+    // Un favorito vivo no puede alterar lo que muestra, busca ni exporta la venta emitida.
+    receptor_fiscal: {
+      razon_social: "FAVORITO VIVO MUTADO",
+      numero_documento: "30504480917",
+    },
+  };
+
+  it("lee exclusivamente el receptor copiado al snapshot y detecta comprador distinto", () => {
+    expect(leerReceptorFiscalCongelado(venta.afip_snapshot)).toEqual({
+      razonSocial: "RECEPTOR FISCAL CONGELADO",
+      tipoDocumento: "CUIT",
+      numeroDocumento: "30714199664",
+      condicionIva: "RESPONSABLE_INSCRIPTO",
+    });
+    expect(receptorFiscalDifiereDelComprador(venta)).toBe(true);
+  });
+
+  it("incorpora receptor y documento congelados a búsqueda y exportación", () => {
+    expect(textoBusquedaVenta(venta)).toContain("receptor fiscal congelado");
+    expect(textoBusquedaVenta(venta)).toContain("30714199664");
+    expect(textoBusquedaVenta(venta)).not.toContain("favorito vivo mutado");
+    expect(camposExportacionReceptorFiscal(venta)).toEqual({
+      "Receptor fiscal": "RECEPTOR FISCAL CONGELADO",
+      "Documento receptor fiscal": "CUIT 30714199664",
+    });
+  });
+
+  it("no duplica al receptor cuando coincide con el comprador comercial", () => {
+    expect(
+      receptorFiscalDifiereDelComprador({
+        ...venta,
+        cliente: {
+          razon_social: "Receptor Fiscal Congelado",
+          cuit_dni: "30-71419966-4",
+        },
+      }),
+    ).toBe(false);
   });
 });
 

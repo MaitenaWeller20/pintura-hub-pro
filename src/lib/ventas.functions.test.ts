@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { ejecutarConversionPresupuestoSegunFlags, ventaInputSchema } from "./ventas.functions";
+import {
+  ejecutarCreacionNotaSegunFlags,
+  ejecutarConversionPresupuestoSegunFlags,
+  ventaInputSchema,
+} from "./ventas.functions";
 
 const VENTA_BASE = {
   sucursal_id: "71000000-0000-4000-8000-000000000001",
@@ -23,6 +27,87 @@ describe("entrada de venta neutral", () => {
     expect(() =>
       ventaInputSchema.parse({ ...VENTA_BASE, tipo_comprobante: "FACTURA_LIBRE" }),
     ).toThrow();
+  });
+});
+
+describe("cerco comercial de NC/ND", () => {
+  const nota = (tipo: "NOTA_CREDITO" | "NOTA_DEBITO") =>
+    ventaInputSchema.parse({
+      ...VENTA_BASE,
+      tipo_comprobante: tipo,
+      cbte_asoc_id: "78000000-0000-4000-8000-000000000001",
+    }) as ReturnType<typeof ventaInputSchema.parse> & {
+      tipo_comprobante: "NOTA_CREDITO" | "NOTA_DEBITO";
+    };
+
+  it("en v2 una NC usa sólo la reversión total del original", async () => {
+    const crearRegular = vi.fn();
+    const crearNotaCreditoTotal = vi.fn(async () => ({
+      id: "79000000-0000-4000-8000-000000000001",
+      numero: "NCV-00000001",
+      cta_cte: false,
+    }));
+
+    await expect(
+      ejecutarCreacionNotaSegunFlags(nota("NOTA_CREDITO"), {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+        }),
+        crearRegular,
+        crearNotaCreditoTotal,
+      }),
+    ).resolves.toMatchObject({ id: "79000000-0000-4000-8000-000000000001" });
+    expect(crearNotaCreditoTotal).toHaveBeenCalledWith("78000000-0000-4000-8000-000000000001");
+    expect(crearRegular).not.toHaveBeenCalled();
+  });
+
+  it("en v2 rechaza ND antes de todo escritor comercial", async () => {
+    const cargarFlags = vi.fn(async () => ({
+      facturacion_receptor_v2_enabled: true,
+      facturacion_legacy_writer_enabled: false,
+    }));
+    const crearRegular = vi.fn();
+    const crearNotaCreditoTotal = vi.fn();
+
+    await expect(
+      ejecutarCreacionNotaSegunFlags(nota("NOTA_DEBITO"), {
+        cargarFlags,
+        crearRegular,
+        crearNotaCreditoTotal,
+      }),
+    ).rejects.toThrow(/nota de débito.*fuera de alcance/i);
+    expect(crearRegular).not.toHaveBeenCalled();
+    expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
+  });
+
+  it("preserva la escritura de notas sólo en legacy y bloquea mantenimiento", async () => {
+    const crearRegular = vi.fn(async () => ({ id: "legacy", numero: "NC-1", cta_cte: false }));
+    const crearNotaCreditoTotal = vi.fn();
+    const input = nota("NOTA_CREDITO");
+
+    await ejecutarCreacionNotaSegunFlags(input, {
+      cargarFlags: async () => ({
+        facturacion_receptor_v2_enabled: false,
+        facturacion_legacy_writer_enabled: true,
+      }),
+      crearRegular,
+      crearNotaCreditoTotal,
+    });
+    expect(crearRegular).toHaveBeenCalledWith(input);
+
+    await expect(
+      ejecutarCreacionNotaSegunFlags(input, {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: false,
+          facturacion_legacy_writer_enabled: false,
+        }),
+        crearRegular,
+        crearNotaCreditoTotal,
+      }),
+    ).rejects.toThrow(/mantenimiento/i);
+    expect(crearRegular).toHaveBeenCalledTimes(1);
+    expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
   });
 });
 

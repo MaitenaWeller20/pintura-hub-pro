@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { fmtDate, fmtMoney } from "@/lib/format";
 import type { ColaFiscalFila } from "@/lib/fiscal/cola.functions";
-import { presentarEstadoColaFiscal } from "@/lib/fiscal/cola-ui";
+import { clasificarInteraccionCola, presentarEstadoColaFiscal } from "@/lib/fiscal/cola-ui";
 import { EstadoFiscalPill } from "./estado-fiscal-pill";
 
 function fecha(value: string | null): string {
@@ -145,12 +145,7 @@ export function ColaFiscalTabla({
                 const accion = accionSegura(row, esAdmin);
                 const procesando = accion === "Procesando";
                 const ejecutandoAccion = accionPendienteId === row.venta_id;
-                const accionable = [
-                  "Facturar",
-                  "Corregir/reintentar",
-                  "Verificar con ARCA",
-                  "Liberar claim verificado",
-                ].includes(accion);
+                const accionable = clasificarInteraccionCola(accion) !== null;
                 return (
                   <TableRow key={row.venta_id}>
                     <TableCell className="align-top">

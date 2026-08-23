@@ -5,6 +5,44 @@ import { z } from "zod";
 import { normalizarSecciones } from "@/lib/secciones";
 import { PASSWORD_MINIMO } from "@/lib/alta-usuario";
 
+type RespuestaRpc = { data: unknown; error: { message?: string } | null };
+export type ClienteCapacidadFiscal = {
+  rpc(nombre: string, args: Record<string, unknown>): Promise<RespuestaRpc>;
+};
+
+export async function requireAdmin(
+  supabase: ClienteCapacidadFiscal,
+  userId: string,
+): Promise<void> {
+  const { data, error } = await supabase.rpc("is_admin", { _user_id: userId });
+  if (error || data !== true) throw new Error("Solo admin");
+}
+
+export async function ejecutarSetPuedeFacturar(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_facturar", {
+    p_profile_id: input.user_id,
+    p_puede_facturar: input.value,
+  });
+  if (error) throw new Error(error.message ?? "No se pudo actualizar la capacidad fiscal");
+  return { ok: true };
+}
+
+export const setPuedeFacturar = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarSetPuedeFacturar(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
 export const crearUsuario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>

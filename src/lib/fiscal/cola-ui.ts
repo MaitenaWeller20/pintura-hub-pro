@@ -1,5 +1,166 @@
 export type TabColaFiscal = "pendientes" | "revisar" | "emitidas" | "historial";
 
+export type ResultadoColaFiscal =
+  | "venta_creada_factura_pendiente"
+  | "venta_creada_requiere_revision"
+  | "factura_aprobada";
+
+export type BusquedaColaFiscal = {
+  tab: TabColaFiscal;
+  page: number;
+  desde?: string;
+  hasta?: string;
+  sucursal?: string;
+  emisor?: string;
+  documento?: string;
+  estado?: string;
+  venta?: string;
+  resultado?: ResultadoColaFiscal;
+};
+
+const TABS = new Set<TabColaFiscal>(["pendientes", "revisar", "emitidas", "historial"]);
+const RESULTADOS = new Set<ResultadoColaFiscal>([
+  "venta_creada_factura_pendiente",
+  "venta_creada_requiere_revision",
+  "factura_aprobada",
+]);
+const ESTADOS = new Set([
+  "SIN_FACTURAR",
+  "EMITIENDO",
+  "APROBADO",
+  "ERROR_CORREGIBLE",
+  "RECONCILIAR",
+  "CANCELADO",
+  "BLOQUEADO",
+  "PENDIENTE",
+  "ERROR",
+]);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function textoUnico(value: unknown): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") return undefined;
+  const limpio = raw.trim();
+  return limpio || undefined;
+}
+
+function fechaCalendario(value: unknown): string | undefined {
+  const raw = textoUnico(value);
+  const match = raw ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw) : null;
+  if (!raw || !match) return undefined;
+  const fecha = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return fecha.getUTCFullYear() === Number(match[1]) &&
+    fecha.getUTCMonth() === Number(match[2]) - 1 &&
+    fecha.getUTCDate() === Number(match[3])
+    ? raw
+    : undefined;
+}
+
+function uuid(value: unknown): string | undefined {
+  const raw = textoUnico(value);
+  return raw && UUID.test(raw) ? raw.toLowerCase() : undefined;
+}
+
+function documentoBusqueda(value: unknown): string | undefined {
+  const raw = textoUnico(value);
+  if (!raw || !/^[\d.\-\s]+$/.test(raw)) return undefined;
+  const digitos = raw.replace(/\D/g, "");
+  return /^\d{7,11}$/.test(digitos) ? raw : undefined;
+}
+
+export function normalizarBusquedaCola(raw: Record<string, unknown>): BusquedaColaFiscal {
+  const tabRaw = textoUnico(raw.tab);
+  const tab =
+    tabRaw && TABS.has(tabRaw as TabColaFiscal) ? (tabRaw as TabColaFiscal) : "pendientes";
+  const pageRaw = typeof raw.page === "number" ? raw.page : Number(textoUnico(raw.page));
+  const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1;
+  const venta = uuid(raw.venta);
+  const resultadoRaw = textoUnico(raw.resultado);
+  const resultado =
+    venta && resultadoRaw && RESULTADOS.has(resultadoRaw as ResultadoColaFiscal)
+      ? (resultadoRaw as ResultadoColaFiscal)
+      : undefined;
+  const estadoRaw = textoUnico(raw.estado);
+  const estado = estadoRaw && ESTADOS.has(estadoRaw) ? estadoRaw : undefined;
+
+  return {
+    tab,
+    page,
+    ...(fechaCalendario(raw.desde) ? { desde: fechaCalendario(raw.desde) } : {}),
+    ...(fechaCalendario(raw.hasta) ? { hasta: fechaCalendario(raw.hasta) } : {}),
+    ...(uuid(raw.sucursal) ? { sucursal: uuid(raw.sucursal) } : {}),
+    ...(uuid(raw.emisor) ? { emisor: uuid(raw.emisor) } : {}),
+    ...(documentoBusqueda(raw.documento) ? { documento: documentoBusqueda(raw.documento) } : {}),
+    ...(estado ? { estado } : {}),
+    ...(venta ? { venta } : {}),
+    ...(resultado ? { resultado } : {}),
+  };
+}
+
+const REINICIA_PAGINA = new Set([
+  "tab",
+  "desde",
+  "hasta",
+  "sucursal",
+  "emisor",
+  "documento",
+  "estado",
+  "venta",
+]);
+
+export function actualizarBusquedaCola(
+  actual: BusquedaColaFiscal,
+  cambios: Partial<BusquedaColaFiscal>,
+): BusquedaColaFiscal {
+  const siguiente = { ...actual, ...cambios } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(cambios)) {
+    if (value === undefined || value === "") delete siguiente[key];
+  }
+  if (Object.keys(cambios).some((key) => REINICIA_PAGINA.has(key))) siguiente.page = 1;
+  return normalizarBusquedaCola(siguiente);
+}
+
+export function cerrarResultadoCola(actual: BusquedaColaFiscal): BusquedaColaFiscal {
+  const { resultado: _resultado, ...resto } = actual;
+  return resto;
+}
+
+export function resolverTabAutoritativo(
+  actual: TabColaFiscal,
+  venta: string | undefined,
+  filas: Array<{ venta_id: string; tab: TabColaFiscal }>,
+): TabColaFiscal {
+  if (!venta) return actual;
+  return filas.find((fila) => fila.venta_id === venta)?.tab ?? actual;
+}
+
+export function debeRefrescarCola(
+  filas: Array<{ afip_estado: string; claim_vencido: boolean }>,
+): boolean {
+  return filas.some((fila) => fila.afip_estado === "EMITIENDO" && !fila.claim_vencido);
+}
+
+export function presentarResultadoCola(
+  resultado: ResultadoColaFiscal,
+  requiereAdministrador: boolean,
+): { titulo: string; detalle: string; requiereAdministrador: boolean } {
+  if (resultado === "factura_aprobada") {
+    return {
+      titulo: "Factura autorizada",
+      detalle: "ARCA autorizó el comprobante de esta venta.",
+      requiereAdministrador: false,
+    };
+  }
+  return {
+    titulo: "La venta quedó registrada",
+    detalle:
+      resultado === "venta_creada_requiere_revision"
+        ? "No repitas la venta ni el cobro recién enviado. La factura quedó a revisar."
+        : "No repitas la venta ni el cobro recién enviado. La factura quedó pendiente en la cola.",
+    requiereAdministrador: resultado === "venta_creada_requiere_revision" && requiereAdministrador,
+  };
+}
+
 export type PresentacionEstadoColaFiscal = {
   tab: TabColaFiscal;
   accion: string;

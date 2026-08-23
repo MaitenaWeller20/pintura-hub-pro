@@ -30,6 +30,7 @@ import {
   crearUsuario,
   toggleUsuarioActivo,
   resetearPassword,
+  setPuedeFacturar,
   setPermiteVentaSinStock,
   setSeccionesUsuario,
 } from "@/lib/usuarios.functions";
@@ -126,7 +127,7 @@ function UsuariosPage() {
       toast.success("Usuario creado");
       qc.invalidateQueries({ queryKey: ["usuarios"] });
       setOpen(false);
-      const creado = { ...form, id: r?.id, secciones: null };
+      const creado = { ...form, id: r?.id, secciones: null, puede_facturar: false };
       setForm(formVacio);
       // Se abre solo el diálogo de permisos: crear el usuario y elegir qué ve
       // son un mismo momento, y si no se ofrece nadie va a ir a buscarlo.
@@ -366,12 +367,16 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   const qc = useQueryClient();
   const guardarSecciones = useServerFn(setSeccionesUsuario);
   const guardarSinStock = useServerFn(setPermiteVentaSinStock);
+  const guardarPuedeFacturar = useServerFn(setPuedeFacturar);
   const esAdmin = usuario.role === "admin";
 
   // null = "las de siempre". El radio es el que decide entre null y una lista.
   const [aMano, setAMano] = useState<boolean>(usuario.secciones != null);
   const [elegidas, setElegidas] = useState<string[]>(usuario.secciones ?? SECCIONES_DEFAULT);
   const [sinStock, setSinStock] = useState<boolean>(!!usuario.permite_venta_sin_stock);
+  const [puedeFacturar, setPuedeFacturarLocal] = useState<boolean>(
+    esAdmin || usuario.puede_facturar === true,
+  );
 
   const toggle = (key: string) =>
     setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
@@ -387,8 +392,13 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
       const cambiaronSecciones =
         JSON.stringify(seccionesNuevas) !== JSON.stringify(usuario.secciones ?? null);
 
-      // El permiso de negocio primero: si algo falla, es preferible que quede
+      // Los permisos de negocio primero: si algo falla, es preferible que quede
       // sin aplicar el cambio cosmético y no al revés.
+      if (!esAdmin && puedeFacturar !== !!usuario.puede_facturar) {
+        await guardarPuedeFacturar({
+          data: { user_id: usuario.id, value: puedeFacturar },
+        });
+      }
       if (sinStock !== !!usuario.permite_venta_sin_stock) {
         await guardarSinStock({ data: { user_id: usuario.id, valor: sinStock } });
       }
@@ -406,7 +416,7 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" aria-busy={m.isPending}>
         <DialogHeader>
           <DialogTitle>Permisos de {usuario.username}</DialogTitle>
         </DialogHeader>
@@ -500,6 +510,47 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
             </label>
           </div>
         )}
+
+        <fieldset
+          className="rounded-lg border border-primary/25 bg-primary/5 p-3"
+          disabled={m.isPending || esAdmin}
+        >
+          <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Capacidad fiscal
+          </legend>
+          <label
+            htmlFor="usuario-puede-facturar"
+            className="flex min-h-11 cursor-pointer items-start gap-2 text-sm disabled:cursor-not-allowed"
+          >
+            <input
+              id="usuario-puede-facturar"
+              type="checkbox"
+              className="mt-1"
+              checked={puedeFacturar}
+              aria-describedby="usuario-puede-facturar-ayuda"
+              onChange={(event) => setPuedeFacturarLocal(event.target.checked)}
+            />
+            <span>
+              <strong>Puede facturar</strong>
+              <span
+                id="usuario-puede-facturar-ayuda"
+                className="block text-xs text-muted-foreground"
+              >
+                {esAdmin
+                  ? "Los administradores siempre tienen esta capacidad y no se puede desactivar."
+                  : "Permite entrar a la cola y emitir sólo cuando Facturación v2 está habilitada."}
+              </span>
+            </span>
+          </label>
+        </fieldset>
+
+        <div aria-live="assertive">
+          {m.error ? (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              {(m.error as Error).message || "No se pudieron guardar los permisos."}
+            </p>
+          ) : null}
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

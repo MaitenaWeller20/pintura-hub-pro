@@ -10,10 +10,19 @@ import {
   puedeVer,
   seccionDeRuta,
   seccionesDe,
+  puedeAbrirRuta,
 } from "./secciones";
 
-const admin = { isAdmin: true, secciones: null };
-const empleado = (secciones: string[] | null = null) => ({ isAdmin: false, secciones });
+const admin = {
+  isAdmin: true,
+  secciones: null,
+  puedeFacturar: true,
+  facturacionV2Habilitada: false,
+};
+const empleado = (
+  secciones: string[] | null = null,
+  fiscal: { puedeFacturar?: boolean; facturacionV2Habilitada?: boolean } = {},
+) => ({ isAdmin: false, secciones, ...fiscal });
 
 describe("el catálogo", () => {
   it("no tiene keys ni rutas repetidas", () => {
@@ -49,9 +58,7 @@ describe("el catálogo", () => {
     ]);
   });
 
-  it("las tres pantallas con guarda de admin propia no son otorgables", () => {
-    // /reportes, /facturacion y /usuarios rechazan a los no-admin en su
-    // beforeLoad. Ofrecerlas prometería algo que el servidor no cumple.
+  it("las pantallas administrativas y la capacidad fiscal no son otorgables como secciones", () => {
     const otorgables = SECCIONES_OTORGABLES.map((s) => s.key);
     expect(otorgables).not.toContain("reportes");
     expect(otorgables).not.toContain("facturacion");
@@ -60,13 +67,9 @@ describe("el catálogo", () => {
 });
 
 // ---------------------------------------------------------------------------
-// El guard de ruta FALLA ABIERTO: si `seccionDeRuta` no reconoce la URL, deja
-// pasar. Es lo correcto en tiempo de ejecución (cerrar dejaría a todo el mundo,
-// admins incluidos, afuera de cualquier pantalla nueva), pero significa que una
-// ruta agregada sin catalogar queda visible para cualquiera.
-//
-// Este test cierra ese agujero donde corresponde: acá, no en producción. Si
-// alguien crea una pantalla y se olvida de SECCIONES, esto falla.
+// El guard de ruta falla cerrado si `seccionDeRuta` no reconoce la URL. Esta
+// cobertura además obliga a catalogar cada pantalla nueva, para que no aparezca
+// como un 403 inesperado recién en producción.
 // ---------------------------------------------------------------------------
 describe("el catálogo cubre todas las rutas del router", () => {
   /** Rutas que existen pero NO son secciones, con el motivo. */
@@ -177,6 +180,50 @@ describe("seccionesDe / puedeVer", () => {
   it("respeta el orden del catálogo, no el orden en que se guardó", () => {
     expect(seccionesDe(empleado(["stock", "ventas"]))).toEqual(["ventas", "stock"]);
   });
+
+  it("mantiene Facturación fuera del menú normal y sólo la habilita con capacidad fiscal efectiva", () => {
+    expect(seccionesDe(empleado(null))).toEqual(SECCIONES_DEFAULT);
+    expect(
+      seccionesDe(empleado(null, { puedeFacturar: true, facturacionV2Habilitada: false })),
+    ).not.toContain("facturacion");
+    expect(
+      seccionesDe(empleado(null, { puedeFacturar: false, facturacionV2Habilitada: true })),
+    ).not.toContain("facturacion");
+    expect(
+      seccionesDe(empleado(null, { puedeFacturar: true, facturacionV2Habilitada: true })),
+    ).toContain("facturacion");
+  });
+
+  it("el admin conserva configuración con v2 apagado y suma la cola con v2 encendido", () => {
+    expect(puedeAbrirRuta("/facturacion/configuracion", admin)).toBe(true);
+    expect(puedeAbrirRuta("/facturacion/cola", admin)).toBe(false);
+    expect(puedeAbrirRuta("/facturacion/cola", { ...admin, facturacionV2Habilitada: true })).toBe(
+      true,
+    );
+  });
+
+  it("el empleado fiscal accede sólo a la cola y nunca a configuración", () => {
+    const fiscal = empleado(null, {
+      puedeFacturar: true,
+      facturacionV2Habilitada: true,
+    });
+    expect(puedeAbrirRuta("/facturacion", fiscal)).toBe(true);
+    expect(puedeAbrirRuta("/facturacion/", fiscal)).toBe(true);
+    expect(puedeAbrirRuta("/facturacion/cola", fiscal)).toBe(true);
+    expect(puedeAbrirRuta("/facturacion/configuracion", fiscal)).toBe(false);
+  });
+
+  it("falla cerrado para rutas y capacidades desconocidas, salvo el alias /caja", () => {
+    expect(puedeAbrirRuta("/pantalla-que-no-existe", admin)).toBe(false);
+    expect(
+      puedeAbrirRuta("/facturacion/ruta-no-reconocida", {
+        ...admin,
+        facturacionV2Habilitada: true,
+      }),
+    ).toBe(false);
+    expect(puedeAbrirRuta("/caja", empleado(["arqueo"]))).toBe(true);
+    expect(puedeAbrirRuta("/caja", empleado([]))).toBe(false);
+  });
 });
 
 describe("primeraSeccion", () => {
@@ -199,10 +246,10 @@ describe("normalizarSecciones", () => {
     expect(normalizarSecciones(undefined)).toBeNull();
   });
 
-  it("descarta keys inexistentes y soloAdmin", () => {
-    expect(normalizarSecciones(["ventas", "usuarios", "reportes", "../../etc"])).toEqual([
-      "ventas",
-    ]);
+  it("descarta keys inexistentes, soloAdmin y capacidades independientes", () => {
+    expect(
+      normalizarSecciones(["ventas", "usuarios", "reportes", "facturacion", "../../etc"]),
+    ).toEqual(["ventas"]);
   });
 
   it("desduplica", () => {

@@ -29,12 +29,15 @@ import { Route as AuthenticatedVentasIndexRouteImport } from './routes/_authenti
 import { Route as AuthenticatedProductosIndexRouteImport } from './routes/_authenticated/productos.index'
 import { Route as AuthenticatedPresupuestosIndexRouteImport } from './routes/_authenticated/presupuestos.index'
 import { Route as AuthenticatedIngresosMercaderiaIndexRouteImport } from './routes/_authenticated/ingresos-mercaderia.index'
+import { Route as AuthenticatedFacturacionIndexRouteImport } from './routes/_authenticated/facturacion.index'
 import { Route as AuthenticatedComprasIndexRouteImport } from './routes/_authenticated/compras.index'
 import { Route as AuthenticatedVentasNuevaRouteImport } from './routes/_authenticated/ventas.nueva'
 import { Route as AuthenticatedProductosImportarRouteImport } from './routes/_authenticated/productos.importar'
 import { Route as AuthenticatedPresupuestosNuevoRouteImport } from './routes/_authenticated/presupuestos.nuevo'
 import { Route as AuthenticatedPresupuestosIdRouteImport } from './routes/_authenticated/presupuestos.$id'
 import { Route as AuthenticatedIngresosMercaderiaNuevoRouteImport } from './routes/_authenticated/ingresos-mercaderia.nuevo'
+import { Route as AuthenticatedFacturacionConfiguracionRouteImport } from './routes/_authenticated/facturacion.configuracion'
+import { Route as AuthenticatedFacturacionColaRouteImport } from './routes/_authenticated/facturacion.cola'
 import { Route as AuthenticatedComprasNuevaRouteImport } from './routes/_authenticated/compras.nueva'
 import { Route as AuthenticatedProductosIdSeguimientoRouteImport } from './routes/_authenticated/productos.$id.seguimiento'
 import { Route as AuthenticatedPresupuestosEditarIdRouteImport } from './routes/_authenticated/presupuestos.editar.$id'
@@ -146,6 +149,12 @@ const AuthenticatedIngresosMercaderiaIndexRoute =
     path: '/ingresos-mercaderia/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedFacturacionIndexRoute =
+  AuthenticatedFacturacionIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedFacturacionRoute,
+  } as any)
 const AuthenticatedComprasIndexRoute =
   AuthenticatedComprasIndexRouteImport.update({
     id: '/compras/',
@@ -182,6 +191,18 @@ const AuthenticatedIngresosMercaderiaNuevoRoute =
     path: '/ingresos-mercaderia/nuevo',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedFacturacionConfiguracionRoute =
+  AuthenticatedFacturacionConfiguracionRouteImport.update({
+    id: '/configuracion',
+    path: '/configuracion',
+    getParentRoute: () => AuthenticatedFacturacionRoute,
+  } as any)
+const AuthenticatedFacturacionColaRoute =
+  AuthenticatedFacturacionColaRouteImport.update({
+    id: '/cola',
+    path: '/cola',
+    getParentRoute: () => AuthenticatedFacturacionRoute,
+  } as any)
 const AuthenticatedComprasNuevaRoute =
   AuthenticatedComprasNuevaRouteImport.update({
     id: '/compras/nueva',
@@ -208,7 +229,7 @@ export interface FileRoutesByFullPath {
   '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
-  '/facturacion': typeof AuthenticatedFacturacionRoute
+  '/facturacion': typeof AuthenticatedFacturacionRouteWithChildren
   '/gastos': typeof AuthenticatedGastosRoute
   '/pagos': typeof AuthenticatedPagosRoute
   '/pagos-proveedores': typeof AuthenticatedPagosProveedoresRoute
@@ -218,12 +239,15 @@ export interface FileRoutesByFullPath {
   '/stock': typeof AuthenticatedStockRoute
   '/usuarios': typeof AuthenticatedUsuariosRoute
   '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
+  '/facturacion/cola': typeof AuthenticatedFacturacionColaRoute
+  '/facturacion/configuracion': typeof AuthenticatedFacturacionConfiguracionRoute
   '/ingresos-mercaderia/nuevo': typeof AuthenticatedIngresosMercaderiaNuevoRoute
   '/presupuestos/$id': typeof AuthenticatedPresupuestosIdRoute
   '/presupuestos/nuevo': typeof AuthenticatedPresupuestosNuevoRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/compras/': typeof AuthenticatedComprasIndexRoute
+  '/facturacion/': typeof AuthenticatedFacturacionIndexRoute
   '/ingresos-mercaderia/': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/presupuestos/': typeof AuthenticatedPresupuestosIndexRoute
   '/productos/': typeof AuthenticatedProductosIndexRoute
@@ -237,7 +261,6 @@ export interface FileRoutesByTo {
   '/caja': typeof AuthenticatedCajaRoute
   '/clientes': typeof AuthenticatedClientesRoute
   '/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
-  '/facturacion': typeof AuthenticatedFacturacionRoute
   '/gastos': typeof AuthenticatedGastosRoute
   '/pagos': typeof AuthenticatedPagosRoute
   '/pagos-proveedores': typeof AuthenticatedPagosProveedoresRoute
@@ -248,12 +271,15 @@ export interface FileRoutesByTo {
   '/usuarios': typeof AuthenticatedUsuariosRoute
   '/': typeof AuthenticatedIndexRoute
   '/compras/nueva': typeof AuthenticatedComprasNuevaRoute
+  '/facturacion/cola': typeof AuthenticatedFacturacionColaRoute
+  '/facturacion/configuracion': typeof AuthenticatedFacturacionConfiguracionRoute
   '/ingresos-mercaderia/nuevo': typeof AuthenticatedIngresosMercaderiaNuevoRoute
   '/presupuestos/$id': typeof AuthenticatedPresupuestosIdRoute
   '/presupuestos/nuevo': typeof AuthenticatedPresupuestosNuevoRoute
   '/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/compras': typeof AuthenticatedComprasIndexRoute
+  '/facturacion': typeof AuthenticatedFacturacionIndexRoute
   '/ingresos-mercaderia': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/presupuestos': typeof AuthenticatedPresupuestosIndexRoute
   '/productos': typeof AuthenticatedProductosIndexRoute
@@ -269,7 +295,7 @@ export interface FileRoutesById {
   '/_authenticated/caja': typeof AuthenticatedCajaRoute
   '/_authenticated/clientes': typeof AuthenticatedClientesRoute
   '/_authenticated/cuentas-corrientes': typeof AuthenticatedCuentasCorrientesRoute
-  '/_authenticated/facturacion': typeof AuthenticatedFacturacionRoute
+  '/_authenticated/facturacion': typeof AuthenticatedFacturacionRouteWithChildren
   '/_authenticated/gastos': typeof AuthenticatedGastosRoute
   '/_authenticated/pagos': typeof AuthenticatedPagosRoute
   '/_authenticated/pagos-proveedores': typeof AuthenticatedPagosProveedoresRoute
@@ -280,12 +306,15 @@ export interface FileRoutesById {
   '/_authenticated/usuarios': typeof AuthenticatedUsuariosRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/compras/nueva': typeof AuthenticatedComprasNuevaRoute
+  '/_authenticated/facturacion/cola': typeof AuthenticatedFacturacionColaRoute
+  '/_authenticated/facturacion/configuracion': typeof AuthenticatedFacturacionConfiguracionRoute
   '/_authenticated/ingresos-mercaderia/nuevo': typeof AuthenticatedIngresosMercaderiaNuevoRoute
   '/_authenticated/presupuestos/$id': typeof AuthenticatedPresupuestosIdRoute
   '/_authenticated/presupuestos/nuevo': typeof AuthenticatedPresupuestosNuevoRoute
   '/_authenticated/productos/importar': typeof AuthenticatedProductosImportarRoute
   '/_authenticated/ventas/nueva': typeof AuthenticatedVentasNuevaRoute
   '/_authenticated/compras/': typeof AuthenticatedComprasIndexRoute
+  '/_authenticated/facturacion/': typeof AuthenticatedFacturacionIndexRoute
   '/_authenticated/ingresos-mercaderia/': typeof AuthenticatedIngresosMercaderiaIndexRoute
   '/_authenticated/presupuestos/': typeof AuthenticatedPresupuestosIndexRoute
   '/_authenticated/productos/': typeof AuthenticatedProductosIndexRoute
@@ -312,12 +341,15 @@ export interface FileRouteTypes {
     | '/stock'
     | '/usuarios'
     | '/compras/nueva'
+    | '/facturacion/cola'
+    | '/facturacion/configuracion'
     | '/ingresos-mercaderia/nuevo'
     | '/presupuestos/$id'
     | '/presupuestos/nuevo'
     | '/productos/importar'
     | '/ventas/nueva'
     | '/compras/'
+    | '/facturacion/'
     | '/ingresos-mercaderia/'
     | '/presupuestos/'
     | '/productos/'
@@ -331,7 +363,6 @@ export interface FileRouteTypes {
     | '/caja'
     | '/clientes'
     | '/cuentas-corrientes'
-    | '/facturacion'
     | '/gastos'
     | '/pagos'
     | '/pagos-proveedores'
@@ -342,12 +373,15 @@ export interface FileRouteTypes {
     | '/usuarios'
     | '/'
     | '/compras/nueva'
+    | '/facturacion/cola'
+    | '/facturacion/configuracion'
     | '/ingresos-mercaderia/nuevo'
     | '/presupuestos/$id'
     | '/presupuestos/nuevo'
     | '/productos/importar'
     | '/ventas/nueva'
     | '/compras'
+    | '/facturacion'
     | '/ingresos-mercaderia'
     | '/presupuestos'
     | '/productos'
@@ -373,12 +407,15 @@ export interface FileRouteTypes {
     | '/_authenticated/usuarios'
     | '/_authenticated/'
     | '/_authenticated/compras/nueva'
+    | '/_authenticated/facturacion/cola'
+    | '/_authenticated/facturacion/configuracion'
     | '/_authenticated/ingresos-mercaderia/nuevo'
     | '/_authenticated/presupuestos/$id'
     | '/_authenticated/presupuestos/nuevo'
     | '/_authenticated/productos/importar'
     | '/_authenticated/ventas/nueva'
     | '/_authenticated/compras/'
+    | '/_authenticated/facturacion/'
     | '/_authenticated/ingresos-mercaderia/'
     | '/_authenticated/presupuestos/'
     | '/_authenticated/productos/'
@@ -534,6 +571,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIngresosMercaderiaIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/facturacion/': {
+      id: '/_authenticated/facturacion/'
+      path: '/'
+      fullPath: '/facturacion/'
+      preLoaderRoute: typeof AuthenticatedFacturacionIndexRouteImport
+      parentRoute: typeof AuthenticatedFacturacionRoute
+    }
     '/_authenticated/compras/': {
       id: '/_authenticated/compras/'
       path: '/compras'
@@ -576,6 +620,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIngresosMercaderiaNuevoRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/facturacion/configuracion': {
+      id: '/_authenticated/facturacion/configuracion'
+      path: '/configuracion'
+      fullPath: '/facturacion/configuracion'
+      preLoaderRoute: typeof AuthenticatedFacturacionConfiguracionRouteImport
+      parentRoute: typeof AuthenticatedFacturacionRoute
+    }
+    '/_authenticated/facturacion/cola': {
+      id: '/_authenticated/facturacion/cola'
+      path: '/cola'
+      fullPath: '/facturacion/cola'
+      preLoaderRoute: typeof AuthenticatedFacturacionColaRouteImport
+      parentRoute: typeof AuthenticatedFacturacionRoute
+    }
     '/_authenticated/compras/nueva': {
       id: '/_authenticated/compras/nueva'
       path: '/compras/nueva'
@@ -600,12 +658,31 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedFacturacionRouteChildren {
+  AuthenticatedFacturacionColaRoute: typeof AuthenticatedFacturacionColaRoute
+  AuthenticatedFacturacionConfiguracionRoute: typeof AuthenticatedFacturacionConfiguracionRoute
+  AuthenticatedFacturacionIndexRoute: typeof AuthenticatedFacturacionIndexRoute
+}
+
+const AuthenticatedFacturacionRouteChildren: AuthenticatedFacturacionRouteChildren =
+  {
+    AuthenticatedFacturacionColaRoute: AuthenticatedFacturacionColaRoute,
+    AuthenticatedFacturacionConfiguracionRoute:
+      AuthenticatedFacturacionConfiguracionRoute,
+    AuthenticatedFacturacionIndexRoute: AuthenticatedFacturacionIndexRoute,
+  }
+
+const AuthenticatedFacturacionRouteWithChildren =
+  AuthenticatedFacturacionRoute._addFileChildren(
+    AuthenticatedFacturacionRouteChildren,
+  )
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedArqueoRoute: typeof AuthenticatedArqueoRoute
   AuthenticatedCajaRoute: typeof AuthenticatedCajaRoute
   AuthenticatedClientesRoute: typeof AuthenticatedClientesRoute
   AuthenticatedCuentasCorrientesRoute: typeof AuthenticatedCuentasCorrientesRoute
-  AuthenticatedFacturacionRoute: typeof AuthenticatedFacturacionRoute
+  AuthenticatedFacturacionRoute: typeof AuthenticatedFacturacionRouteWithChildren
   AuthenticatedGastosRoute: typeof AuthenticatedGastosRoute
   AuthenticatedPagosRoute: typeof AuthenticatedPagosRoute
   AuthenticatedPagosProveedoresRoute: typeof AuthenticatedPagosProveedoresRoute
@@ -635,7 +712,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCajaRoute: AuthenticatedCajaRoute,
   AuthenticatedClientesRoute: AuthenticatedClientesRoute,
   AuthenticatedCuentasCorrientesRoute: AuthenticatedCuentasCorrientesRoute,
-  AuthenticatedFacturacionRoute: AuthenticatedFacturacionRoute,
+  AuthenticatedFacturacionRoute: AuthenticatedFacturacionRouteWithChildren,
   AuthenticatedGastosRoute: AuthenticatedGastosRoute,
   AuthenticatedPagosRoute: AuthenticatedPagosRoute,
   AuthenticatedPagosProveedoresRoute: AuthenticatedPagosProveedoresRoute,

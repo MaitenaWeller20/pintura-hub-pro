@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { presentarEstadoColaFiscal } from "./cola-ui";
+import {
+  actualizarBusquedaCola,
+  cerrarResultadoCola,
+  debeRefrescarCola,
+  normalizarBusquedaCola,
+  presentarResultadoCola,
+  presentarEstadoColaFiscal,
+  resolverTabAutoritativo,
+} from "./cola-ui";
+
+const VENTA = "10000000-0000-4000-8000-000000000001";
 
 type Caso = {
   nombre: string;
@@ -178,5 +188,118 @@ describe("presentación de estados de la cola fiscal", () => {
         esAdmin: true,
       }),
     ).toThrow(/APROBADO sin persistencia/i);
+  });
+});
+
+describe("URL de la cola fiscal", () => {
+  it("normaliza sólo el contrato público y elimina parámetros desconocidos", () => {
+    expect(
+      normalizarBusquedaCola({
+        tab: "revisar",
+        page: "3",
+        desde: "2026-08-01",
+        hasta: "2026-08-31",
+        documento: " 30-71419966-4 ",
+        estado: "ERROR_CORREGIBLE",
+        venta: VENTA,
+        resultado: "factura_aprobada",
+        limite: "200",
+        secreto: "no",
+      }),
+    ).toEqual({
+      tab: "revisar",
+      page: 3,
+      desde: "2026-08-01",
+      hasta: "2026-08-31",
+      documento: "30-71419966-4",
+      estado: "ERROR_CORREGIBLE",
+      venta: VENTA,
+      resultado: "factura_aprobada",
+    });
+  });
+
+  it("descarta fechas, UUID, estados y resultados inválidos y exige venta para resultado", () => {
+    expect(
+      normalizarBusquedaCola({
+        tab: "todos",
+        page: -2,
+        desde: "2026-02-30",
+        sucursal: "no-es-uuid",
+        estado: "APROBAR_TODO",
+        resultado: "factura_aprobada",
+      }),
+    ).toEqual({ tab: "pendientes", page: 1 });
+  });
+
+  it("descarta un documento que el contrato del servidor no podría buscar", () => {
+    expect(
+      normalizarBusquedaCola({
+        tab: "pendientes",
+        page: 1,
+        documento: "CUIT cualquiera",
+      }),
+    ).toEqual({ tab: "pendientes", page: 1 });
+    expect(normalizarBusquedaCola({ tab: "pendientes", page: 1, documento: "12-345" })).toEqual({
+      tab: "pendientes",
+      page: 1,
+    });
+  });
+
+  it("reinicia la página al cambiar tab o filtros", () => {
+    const actual = { tab: "emitidas" as const, page: 8, documento: "30714199664" };
+    expect(actualizarBusquedaCola(actual, { tab: "revisar" })).toEqual({
+      tab: "revisar",
+      page: 1,
+      documento: "30714199664",
+    });
+    expect(actualizarBusquedaCola(actual, { estado: "APROBADO" })).toEqual({
+      tab: "emitidas",
+      page: 1,
+      documento: "30714199664",
+      estado: "APROBADO",
+    });
+  });
+
+  it("cerrar el resultado preserva venta, pestaña, página y filtros", () => {
+    expect(
+      cerrarResultadoCola({
+        tab: "revisar",
+        page: 4,
+        venta: VENTA,
+        documento: "30714199664",
+        resultado: "venta_creada_requiere_revision",
+      }),
+    ).toEqual({ tab: "revisar", page: 4, venta: VENTA, documento: "30714199664" });
+  });
+});
+
+describe("actualización y resultado autoritativos", () => {
+  it("corrige una pestaña obsoleta sólo para la venta exacta devuelta por servidor", () => {
+    expect(
+      resolverTabAutoritativo("pendientes", VENTA, [{ venta_id: VENTA, tab: "revisar" }]),
+    ).toBe("revisar");
+    expect(
+      resolverTabAutoritativo("pendientes", undefined, [{ venta_id: VENTA, tab: "revisar" }]),
+    ).toBe("pendientes");
+  });
+
+  it("hace polling sólo si la página contiene un EMITIENDO reciente según el servidor", () => {
+    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", claim_vencido: false }])).toBe(true);
+    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", claim_vencido: true }])).toBe(false);
+    expect(debeRefrescarCola([{ afip_estado: "SIN_FACTURAR", claim_vencido: false }])).toBe(false);
+  });
+
+  it("explica el resultado parcial sin invitar a repetir venta ni cobro", () => {
+    expect(presentarResultadoCola("venta_creada_factura_pendiente", false)).toEqual({
+      titulo: "La venta quedó registrada",
+      detalle:
+        "No repitas la venta ni el cobro recién enviado. La factura quedó pendiente en la cola.",
+      requiereAdministrador: false,
+    });
+    expect(presentarResultadoCola("venta_creada_requiere_revision", true)).toEqual({
+      titulo: "La venta quedó registrada",
+      detalle: "No repitas la venta ni el cobro recién enviado. La factura quedó a revisar.",
+      requiereAdministrador: true,
+    });
   });
 });

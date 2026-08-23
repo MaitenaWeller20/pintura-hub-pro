@@ -10,6 +10,7 @@ export interface ProfileWithRole {
     username: string;
     nombre_completo: string | null;
     sucursal_id: string | null;
+    puede_facturar: boolean;
   };
   /** Qué secciones del menú ve. `null` = las de siempre. Ver src/lib/secciones.ts. */
   secciones: string[] | null;
@@ -28,6 +29,57 @@ export interface ProfileWithRole {
    * avisar ANTES de que alguien cargue una venta entera que va a ser rechazada.
    */
   puedeVenderSinStock: boolean;
+  /** Capacidad por rol/perfil. La cola además exige `facturacionV2Habilitada`. */
+  puedeFacturar: boolean;
+  facturacionV2Habilitada: boolean;
+  facturacionLegacyHabilitada: boolean;
+}
+
+export function resolverEstadoFiscalUsuario(input: {
+  isAdmin: boolean;
+  puedeFacturarPerfil: boolean;
+  settings: unknown;
+}): Pick<
+  ProfileWithRole,
+  "puedeFacturar" | "facturacionV2Habilitada" | "facturacionLegacyHabilitada"
+> {
+  const rows = Array.isArray(input.settings) ? input.settings : [];
+  const row = rows.length === 1 && typeof rows[0] === "object" && rows[0] ? rows[0] : null;
+  const value = row as Record<string, unknown> | null;
+  const v2 = value?.facturacion_receptor_v2_enabled;
+  const legacy = value?.facturacion_legacy_writer_enabled;
+  const flagsValidos =
+    value?.id === true && typeof v2 === "boolean" && typeof legacy === "boolean" && !(v2 && legacy);
+  return {
+    puedeFacturar: input.isAdmin || input.puedeFacturarPerfil,
+    facturacionV2Habilitada: flagsValidos ? v2 : false,
+    facturacionLegacyHabilitada: flagsValidos ? legacy : false,
+  };
+}
+
+/** Lectura corta para `beforeLoad`; ante flags inválidos la cola falla cerrado. */
+export async function cargarAccesoFiscalActual() {
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user) return null;
+  const [{ data: roles }, { data: profile }, { data: settings, error: settingsError }] =
+    await Promise.all([
+      supabase.from("user_roles").select("role").eq("user_id", auth.user.id),
+      supabase.from("profiles").select("puede_facturar").eq("id", auth.user.id).maybeSingle(),
+      supabase
+        .from("settings")
+        .select("id,facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
+        .eq("id", true),
+    ]);
+  const isAdmin = roles?.some((row) => row.role === "admin") ?? false;
+  return {
+    user: auth.user,
+    isAdmin,
+    ...resolverEstadoFiscalUsuario({
+      isAdmin,
+      puedeFacturarPerfil: profile?.puede_facturar === true,
+      settings: settingsError ? [] : settings,
+    }),
+  };
 }
 
 export function useCurrentUser() {
@@ -44,25 +96,34 @@ export function useCurrentUser() {
         }
         return;
       }
-      const [{ data: prof }, { data: roles }] = await Promise.all([
+      const [
+        { data: prof },
+        { data: roles },
+        { data: settings, error: errorSettings },
+        { data: habilitadas },
+      ] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, username, nombre_completo, sucursal_id, secciones, permite_venta_sin_stock")
+          .select(
+            "id, username, nombre_completo, sucursal_id, secciones, permite_venta_sin_stock, puede_facturar",
+          )
           .eq("id", user.id)
           .maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", user.id),
+        supabase
+          .from("settings")
+          .select("id,facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
+          .eq("id", true),
+        supabase
+          .from("profile_sucursales")
+          .select("sucursal:sucursales(id, nombre)")
+          .eq("profile_id", user.id),
       ]);
 
-      // Las sucursales donde puede trabajar. Se trae siempre: es lo que decide
-      // si se le muestra el selector para cambiarse.
-      const { data: habilitadas } = await supabase
-        .from("profile_sucursales")
-        .select("sucursal:sucursales(id, nombre)")
-        .eq("profile_id", user.id);
-      const sucursalesHabilitadas = ((habilitadas ?? []) as any[])
+      const sucursalesHabilitadas = (habilitadas ?? [])
         .map((h) => h.sucursal)
-        .filter(Boolean)
-        .sort((a: any, b: any) => a.nombre.localeCompare(b.nombre));
+        .filter((sucursal): sucursal is { id: string; nombre: string } => sucursal !== null)
+        .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
       let sucursal = null;
       if (prof?.sucursal_id) {
@@ -74,6 +135,11 @@ export function useCurrentUser() {
         sucursal = s ?? null;
       }
       const role = (roles?.[0]?.role ?? null) as "admin" | "empleado" | null;
+      const fiscal = resolverEstadoFiscalUsuario({
+        isAdmin: role === "admin",
+        puedeFacturarPerfil: prof?.puede_facturar === true,
+        settings: errorSettings ? [] : settings,
+      });
       if (mounted) {
         setData({
           user,
@@ -82,13 +148,15 @@ export function useCurrentUser() {
             username: user.email ?? "",
             nombre_completo: null,
             sucursal_id: null,
+            puede_facturar: false,
           },
-          secciones: (prof as any)?.secciones ?? null,
+          secciones: prof?.secciones ?? null,
           sucursal,
           sucursalesHabilitadas,
           role,
           isAdmin: role === "admin",
-          puedeVenderSinStock: role === "admin" || (prof as any)?.permite_venta_sin_stock === true,
+          puedeVenderSinStock: role === "admin" || prof?.permite_venta_sin_stock === true,
+          ...fiscal,
         });
         setLoading(false);
       }

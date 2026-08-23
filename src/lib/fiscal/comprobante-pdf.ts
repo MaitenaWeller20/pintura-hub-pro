@@ -87,10 +87,11 @@ export function numeroFiscal(puntoVenta: number, numero: number): string {
   return `${String(puntoVenta).padStart(5, "0")}-${String(numero).padStart(8, "0")}`;
 }
 
-/** "CUIT" / "DNI" / null según el DocTipo que se declaró. */
+/** Etiqueta del documento según el DocTipo que se declaró. */
 function etiquetaDoc(docTipo: number | null | undefined): string | null {
   if (docTipo === 80) return "CUIT";
   if (docTipo === 86) return "CUIL";
+  if (docTipo === 87) return "CDI";
   if (docTipo === 96) return "DNI";
   return null;
 }

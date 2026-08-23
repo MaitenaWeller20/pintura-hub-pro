@@ -208,6 +208,27 @@ describe("comprobante impreso — los campos obligatorios", () => {
     expect(texto).not.toContain("Pinturerías del Sur SRL");
   });
 
+  it("imprime tipo y número del CDI congelado en el receptor fiscal", () => {
+    const { doc } = generarComprobantePdf(venta, items, {
+      ...fiscalBase,
+      receptor: {
+        ...fiscalBase.receptor,
+        razon_social: "Receptor con CDI",
+        cuit_dni: "50123456789",
+        doc_tipo: 87,
+      },
+      qrInput: {
+        ...fiscalBase.qrInput,
+        tipoDocRec: 87,
+        nroDocRec: "50123456789",
+      },
+    });
+
+    const textoCdi = textoDelPdf(doc);
+    expect(textoCdi).toContain("Receptor con CDI");
+    expect(textoCdi).toContain("CDI: 50-12345678-9");
+  });
+
   // Ley 27.743 / RG 5614: obligatoria en B y C a consumidor final.
   it("incluye la leyenda de Transparencia Fiscal en una B a consumidor final", () => {
     expect(texto).toContain("Régimen de Transparencia Fiscal al Consumidor (Ley N° 27.743)");

@@ -466,6 +466,43 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     });
   }
 
+  async function comoServiceRole(query: (tx: any) => Promise<any>) {
+    return sql.begin(async (tx: any) => {
+      await tx`set local role service_role`;
+      await tx`select set_config('request.jwt.claims',${JSON.stringify({ role: "service_role" })},true)`;
+      return query(tx);
+    });
+  }
+
+  async function cambiarActivoConCas(profileId: string, activo: boolean) {
+    const operacionId = crypto.randomUUID();
+    const [inicio] = await comoServiceRole(
+      (tx: any) => tx`
+        select public.iniciar_transicion_usuario_activo(
+          ${ids.admin},${profileId},${activo},${operacionId}
+        ) as estado
+      `,
+    );
+    if (!inicio?.estado?.pendiente) throw new Error("La transición CAS no quedó pendiente");
+
+    // En producción este paso lo hace GoTrue Admin. La integración SQL local
+    // emula únicamente ese estado externo; profiles.activo se muta siempre por
+    // las RPC versionadas y nunca se saltea el trigger.
+    await sql`
+      update auth.users
+         set banned_until=${activo ? null : new Date("2126-01-01T00:00:00.000Z")}
+       where id=${profileId}
+    `;
+    const [final] = await comoServiceRole(
+      (tx: any) => tx`
+        select public.finalizar_transicion_usuario_activo(
+          ${profileId},${inicio.estado.version},${operacionId}
+        ) as estado
+      `,
+    );
+    if (!final?.estado?.aplicada) throw new Error("La transición CAS fue supersedida");
+  }
+
   async function consultar(
     userId: string,
     input: {
@@ -976,7 +1013,7 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
     );
 
     try {
-      await sql`update public.profiles set activo=false where id=${ids.employee}`;
+      await cambiarActivoConCas(ids.employee, false);
       await expect(
         comoUsuario(
           ids.employee,
@@ -986,7 +1023,7 @@ integrationSuite("cola fiscal contra PostgreSQL local", () => {
         ),
       ).rejects.toMatchObject({ code: "42501" });
     } finally {
-      await sql`update public.profiles set activo=true where id=${ids.employee}`;
+      await cambiarActivoConCas(ids.employee, true);
     }
 
     try {

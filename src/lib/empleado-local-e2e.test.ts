@@ -133,6 +133,23 @@ describe("bootstrap del empleado local E2E", () => {
     expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins"]);
   });
 
+  it("restaura exactamente un fixture previo cuya sucursal activa todavía no tenía relación", async () => {
+    const { repo, estado } = repositorioEnMemoria({
+      usuario: { id: "usuario-existente" },
+      perfil: { activo: true, sucursalId: "sucursal-ohiggins" },
+      roles: ["empleado"],
+      sucursales: SUCURSALES,
+      sucursalesAsignadas: [],
+    });
+
+    const limpiar = await prepararEmpleadoLocalE2E(repo);
+    expect(estado.sucursalesAsignadas).toEqual(["sucursal-ohiggins", "sucursal-general-paz"]);
+
+    await expect(limpiar()).resolves.toBeUndefined();
+    expect(estado.perfil?.sucursalId).toBe("sucursal-ohiggins");
+    expect(estado.sucursalesAsignadas).toEqual([]);
+  });
+
   it("relee el perfil que crea automáticamente Auth antes de intentar insertarlo", async () => {
     const { repo, estado, llamadas } = repositorioEnMemoria({
       usuario: null,

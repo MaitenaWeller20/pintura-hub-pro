@@ -69,15 +69,21 @@ export async function prepararEmpleadoLocalE2E(
       }
     };
 
-    // La base no deja quitar la sucursal activa. Restaurarla primero también
-    // evita que el teardown dependa del orden de las dos asignaciones.
+    // La base no deja quitar la sucursal activa. Primero se la despeja, después
+    // se retiran exactamente las relaciones agregadas y recién al final se
+    // restaura el valor original. Ese orden también cubre un fixture previo
+    // inconsistente cuya sucursal activa todavía no tenía relación: restaurarla
+    // antes del DELETE volvería a bloquear la limpieza.
+    if (sucursalesAgregadas.length > 0) {
+      await intentar(() => repositorio.actualizarSucursalPerfil(usuarioId!, null));
+    }
+    for (const sucursalId of [...sucursalesAgregadas].reverse()) {
+      await intentar(() => repositorio.quitarSucursal(usuarioId!, sucursalId));
+    }
     if (sucursalPerfilAnterior !== undefined) {
       await intentar(() =>
         repositorio.actualizarSucursalPerfil(usuarioId!, sucursalPerfilAnterior ?? null),
       );
-    }
-    for (const sucursalId of [...sucursalesAgregadas].reverse()) {
-      await intentar(() => repositorio.quitarSucursal(usuarioId!, sucursalId));
     }
     if (rolAgregado) await intentar(() => repositorio.quitarRol(usuarioId!));
     if (perfilCreado) await intentar(() => repositorio.eliminarPerfil(usuarioId!));

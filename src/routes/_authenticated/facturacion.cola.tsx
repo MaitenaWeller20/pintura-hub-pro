@@ -456,12 +456,13 @@ function ColaFiscalPage() {
             <Button
               type="button"
               variant="outline"
+              className="min-h-11"
               disabled={detalleVenta.isFetching}
               onClick={() => void detalleVenta.refetch()}
             >
               Reintentar detalle
             </Button>
-            <Button type="button" variant="ghost" onClick={cerrarDetalle}>
+            <Button type="button" variant="ghost" className="min-h-11" onClick={cerrarDetalle}>
               Cerrar detalle
             </Button>
           </div>

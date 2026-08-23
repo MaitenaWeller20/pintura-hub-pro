@@ -36,6 +36,14 @@ export interface ProfileWithRole {
   facturacionLegacyHabilitada: boolean;
 }
 
+/** El layout falla cerrado si PostgREST no puede confirmar un perfil activo. */
+export function perfilHabilitaSesion(
+  perfil: { activo?: unknown } | null | undefined,
+  error: unknown,
+): boolean {
+  return error == null && perfil?.activo === true;
+}
+
 /** Prioridad canónica: cualquier asignación admin domina, sin depender del orden de PostgREST. */
 export function resolverRolEfectivo(
   roles: readonly unknown[] | null | undefined,

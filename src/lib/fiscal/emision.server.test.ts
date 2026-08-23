@@ -797,6 +797,9 @@ const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
   letra: "B",
   cbteTipo: 6,
   fechaFiscal: "2026-08-22",
+  pagado: "0.00",
+  saldo: "0.20",
+  cbteAsoc: null,
   receptor: {
     razonSocial: "Consumidor Final",
     domicilio: null,
@@ -849,13 +852,42 @@ function confirmacionesDistintas(): Array<[string, ConfirmacionFiscalPostBorrado
 describe("handshake post-creación del borrador", () => {
   it("produce SHA-256 canónico de la tupla completa", () => {
     expect(crearHuellaConfirmacionFiscal(CONFIRMACION_BASE)).toBe(
-      "6ecf3ab99ba65e986269c2f0a56243c4087e4dfea9e95aedf3e0a3c73f08b19d",
+      "d51d91f9d06bab2e21a82d75954031194279607f11b9d352300a847535153d66",
     );
   });
 
   it.each(confirmacionesDistintas())("cambia la huella si cambia %s", (_campo, confirmacion) => {
     expect(crearHuellaConfirmacionFiscal(confirmacion)).not.toBe(
       crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+    );
+  });
+
+  it.each([
+    ["pagado", { pagado: "0.20", saldo: "0.00", cbteAsoc: null }],
+    ["saldo", { pagado: "0.00", saldo: "0.21", cbteAsoc: null }],
+    [
+      "CbteAsoc",
+      {
+        pagado: "0.00",
+        saldo: "0.20",
+        cbteAsoc: {
+          tipo: 1,
+          letra: "A",
+          puntoVenta: 5,
+          numero: 10,
+          fecha: "2026-08-20",
+        },
+      },
+    ],
+  ] as const)("incluye %s en la huella autoritativa", (_campo, cambio) => {
+    const base = {
+      ...CONFIRMACION_BASE,
+      pagado: "0.00",
+      saldo: "0.20",
+      cbteAsoc: null,
+    };
+    expect(crearHuellaConfirmacionFiscal({ ...base, ...cambio } as never)).not.toBe(
+      crearHuellaConfirmacionFiscal(base as never),
     );
   });
 });

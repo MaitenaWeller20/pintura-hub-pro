@@ -44,6 +44,9 @@ const CONFIRMACION_BASE: ConfirmacionFiscalPostBorrador = {
   letra: "A",
   cbteTipo: 1,
   fechaFiscal: "2026-08-22",
+  pagado: "1210.00",
+  saldo: "0.00",
+  cbteAsoc: null,
   receptor: {
     razonSocial: "RECEPTOR A",
     domicilio: "Domicilio A",
@@ -64,6 +67,16 @@ function confirmacionPara(
 ): ConfirmacionFiscalPostBorrador {
   const confirmacion = structuredClone(CONFIRMACION_BASE);
   confirmacion.cbteTipo = tipo === "NOTA_CREDITO" ? 3 : 1;
+  confirmacion.cbteAsoc =
+    tipo === "NOTA_CREDITO"
+      ? {
+          tipo: 1,
+          letra: "A",
+          puntoVenta: 5,
+          numero: 40,
+          fecha: "2026-08-20",
+        }
+      : null;
   if (receptor.origen === "MANUAL") {
     confirmacion.receptor = {
       ...confirmacion.receptor,

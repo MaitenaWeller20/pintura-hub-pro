@@ -29,6 +29,15 @@ function preview(overrides: Partial<PreviewEmisionFiscal> = {}): PreviewEmisionF
     letra: "A" as const,
     cbteTipo: 3,
     fechaFiscal: "2026-08-23",
+    pagado: "121.00",
+    saldo: "0.00",
+    cbteAsoc: {
+      tipo: 1,
+      letra: "A" as const,
+      puntoVenta: 5,
+      numero: 41,
+      fecha: "2026-08-20",
+    },
     receptor,
   };
   return {
@@ -81,5 +90,18 @@ describe("resumen de confirmación fiscal", () => {
     expect(html).toContain("PV 00005");
     expect(html).toContain("00000041");
     expect(html).toContain("20/08/2026");
+  });
+
+  it("en la segunda confirmación muestra el cobrado y saldo autoritativos", () => {
+    const html = renderToStaticMarkup(
+      createElement(ResumenEmisionFiscal, {
+        preview: preview({ pagado: "20.00", saldo: "101.00" }),
+        comprador: "COMPRADOR",
+        requiereSegundaConfirmacion: true,
+      }),
+    );
+    expect(html).toContain("20,00");
+    expect(html).toContain("101,00");
+    expect(html).not.toContain("El servidor lo confirmará al emitir");
   });
 });

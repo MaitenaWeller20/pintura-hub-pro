@@ -412,6 +412,9 @@ export async function construirPreviewBorradorFiscalProvisional(
     letra,
     cbteTipo: cbteTipoAfip("VENTA", letra),
     fechaFiscal,
+    pagado: decimalDosProvisional(pagado),
+    saldo: decimalDosProvisional(saldo),
+    cbteAsoc: null,
     receptor,
   };
 
@@ -455,6 +458,9 @@ export async function construirPreviewBorradorFiscalProvisional(
       letra,
       cbte_tipo: confirmacionFingerprint.cbteTipo,
       fecha_fiscal: fechaFiscal,
+      pagado: confirmacionFingerprint.pagado,
+      saldo: confirmacionFingerprint.saldo,
+      cbte_asoc: null,
       receptor,
     },
     advertencia:
@@ -855,6 +861,15 @@ export function crearDependenciasEmisionFiscalServer(input: {
         original,
       };
       preparaciones.set(ventaId, interna);
+      const cbteAsoc = original
+        ? {
+            tipo: original.identidad.cbteTipo,
+            letra: original.letra,
+            puntoVenta: original.identidad.puntoVenta,
+            numero: original.identidad.numero,
+            fecha: original.fechaComprobante,
+          }
+        : null;
       const preparacionBase = {
         ventaId,
         tipoComprobante: tipo,
@@ -870,15 +885,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
           pagado: lectura.venta.totalPagado,
           saldo: lectura.venta.saldo,
           comprador: lectura.venta.clienteId,
-          cbteAsoc: original
-            ? {
-                tipo: original.identidad.cbteTipo,
-                letra: original.letra,
-                puntoVenta: original.identidad.puntoVenta,
-                numero: original.identidad.numero,
-                fecha: original.fechaComprobante,
-              }
-            : null,
+          cbteAsoc,
           demoraDias: diasDesdeHoyAr(new Date(lectura.venta.fechaComercial)),
           advertenciaDemora:
             diasDesdeHoyAr(new Date(lectura.venta.fechaComercial)) > 5
@@ -899,6 +906,9 @@ export function crearDependenciasEmisionFiscalServer(input: {
         letra,
         cbteTipo: preparacionBase.cbteTipo,
         fechaFiscal: fechaComprobante,
+        pagado: lectura.venta.totalPagado,
+        saldo: lectura.venta.saldo,
+        cbteAsoc,
         receptor: proyectarReceptorFiscalConfirmado(receptorConfirmado),
       };
       return {
@@ -1187,6 +1197,15 @@ export async function previsualizarVentaFiscalExistente(input: {
     vista.original?.emisor.razonSocial ?? vista.contexto.emisorImpreso.razon_social;
   const sucursalId = vista.original?.sucursal.id ?? vista.contexto.sucursal.id;
   const sucursalNombre = vista.original?.sucursal.nombre ?? vista.contexto.sucursal.nombre;
+  const cbteAsoc = vista.original
+    ? {
+        tipo: vista.original.identidad.cbteTipo,
+        letra: vista.original.letra,
+        puntoVenta: vista.original.identidad.puntoVenta,
+        numero: vista.original.identidad.numero,
+        fecha: vista.original.fechaComprobante,
+      }
+    : null;
   const confirmacionAutoritativa: ConfirmacionFiscalPostBorrador = {
     version: 1,
     importe: lectura.venta.total,
@@ -1199,6 +1218,9 @@ export async function previsualizarVentaFiscalExistente(input: {
     letra: vista.letra,
     cbteTipo: preparacion.cbteTipo,
     fechaFiscal: preparacion.fechaComprobante,
+    pagado: lectura.venta.totalPagado,
+    saldo: lectura.venta.saldo,
+    cbteAsoc,
     receptor: receptorVisible,
   };
   return {
@@ -1221,13 +1243,13 @@ export async function previsualizarVentaFiscalExistente(input: {
     modo: preparacion.modo,
     afip_validez: preparacion.validez,
     cbte_tipo: preparacion.cbteTipo,
-    cbte_asoc: vista.original
+    cbte_asoc: cbteAsoc
       ? {
-          tipo: vista.original.identidad.cbteTipo,
-          letra: vista.original.letra,
-          punto_venta: vista.original.identidad.puntoVenta,
-          numero: vista.original.identidad.numero,
-          fecha: vista.original.fechaComprobante,
+          tipo: cbteAsoc.tipo,
+          letra: cbteAsoc.letra,
+          punto_venta: cbteAsoc.puntoVenta,
+          numero: cbteAsoc.numero,
+          fecha: cbteAsoc.fecha,
         }
       : null,
     demora_dias: demoraDias,

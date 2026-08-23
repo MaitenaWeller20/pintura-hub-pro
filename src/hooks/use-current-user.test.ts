@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  perfilHabilitaSesion,
   resolverAccesoFiscalUsuario,
   resolverEstadoFiscalUsuario,
   resolverRolEfectivo,
@@ -7,6 +8,13 @@ import {
 import { puedeAbrirRuta } from "@/lib/secciones";
 
 describe("estado fiscal del usuario", () => {
+  it("cierra el layout ante perfil ausente, inactivo o lectura rechazada", () => {
+    expect(perfilHabilitaSesion({ activo: true }, null)).toBe(true);
+    expect(perfilHabilitaSesion({ activo: false }, null)).toBe(false);
+    expect(perfilHabilitaSesion(null, null)).toBe(false);
+    expect(perfilHabilitaSesion({ activo: true }, new Error("REST 403"))).toBe(false);
+  });
+
   it.each([
     [[{ role: "empleado" }, { role: "admin" }], "admin"],
     [[{ role: "admin" }, { role: "empleado" }], "admin"],

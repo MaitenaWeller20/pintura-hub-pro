@@ -51,6 +51,19 @@ export function decidirEscritorFiscal(
   return "V2";
 }
 
+/**
+ * Ventana compatible estricta del lector: sólo mientras el escritor legacy es
+ * el único habilitado se toleran aprobaciones históricas previas al marcador.
+ * El cutover v2 vuelve a cerrar automáticamente ese fallback.
+ */
+export function permiteLectorLegacySinMarca(flags: FlagsFacturacion): boolean {
+  const { facturacion_receptor_v2_enabled: v2, facturacion_legacy_writer_enabled: legacy } = flags;
+  if (v2 && legacy) {
+    throw new Error("La configuración fiscal es inválida: ambos escritores están activos.");
+  }
+  return !v2 && legacy;
+}
+
 export async function cargarFlagsFacturacionDesdeSupabase(supabaseUsuario: {
   from(tabla: "settings"): {
     select(columnas: string): {

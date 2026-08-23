@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { decidirEscritorFiscal, leerFlagsFacturacion } from "./feature.server";
+import {
+  decidirEscritorFiscal,
+  leerFlagsFacturacion,
+  permiteLectorLegacySinMarca,
+} from "./feature.server";
 
 describe("feature flags del escritor fiscal", () => {
   it.each([
@@ -46,6 +50,33 @@ describe("feature flags del escritor fiscal", () => {
         "V2",
       ),
     ).toThrow(/cliente receptor v2/i);
+  });
+
+  it("abre el lector sin marca sólo durante la ventana legacy exclusiva", () => {
+    expect(
+      permiteLectorLegacySinMarca({
+        facturacion_receptor_v2_enabled: false,
+        facturacion_legacy_writer_enabled: true,
+      }),
+    ).toBe(true);
+    expect(
+      permiteLectorLegacySinMarca({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      permiteLectorLegacySinMarca({
+        facturacion_receptor_v2_enabled: false,
+        facturacion_legacy_writer_enabled: false,
+      }),
+    ).toBe(false);
+    expect(() =>
+      permiteLectorLegacySinMarca({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: true,
+      }),
+    ).toThrow(/ambos escritores/i);
   });
 
   it("relee la fila única id=true en cada invocación y valida tipos", async () => {

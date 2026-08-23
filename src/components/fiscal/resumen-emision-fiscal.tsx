@@ -151,11 +151,7 @@ export function ResumenEmisionFiscal({
           </div>
           <div className="sm:col-span-2">
             <dt className="text-xs text-muted-foreground">Saldo comercial</dt>
-            <dd className="font-mono tabular-nums">
-              {requiereSegundaConfirmacion
-                ? "El servidor lo confirmará al emitir"
-                : fmtMoney(preview.saldo)}
-            </dd>
+            <dd className="font-mono tabular-nums">{fmtMoney(preview.saldo)}</dd>
           </div>
         </dl>
 

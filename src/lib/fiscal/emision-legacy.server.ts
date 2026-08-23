@@ -31,6 +31,7 @@ import {
   MOCK,
 } from "./arca";
 import { diasDesdeHoyAr, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "./fecha";
+import { camposEvidenciaFiscalLegacy } from "./legacy-compat";
 import { qrAfipDataUrl } from "./qr";
 import { cargarContextoFiscal } from "./contexto.server";
 import {
@@ -51,6 +52,10 @@ import {
 // `updated_at.lt` sólo se activa cuando el request original quedó realmente muerto
 // (crash / serverless killed), no cuando todavía está esperando a AFIP.
 const EMISION_GRACE_MS = 90_000;
+
+class ErrorPersistenciaCaeLegacy extends Error {
+  readonly name = "ErrorPersistenciaCaeLegacy";
+}
 
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -249,6 +254,11 @@ export async function emitirComprobanteLegacy({
       subtotal_con_iva: Math.abs(Number(i.subtotal_con_iva ?? 0)),
     })),
   });
+  const evidenciaLegacy = camposEvidenciaFiscalLegacy({
+    modo: pv.modo,
+    simulado: MOCK,
+    fecha: snapshot.fecha,
+  });
 
   // --- Recuperación de un intento anterior --------------------------------
   // Si hay un número reservado, la identidad de esa reserva (punto de venta,
@@ -289,7 +299,7 @@ export async function emitirComprobanteLegacy({
       if (recuperado) {
         // AFIP sí lo había autorizado: el timeout nos mintió. Guardamos el CAE
         // en vez de emitir de nuevo (que duplicaría el comprobante).
-        await sb
+        const { error: recuperarError } = await sb
           .from("ventas")
           .update({
             cae: recuperado.cae,
@@ -304,10 +314,16 @@ export async function emitirComprobanteLegacy({
             ...(venta.afip_snapshot
               ? {}
               : { afip_snapshot: snapshot, afip_imp_total: totales.total }),
+            ...evidenciaLegacy,
             // Si la letra emitida difiere del tipo tipeado, reescribe tipo/numero interno.
             ...(await camposReescrituraLetra(sb, venta, cbteTipo)),
           })
           .eq("id", venta.id);
+        if (recuperarError) {
+          throw new Error(
+            `ARCA autorizó el comprobante, pero no se pudo persistir la evidencia legacy: ${recuperarError.message}.`,
+          );
+        }
         return {
           cae: recuperado.cae,
           numero: venta.afip_numero,
@@ -420,6 +436,7 @@ export async function emitirComprobanteLegacy({
       // declaró en ESTE intento, no lo que se recalcule después.
       afip_snapshot: snapshot,
       afip_imp_total: totales.total,
+      ...evidenciaLegacy,
     })
     .eq("id", venta.id)
     .is("cae", null)
@@ -462,7 +479,7 @@ export async function emitirComprobanteLegacy({
       sb,
     );
 
-    await sb
+    const { error: aprobacionError } = await sb
       .from("ventas")
       .update({
         cae: r.cae,
@@ -476,6 +493,11 @@ export async function emitirComprobanteLegacy({
         ...(await camposReescrituraLetra(sb, venta, cbteTipo)),
       })
       .eq("id", venta.id);
+    if (aprobacionError) {
+      throw new ErrorPersistenciaCaeLegacy(
+        `ARCA autorizó el comprobante, pero no se pudo persistir la aprobación legacy: ${aprobacionError.message}.`,
+      );
+    }
 
     return { cae: r.cae, numero, recuperado: false, modo: pv.modo };
   } catch (e) {
@@ -495,6 +517,14 @@ export async function emitirComprobanteLegacy({
       await marcarPendiente(sb, venta.id, msg);
       throw new Error(
         "AFIP no responde. El comprobante quedó pendiente: reintentá en unos minutos.",
+      );
+    }
+    if (e instanceof ErrorPersistenciaCaeLegacy) {
+      // La respuesta de ARCA ya pudo contener CAE: conservar identidad/número
+      // para que el siguiente intento consulte y recupere, nunca reemitir.
+      await marcarPendiente(sb, venta.id, msg);
+      throw new Error(
+        "ARCA respondió, pero no se pudo guardar la autorización. El comprobante quedó pendiente de recuperación; reintentá sin crear otro.",
       );
     }
 

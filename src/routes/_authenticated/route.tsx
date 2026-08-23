@@ -7,7 +7,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
-import { useCurrentUser } from "@/hooks/use-current-user";
+import { perfilHabilitaSesion, useCurrentUser } from "@/hooks/use-current-user";
 import {
   Sidebar,
   SidebarContent,
@@ -70,6 +70,15 @@ export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async () => {
     const { data, error } = await supabase.auth.getUser();
     if (error || !data.user) throw redirect({ to: "/auth" });
+    const { data: perfil, error: perfilError } = await supabase
+      .from("profiles")
+      .select("activo")
+      .eq("id", data.user.id)
+      .maybeSingle();
+    if (!perfilHabilitaSesion(perfil, perfilError)) {
+      await supabase.auth.signOut();
+      throw redirect({ to: "/auth" });
+    }
   },
   component: AuthenticatedLayout,
   pendingComponent: Cargando,

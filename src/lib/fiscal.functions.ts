@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   cargarFlagsFacturacionDesdeSupabase,
   decidirEscritorFiscal,
+  permiteLectorLegacySinMarca,
   type FlagsFacturacion,
   type TipoEntradaFiscal,
 } from "./fiscal/feature.server";
@@ -483,6 +484,7 @@ export const previsualizarEmisionFiscal = createServerFn({ method: "POST" })
 export async function resolverDatosFiscalesComprobanteDesdeFila(
   filaInput: unknown,
   deps: {
+    permitirLegacySinMarca?: boolean;
     cargarLegacy(): Promise<unknown>;
     generarQr(input: QrAfipInput): Promise<string>;
   },
@@ -506,7 +508,13 @@ export async function resolverDatosFiscalesComprobanteDesdeFila(
   }
 
   let preparado: DatosFiscalesPreparados;
-  if (fila.afip_legacy_incompleto === true) {
+  const versionLegacy =
+    typeof fila.afip_version === "number" &&
+    Number.isInteger(fila.afip_version) &&
+    fila.afip_version < 2;
+  const usarLegacyMarcado = fila.afip_legacy_incompleto === true;
+  const usarLegacyCompatible = deps.permitirLegacySinMarca === true && versionLegacy;
+  if (usarLegacyMarcado || usarLegacyCompatible) {
     const datosHistoricos = await deps.cargarLegacy();
     if (!datosHistoricos) {
       throw new ErrorImpresionFiscal(
@@ -514,7 +522,10 @@ export async function resolverDatosFiscalesComprobanteDesdeFila(
         "No se pudieron materializar los datos del comprobante histórico.",
       );
     }
-    preparado = prepararDatosFiscalesLegacyMarcados({ fila, datosHistoricos });
+    preparado = prepararDatosFiscalesLegacyMarcados({
+      fila: usarLegacyCompatible ? { ...fila, afip_legacy_incompleto: true } : fila,
+      datosHistoricos,
+    });
   } else {
     preparado = prepararDatosFiscalesImpresos(fila);
   }
@@ -548,7 +559,8 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
       );
     }
 
-    const [{ qrAfipDataUrlObligatorio }, { escenarioMockFiscalActual }] = await Promise.all([
+    const [flags, { qrAfipDataUrlObligatorio }, { escenarioMockFiscalActual }] = await Promise.all([
+      cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
       import("./fiscal/qr"),
       import("./fiscal/mock-scenario.server"),
     ]);
@@ -562,6 +574,7 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
           }
         : qrAfipDataUrlObligatorio;
     return resolverDatosFiscalesComprobanteDesdeFila(venta, {
+      permitirLegacySinMarca: permiteLectorLegacySinMarca(flags),
       generarQr,
       async cargarLegacy() {
         const { datosFiscalesComprobanteLegacy } = await import("./fiscal/emision-legacy.server");

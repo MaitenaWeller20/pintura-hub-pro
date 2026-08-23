@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Paintbrush, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Cargando } from "@/components/app/cargando";
+import { perfilHabilitaSesion } from "@/hooks/use-current-user";
 
 /**
  * La sesión vive en el navegador, así que esta ruta no se puede resolver en el
@@ -50,12 +51,27 @@ function AuthPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    setLoading(false);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
     if (error) {
+      setLoading(false);
       toast.error("Credenciales inválidas o cuenta inactiva.");
       return;
     }
+    const { data: perfil, error: perfilError } = await supabase
+      .from("profiles")
+      .select("activo")
+      .eq("id", data.user.id)
+      .maybeSingle();
+    if (!perfilHabilitaSesion(perfil, perfilError)) {
+      await supabase.auth.signOut();
+      setLoading(false);
+      toast.error("La cuenta no está activa. Contactá a un administrador.");
+      return;
+    }
+    setLoading(false);
     toast.success("Bienvenido/a");
     window.location.href = "/";
   };

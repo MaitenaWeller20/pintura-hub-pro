@@ -13,8 +13,6 @@ import {
   type ConfirmacionFiscalPostBorrador,
 } from "@/lib/fiscal/confirmacion";
 
-const HUELLA_CONFIRMACION = "9d5026caa845681a6d62da9ccd828217c554c8d2822531c5399931e733a0bae9";
-
 const RECEPTOR = {
   razonSocial: "APLICACIONES Y SERVICIOS S.R.L.",
   domicilio: "Sarmiento 1398",
@@ -40,8 +38,13 @@ const CONFIRMACION = {
   letra: "A",
   cbteTipo: 1,
   fechaFiscal: "2026-08-23",
+  pagado: "121.00",
+  saldo: "0.00",
+  cbteAsoc: null,
   receptor: RECEPTOR,
 } as const;
+
+const HUELLA_CONFIRMACION = crearHuellaConfirmacionFiscal(CONFIRMACION);
 
 const PREVIEW = {
   autoritativo: true,
@@ -108,6 +111,9 @@ const PREVIEW_PROVISIONAL = {
     letra: "A",
     cbte_tipo: 1,
     fecha_fiscal: "2026-08-23",
+    pagado: "121.00",
+    saldo: "0.00",
+    cbte_asoc: null,
     receptor: RECEPTOR,
   },
   advertencia: "Se revalidará contra la venta persistida.",
@@ -133,6 +139,17 @@ function respuestaReconfirmacion(
     modo: confirmacion.modo,
     afip_validez: confirmacion.modo,
     cbte_tipo: confirmacion.cbteTipo,
+    pagado: confirmacion.pagado,
+    saldo: confirmacion.saldo,
+    cbte_asoc: confirmacion.cbteAsoc
+      ? {
+          tipo: confirmacion.cbteAsoc.tipo,
+          letra: confirmacion.cbteAsoc.letra,
+          punto_venta: confirmacion.cbteAsoc.puntoVenta,
+          numero: confirmacion.cbteAsoc.numero,
+          fecha: confirmacion.cbteAsoc.fecha,
+        }
+      : null,
     confirmacion_autoritativa: confirmacion,
     huella_confirmacion: huella,
   };
@@ -197,10 +214,41 @@ describe("contrato runtime del diálogo fiscal", () => {
           numero: 41,
           fecha: "2026-08-20",
         },
-        confirmacion_autoritativa: { ...CONFIRMACION, cbteTipo: 3 },
-        huella_confirmacion: crearHuellaConfirmacionFiscal({ ...CONFIRMACION, cbteTipo: 3 }),
+        confirmacion_autoritativa: {
+          ...CONFIRMACION,
+          cbteTipo: 3,
+          cbteAsoc: {
+            tipo: 1,
+            letra: "A",
+            puntoVenta: 5,
+            numero: 41,
+            fecha: "2026-08-20",
+          },
+        },
+        huella_confirmacion: crearHuellaConfirmacionFiscal({
+          ...CONFIRMACION,
+          cbteTipo: 3,
+          cbteAsoc: {
+            tipo: 1,
+            letra: "A",
+            puntoVenta: 5,
+            numero: 41,
+            fecha: "2026-08-20",
+          },
+        }),
       }).cbte_asoc,
     ).toEqual({ tipo: 1, letra: "A", punto_venta: 5, numero: 41, fecha: "2026-08-20" });
+
+    expect(() =>
+      parsePreviewEmisionFiscalAutoritativa({
+        ...PREVIEW,
+        cbte_tipo: 3,
+        letra: "A",
+        cbte_asoc: null,
+        confirmacion_autoritativa: { ...CONFIRMACION, cbteTipo: 3 },
+        huella_confirmacion: crearHuellaConfirmacionFiscal({ ...CONFIRMACION, cbteTipo: 3 }),
+      }),
+    ).toThrow(/previsualizaci.n fiscal/i);
   });
 
   it("conserva el contrato estricto de preview provisional para el cierre inmediato", () => {
@@ -375,6 +423,21 @@ describe("contrato runtime del diálogo fiscal", () => {
     ["letra", { ...PREVIEW_PROVISIONAL, letra: "B" }],
     ["CbteTipo", { ...PREVIEW_PROVISIONAL, cbte_tipo: 6 }],
     ["fecha fiscal", { ...PREVIEW_PROVISIONAL, fecha_fiscal: "2026-08-24" }],
+    ["pagado", { ...PREVIEW_PROVISIONAL, pagado: "120.00" }],
+    ["saldo", { ...PREVIEW_PROVISIONAL, saldo: "1.00" }],
+    [
+      "CbteAsoc",
+      {
+        ...PREVIEW_PROVISIONAL,
+        cbte_asoc: {
+          tipo: 1,
+          letra: "A",
+          punto_venta: 5,
+          numero: 41,
+          fecha: "2026-08-20",
+        },
+      },
+    ],
     [
       "receptor",
       {
@@ -400,6 +463,9 @@ describe("contrato runtime del diálogo fiscal", () => {
     "letra",
     "cbteTipo",
     "fechaFiscal",
+    "pagado",
+    "saldo",
+    "cbteAsoc",
     "receptor",
   ] as const)("rechaza reconfirmación sin %s", (campo) => {
     const tupla = { ...CONFIRMACION } as Record<string, unknown>;
@@ -429,22 +495,25 @@ describe("contrato runtime del diálogo fiscal", () => {
   });
 
   it("sustituye toda la preview por el estado autoritativo después de crear la venta", () => {
+    const confirmacionReleida: ConfirmacionFiscalPostBorrador = {
+      ...CONFIRMACION,
+      pagado: "20.00",
+      saldo: "101.00",
+      cbteAsoc: {
+        tipo: 1,
+        letra: "A",
+        puntoVenta: 5,
+        numero: 19,
+        fecha: "2026-08-20",
+      },
+    };
     const respuesta = parseRespuestaConfirmacionFiscal(
-      respuestaReconfirmacion(CONFIRMACION, {
+      respuestaReconfirmacion(confirmacionReleida, {
         venta_id: "10000000-0000-4000-8000-000000000099",
-        pagado: "20.00",
-        saldo: "101.00",
         comprador: null,
         demora_dias: 7,
         advertencia_demora: "Venta antigua reconfirmada por el servidor.",
         confirmacion_factura_a_permitida: false,
-        cbte_asoc: {
-          tipo: 1,
-          letra: "A",
-          punto_venta: 5,
-          numero: 19,
-          fecha: "2026-08-20",
-        },
       }),
     );
     if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") throw new Error("Respuesta inesperada");

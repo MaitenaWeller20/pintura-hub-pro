@@ -241,6 +241,51 @@ describe("fallback histórico marcado", () => {
     ).toThrowError(expect.objectContaining({ codigo: "LEGACY_FISCAL_NO_MARCADO" }));
   });
 
+  it("lee una aprobación legacy sin marcar sólo durante la ventana compatible", async () => {
+    const filaSinMarca = {
+      ...filaLegacy,
+      afip_version: 0,
+      afip_legacy_incompleto: false,
+      afip_validez: null,
+    };
+
+    await expect(
+      resolverDatosFiscalesComprobanteDesdeFila(filaSinMarca, {
+        permitirLegacySinMarca: true,
+        cargarLegacy: async () => datosHistoricos,
+        generarQr: async () => QR_PNG,
+      }),
+    ).resolves.toMatchObject({
+      origen: "LEGACY_INCOMPLETO",
+      qr: QR_PNG,
+    });
+
+    await expect(
+      resolverDatosFiscalesComprobanteDesdeFila(filaSinMarca, {
+        permitirLegacySinMarca: false,
+        cargarLegacy: async () => datosHistoricos,
+        generarQr: async () => QR_PNG,
+      }),
+    ).rejects.toMatchObject({ codigo: "COMPROBANTE_FISCAL_INCONSISTENTE" });
+  });
+
+  it("mantiene imprimible una aprobación nueva del writer legacy por su marca explícita", async () => {
+    await expect(
+      resolverDatosFiscalesComprobanteDesdeFila(
+        { ...filaLegacy, afip_version: 0, afip_legacy_incompleto: true },
+        {
+          permitirLegacySinMarca: false,
+          cargarLegacy: async () => datosHistoricos,
+          generarQr: async () => QR_PNG,
+        },
+      ),
+    ).resolves.toMatchObject({
+      origen: "LEGACY_INCOMPLETO",
+      advertencia: "HISTÓRICO LEGACY — DATOS FISCALES INCOMPLETOS",
+      qr: QR_PNG,
+    });
+  });
+
   it("reimprime una fila histórica real sin snapshot, fecha fiscal ni total fiscal", () => {
     const {
       afip_fecha_comprobante: _fechaFiscal,

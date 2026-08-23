@@ -79,7 +79,13 @@ export type PreviewFiscalAutoritativaReconfirmacion = {
   modo: "PRODUCCION" | "HOMOLOGACION";
   afip_validez: PreparacionEmisionFiscal["validez"];
   cbte_tipo: number;
-  cbte_asoc: PreparacionEmisionFiscal["reconfirmacion"]["cbteAsoc"];
+  cbte_asoc: {
+    tipo: number;
+    letra: "A" | "B" | "C";
+    punto_venta: number;
+    numero: number;
+    fecha: string;
+  } | null;
   demora_dias: number;
   advertencia_demora: string | null;
   confirmacion_factura_a_permitida: boolean;
@@ -361,8 +367,8 @@ async function liberarPreflightParaReconfirmar(
       fecha_comercial: vista.fechaComercial,
       fecha_fiscal: confirmacion.fechaFiscal,
       total: confirmacion.importe,
-      pagado: vista.pagado,
-      saldo: vista.saldo,
+      pagado: confirmacion.pagado,
+      saldo: confirmacion.saldo,
       comprador: vista.comprador,
       receptor: confirmacion.receptor,
       letra: confirmacion.letra,
@@ -375,7 +381,15 @@ async function liberarPreflightParaReconfirmar(
       modo: confirmacion.modo,
       afip_validez: preparacion.validez,
       cbte_tipo: confirmacion.cbteTipo,
-      cbte_asoc: vista.cbteAsoc,
+      cbte_asoc: confirmacion.cbteAsoc
+        ? {
+            tipo: confirmacion.cbteAsoc.tipo,
+            letra: confirmacion.cbteAsoc.letra,
+            punto_venta: confirmacion.cbteAsoc.puntoVenta,
+            numero: confirmacion.cbteAsoc.numero,
+            fecha: confirmacion.cbteAsoc.fecha,
+          }
+        : null,
       demora_dias: vista.demoraDias,
       advertencia_demora: vista.advertenciaDemora,
       confirmacion_factura_a_permitida: vista.confirmacionFacturaAPermitida,

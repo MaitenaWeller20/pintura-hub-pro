@@ -28,6 +28,15 @@ const cbteAsocSchema = z
     fecha,
   })
   .strict();
+const cbteAsocConfirmacionSchema = z
+  .object({
+    tipo: z.number().int().positive(),
+    letra: z.enum(["A", "B", "C"]),
+    puntoVenta: z.number().int().positive(),
+    numero: z.number().int().positive(),
+    fecha,
+  })
+  .strict();
 
 const receptorConfirmadoSchema = z
   .object({
@@ -63,6 +72,9 @@ const confirmacionAutoritativaSchema = z
     letra: z.enum(["A", "B", "C"]),
     cbteTipo: z.number().int().positive(),
     fechaFiscal: fecha,
+    pagado: decimal,
+    saldo: decimal,
+    cbteAsoc: cbteAsocConfirmacionSchema.nullable(),
     receptor: receptorConfirmadoSchema,
   })
   .strict();
@@ -136,6 +148,9 @@ const previewProvisionalSchema = z
         letra: z.enum(["A", "B", "C"]),
         cbte_tipo: z.number().int().positive(),
         fecha_fiscal: fecha,
+        pagado: decimal,
+        saldo: decimal,
+        cbte_asoc: cbteAsocSchema.nullable(),
         receptor: receptorConfirmadoSchema,
       })
       .strict(),
@@ -207,6 +222,16 @@ function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): vo
   if (letraDeCbteTipo(confirmacion.cbteTipo) !== confirmacion.letra) {
     throw new Error("El CbteTipo no coincide con la letra fiscal confirmada.");
   }
+  const esNota = [2, 3, 7, 8, 12, 13].includes(confirmacion.cbteTipo);
+  if (esNota && !confirmacion.cbteAsoc) {
+    throw new Error("La nota fiscal no conserva el comprobante asociado.");
+  }
+  if (confirmacion.cbteAsoc) {
+    validarFechaIsoCalendario(confirmacion.cbteAsoc.fecha, "La fecha del comprobante asociado");
+    if (letraDeCbteTipo(confirmacion.cbteAsoc.tipo) !== confirmacion.cbteAsoc.letra) {
+      throw new Error("El comprobante asociado no coincide con su letra fiscal.");
+    }
+  }
 }
 
 function confirmacionVisibleAutoritativa(
@@ -224,6 +249,17 @@ function confirmacionVisibleAutoritativa(
     letra: preview.letra,
     cbteTipo: preview.cbte_tipo,
     fechaFiscal: preview.fecha_fiscal,
+    pagado: preview.pagado,
+    saldo: preview.saldo,
+    cbteAsoc: preview.cbte_asoc
+      ? {
+          tipo: preview.cbte_asoc.tipo,
+          letra: preview.cbte_asoc.letra,
+          puntoVenta: preview.cbte_asoc.punto_venta,
+          numero: preview.cbte_asoc.numero,
+          fecha: preview.cbte_asoc.fecha,
+        }
+      : null,
     receptor: preview.receptor,
   };
 }
@@ -243,6 +279,17 @@ function confirmacionVisibleProvisional(
     letra: preview.letra,
     cbteTipo: preview.cbte_tipo,
     fechaFiscal: preview.fecha_fiscal,
+    pagado: preview.pagado,
+    saldo: preview.saldo,
+    cbteAsoc: preview.cbte_asoc
+      ? {
+          tipo: preview.cbte_asoc.tipo,
+          letra: preview.cbte_asoc.letra,
+          puntoVenta: preview.cbte_asoc.punto_venta,
+          numero: preview.cbte_asoc.numero,
+          fecha: preview.cbte_asoc.fecha,
+        }
+      : null,
     receptor: preview.receptor,
   };
 }
@@ -260,6 +307,17 @@ function confirmacionProvisional(preview: PreviewProvisional): ConfirmacionFisca
     letra: preview.confirmacion_provisional.letra,
     cbteTipo: preview.confirmacion_provisional.cbte_tipo,
     fechaFiscal: preview.confirmacion_provisional.fecha_fiscal,
+    pagado: preview.confirmacion_provisional.pagado,
+    saldo: preview.confirmacion_provisional.saldo,
+    cbteAsoc: preview.confirmacion_provisional.cbte_asoc
+      ? {
+          tipo: preview.confirmacion_provisional.cbte_asoc.tipo,
+          letra: preview.confirmacion_provisional.cbte_asoc.letra,
+          puntoVenta: preview.confirmacion_provisional.cbte_asoc.punto_venta,
+          numero: preview.confirmacion_provisional.cbte_asoc.numero,
+          fecha: preview.confirmacion_provisional.cbte_asoc.fecha,
+        }
+      : null,
     receptor: preview.confirmacion_provisional.receptor,
   };
 }

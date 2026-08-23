@@ -14,6 +14,15 @@ export type ConfirmacionFiscalPostBorrador = {
   letra: Letra;
   cbteTipo: number;
   fechaFiscal: string;
+  pagado: string;
+  saldo: string;
+  cbteAsoc: {
+    tipo: number;
+    letra: Letra;
+    puntoVenta: number;
+    numero: number;
+    fecha: string;
+  } | null;
   receptor: ReceptorFiscalConfirmado;
 };
 
@@ -32,6 +41,17 @@ export function copiarConfirmacionFiscal(
     letra: confirmacion.letra,
     cbteTipo: confirmacion.cbteTipo,
     fechaFiscal: confirmacion.fechaFiscal,
+    pagado: confirmacion.pagado,
+    saldo: confirmacion.saldo,
+    cbteAsoc: confirmacion.cbteAsoc
+      ? {
+          tipo: confirmacion.cbteAsoc.tipo,
+          letra: confirmacion.cbteAsoc.letra,
+          puntoVenta: confirmacion.cbteAsoc.puntoVenta,
+          numero: confirmacion.cbteAsoc.numero,
+          fecha: confirmacion.cbteAsoc.fecha,
+        }
+      : null,
     receptor: {
       razonSocial: confirmacion.receptor.razonSocial,
       domicilio: confirmacion.receptor.domicilio,

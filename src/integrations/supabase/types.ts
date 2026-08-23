@@ -3677,6 +3677,7 @@ export type Database = {
           venta_id: string
         }[]
       }
+      validar_perfil_activo_postgrest: { Args: never; Returns: undefined }
       validar_snapshot_fiscal_v2: {
         Args: { p_snapshot: Json }
         Returns: undefined

@@ -190,6 +190,90 @@ export const crearUsuario = createServerFn({ method: "POST" })
     return { id: nuevoId };
   });
 
+type ErrorOperacionUsuario = { message?: string } | null;
+
+export type OperacionesToggleUsuario = {
+  actualizarPerfil(
+    userId: string,
+    activo: boolean,
+  ): Promise<{ data: { id: string } | null; error: ErrorOperacionUsuario }>;
+  actualizarAuth(
+    userId: string,
+    banDuration: "none" | "876000h",
+  ): Promise<{ error: ErrorOperacionUsuario }>;
+};
+
+function mensajeErrorUsuario(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    error.message.trim()
+  ) {
+    return error.message;
+  }
+  return fallback;
+}
+
+export async function ejecutarToggleUsuarioActivo(
+  input: { user_id: string; activo: boolean },
+  operaciones: OperacionesToggleUsuario,
+): Promise<{ ok: true }> {
+  const actualizarPerfilValidado = async (activo: boolean): Promise<void> => {
+    const { data, error } = await operaciones.actualizarPerfil(input.user_id, activo);
+    if (error) {
+      throw new Error(
+        mensajeErrorUsuario(error, `No se pudo ${activo ? "reactivar" : "inactivar"} el perfil`),
+      );
+    }
+    if (data?.id !== input.user_id) {
+      throw new Error("El perfil del usuario no existe");
+    }
+  };
+
+  const actualizarAuthValidado = async (banDuration: "none" | "876000h"): Promise<void> => {
+    const { error } = await operaciones.actualizarAuth(input.user_id, banDuration);
+    if (error) {
+      throw new Error(
+        mensajeErrorUsuario(
+          error,
+          banDuration === "none"
+            ? "No se pudo quitar el bloqueo de acceso"
+            : "No se pudo bloquear el acceso",
+        ),
+      );
+    }
+  };
+
+  if (!input.activo) {
+    // Fail-safe: cerrar primero la frontera de datos. Si luego falla el ban de
+    // GoTrue, el pre-request y las RPC siguen viendo el perfil inactivo.
+    await actualizarPerfilValidado(false);
+    await actualizarAuthValidado("876000h");
+    return { ok: true };
+  }
+
+  // Para reactivar, Auth se abre primero. Sólo publicamos el perfil como activo
+  // si eso funcionó; si la segunda operación falla, restauramos el ban.
+  await actualizarAuthValidado("none");
+  try {
+    await actualizarPerfilValidado(true);
+  } catch (errorPerfil) {
+    const mensajePerfil = mensajeErrorUsuario(errorPerfil, "No se pudo reactivar el perfil");
+    try {
+      await actualizarAuthValidado("876000h");
+    } catch (errorReban) {
+      const mensajeReban = mensajeErrorUsuario(errorReban, "No se pudo restaurar el bloqueo");
+      throw new Error(`${mensajePerfil}. Además, no se pudo restaurar el bloqueo: ${mensajeReban}`);
+    }
+    throw new Error(mensajePerfil);
+  }
+
+  return { ok: true };
+}
+
 export const toggleUsuarioActivo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
@@ -200,11 +284,23 @@ export const toggleUsuarioActivo = createServerFn({ method: "POST" })
     const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
     if (!isAdmin) throw new Error("Solo admin");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    await supabaseAdmin.from("profiles").update({ activo: data.activo }).eq("id", data.user_id);
-    await supabaseAdmin.auth.admin.updateUserById(data.user_id, {
-      ban_duration: data.activo ? "none" : "876000h",
+    return ejecutarToggleUsuarioActivo(data, {
+      async actualizarPerfil(targetUserId, activo) {
+        const { data: perfil, error } = await supabaseAdmin
+          .from("profiles")
+          .update({ activo })
+          .eq("id", targetUserId)
+          .select("id")
+          .maybeSingle();
+        return { data: perfil, error };
+      },
+      async actualizarAuth(targetUserId, banDuration) {
+        const { error } = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+          ban_duration: banDuration,
+        });
+        return { error };
+      },
     });
-    return { ok: true };
   });
 
 /** Server fn admin: habilita/deshabilita que un usuario venda productos sin stock (R6). */

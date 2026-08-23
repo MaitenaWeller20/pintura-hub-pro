@@ -560,4 +560,64 @@ describe("toggleUsuarioActivo", () => {
     });
     expect(doble.authCalls).toHaveLength(9);
   });
+
+  it("el retry de la misma intención adopta y finaliza la reconciliación fail-safe vigente", async () => {
+    const doble = new ToggleCasDouble();
+    doble.ids = [OP_FAIL_SAFE];
+    const operaciones = doble.operaciones();
+    const finalizarReal = operaciones.finalizar;
+    operaciones.finalizar = async (...args) => {
+      await finalizarReal(...args);
+      const nuevaId = `40000000-0000-4000-8000-${String(doble.estado.version + 1).padStart(12, "0")}`;
+      doble.estado.version += 1;
+      doble.estado.activoDeseado = false;
+      doble.estado.operacionId = nuevaId;
+      doble.estado.pendiente = true;
+      doble.estado.perfilActivo = false;
+      doble.operacionesConsumidas.set(nuevaId, {
+        version: doble.estado.version,
+        activoDeseado: false,
+      });
+      return {
+        data: {
+          version: doble.estado.version,
+          activo_deseado: false,
+          operacion_id: nuevaId,
+          pendiente: true,
+          activo_actual: false,
+          aplicada: false,
+          supersedida: true,
+        },
+        error: null,
+      };
+    };
+
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+        operaciones,
+      ),
+    ).rejects.toThrow(/cerrado y pendiente.*reintent/i);
+    expect(doble.estado).toMatchObject({
+      operacionId: OP_FAIL_SAFE,
+      activoDeseado: false,
+      pendiente: true,
+      perfilActivo: false,
+    });
+
+    operaciones.finalizar = finalizarReal;
+    await expect(
+      ejecutarToggleUsuarioActivo(
+        { user_id: EMPLEADO, activo: false, operacion_id: OP_BAJA },
+        operaciones,
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(doble.estado).toMatchObject({
+      operacionId: OP_FAIL_SAFE,
+      activoDeseado: false,
+      pendiente: false,
+      perfilActivo: false,
+      authBloqueado: true,
+    });
+  });
 });

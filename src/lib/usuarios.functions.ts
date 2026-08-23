@@ -324,11 +324,23 @@ export async function ejecutarToggleUsuarioActivo(
     "No se pudo iniciar el cambio de acceso",
   );
   if (iniciar.supersedida) {
-    throw new Error(
-      "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
-    );
-  }
-  if (iniciar.operacionId !== input.operacion_id || iniciar.activoDeseado !== input.activo) {
+    if (iniciar.activoDeseado !== input.activo) {
+      throw new Error(
+        "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
+      );
+    }
+    // El cierre fail-safe usa una operación interna más nueva, pero preserva
+    // exactamente el desired del administrador. Un retry con la clave original
+    // debe adoptar esa reconciliación pendiente; de otro modo profile=false
+    // quedaría pendiente para siempre aunque el usuario repita la misma acción.
+    if (!iniciar.pendiente) {
+      if (iniciar.activoActual === iniciar.activoDeseado) return { ok: true };
+      throw new Error("El acceso resuelto no coincide con la intención vigente");
+    }
+  } else if (
+    iniciar.operacionId !== input.operacion_id ||
+    iniciar.activoDeseado !== input.activo
+  ) {
     throw new Error("La transición de acceso no coincide con la operación solicitada");
   }
   if (!iniciar.pendiente) {
@@ -339,7 +351,7 @@ export async function ejecutarToggleUsuarioActivo(
 
   await actualizarAuthValidado(iniciar.activoDeseado ? "none" : "876000h");
   let final = await rpcConReintento(
-    () => operaciones.finalizar(input.user_id, iniciar.version, input.operacion_id),
+    () => operaciones.finalizar(input.user_id, iniciar.version, iniciar.operacionId),
     "No se pudo finalizar el cambio de acceso",
   );
   if (final.aplicada) return { ok: true };

@@ -24,8 +24,16 @@ check "ventas tiene los doce campos fiscales nuevos" "12" \
 
 check "profiles.puede_facturar nace false" "false" \
   "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='puede_facturar'")"
-check "flags de rollout nacen v2 apagado y legacy encendido" "false|true" \
+check "schema post-corte nace en mantenimiento y legacy retirado" "false|false" \
   "$(q "select facturacion_receptor_v2_enabled::text||'|'||facturacion_legacy_writer_enabled::text from public.settings where id=true")"
+check "legacy no puede reactivarse y su default es false" "false|1" \
+  "$(q "select column_default||'|'||(select count(*) from pg_constraint where conrelid='public.settings'::regclass and conname='ck_settings_legacy_writer_retirado')::text from information_schema.columns where table_schema='public' and table_name='settings' and column_name='facturacion_legacy_writer_enabled'")"
+check "firma antigua de presupuesto fue retirada" "0" \
+  "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='convertir_presupuesto_en_venta'")"
+check "service_role ya no ejecuta el helper de numeración" "false" \
+  "$(q "select has_function_privilege('service_role','public.next_comprobante_numero(uuid,public.tipo_comprobante)','execute')::text")"
+check "guard irreversible del writer legacy existe" "1" \
+  "$(q "select count(*) from pg_trigger where tgrelid='public.ventas'::regclass and tgname='trg_ventas_fiscales_legacy_retirado' and not tgisinternal")"
 check "modalidad A nace desconocida" "'DESCONOCIDA'::text" \
   "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='emisores' and column_name='factura_a_modalidad'")"
 check "authenticated no conserva SELECT de tabla completa sobre emisores" "false" \
@@ -244,7 +252,8 @@ BEGIN
   END;
 END $$;
 
--- Dos flags verdaderos se rechazan; ambos falsos son la cerca corta de corte.
+-- Legacy no puede reactivarse; ambos falsos son la cerca corta de corte y
+-- v2=true/legacy=false sigue siendo el único estado productivo habilitable.
 DO $$
 BEGIN
   BEGIN
@@ -255,6 +264,26 @@ BEGIN
     RAISE EXCEPTION 'se habilitaron simultáneamente ambos escritores fiscales';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
+  BEGIN
+    UPDATE public.settings
+       SET facturacion_receptor_v2_enabled=false,
+           facturacion_legacy_writer_enabled=true
+     WHERE id=true;
+    RAISE EXCEPTION 'se reactivó el escritor fiscal legacy retirado';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE public.settings
+     SET facturacion_receptor_v2_enabled=true,
+         facturacion_legacy_writer_enabled=false
+   WHERE id=true;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.settings
+     WHERE id=true
+       AND facturacion_receptor_v2_enabled
+       AND NOT facturacion_legacy_writer_enabled
+  ) THEN
+    RAISE EXCEPTION 'el cuadrante productivo v2 no funciona';
+  END IF;
   UPDATE public.settings
      SET facturacion_receptor_v2_enabled=false,
          facturacion_legacy_writer_enabled=false
@@ -267,6 +296,39 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'la cerca fiscal con ambos flags falsos no funciona';
   END IF;
+END $$;
+
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO public.ventas (
+      sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante
+    ) VALUES (
+      (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+      'b2000000-0000-0000-0000-000000000001',
+      'a2000000-0000-0000-0000-000000000002',
+      'T2-LEGACY-INSERT-BLOQUEADO','FACTURA_B'
+    );
+    RAISE EXCEPTION 'el guard aceptó un INSERT fiscal legacy';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO public.ventas (
+      id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante
+    ) VALUES (
+      'e2000000-0000-0000-0000-000000000099',
+      (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+      'b2000000-0000-0000-0000-000000000001',
+      'a2000000-0000-0000-0000-000000000002',
+      'T2-LEGACY-UPDATE-BLOQUEADO','VENTA'
+    );
+    UPDATE public.ventas
+       SET tipo_comprobante='FACTURA_A'
+     WHERE id='e2000000-0000-0000-0000-000000000099';
+    RAISE EXCEPTION 'el guard aceptó un UPDATE hacia fiscal legacy';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
 END $$;
 
 -- Favoritos: datos de dos sucursales y uno inactivo en la sucursal activa.
@@ -436,6 +498,10 @@ SELECT set_config('request.jwt.claims','{}',true);
 
 -- Fixtures del backfill. La rutina se ejecuta en aplicar=true sólo dentro de
 -- esta transacción y todo se revierte al final.
+-- El writer legacy ya está retirado: el trigger se suspende sólo dentro de
+-- este rollback para poder construir historia sintética anterior al corte.
+ALTER TABLE public.ventas DISABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
+
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,
   cae,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_modo,
@@ -487,6 +553,8 @@ INSERT INTO public.ventas (
   -- Solapes deliberados: la precedencia, no sólo cada rama aislada, es contrato.
   ('e2000000-0000-0000-0000-000000000009',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-NOTA-ANULADA','NOTA_CREDITO','PENDIENTE','ANULADA'),
   ('e2000000-0000-0000-0000-000000000010',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002','T2-BACKFILL-REMITO-ERROR','REMITO','ERROR','ACTIVA');
+
+ALTER TABLE public.ventas ENABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
 
 CREATE TEMP TABLE t2_backfill_antes ON COMMIT DROP AS
 SELECT id,afip_estado,afip_validez,afip_legacy_incompleto,afip_snapshot,

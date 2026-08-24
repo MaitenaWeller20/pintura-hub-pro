@@ -1,8 +1,8 @@
 # Task 14: checklist de rollout fiscal controlado
 
-Estado de este documento: **preparación local solamente**. No autoriza un deploy, una migración
-remota, un cambio de banderas, un backfill ni una llamada a ARCA. Las migraciones las ejecuta
-manualmente el usuario autorizado y cada operación remota requiere aprobación separada.
+Estado de este documento: **corte v2 autorizado por el usuario el 2026-08-24**. La autorización
+incluye migraciones, backfill y cambio de banderas, pero no autoriza emitir un comprobante ni llamar
+a ARCA sin una confirmación humana separada de la operación concreta.
 
 ## Roles y registro previo
 
@@ -55,9 +55,11 @@ ejecutar; cualquier diferencia exige detenerse y revisar un nuevo manifiesto.
 |    24 | `20260823174401_barrera_postgrest_perfiles_activos.sql`          | `865df1c382abc61caf79b973ad5b45b7258994b1732e4d131a16039eaf2f8c0a` |
 |    25 | `20260823180500_toggle_usuario_activo_cas.sql`                   | `aeaf6b67098ef8402049ae3adb63dbedd21ae0b6fa802df5bfcb24be2459e617` |
 |    26 | `20260823182000_forzar_cierre_usuario_activo_fail_safe.sql`      | `49d2f52c03b36b60fa59a4ceb2620d8c8199a02c9d8152f2722d9a00d8f1919c` |
+|    27 | `20260824025109_backfill_cola_fiscal.sql`                        | `593c0ac0a731dc3953dac9d1f3843865dd975231a2f09e8e11ecb4b51a956ed1` |
+|    28 | `20260824025115_retirar_escritor_fiscal_legacy.sql`              | `4eb135bdc1510def709015a2c7d661c90ce01fbf56644a5e8a699dea124be4a7` |
 
-No forman parte del manifiesto `backfill_cola_fiscal` ni `retirar_escritor_fiscal_legacy`: sólo
-pueden crearse después de sus respectivos gates post-deployment.
+Las #27/#28 son el gate post-deployment: se aplican únicamente con la aplicación pausada, ambos
+writers apagados, sin trabajo fiscal en vuelo y con preview/clasificación coincidentes.
 
 ## Estado inicial obligatorio
 
@@ -66,8 +68,8 @@ pueden crearse después de sus respectivos gates post-deployment.
 - [ ] Conteos y digests de la cola registrados con la auditoría sólo lectura.
 - [ ] Evidencia de Factura A estándar vigente por emisor, sin copiar su texto sensible al acta.
 - [ ] PV, CUIT, ambiente y certificados corresponden a cada empresa.
-- [ ] No existen todavía migraciones `backfill_cola_fiscal` ni
-      `retirar_escritor_fiscal_legacy`; no se intentará crearlas o ejecutarlas en esta fase.
+- [ ] Las #27/#28 existen y sus hashes coinciden, pero todavía no se aplicaron antes de abrir la
+      ventana específica de corte.
 
 ## Fase A — prefijo compatible, todavía sin v2
 
@@ -150,10 +152,9 @@ real.
       resultado revisado, o se dejó explícitamente pendiente: `__________`.
 - [ ] Las banderas siguen `v2=false`, `legacy=true`; esta fase no habilita la v2.
 
-## Gate posterior — backfill y corte fiscal (no incluido ni autorizado)
+## Gate posterior — backfill y corte fiscal autorizado el 2026-08-24
 
-No marcar ni ejecutar esta sección como parte de Task 14 local. Requiere otra aprobación, un
-despliegue compatible sano y una migración futura revisada.
+Ejecutar sólo con despliegue compatible sano, backup fresco, mantenimiento y migraciones revisadas.
 
 - [ ] Se corrió `backfill_cola_fiscal(false)` y se comparó contra la clasificación SQL independiente.
 - [ ] Se repitieron inmediatamente antes del corte los conteos y digests; no cambiaron y no hay filas

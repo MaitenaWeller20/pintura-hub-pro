@@ -41,7 +41,9 @@ WITH requeridas(version,nombre) AS (
     ('20260823173000','anulacion_neutral_idempotente'),
     ('20260823174401','barrera_postgrest_perfiles_activos'),
     ('20260823180500','toggle_usuario_activo_cas'),
-    ('20260823182000','forzar_cierre_usuario_activo_fail_safe')
+    ('20260823182000','forzar_cierre_usuario_activo_fail_safe'),
+    ('20260824025109','backfill_cola_fiscal'),
+    ('20260824025115','retirar_escritor_fiscal_legacy')
 )
 SELECT
   'LEDGER' AS control,
@@ -91,7 +93,9 @@ BEGIN
       ('20260823173000','anulacion_neutral_idempotente'),
       ('20260823174401','barrera_postgrest_perfiles_activos'),
       ('20260823180500','toggle_usuario_activo_cas'),
-      ('20260823182000','forzar_cierre_usuario_activo_fail_safe')
+      ('20260823182000','forzar_cierre_usuario_activo_fail_safe'),
+      ('20260824025109','backfill_cola_fiscal'),
+      ('20260824025115','retirar_escritor_fiscal_legacy')
   )
   SELECT pg_catalog.string_agg(r.version||'_'||r.nombre,',' ORDER BY r.version)
     INTO v_faltantes
@@ -129,7 +133,9 @@ BEGIN
       ('20260823173000','anulacion_neutral_idempotente'),
       ('20260823174401','barrera_postgrest_perfiles_activos'),
       ('20260823180500','toggle_usuario_activo_cas'),
-      ('20260823182000','forzar_cierre_usuario_activo_fail_safe')
+      ('20260823182000','forzar_cierre_usuario_activo_fail_safe'),
+      ('20260824025109','backfill_cola_fiscal'),
+      ('20260824025115','retirar_escritor_fiscal_legacy')
   )
   SELECT pg_catalog.string_agg(sm.version||'_'||sm.name,',' ORDER BY sm.version)
     INTO v_inesperadas
@@ -379,7 +385,7 @@ SELECT
   ) AS divergencia_auth
 FROM estado;
 
--- Banderas. Antes del corte: false/true. Durante mantenimiento y rollback: false/false.
+-- Banderas post-retiro. Durante mantenimiento/rollback: false/false; activo: true/false.
 SELECT
   s.facturacion_receptor_v2_enabled,
   s.facturacion_legacy_writer_enabled,
@@ -387,6 +393,30 @@ SELECT
     s.facturacion_receptor_v2_enabled
     AND s.facturacion_legacy_writer_enabled
   ) AS combinacion_valida
+FROM public.settings AS s
+WHERE s.id=true;
+
+SELECT
+  NOT s.facturacion_legacy_writer_enabled AS legacy_apagado,
+  EXISTS (
+    SELECT 1 FROM pg_catalog.pg_constraint
+     WHERE conrelid='public.settings'::regclass
+       AND conname='ck_settings_legacy_writer_retirado'
+  ) AS legacy_irreversible,
+  EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger
+     WHERE tgrelid='public.ventas'::regclass
+       AND tgname='trg_ventas_fiscales_legacy_retirado'
+       AND NOT tgisinternal
+  ) AS guard_positivo_instalado,
+  pg_catalog.to_regprocedure(
+    'public.convertir_presupuesto_en_venta(uuid,uuid,public.tipo_comprobante,public.condicion_venta,jsonb,uuid)'
+  ) IS NULL AS conversor_legacy_retirado,
+  NOT pg_catalog.has_function_privilege(
+    'service_role',
+    'public.next_comprobante_numero(uuid,public.tipo_comprobante)',
+    'execute'
+  ) AS helper_service_role_retirado
 FROM public.settings AS s
 WHERE s.id=true;
 
@@ -456,7 +486,7 @@ SELECT
     'service_role',
     'public.next_comprobante_numero(uuid,public.tipo_comprobante)',
     'execute'
-  ) AS helper_service_role_temporal;
+  ) AS helper_service_role_execute;
 
 -- ACL efectiva exacta de las tablas de remitos. `privilegios_efectivos` debe
 -- ser solamente SELECT y `acl_exacto=true` en las cuatro combinaciones.

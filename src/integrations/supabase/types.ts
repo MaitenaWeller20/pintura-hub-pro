@@ -3332,7 +3332,7 @@ export type Database = {
         }[]
       }
       buscar_productos_similares: {
-        Args: { p_codigo?: string; p_limite?: number; p_texto: string }
+        Args: { p_codigo?: string; p_limite?: number; p_proveedor_id?: string; p_texto: string }
         Returns: {
           activo: boolean
           codigo: string

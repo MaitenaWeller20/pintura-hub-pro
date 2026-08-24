@@ -225,4 +225,67 @@ describe("adaptador HTTP local del cleanup ABMC", () => {
     expect(pedidosExternos).toBe(0);
     expect(credencialesExternas).toBe(0);
   });
+
+  it("no sigue un DELETE redirigido ni reenvía la credencial service-role", async () => {
+    const origenLocal = "http://127.0.0.1:54321";
+    const origenExterno = "https://externo.invalid";
+    const serviceRole = "service-role-local";
+    const solicitudes: Array<{
+      url: URL;
+      method: string;
+      redirect: RequestRedirect | undefined;
+      authorization: string | null;
+      apikey: string | null;
+    }> = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (request, init) => {
+      const url = new URL(typeof request === "string" ? request : request.toString());
+      const headers = new Headers(init?.headers);
+      solicitudes.push({
+        url,
+        method: init?.method ?? "GET",
+        redirect: init?.redirect,
+        authorization: headers.get("Authorization"),
+        apikey: headers.get("apikey"),
+      });
+
+      if (url.origin === origenLocal) {
+        return new Response(null, {
+          status: 307,
+          headers: { Location: `${origenExterno}/robar` },
+        });
+      }
+      return new Response(null, { status: 204 });
+    });
+    const repo = crearRepositorioFixturesAbmcLocalHttp(
+      {
+        SUPABASE_URL: origenLocal,
+        SUPABASE_SERVICE_ROLE_KEY: serviceRole,
+      },
+      fetchImpl,
+    );
+
+    await expect(
+      repo.borrarIdentidadExacta("clientes", CLIENTE_ID, "ZZ-E2E-REDIRECT"),
+    ).rejects.toThrow(/307/);
+
+    expect(solicitudes).toHaveLength(1);
+    expect(solicitudes[0]).toMatchObject({
+      method: "DELETE",
+      redirect: "manual",
+      authorization: `Bearer ${serviceRole}`,
+      apikey: serviceRole,
+    });
+    expect(solicitudes[0].url.origin).toBe(origenLocal);
+    expect(solicitudes.filter(({ url }) => url.origin === origenExterno)).toEqual([]);
+    expect(
+      solicitudes.filter(
+        ({ url, authorization, apikey }) =>
+          url.origin !== origenLocal && (authorization !== null || apikey !== null),
+      ),
+    ).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/^http:\/\/127\.0\.0\.1:54321\/rest\/v1\/clientes\?/),
+      expect.objectContaining({ method: "DELETE", redirect: "manual" }),
+    );
+  });
 });

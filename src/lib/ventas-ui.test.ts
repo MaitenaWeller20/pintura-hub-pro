@@ -403,6 +403,7 @@ describe("creación comercial idempotente antes de emitir", () => {
         control,
         idempotencyKey: "71000000-0000-4000-8000-000000000002",
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: "a".repeat(64),
       },
@@ -413,6 +414,7 @@ describe("creación comercial idempotente antes de emitir", () => {
         control,
         idempotencyKey: "71000000-0000-4000-8000-000000000002",
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
         confirmaVentaAntigua: false,
         huellaConfirmacion: "b".repeat(64),
       },
@@ -425,12 +427,14 @@ describe("creación comercial idempotente antes de emitir", () => {
     expect(emitirPostBorrador).toHaveBeenNthCalledWith(1, {
       ventaId: "72000000-0000-4000-8000-000000000002",
       receptor: { origen: "CLIENTE_COMERCIAL" },
+      letraSolicitada: "A",
       confirmaVentaAntigua: false,
       huellaConfirmacion: "a".repeat(64),
     });
     expect(emitirPostBorrador).toHaveBeenNthCalledWith(2, {
       ventaId: "72000000-0000-4000-8000-000000000002",
       receptor: { origen: "CLIENTE_COMERCIAL" },
+      letraSolicitada: "B",
       confirmaVentaAntigua: false,
       huellaConfirmacion: "b".repeat(64),
     });
@@ -447,6 +451,7 @@ describe("creación comercial idempotente antes de emitir", () => {
       control,
       idempotencyKey: "71000000-0000-4000-8000-000000000003",
       receptor: { origen: "CLIENTE_COMERCIAL" as const },
+      letraSolicitada: "B" as const,
       confirmaVentaAntigua: false,
       huellaConfirmacion: "c".repeat(64),
     };

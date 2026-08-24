@@ -386,6 +386,32 @@ function acciones(doble: FiscalDouble): string[] {
 }
 
 describe("ejecutarEmisionFiscal", () => {
+  it("al reconfirmar una nota explica que la letra viene del comprobante original", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: ORIGINAL,
+        letraSolicitada: "A",
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
+      } as never,
+      doble.deps(),
+    );
+
+    expect(resultado).toMatchObject({
+      estado: "RECONFIRMACION_REQUERIDA",
+      preview_autoritativa: {
+        letra: "A",
+        razon_letra: "La nota conserva la letra A del comprobante original.",
+      },
+    });
+    expect(acciones(doble)).toEqual(["RECLAMAR", "ERROR_CORREGIBLE"]);
+    expect(doble.payloadsCae).toHaveLength(0);
+  });
+
   it.each([
     [
       "receptor",
@@ -424,6 +450,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: crearHuellaConfirmacionFiscal(CONFIRMACION_BASE),
       } as never,
@@ -450,6 +477,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -476,6 +504,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -495,6 +524,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -517,6 +547,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -538,6 +569,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -561,6 +593,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -599,6 +632,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -623,6 +657,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -649,6 +684,7 @@ describe("ejecutarEmisionFiscal", () => {
         {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_A,
+          letraSolicitada: "A",
           confirmaVentaAntigua: false,
           huellaConfirmacion: huellaPara(doble, MANUAL_A),
         },
@@ -672,6 +708,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -724,6 +761,7 @@ describe("ejecutarEmisionFiscal", () => {
         {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_A,
+          letraSolicitada: "A",
           confirmaVentaAntigua: false,
           huellaConfirmacion: huellaPara(doble, MANUAL_A),
         },
@@ -733,6 +771,7 @@ describe("ejecutarEmisionFiscal", () => {
         {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_B,
+          letraSolicitada: "A",
           confirmaVentaAntigua: false,
           huellaConfirmacion: huellaPara(doble, MANUAL_B),
         },
@@ -756,6 +795,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -769,6 +809,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -792,6 +833,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -818,6 +860,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -850,6 +893,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: MANUAL_A,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },
@@ -871,6 +915,7 @@ describe("ejecutarEmisionFiscal", () => {
         {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: ORIGINAL,
+          letraSolicitada: "A",
           confirmaVentaAntigua: false,
           huellaConfirmacion: huellaPara(doble, ORIGINAL),
         },
@@ -890,6 +935,7 @@ describe("ejecutarEmisionFiscal", () => {
         {
           ventaId: "71000000-0000-4000-8000-000000000001",
           receptor: MANUAL_A,
+          letraSolicitada: "A",
           confirmaVentaAntigua: false,
           huellaConfirmacion: huellaPara(doble, MANUAL_A),
         },
@@ -902,6 +948,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: ORIGINAL,
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, ORIGINAL),
       },
@@ -922,6 +969,7 @@ describe("ejecutarEmisionFiscal", () => {
       {
         ventaId: "71000000-0000-4000-8000-000000000001",
         receptor: { ...MANUAL_A, guardar_para_proximas: true },
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: huellaPara(doble, MANUAL_A),
       },

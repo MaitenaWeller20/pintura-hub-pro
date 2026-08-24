@@ -13,7 +13,11 @@ import {
   proyectarReceptorFiscalConfirmado,
   type ConfirmacionFiscalPostBorrador,
 } from "./emision.server";
-import type { DependenciasEmisionFiscal, ReservaFiscalPersistida } from "./emision";
+import {
+  ejecutarEmisionFiscal,
+  type DependenciasEmisionFiscal,
+  type ReservaFiscalPersistida,
+} from "./emision";
 import { validarSnapshotFiscalV2 } from "./snapshot";
 
 describe("liberación administrativa de claims", () => {
@@ -534,15 +538,19 @@ describe("preview autoritativa de una nota de crédito", () => {
     const preparacionRuntime = await dependencias.prepararEmision({
       ventaId: notaId,
       receptor: { origen: "COMPROBANTE_ORIGINAL" },
+      letraSolicitada: "A",
     });
     expect(preparacionRuntime.confirmacionAutoritativa).toMatchObject({
       emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
       sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",
+      letra: "B",
+      cbteTipo: 8,
     });
 
     const preview = await previsualizarVentaFiscalExistente({
       ventaId: notaId,
       receptor: { origen: "COMPROBANTE_ORIGINAL" },
+      letraSolicitada: "A",
       admin: admin as never,
       usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
     });
@@ -550,6 +558,7 @@ describe("preview autoritativa de una nota de crédito", () => {
     expect(preview.emisor_razon_social).toBe("EMISOR ORIGINAL CONGELADO");
     expect(preview.sucursal_nombre).toBe("SUCURSAL ORIGINAL CONGELADA");
     expect(preview.afip_validez).toBe(original.identidad.validez);
+    expect(preview).toMatchObject({ letra: "B", cbte_tipo: 8 });
     expect(preview.receptor.domicilio).toBe("DOMICILIO RECEPTOR CONGELADO");
     expect(preview.cbte_asoc).toEqual({
       tipo: original.identidad.cbteTipo,
@@ -692,6 +701,7 @@ describe("preview provisional de borrador", () => {
         pagos: [{ forma_pago: "EFECTIVO", monto: 0.1, detalle: {} }],
         percepciones: 0.02,
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
       },
       {
         cargarContexto: async () => preparacion().contexto as never,
@@ -766,6 +776,7 @@ describe("preview provisional de borrador", () => {
           pagos: [],
           percepciones: 0,
           receptor: { origen: "CLIENTE_COMERCIAL" },
+          letraSolicitada: "B",
         },
         {
           cargarContexto: async () => preparacion().contexto as never,
@@ -782,6 +793,149 @@ describe("preview provisional de borrador", () => {
         },
       ),
     ).rejects.toThrow(/producto.*activo/i);
+  });
+
+  function entradaConLetra(
+    letraSolicitada: unknown,
+    receptor: Record<string, unknown> = { origen: "CLIENTE_COMERCIAL" },
+  ) {
+    return {
+      sucursalId: "71000000-0000-4000-8000-000000000301",
+      clienteId: "71000000-0000-4000-8000-000000000401",
+      fechaComercial: "2026-08-24T15:00:00.000Z",
+      items: [
+        {
+          producto_id: "71000000-0000-4000-8000-000000000501",
+          cantidad: 1,
+          descuento_porcentaje: 0,
+        },
+      ],
+      pagos: [],
+      percepciones: 0,
+      receptor,
+      ...(letraSolicitada === undefined ? {} : { letraSolicitada }),
+    };
+  }
+
+  function dependenciasPreviewLetra() {
+    return {
+      cargarContexto: async () => preparacion().contexto as never,
+      cargarCliente: async () => ({
+        id: "71000000-0000-4000-8000-000000000401",
+        razonSocial: "Consumidor Final",
+        cuitDni: null,
+        tipo: "CONSUMIDOR_FINAL",
+        direccion: null,
+      }),
+      cargarProductos: async () => [
+        {
+          id: "71000000-0000-4000-8000-000000000501",
+          activo: true,
+          precioSinIva: 100,
+          ivaPorcentaje: 21,
+        },
+      ],
+      cargarFavorito: async () => null,
+      ahora: () => new Date("2026-08-24T15:00:00.000Z"),
+    };
+  }
+
+  const receptorA = {
+    origen: "MANUAL",
+    tipo_documento: "CUIT",
+    numero_documento: "30-71419966-4",
+    razon_social: "Receptor A",
+    condicion_iva: "RESPONSABLE_INSCRIPTO",
+    domicilio: null,
+    guardar_para_proximas: false,
+    confirma_datos_manuales: true,
+  };
+
+  it("deriva CbteTipo 1/6 desde la letra A/B solicitada", async () => {
+    const [facturaA, facturaB] = await Promise.all([
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("A", receptorA) as never,
+        dependenciasPreviewLetra() as never,
+      ),
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("B") as never,
+        dependenciasPreviewLetra() as never,
+      ),
+    ]);
+
+    expect([facturaA.letra, facturaA.cbte_tipo]).toEqual(["A", 1]);
+    expect([facturaB.letra, facturaB.cbte_tipo]).toEqual(["B", 6]);
+  });
+
+  it("rechaza A sin CUIT o con CUIT inválido", async () => {
+    const receptorConCuitInvalido = {
+      ...receptorA,
+      numero_documento: "30-71419966-5",
+    };
+    const resultados = await Promise.allSettled([
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("A") as never,
+        dependenciasPreviewLetra() as never,
+      ),
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("A", receptorConCuitInvalido) as never,
+        dependenciasPreviewLetra() as never,
+      ),
+    ]);
+
+    expect(resultados.map(({ status }) => status)).toEqual(["rejected", "rejected"]);
+  });
+
+  it("permite B sin documento o con un receptor identificado opcional", async () => {
+    const receptorBIdentificado = {
+      origen: "MANUAL",
+      tipo_documento: "CUIL",
+      numero_documento: "20-24472051-0",
+      razon_social: "Consumidor identificado",
+      condicion_iva: "CONSUMIDOR_FINAL",
+      domicilio: null,
+      guardar_para_proximas: false,
+      confirma_datos_manuales: true,
+    };
+    const [anonima, identificada] = await Promise.all([
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("B") as never,
+        dependenciasPreviewLetra() as never,
+      ),
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("B", receptorBIdentificado) as never,
+        dependenciasPreviewLetra() as never,
+      ),
+    ]);
+
+    expect(anonima).toMatchObject({ letra: "B", cbte_tipo: 6 });
+    expect(anonima.receptor).toMatchObject({ docTipoArca: 99, docNroArca: "0" });
+    expect(identificada).toMatchObject({ letra: "B", cbte_tipo: 6 });
+    expect(identificada.receptor).toMatchObject({ docTipoArca: 86, docNroArca: "20244720510" });
+  });
+
+  it("no admite omitir la letra ni solicitar C en una factura nueva", async () => {
+    const resultados = await Promise.allSettled([
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra(undefined) as never,
+        dependenciasPreviewLetra() as never,
+      ),
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("C") as never,
+        dependenciasPreviewLetra() as never,
+      ),
+    ]);
+
+    expect(resultados.map(({ status }) => status)).toEqual(["rejected", "rejected"]);
+  });
+
+  it("no corrige silenciosamente una B solicitada a Factura A por el receptor", async () => {
+    await expect(
+      construirPreviewBorradorFiscalProvisional(
+        entradaConLetra("B", receptorA) as never,
+        dependenciasPreviewLetra() as never,
+      ),
+    ).rejects.toThrow(/letra|condici.n|receptor/i);
   });
 });
 
@@ -905,5 +1059,118 @@ describe("handshake post-creación del borrador", () => {
     expect(crearHuellaConfirmacionFiscal(simulada)).not.toBe(
       crearHuellaConfirmacionFiscal(homologacion),
     );
+  });
+
+  it("una huella A vieja no autoriza una nueva solicitud B", async () => {
+    const ventaId = "71000000-0000-4000-8000-000000000001";
+    const claimToken = "81000000-0000-4000-8000-000000000001";
+    const confirmacionA: ConfirmacionFiscalPostBorrador = {
+      ...CONFIRMACION_BASE,
+      letra: "A",
+      cbteTipo: 1,
+      receptor: {
+        razonSocial: "Receptor A",
+        domicilio: null,
+        tipoDocumento: "CUIT",
+        numeroDocumento: "30714199664",
+        docTipoArca: 80,
+        docNroArca: "30714199664",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+        origen: "MANUAL",
+        origenId: null,
+        verificadoArcaAt: null,
+      },
+    };
+    const preparar = (letra: "A" | "B") => {
+      const confirmacion = letra === "A" ? confirmacionA : CONFIRMACION_BASE;
+      return {
+        ventaId,
+        tipoComprobante: "VENTA" as const,
+        emisorCuit: confirmacion.emisorCuit,
+        puntoVenta: confirmacion.puntoVenta,
+        cbteTipo: confirmacion.cbteTipo,
+        modo: confirmacion.modo,
+        simulado: false,
+        validez: confirmacion.afipValidez,
+        fechaComprobante: confirmacion.fechaFiscal,
+        confirmacionAutoritativa: confirmacion,
+        huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacion),
+        reconfirmacion: {
+          fechaComercial: "2026-08-24T15:00:00.000Z",
+          pagado: confirmacion.pagado,
+          saldo: confirmacion.saldo,
+          comprador: null,
+          cbteAsoc: null,
+          demoraDias: 0,
+          advertenciaDemora: null,
+          confirmacionFacturaAPermitida: true,
+        },
+      };
+    };
+
+    let estado = {
+      venta_id: ventaId,
+      afip_estado: "SIN_FACTURAR",
+      afip_fase: null as string | null,
+      afip_claim_token: null as string | null,
+      afip_numero: null,
+      afip_version: 0,
+    };
+    let consultoSecuencia = false;
+    const deps = {
+      generarClaimToken: () => claimToken,
+      ahoraIso: () => "2026-08-24T15:00:00.000Z",
+      autorizarEmision: async () => ({ tipoComprobante: "VENTA" as const, afipVersion: 0 }),
+      prepararEmision: async (input: { letraSolicitada?: "A" | "B" }) =>
+        preparar(input.letraSolicitada ?? "A"),
+      consultarSecuencia: async () => {
+        consultoSecuencia = true;
+        throw new Error("Una huella vieja avanzó más allá de PREFLIGHT.");
+      },
+      validarFechaFiscal: () => undefined,
+      transicionar: async (input: { accion: string; claimToken: string | null }) => {
+        if (input.accion === "RECLAMAR") {
+          estado = {
+            ...estado,
+            afip_estado: "EMITIENDO",
+            afip_fase: "PREFLIGHT",
+            afip_claim_token: input.claimToken,
+            afip_version: 1,
+          };
+          return estado;
+        }
+        if (input.accion === "ERROR_CORREGIBLE") {
+          estado = {
+            ...estado,
+            afip_estado: "ERROR_CORREGIBLE",
+            afip_fase: null,
+            afip_claim_token: null,
+            afip_version: estado.afip_version + 1,
+          };
+          return estado;
+        }
+        throw new Error(`Transición inesperada: ${input.accion}`);
+      },
+      cargarEstadoPersistido: async () => estado,
+      esConflictoClaim: () => false,
+      esConflictoSecuencia: () => false,
+    } as unknown as DependenciasEmisionFiscal;
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId,
+        receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionA),
+      } as never,
+      deps,
+    );
+
+    expect(resultado).toMatchObject({
+      estado: "RECONFIRMACION_REQUERIDA",
+      confirmacion_autoritativa: { letra: "B", cbteTipo: 6 },
+    });
+    expect(consultoSecuencia).toBe(false);
   });
 });

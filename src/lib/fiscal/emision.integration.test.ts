@@ -129,7 +129,14 @@ suite("motor fiscal contra Supabase local", () => {
     }
   });
 
-  function snapshot(ventaId: string, itemId: string, numero: number, puntoVenta: number) {
+  function snapshot(
+    ventaId: string,
+    itemId: string,
+    numero: number,
+    puntoVenta: number,
+    letraSolicitada: "A" | "B",
+  ) {
+    const facturaA = letraSolicitada === "A";
     return crearSnapshotFiscalV2({
       venta: {
         id: ventaId,
@@ -165,29 +172,43 @@ suite("motor fiscal contra Supabase local", () => {
         telefono: null,
       },
       sucursal: { id: sucursalId, nombre: "Sucursal", direccion: "Domicilio", telefono: null },
-      receptor: {
-        razonSocial: "RECEPTOR TASK 9",
-        domicilio: null,
-        tipoDocumento: "CUIT",
-        numeroDocumento: "30714199664",
-        docTipoArca: 80,
-        docNroArca: "30714199664",
-        condicionIva: "RESPONSABLE_INSCRIPTO",
-        origen: "MANUAL",
-        origenId: null,
-        verificadoArcaAt: null,
-        condicionIvaReceptorId: 1,
-      },
+      receptor: facturaA
+        ? {
+            razonSocial: "RECEPTOR TASK 9",
+            domicilio: null,
+            tipoDocumento: "CUIT",
+            numeroDocumento: "30714199664",
+            docTipoArca: 80,
+            docNroArca: "30714199664",
+            condicionIva: "RESPONSABLE_INSCRIPTO",
+            origen: "MANUAL",
+            origenId: null,
+            verificadoArcaAt: null,
+            condicionIvaReceptorId: 1,
+          }
+        : {
+            razonSocial: "Consumidor Final",
+            domicilio: null,
+            tipoDocumento: "SIN_IDENTIFICAR",
+            numeroDocumento: null,
+            docTipoArca: 99,
+            docNroArca: "0",
+            condicionIva: "CONSUMIDOR_FINAL",
+            origen: "CLIENTE_COMERCIAL",
+            origenId: null,
+            verificadoArcaAt: null,
+            condicionIvaReceptorId: 5,
+          },
       identidad: {
         numero,
         emisorCuit: "30717322467",
         puntoVenta,
-        cbteTipo: 1,
+        cbteTipo: facturaA ? 1 : 6,
         modo: "HOMOLOGACION",
         simulado: true,
         validez: "SIMULADA",
       },
-      letra: "A",
+      letra: letraSolicitada,
       concepto: 1,
       fechaComprobante: "2026-08-22",
       importeNeto: "1000.00",
@@ -200,7 +221,7 @@ suite("motor fiscal contra Supabase local", () => {
       tributos: [],
       moneda: "PES",
       cotizacion: "1.000000",
-      ivaContenido: "0.00",
+      ivaContenido: facturaA ? "0.00" : "210.00",
       otrosImpuestosNacionalesIndirectos: "0.00",
       origen: "VENTA",
       comprobanteOriginalId: null,
@@ -213,30 +234,45 @@ suite("motor fiscal contra Supabase local", () => {
     itemId: string,
     puntoVenta: number,
     outcomes: Array<"OK" | "TIMEOUT">,
+    letraSolicitada: "A" | "B",
   ) {
     let arcaCalls = 0;
     const transitionActions: string[] = [];
+    const facturaA = letraSolicitada === "A";
     const confirmacionAutoritativa = {
       version: 1 as const,
       importe: "1210.00",
       emisorCuit: "30717322467",
       puntoVenta,
       modo: "HOMOLOGACION" as const,
-      letra: "A" as const,
-      cbteTipo: 1,
+      letra: letraSolicitada,
+      cbteTipo: facturaA ? 1 : 6,
       fechaFiscal: "2026-08-22",
-      receptor: {
-        razonSocial: "RECEPTOR",
-        domicilio: null,
-        tipoDocumento: "CUIT" as const,
-        numeroDocumento: "30714199664",
-        docTipoArca: 80,
-        docNroArca: "30714199664",
-        condicionIva: "RESPONSABLE_INSCRIPTO" as const,
-        origen: "MANUAL" as const,
-        origenId: null,
-        verificadoArcaAt: null,
-      },
+      receptor: facturaA
+        ? {
+            razonSocial: "RECEPTOR",
+            domicilio: null,
+            tipoDocumento: "CUIT" as const,
+            numeroDocumento: "30714199664",
+            docTipoArca: 80 as const,
+            docNroArca: "30714199664",
+            condicionIva: "RESPONSABLE_INSCRIPTO" as const,
+            origen: "MANUAL" as const,
+            origenId: null,
+            verificadoArcaAt: null,
+          }
+        : {
+            razonSocial: "Consumidor Final",
+            domicilio: null,
+            tipoDocumento: "SIN_IDENTIFICAR" as const,
+            numeroDocumento: null,
+            docTipoArca: 99 as const,
+            docNroArca: "0",
+            condicionIva: "CONSUMIDOR_FINAL" as const,
+            origen: "CLIENTE_COMERCIAL" as const,
+            origenId: null,
+            verificadoArcaAt: null,
+          },
     };
     const huellaConfirmacion = crearHuellaConfirmacionFiscal(confirmacionAutoritativa);
     const transition = async ({ ventaId: id, accion, claimToken, payload }: any) => {
@@ -259,26 +295,32 @@ suite("motor fiscal contra Supabase local", () => {
       ahoraIso: () => "2026-08-22T16:00:00.000Z",
       autorizarEmision: async () => ({ tipoComprobante: "VENTA", afipVersion: 0 }),
       autorizarConciliacion: async () => undefined,
-      prepararEmision: async () => ({
-        ventaId,
-        tipoComprobante: "VENTA",
-        emisorCuit: "30717322467",
-        puntoVenta,
-        cbteTipo: 1,
-        modo: "HOMOLOGACION",
-        simulado: true,
-        validez: "SIMULADA",
-        fechaComprobante: "2026-08-22",
-        confirmacionAutoritativa,
-        huellaConfirmacion,
-      }),
+      prepararEmision: async (input: { letraSolicitada: "A" | "B" }) => {
+        if (input.letraSolicitada !== letraSolicitada) {
+          throw new Error("El motor no propagó la letra solicitada al preflight.");
+        }
+        return {
+          ventaId,
+          tipoComprobante: "VENTA",
+          emisorCuit: "30717322467",
+          puntoVenta,
+          cbteTipo: facturaA ? 1 : 6,
+          modo: "HOMOLOGACION",
+          simulado: true,
+          validez: "SIMULADA",
+          fechaComprobante: "2026-08-22",
+          confirmacionAutoritativa,
+          huellaConfirmacion,
+        };
+      },
       consultarSecuencia: async () => ({
         ultimoRemoto: 0,
         ultimaFechaRemota: null,
         ultimoLocal: 0,
       }),
       validarFechaFiscal: () => undefined,
-      crearSnapshot: async ({ numero }: any) => snapshot(ventaId, itemId, numero, puntoVenta),
+      crearSnapshot: async ({ numero }: any) =>
+        snapshot(ventaId, itemId, numero, puntoVenta, letraSolicitada),
       transicionar: transition,
       async cargarEstadoPersistido() {
         const { data, error } = await supabase.rpc("leer_venta_fiscal_exacta", {
@@ -347,7 +389,7 @@ suite("motor fiscal contra Supabase local", () => {
              (select count(*) from public.venta_pagos where venta_id=${ids.sales[0]})::int pagos,
              (select total::text from public.ventas where id=${ids.sales[0]}) total
     `;
-    const runtime = deps(ids.sales[0], ids.items[0], 901, ["OK"]);
+    const runtime = deps(ids.sales[0], ids.items[0], 901, ["OK"], "A");
     const result = await ejecutarEmisionFiscal(
       {
         ventaId: ids.sales[0],
@@ -361,6 +403,7 @@ suite("motor fiscal contra Supabase local", () => {
           guardar_para_proximas: false,
           confirma_datos_manuales: true,
         },
+        letraSolicitada: "A",
         confirmaVentaAntigua: false,
         huellaConfirmacion: runtime.huellaConfirmacion,
       },
@@ -377,11 +420,12 @@ suite("motor fiscal contra Supabase local", () => {
   });
 
   it("un timeout post-request queda durable en RECONCILIAR", async () => {
-    const runtime = deps(ids.sales[1], ids.items[1], 902, ["TIMEOUT"]);
+    const runtime = deps(ids.sales[1], ids.items[1], 902, ["TIMEOUT"], "B");
     const result = await ejecutarEmisionFiscal(
       {
         ventaId: ids.sales[1],
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
         confirmaVentaAntigua: false,
         huellaConfirmacion: runtime.huellaConfirmacion,
       },
@@ -398,11 +442,12 @@ suite("motor fiscal contra Supabase local", () => {
   });
 
   it("reenvía sólo tras ausencia verificada y conserva número/snapshot/hash", async () => {
-    const runtime = deps(ids.sales[2], ids.items[2], 903, ["TIMEOUT", "OK"]);
+    const runtime = deps(ids.sales[2], ids.items[2], 903, ["TIMEOUT", "OK"], "B");
     await ejecutarEmisionFiscal(
       {
         ventaId: ids.sales[2],
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
         confirmaVentaAntigua: false,
         huellaConfirmacion: runtime.huellaConfirmacion,
       },
@@ -436,7 +481,7 @@ suite("motor fiscal contra Supabase local", () => {
   });
 
   it("recupera contra la RPC real un commit de RESPUESTA_RECIBIDA cuya respuesta se perdió", async () => {
-    const runtime = deps(ids.sales[4], ids.items[4], 904, ["OK"]);
+    const runtime = deps(ids.sales[4], ids.items[4], 904, ["OK"], "B");
     const transicionarReal = runtime.dependencies.transicionar;
     let perderRespuesta = true;
     runtime.dependencies.transicionar = async (input: any) => {
@@ -452,6 +497,7 @@ suite("motor fiscal contra Supabase local", () => {
       {
         ventaId: ids.sales[4],
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
         confirmaVentaAntigua: false,
         huellaConfirmacion: runtime.huellaConfirmacion,
       },
@@ -474,11 +520,12 @@ suite("motor fiscal contra Supabase local", () => {
   });
 
   it("propaga RECUPERAR_CAE desde el motor TS hasta la RPC real", async () => {
-    const runtime = deps(ids.sales[5], ids.items[5], 905, ["TIMEOUT"]);
+    const runtime = deps(ids.sales[5], ids.items[5], 905, ["TIMEOUT"], "B");
     await ejecutarEmisionFiscal(
       {
         ventaId: ids.sales[5],
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
         confirmaVentaAntigua: false,
         huellaConfirmacion: runtime.huellaConfirmacion,
       },
@@ -514,11 +561,12 @@ suite("motor fiscal contra Supabase local", () => {
   });
 
   it("propaga una divergencia como BLOQUEAR hasta la RPC real", async () => {
-    const runtime = deps(ids.sales[6], ids.items[6], 906, ["TIMEOUT"]);
+    const runtime = deps(ids.sales[6], ids.items[6], 906, ["TIMEOUT"], "B");
     await ejecutarEmisionFiscal(
       {
         ventaId: ids.sales[6],
         receptor: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "B",
         confirmaVentaAntigua: false,
         huellaConfirmacion: runtime.huellaConfirmacion,
       },

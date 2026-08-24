@@ -431,6 +431,7 @@ export async function confirmarCierreFiscalInmediato<T>(
     control: ControlCreacionVenta;
     idempotencyKey: string;
     receptor: SelectorReceptorFiscal;
+    letraSolicitada: "A" | "B";
     confirmaVentaAntigua: boolean;
     huellaConfirmacion: string;
   },
@@ -439,6 +440,7 @@ export async function confirmarCierreFiscalInmediato<T>(
     emitirPostBorrador(input: {
       ventaId: string;
       receptor: SelectorReceptorFiscal;
+      letraSolicitada: "A" | "B";
       confirmaVentaAntigua: boolean;
       huellaConfirmacion: string;
     }): Promise<T>;
@@ -457,6 +459,7 @@ export async function confirmarCierreFiscalInmediato<T>(
   return deps.emitirPostBorrador({
     ventaId,
     receptor: input.receptor,
+    letraSolicitada: input.letraSolicitada,
     confirmaVentaAntigua: input.confirmaVentaAntigua,
     huellaConfirmacion: input.huellaConfirmacion,
   });

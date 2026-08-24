@@ -1,4 +1,9 @@
+import type { ReceptorFormulario } from "./receptor-fiscal-form";
+
+export type LetraSolicitada = "A" | "B";
+
 export type EstadoConfirmacionFiscal = {
+  letraSolicitada: LetraSolicitada | null;
   huellaConfirmacion: string | null;
   confirmaDatosManuales: boolean;
   requiereSegundaConfirmacion: boolean;
@@ -8,6 +13,34 @@ export type ControlSolicitudPreview = {
   secuencia: number;
   activa: number | null;
 };
+
+export function adaptarReceptorFormularioALetra(
+  value: ReceptorFormulario,
+  letraSolicitada: LetraSolicitada,
+): ReceptorFormulario {
+  if (value.origen !== "MANUAL") return value;
+  if (letraSolicitada === "B") {
+    return {
+      ...value,
+      condicion_iva:
+        value.condicion_iva === "CONSUMIDOR_FINAL" || value.condicion_iva === "EXENTO"
+          ? value.condicion_iva
+          : "CONSUMIDOR_FINAL",
+    };
+  }
+
+  const conservaCuit = value.tipo_documento === "CUIT";
+  return {
+    ...value,
+    tipo_documento: "CUIT",
+    numero_documento: conservaCuit ? value.numero_documento : "",
+    condicion_iva:
+      value.condicion_iva === "RESPONSABLE_INSCRIPTO" || value.condicion_iva === "MONOTRIBUTO"
+        ? value.condicion_iva
+        : "RESPONSABLE_INSCRIPTO",
+    guardar_para_proximas: conservaCuit ? value.guardar_para_proximas : false,
+  };
+}
 
 export function crearControlSolicitudPreview(): ControlSolicitudPreview {
   return { secuencia: 0, activa: null };
@@ -34,8 +67,11 @@ export function finalizarSolicitudPreview(control: ControlSolicitudPreview, toke
   if (control.activa === token) control.activa = null;
 }
 
-export function crearEstadoConfirmacionFiscal(): EstadoConfirmacionFiscal {
+export function crearEstadoConfirmacionFiscal(
+  letraSolicitada: LetraSolicitada | null = null,
+): EstadoConfirmacionFiscal {
   return {
+    letraSolicitada,
     huellaConfirmacion: null,
     confirmaDatosManuales: false,
     requiereSegundaConfirmacion: false,
@@ -43,9 +79,18 @@ export function crearEstadoConfirmacionFiscal(): EstadoConfirmacionFiscal {
 }
 
 export function cambiarReceptorConfirmacion(
-  _estado: EstadoConfirmacionFiscal,
+  estado: EstadoConfirmacionFiscal,
 ): EstadoConfirmacionFiscal {
-  return crearEstadoConfirmacionFiscal();
+  return crearEstadoConfirmacionFiscal(estado.letraSolicitada);
+}
+
+export function cambiarLetraConfirmacion(
+  _estado: EstadoConfirmacionFiscal,
+  letraSolicitada: LetraSolicitada,
+  control: ControlSolicitudPreview,
+): EstadoConfirmacionFiscal {
+  invalidarSolicitudPreview(control);
+  return crearEstadoConfirmacionFiscal(letraSolicitada);
 }
 
 export function registrarPreviewConfirmacion(
@@ -56,10 +101,11 @@ export function registrarPreviewConfirmacion(
 }
 
 export function registrarReconfirmacion(
-  _estado: EstadoConfirmacionFiscal,
+  estado: EstadoConfirmacionFiscal,
   huella: string,
 ): EstadoConfirmacionFiscal {
   return {
+    letraSolicitada: estado.letraSolicitada,
     huellaConfirmacion: huella,
     confirmaDatosManuales: false,
     requiereSegundaConfirmacion: true,

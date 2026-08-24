@@ -87,6 +87,7 @@ test("convierte una vez, conserva venta_id y una falla fiscal deja CONVERTIDO", 
   await dialogo.getByTestId("conv-y-facturar").dblclick();
   const fiscal = page.getByTestId("dialogo-emision-fiscal");
   await expect(fiscal).toBeVisible({ timeout: 20_000 });
+  await fiscal.getByRole("radio", { name: /Factura B\b/i }).check();
   await fiscal.getByRole("button", { name: "Revisar datos fiscales" }).click();
   await expect(fiscal.getByRole("button", { name: "Emitir comprobante" })).toBeVisible({
     timeout: 20_000,

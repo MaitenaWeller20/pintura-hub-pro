@@ -10,6 +10,9 @@ export type CondicionIva = "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO" | "EXENTO" | 
 
 export type Letra = "A" | "B" | "C";
 
+/** Letras que el operador puede elegir para una venta nueva del rollout v2. */
+export type LetraFacturaSolicitada = Extract<Letra, "A" | "B">;
+
 /** Los tipos de comprobante que maneja quimex. */
 export type TipoComprobante =
   | "VENTA"
@@ -82,6 +85,28 @@ export function determinarLetra(
   }
   if (condReceptor === "EXENTO" || condReceptor === "CONSUMIDOR_FINAL") return "B";
   throw new Error("La condición de IVA del receptor debe estar confirmada.");
+}
+
+/**
+ * Confirma que la letra elegida por el operador sea compatible con la
+ * condición impositiva ya resuelta del receptor. La elección sigue siendo
+ * explícita: esta función valida, pero nunca la corrige silenciosamente.
+ */
+export function validarLetraSolicitada(
+  condEmisor: CondicionIva,
+  condReceptor: CondicionIva | null | undefined,
+  letraSolicitada: LetraFacturaSolicitada,
+): LetraFacturaSolicitada {
+  if (letraSolicitada !== "A" && letraSolicitada !== "B") {
+    throw new Error("La letra solicitada debe ser A o B.");
+  }
+  const compatible = determinarLetra(condEmisor, condReceptor);
+  if (letraSolicitada !== compatible) {
+    throw new Error(
+      `La letra ${letraSolicitada} no es compatible con la condición de IVA ${String(condReceptor)} del receptor.`,
+    );
+  }
+  return letraSolicitada;
 }
 
 export function facturaDeLetra(letra: Letra): TipoComprobante {

@@ -42,7 +42,6 @@ import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
 import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
 import { emitirComprobantePostBorrador, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
 import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
-import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
 import {
   confirmarCierreFiscalInmediato,
   crearControlCreacionVenta,
@@ -479,8 +478,8 @@ function NuevaVenta() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoComp]);
 
-  // En v2 la venta ordinaria es neutral: la letra se decide recién con el
-  // receptor fiscal confirmado. El selector A/B queda sólo durante el drain legacy.
+  // En v2 la venta ordinaria es neutral hasta el diálogo fiscal: allí el empleado
+  // elige A o B y confirma un receptor compatible antes de pedir la previsualización.
   useEffect(() => {
     if (esNota) return; // no tocar el tipo de una nota de crédito/débito
     const positivo = ["VENTA", "FACTURA_A", "FACTURA_B", "FACTURA_C"].includes(tipoComp);
@@ -1339,7 +1338,7 @@ function NuevaVenta() {
               navegarACola(ventaId, "venta_creada_factura_pendiente");
             }
           }}
-          onPrevisualizar={(receptor: SelectorReceptorFiscal) =>
+          onPrevisualizar={({ receptor, letraSolicitada }) =>
             previsualizarFiscal({
               data: {
                 origen: "BORRADOR",
@@ -1357,16 +1356,23 @@ function NuevaVenta() {
                 pagos: pagosPayload,
                 percepciones: Number(percepciones || 0),
                 receptor,
+                letra_solicitada: letraSolicitada,
               },
             })
           }
-          onConfirmar={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
+          onConfirmar={async ({
+            receptor,
+            letraSolicitada,
+            confirmaVentaAntigua,
+            huellaConfirmacion,
+          }) => {
             try {
               const respuesta = await confirmarCierreFiscalInmediato(
                 {
                   control: controlCreacionRef.current,
                   idempotencyKey,
                   receptor,
+                  letraSolicitada,
                   confirmaVentaAntigua,
                   huellaConfirmacion,
                 },
@@ -1377,6 +1383,7 @@ function NuevaVenta() {
                       data: {
                         venta_id: input.ventaId,
                         receptor: input.receptor,
+                        letra_solicitada: input.letraSolicitada,
                         confirma_venta_antigua: input.confirmaVentaAntigua,
                         huella_confirmacion_provisional: input.huellaConfirmacion,
                       },

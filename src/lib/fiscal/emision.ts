@@ -1,4 +1,5 @@
 import type { SelectorReceptorFiscal } from "./receptor";
+import type { LetraFacturaSolicitada } from "./codigos";
 import type { SnapshotFiscalV2 } from "./snapshot";
 import {
   copiarConfirmacionFiscal,
@@ -155,6 +156,7 @@ export type DependenciasEmisionFiscal = {
   prepararEmision(input: {
     ventaId: string;
     receptor: SelectorReceptorFiscal;
+    letraSolicitada: LetraFacturaSolicitada;
   }): Promise<PreparacionEmisionFiscal>;
   consultarSecuencia(input: PreparacionEmisionFiscal): Promise<{
     ultimoRemoto: number;
@@ -205,6 +207,7 @@ export type DependenciasEmisionFiscal = {
 type InputEmision = {
   ventaId: string;
   receptor: SelectorReceptorFiscal;
+  letraSolicitada: LetraFacturaSolicitada;
   confirmaVentaAntigua: boolean;
   huellaConfirmacion: string;
 };
@@ -372,7 +375,9 @@ async function liberarPreflightParaReconfirmar(
       comprador: vista.comprador,
       receptor: confirmacion.receptor,
       letra: confirmacion.letra,
-      razon_letra: `La condición ${confirmacion.receptor.condicionIva} determina letra ${confirmacion.letra}.`,
+      razon_letra: confirmacion.cbteAsoc
+        ? `La nota conserva la letra ${confirmacion.letra} del comprobante original.`
+        : `La condición ${confirmacion.receptor.condicionIva} determina letra ${confirmacion.letra}.`,
       emisor_cuit: confirmacion.emisorCuit,
       emisor_razon_social: confirmacion.emisorRazonSocial,
       sucursal_id: confirmacion.sucursalId,
@@ -703,6 +708,7 @@ export async function ejecutarEmisionFiscal(
     preparacion = await deps.prepararEmision({
       ventaId: input.ventaId,
       receptor: input.receptor,
+      letraSolicitada: input.letraSolicitada,
     });
     const huellaAutoritativa = huellaCanonicaPreparacion(preparacion);
     if (input.huellaConfirmacion !== huellaAutoritativa) {
@@ -784,6 +790,7 @@ export async function ejecutarEmisionFiscal(
         preparacion = await deps.prepararEmision({
           ventaId: input.ventaId,
           receptor: input.receptor,
+          letraSolicitada: input.letraSolicitada,
         });
         if (input.huellaConfirmacion !== huellaCanonicaPreparacion(preparacion)) {
           return liberarPreflightParaReconfirmar(

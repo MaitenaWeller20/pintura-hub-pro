@@ -47,6 +47,7 @@ const v2BaseInputSchema = z
   .object({
     venta_id: z.string().uuid(),
     receptor: receptorSchema,
+    letra_solicitada: z.enum(["A", "B"]),
     confirma_venta_antigua: z.boolean(),
   })
   .strict();
@@ -85,12 +86,13 @@ const pagoBorradorSchema = z
   })
   .strict();
 
-const previewInputSchema = z.discriminatedUnion("origen", [
+export const previewInputSchema = z.discriminatedUnion("origen", [
   z
     .object({
       origen: z.literal("VENTA_EXISTENTE"),
       venta_id: z.string().uuid(),
       receptor: receptorSchema,
+      letra_solicitada: z.enum(["A", "B"]),
     })
     .strict(),
   z
@@ -103,6 +105,7 @@ const previewInputSchema = z.discriminatedUnion("origen", [
       pagos: z.array(pagoBorradorSchema),
       percepciones: z.number().finite().nonnegative(),
       receptor: receptorSchema,
+      letra_solicitada: z.enum(["A", "B"]),
     })
     .strict(),
 ]);
@@ -275,6 +278,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
       {
         ventaId: data.venta_id,
         receptor: data.receptor,
+        letraSolicitada: data.letra_solicitada,
         confirmaVentaAntigua: data.confirma_venta_antigua,
         huellaConfirmacion: data.huella_confirmacion,
       },
@@ -316,6 +320,7 @@ export const emitirComprobantePostBorrador = createServerFn({ method: "POST" })
           {
             ventaId: data.venta_id,
             receptor: data.receptor,
+            letraSolicitada: data.letra_solicitada,
             confirmaVentaAntigua: data.confirma_venta_antigua,
             huellaConfirmacion: data.huella_confirmacion_provisional,
           },
@@ -443,6 +448,7 @@ export const previsualizarEmisionFiscal = createServerFn({ method: "POST" })
       return previsualizarVentaFiscalExistente({
         ventaId: data.venta_id,
         receptor: data.receptor,
+        letraSolicitada: data.letra_solicitada,
         admin: supabaseAdmin,
         usuario: context.supabase,
       });
@@ -475,6 +481,7 @@ export const previsualizarEmisionFiscal = createServerFn({ method: "POST" })
         pagos: data.pagos,
         percepciones: data.percepciones,
         receptor: data.receptor,
+        letraSolicitada: data.letra_solicitada,
       },
       admin: supabaseAdmin,
       usuario: context.supabase,

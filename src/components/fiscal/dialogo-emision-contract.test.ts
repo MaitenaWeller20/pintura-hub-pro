@@ -121,6 +121,11 @@ const PREVIEW_PROVISIONAL = {
   advertencia: "Se revalidará contra la venta persistida.",
 } as const;
 
+type ParsePreviewConLetraSolicitada = (
+  value: unknown,
+  letraSolicitada: "A" | "B",
+) => ReturnType<typeof parsePreviewEmisionFiscalAutoritativa>;
+
 function respuestaReconfirmacion(
   confirmacion: ConfirmacionFiscalPostBorrador = CONFIRMACION,
   cambiosPreview: Record<string, unknown> = {},
@@ -177,6 +182,23 @@ describe("contrato runtime del diálogo fiscal", () => {
     ).toThrow(/previsualizaci.n fiscal/i);
     expect(() => parsePreviewEmisionFiscal({ ...PREVIEW, campo_inventado: true })).toThrow();
     expect(() => parsePreviewEmisionFiscal({ ...PREVIEW, total: "-1.00" })).toThrow();
+  });
+
+  it("rechaza una preview cuya letra no coincide con la solicitada por el operador", () => {
+    const parseConLetraSolicitada =
+      parsePreviewEmisionFiscalAutoritativa as ParsePreviewConLetraSolicitada;
+
+    expect(parseConLetraSolicitada(PREVIEW, "A")).toEqual(PREVIEW);
+    expect(() => parseConLetraSolicitada(PREVIEW, "B")).toThrow(
+      /letra.+solicitad|solicitad.+letra/i,
+    );
+  });
+
+  it("aplica la misma letra solicitada al contrato ordinario del diálogo", () => {
+    expect(parsePreviewEmisionFiscal(PREVIEW, "A")).toEqual(PREVIEW);
+    expect(() => parsePreviewEmisionFiscal(PREVIEW, "B")).toThrow(
+      /letra.+solicitad|solicitad.+letra/i,
+    );
   });
 
   it("exige la identidad visual autoritativa exacta del emisor y la sucursal", () => {

@@ -31,7 +31,6 @@ import {
 import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
 import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
 import { emitirComprobante, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
-import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
 import { resultadoColaDespuesDeEmision } from "@/lib/ventas-ui";
 import {
   accionFiscalDespuesDeConvertirPresupuesto,
@@ -384,24 +383,31 @@ function DetallePresupuesto() {
               navegarACola(ventaParaFacturar.id, "venta_creada_factura_pendiente");
             }
           }}
-          onPrevisualizar={(receptor: SelectorReceptorFiscal) =>
+          onPrevisualizar={({ receptor, letraSolicitada }) =>
             previsualizarFiscal({
               data: {
                 origen: "VENTA_EXISTENTE",
                 venta_id: ventaParaFacturar.id,
                 receptor,
+                letra_solicitada: letraSolicitada,
               },
             }).then((respuesta) => {
               if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
               return respuesta;
             })
           }
-          onConfirmar={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
+          onConfirmar={async ({
+            receptor,
+            letraSolicitada,
+            confirmaVentaAntigua,
+            huellaConfirmacion,
+          }) => {
             try {
               const respuesta = await emitirFiscal({
                 data: {
                   venta_id: ventaParaFacturar.id,
                   receptor,
+                  letra_solicitada: letraSolicitada,
                   confirma_venta_antigua: confirmaVentaAntigua,
                   huella_confirmacion: huellaConfirmacion,
                 },

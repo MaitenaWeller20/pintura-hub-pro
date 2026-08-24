@@ -13,10 +13,11 @@ import {
 import {
   cbteTipoAfip,
   condicionIvaReceptorId,
-  determinarLetra,
   ivaIdAfip,
   letraDeCbteTipo,
+  validarLetraSolicitada,
   type Letra,
+  type LetraFacturaSolicitada,
 } from "./codigos";
 import {
   copiarConfirmacionFiscal,
@@ -202,6 +203,7 @@ export type EntradaPreviewBorradorFiscal = {
   pagos: PagoBorradorFiscal[];
   percepciones: number;
   receptor: SelectorReceptorFiscal;
+  letraSolicitada: LetraFacturaSolicitada;
 };
 
 export { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
@@ -394,7 +396,11 @@ export async function construirPreviewBorradorFiscalProvisional(
     cargarFavorito: deps.cargarFavorito,
     cargarOriginal: async () => null,
   });
-  const letra = determinarLetra(contexto.emisor.condicion_iva, receptor.condicionIva);
+  const letra = validarLetraSolicitada(
+    contexto.emisor.condicion_iva,
+    receptor.condicionIva,
+    input.letraSolicitada,
+  );
   const ahora = deps.ahora();
   const fechaFiscal = fechaFiscalHoyAr(() => ahora);
   const demoraDias = Math.max(0, diasDesdeHoyAr(new Date(input.fechaComercial), ahora));
@@ -434,7 +440,7 @@ export async function construirPreviewBorradorFiscalProvisional(
     letra,
     cbte_tipo: confirmacionFingerprint.cbteTipo,
     cbte_asoc: null,
-    razon_letra: `La condición ${receptor.condicionIva} determina letra ${letra}.`,
+    razon_letra: `La letra ${letra} fue solicitada y es compatible con la condición ${receptor.condicionIva}.`,
     fecha_comercial: input.fechaComercial,
     fecha_fiscal: fechaFiscal,
     demora_dias: demoraDias,
@@ -812,7 +818,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
       if (ventaId !== ventaIdAutorizada)
         throw new Error("Venta fiscal fuera de la autorización previa.");
     },
-    async prepararEmision({ ventaId, receptor: selector }) {
+    async prepararEmision({ ventaId, receptor: selector, letraSolicitada }) {
       const { lectura, contexto } = await contextoParaVenta(ventaId);
       if (lectura.venta.cae) throw new Error("La venta ya tiene CAE.");
       const tipo = tipoV2(lectura.venta.tipoComprobante);
@@ -845,7 +851,11 @@ export function crearDependenciasEmisionFiscalServer(input: {
       }
       const letra =
         original?.letra ??
-        determinarLetra(contexto.emisor.condicion_iva, receptorConfirmado.condicionIva);
+        validarLetraSolicitada(
+          contexto.emisor.condicion_iva,
+          receptorConfirmado.condicionIva,
+          letraSolicitada,
+        );
       if (input.validarModalidadFacturaA !== false) {
         validarModalidadFacturaA(
           letra,
@@ -1179,6 +1189,7 @@ export function proyectarReceptorFiscalConfirmado(
 export async function previsualizarVentaFiscalExistente(input: {
   ventaId: string;
   receptor: SelectorReceptorFiscal;
+  letraSolicitada: LetraFacturaSolicitada;
   admin: SupabaseLike;
   usuario: SupabaseLike;
 }) {
@@ -1191,6 +1202,7 @@ export async function previsualizarVentaFiscalExistente(input: {
   const preparacion = await deps.prepararEmision({
     ventaId: input.ventaId,
     receptor: input.receptor,
+    letraSolicitada: input.letraSolicitada,
   });
   const lectura = await leerVentaExacta(input.admin, input.ventaId);
   const vista = deps.obtenerVistaPreparacion(input.ventaId);
@@ -1238,7 +1250,9 @@ export async function previsualizarVentaFiscalExistente(input: {
     comprador: lectura.venta.clienteId,
     receptor: receptorVisible,
     letra: vista.letra,
-    razon_letra: `La condición ${vista.receptor.condicionIva} determina letra ${vista.letra}.`,
+    razon_letra: vista.original
+      ? `La nota hereda la letra ${vista.letra} del comprobante original.`
+      : `La letra ${vista.letra} fue solicitada y es compatible con la condición ${vista.receptor.condicionIva}.`,
     emisor_cuit: preparacion.emisorCuit,
     emisor_razon_social: emisorRazonSocial,
     sucursal_id: sucursalId,

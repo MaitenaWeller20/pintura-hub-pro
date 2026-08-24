@@ -334,6 +334,52 @@ expect_snapshot_valido() {
   snapshot="$(jq -c --arg hash "$hash" '. + {hash:$hash}' <<<"$body")"
   check_sql "$name" "" "SELECT public.validar_snapshot_fiscal_v2('$snapshot'::jsonb);"
 }
+
+echo
+echo "== Elección explícita de letra A/B =="
+expect_snapshot_valido "emisor RI permite elegir A para receptor RI con CUIT" '
+  .receptor.tipoDocumento="CUIT" |
+  .receptor.numeroDocumento="30714199664" |
+  .receptor.docTipoArca=80 |
+  .receptor.docNroArca="30714199664" |
+  .receptor.condicionIva="RESPONSABLE_INSCRIPTO" |
+  .receptor.condicionIvaReceptorId=1 |
+  .letra="A" | .identidad.cbteTipo=1 | .ivaContenido="0.00"
+'
+expect_snapshot_valido "emisor RI permite elegir B para receptor CF identificado con CUIL" '
+  .receptor.tipoDocumento="CUIL" |
+  .receptor.numeroDocumento="20244720510" |
+  .receptor.docTipoArca=86 |
+  .receptor.docNroArca="20244720510" |
+  .receptor.condicionIva="CONSUMIDOR_FINAL" |
+  .receptor.condicionIvaReceptorId=5 |
+  .letra="B" | .identidad.cbteTipo=6 | .ivaContenido="210.00"
+'
+expect_snapshot_invalido "la elección A exige CUIT aunque el receptor esté identificado" '
+  .receptor.tipoDocumento="DNI" |
+  .receptor.numeroDocumento="30123456" |
+  .receptor.docTipoArca=96 |
+  .receptor.docNroArca="30123456" |
+  .receptor.condicionIva="RESPONSABLE_INSCRIPTO" |
+  .receptor.condicionIvaReceptorId=1 |
+  .letra="A" | .identidad.cbteTipo=1 | .ivaContenido="0.00"
+' 'factura A.*CUIT|CUIT'
+expect_snapshot_invalido "una nota A no puede asociar una factura B original" '
+  .receptor.tipoDocumento="CUIT" |
+  .receptor.numeroDocumento="30714199664" |
+  .receptor.docTipoArca=80 |
+  .receptor.docNroArca="30714199664" |
+  .receptor.condicionIva="RESPONSABLE_INSCRIPTO" |
+  .receptor.condicionIvaReceptorId=1 |
+  .letra="A" |
+  .venta.tipoComprobante="NOTA_CREDITO" |
+  .identidad.cbteTipo=3 |
+  .ivaContenido="0.00" |
+  .origen="COMPROBANTE_ORIGINAL" |
+  .comprobanteOriginalId="71000000-0000-4000-8000-000000000401" |
+  .cbtesAsoc=[{tipo:6,puntoVenta:5,numero:1,cuit:"30714199664",fecha:"2026-08-20"}]
+' 'CbtesAsoc.*letra|asociaci.n.*letra'
+
 expect_snapshot_invalido "v2 rechaza claves anidadas desconocidas" \
   '.receptor.extra=true' 'receptor.*(incompleto|inválido)'
 expect_snapshot_invalido "v2 rechaza claves anidadas faltantes" \
@@ -522,6 +568,12 @@ expect_fail_like "expected_version obsoleto levanta error" "versi.n esperada" \
   "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015',jsonb_build_object('expected_version',0,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000150','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
 expect_fail_like "un token ajeno levanta error" "token.*no coincide" \
   "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000099',jsonb_build_object('expected_version',1,'snapshot','$SNAPSHOT'::jsonb,'snapshot_hash','$SNAPSHOT_HASH','numero_propuesto',1,'fecha_comprobante','2026-08-22','emisor_cuit','30900000150','punto_venta',995,'cbte_tipo',1,'modo','PRODUCCION','simulado',false,'validez','PRODUCCION','ultimo_remoto',0,'ultimo_local_observado',0));"
+snapshot_con_letra_cambiada="$(jq -c '.letra="B"' <<<"$SNAPSHOT")"
+reserva_con_letra_cambiada="$(jq -c --argjson snapshot "$snapshot_con_letra_cambiada" '.snapshot=$snapshot' <<<"$reserva_base")"
+expect_fail_like "RESERVAR rechaza letra cambiada con la huella del snapshot anterior" "hash.*inv.lid" \
+  "BEGIN; SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000015','RESERVAR','d3000000-0000-0000-0000-000000000015','$reserva_con_letra_cambiada'::jsonb); ROLLBACK;"
+check "la letra adulterada se rechaza antes de reservar número" "EMITIENDO|PREFLIGHT||1" \
+  "$(q "SELECT afip_estado||'|'||afip_fase||'|'||coalesce(afip_numero::text,'')||'|'||afip_version FROM public.ventas WHERE id='c3000000-0000-0000-0000-000000000015'")"
 check "fallos optimistas no mutan la venta ni el intento" "EMITIENDO|PREFLIGHT|1|1" \
   "$(q "SELECT v.afip_estado||'|'||v.afip_fase||'|'||v.afip_version||'|'||count(i.id) FROM public.ventas v LEFT JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000015' GROUP BY v.id")"
 

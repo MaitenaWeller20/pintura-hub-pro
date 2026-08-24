@@ -60,7 +60,6 @@ import {
   reconciliarComprobante,
 } from "@/lib/fiscal.functions";
 import type { ReceptorHeredadoVista } from "@/components/fiscal/receptor-fiscal-form";
-import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
 
 const TAMANO_PAGINA = 25;
 const TABS: Array<{ value: TabColaFiscal; label: string }> = [
@@ -635,23 +634,30 @@ function ColaFiscalPage() {
           onOpenChange={(open) => {
             if (!open) setSeleccion(null);
           }}
-          onPrevisualizar={(receptor: SelectorReceptorFiscal) =>
+          onPrevisualizar={({ receptor, letraSolicitada }) =>
             previsualizar({
               data: {
                 origen: "VENTA_EXISTENTE",
                 venta_id: seleccionada.venta_id,
                 receptor,
+                letra_solicitada: letraSolicitada,
               },
             }).then((respuesta) => {
               if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
               return parsePreviewEmisionFiscalAutoritativa(respuesta);
             })
           }
-          onConfirmar={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
+          onConfirmar={async ({
+            receptor,
+            letraSolicitada,
+            confirmaVentaAntigua,
+            huellaConfirmacion,
+          }) => {
             const resultado = await emitir({
               data: {
                 venta_id: seleccionada.venta_id,
                 receptor,
+                letra_solicitada: letraSolicitada,
                 confirma_venta_antigua: confirmaVentaAntigua,
                 huella_confirmacion: huellaConfirmacion,
               },

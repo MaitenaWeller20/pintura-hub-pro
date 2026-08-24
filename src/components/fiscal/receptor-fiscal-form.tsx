@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import type { ReceptorFiscalConfirmado, TipoDocumentoFiscal } from "@/lib/fiscal/receptor";
 import type { CondicionIva } from "@/lib/fiscal/codigos";
+import { adaptarReceptorFormularioALetra, type LetraSolicitada } from "./dialogo-emision-state";
 
 export type ReceptorFormulario =
   | { origen: "CLIENTE_COMERCIAL" }
@@ -24,13 +25,29 @@ export type ReceptorHeredadoVista = Pick<
   "razonSocial" | "tipoDocumento" | "numeroDocumento" | "condicionIva" | "domicilio"
 >;
 
-function crearReceptorManualVacio(): Extract<ReceptorFormulario, { origen: "MANUAL" }> {
+type ReceptorManual = Extract<ReceptorFormulario, { origen: "MANUAL" }>;
+
+const CONDICIONES_POR_LETRA: Record<
+  LetraSolicitada,
+  ReadonlyArray<{ value: CondicionIva; label: string }>
+> = {
+  A: [
+    { value: "RESPONSABLE_INSCRIPTO", label: "Responsable inscripto" },
+    { value: "MONOTRIBUTO", label: "Monotributo" },
+  ],
+  B: [
+    { value: "CONSUMIDOR_FINAL", label: "Consumidor final" },
+    { value: "EXENTO", label: "Exento" },
+  ],
+};
+
+function crearReceptorManualVacio(letraSolicitada: LetraSolicitada): ReceptorManual {
   return {
     origen: "MANUAL",
-    tipo_documento: "CUIT",
+    tipo_documento: letraSolicitada === "A" ? "CUIT" : "SIN_IDENTIFICAR",
     numero_documento: "",
     razon_social: "",
-    condicion_iva: "CONSUMIDOR_FINAL",
+    condicion_iva: letraSolicitada === "A" ? "RESPONSABLE_INSCRIPTO" : "CONSUMIDOR_FINAL",
     domicilio: "",
     guardar_para_proximas: false,
   };
@@ -56,6 +73,7 @@ export function ReceptorFiscalForm({
   favoritos,
   clienteComercial,
   receptorHeredado,
+  letraSolicitada,
   confirmaDatosManuales,
   disabled,
   initialFocusRef,
@@ -66,6 +84,7 @@ export function ReceptorFiscalForm({
   favoritos: ReceptorFiscalFavorito[];
   clienteComercial: { razonSocial: string; documento: string | null };
   receptorHeredado?: ReceptorHeredadoVista | null;
+  letraSolicitada: LetraSolicitada | null;
   confirmaDatosManuales: boolean;
   disabled: boolean;
   initialFocusRef?: RefObject<HTMLInputElement | null>;
@@ -84,8 +103,15 @@ export function ReceptorFiscalForm({
     );
   }
 
-  const elegirManual = () =>
-    onChange(value.origen === "MANUAL" ? value : crearReceptorManualVacio());
+  const elegirManual = () => {
+    if (!letraSolicitada) return;
+    onChange(
+      value.origen === "MANUAL"
+        ? adaptarReceptorFormularioALetra(value, letraSolicitada)
+        : crearReceptorManualVacio(letraSolicitada),
+    );
+  };
+  const condiciones = letraSolicitada ? CONDICIONES_POR_LETRA[letraSolicitada] : [];
 
   return (
     <fieldset disabled={disabled} className="space-y-3">
@@ -156,43 +182,50 @@ export function ReceptorFiscalForm({
 
       {value.origen === "MANUAL" ? (
         <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
+          {letraSolicitada === "B" ? (
+            <div>
+              <Label htmlFor="receptor-tipo-documento">Tipo de documento (opcional)</Label>
+              <select
+                id="receptor-tipo-documento"
+                className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={value.tipo_documento}
+                onChange={(event) => {
+                  const tipo = event.target.value as TipoDocumentoFiscal;
+                  onChange({
+                    ...value,
+                    tipo_documento: tipo,
+                    numero_documento: tipo === "SIN_IDENTIFICAR" ? "" : value.numero_documento,
+                    guardar_para_proximas:
+                      tipo === "SIN_IDENTIFICAR" ? false : value.guardar_para_proximas,
+                  });
+                }}
+              >
+                <option value="SIN_IDENTIFICAR">Sin identificar</option>
+                <option value="CUIT">CUIT</option>
+                <option value="CUIL">CUIL</option>
+                <option value="DNI">DNI</option>
+                <option value="CDI">CDI</option>
+              </select>
+            </div>
+          ) : null}
           <div>
-            <Label htmlFor="receptor-tipo-documento">Tipo de documento</Label>
-            <select
-              id="receptor-tipo-documento"
-              className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={value.tipo_documento}
-              onChange={(event) => {
-                const tipo = event.target.value as TipoDocumentoFiscal;
-                onChange({
-                  ...value,
-                  tipo_documento: tipo,
-                  numero_documento: tipo === "SIN_IDENTIFICAR" ? "" : value.numero_documento,
-                  guardar_para_proximas:
-                    tipo === "SIN_IDENTIFICAR" ? false : value.guardar_para_proximas,
-                });
-              }}
-            >
-              <option value="CUIT">CUIT</option>
-              <option value="CUIL">CUIL</option>
-              <option value="DNI">DNI</option>
-              <option value="CDI">CDI</option>
-              <option value="SIN_IDENTIFICAR">Sin identificar</option>
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="receptor-numero-documento">Número de documento</Label>
+            <Label htmlFor="receptor-numero-documento">
+              {letraSolicitada === "A" ? "CUIT" : "Número de documento (opcional)"}
+            </Label>
             <Input
               id="receptor-numero-documento"
               className="mt-1 min-h-11"
               inputMode="numeric"
               value={value.numero_documento}
               disabled={disabled || value.tipo_documento === "SIN_IDENTIFICAR"}
+              required={letraSolicitada === "A"}
               aria-describedby="ayuda-documento-fiscal"
               onChange={(event) => onChange({ ...value, numero_documento: event.target.value })}
             />
             <p id="ayuda-documento-fiscal" className="mt-1 text-xs text-muted-foreground">
-              Elegí el tipo explícitamente; el sistema no lo infiere por longitud.
+              {letraSolicitada === "A"
+                ? "La factura A requiere el CUIT del receptor."
+                : "Podés emitir sin identificación o elegir el tipo explícitamente."}
             </p>
           </div>
           <div className="sm:col-span-2">
@@ -214,10 +247,11 @@ export function ReceptorFiscalForm({
                 onChange({ ...value, condicion_iva: event.target.value as CondicionIva })
               }
             >
-              <option value="RESPONSABLE_INSCRIPTO">Responsable inscripto</option>
-              <option value="MONOTRIBUTO">Monotributo</option>
-              <option value="EXENTO">Exento</option>
-              <option value="CONSUMIDOR_FINAL">Consumidor final</option>
+              {condiciones.map((condicion) => (
+                <option key={condicion.value} value={condicion.value}>
+                  {condicion.label}
+                </option>
+              ))}
             </select>
           </div>
           <div>

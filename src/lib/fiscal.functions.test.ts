@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as fiscalFunctions from "./fiscal.functions";
 import {
   emitirInputSchema,
   ejecutarFachadaEmisionPostBorrador,
@@ -9,16 +10,94 @@ import {
 const INPUT = {
   venta_id: "71000000-0000-4000-8000-000000000001",
   receptor: { origen: "CLIENTE_COMERCIAL" as const },
+  letra_solicitada: "B" as const,
   confirma_venta_antigua: false,
   huella_confirmacion_provisional:
     "9df51a2cdbd04aaa392561b214a01a6b8c200ba1762608f23c7fadb111848979",
 };
+
+type EsquemaEntrada = { parse(value: unknown): unknown };
+
+function esquemaPreviewFiscal(): EsquemaEntrada {
+  const esquema = (fiscalFunctions as unknown as { previewInputSchema?: EsquemaEntrada })
+    .previewInputSchema;
+  expect(esquema).toBeDefined();
+  return esquema!;
+}
+
+describe("contrato público de letra fiscal solicitada", () => {
+  const emision = {
+    venta_id: INPUT.venta_id,
+    receptor: INPUT.receptor,
+    letra_solicitada: "B" as const,
+    confirma_venta_antigua: false,
+    huella_confirmacion: INPUT.huella_confirmacion_provisional,
+  };
+
+  it("exige letra_solicitada en toda emisión v2 regular", () => {
+    const { letra_solicitada: _omitida, ...sinLetra } = emision;
+
+    expect(emitirInputSchema.parse(emision)).toEqual(emision);
+    expect(() => emitirInputSchema.parse(sinLetra)).toThrow();
+  });
+
+  it("exige letra_solicitada en la emisión inmediata post-borrador", () => {
+    const { letra_solicitada: _omitida, ...sinLetra } = INPUT;
+
+    expect(postBorradorInputSchema.parse(INPUT)).toEqual(INPUT);
+    expect(() => postBorradorInputSchema.parse(sinLetra)).toThrow();
+  });
+
+  it.each(["C", "X", "", 1, null])(
+    "rechaza la letra solicitada fuera de A/B: %j",
+    (letra_solicitada) => {
+      expect(() => emitirInputSchema.parse({ ...emision, letra_solicitada })).toThrow();
+      expect(() => postBorradorInputSchema.parse({ ...INPUT, letra_solicitada })).toThrow();
+    },
+  );
+
+  it("exige A/B también al previsualizar borrador o venta ya registrada", () => {
+    const esquema = esquemaPreviewFiscal();
+    const ventaExistente = {
+      origen: "VENTA_EXISTENTE",
+      venta_id: INPUT.venta_id,
+      receptor: INPUT.receptor,
+      letra_solicitada: "A",
+    };
+    const borrador = {
+      origen: "BORRADOR",
+      sucursal_id: "71000000-0000-4000-8000-000000000301",
+      cliente_id: "71000000-0000-4000-8000-000000000401",
+      fecha_comercial: "2026-08-24T15:00:00.000Z",
+      items: [
+        {
+          producto_id: "71000000-0000-4000-8000-000000000501",
+          cantidad: 1,
+          descuento_porcentaje: 0,
+        },
+      ],
+      pagos: [],
+      percepciones: 0,
+      receptor: INPUT.receptor,
+      letra_solicitada: "B",
+    };
+
+    expect(esquema.parse(ventaExistente)).toEqual(ventaExistente);
+    expect(esquema.parse(borrador)).toEqual(borrador);
+    expect(() => {
+      const { letra_solicitada: _omitida, ...sinLetra } = ventaExistente;
+      esquema.parse(sinLetra);
+    }).toThrow();
+    expect(() => esquema.parse({ ...borrador, letra_solicitada: "C" })).toThrow();
+  });
+});
 
 describe("fachada post-borrador", () => {
   it("exige una huella canónica en toda emisión v2 regular", () => {
     const v2 = {
       venta_id: INPUT.venta_id,
       receptor: INPUT.receptor,
+      letra_solicitada: INPUT.letra_solicitada,
       confirma_venta_antigua: false,
       huella_confirmacion: INPUT.huella_confirmacion_provisional,
     };

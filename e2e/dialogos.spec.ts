@@ -121,6 +121,7 @@ test.describe("diálogos en pantalla baja", () => {
     await abrir.click();
     const dialogo = page.getByTestId("dialogo-emision-fiscal");
     await expect(dialogo).toBeVisible();
+    await dialogo.getByRole("radio", { name: /Factura B\b/i }).check();
     await dialogo.getByText("Otro receptor", { exact: true }).click();
 
     const caja = await dialogo.boundingBox();

@@ -7,6 +7,7 @@ import {
 } from "@/lib/fiscal/confirmacion";
 import { validarFechaIsoCalendario } from "@/lib/fiscal/fecha";
 import { validarReceptorFiscalConfirmado } from "@/lib/fiscal/receptor";
+import type { LetraSolicitada } from "./dialogo-emision-state";
 
 const uuid = z.string().uuid();
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -214,19 +215,25 @@ function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): vo
     throw new Error("El CUIT emisor no es canónico o no tiene dígito verificador válido.");
   }
   validarReceptorFiscalConfirmado(confirmacion.receptor, Number(confirmacion.importe));
-  const letraEsperada = determinarLetra(
-    "RESPONSABLE_INSCRIPTO",
-    confirmacion.receptor.condicionIva,
-  );
-  if (confirmacion.letra !== letraEsperada) {
-    throw new Error("La letra no coincide con la condición fiscal del receptor.");
+  const esNota = [2, 3, 7, 8, 12, 13].includes(confirmacion.cbteTipo);
+  if (esNota) {
+    if (!confirmacion.cbteAsoc) {
+      throw new Error("La nota fiscal no conserva el comprobante asociado.");
+    }
+    if (confirmacion.letra !== confirmacion.cbteAsoc.letra) {
+      throw new Error("La nota fiscal no hereda la letra del comprobante asociado.");
+    }
+  } else {
+    const letraEsperada = determinarLetra(
+      "RESPONSABLE_INSCRIPTO",
+      confirmacion.receptor.condicionIva,
+    );
+    if (confirmacion.letra !== letraEsperada) {
+      throw new Error("La letra no coincide con la condición fiscal del receptor.");
+    }
   }
   if (letraDeCbteTipo(confirmacion.cbteTipo) !== confirmacion.letra) {
     throw new Error("El CbteTipo no coincide con la letra fiscal confirmada.");
-  }
-  const esNota = [2, 3, 7, 8, 12, 13].includes(confirmacion.cbteTipo);
-  if (esNota && !confirmacion.cbteAsoc) {
-    throw new Error("La nota fiscal no conserva el comprobante asociado.");
   }
   if (confirmacion.cbteAsoc) {
     validarFechaIsoCalendario(confirmacion.cbteAsoc.fecha, "La fecha del comprobante asociado");
@@ -372,7 +379,19 @@ function parsear<T>(schema: z.ZodType<T>, value: unknown, mensaje: string): T {
   return parsed.data;
 }
 
-export function parsePreviewEmisionFiscal(value: unknown): PreviewEmisionFiscal {
+function validarLetraSolicitada(
+  preview: Pick<PreviewEmisionFiscal, "letra">,
+  letraSolicitada?: LetraSolicitada,
+): void {
+  if (letraSolicitada && preview.letra !== letraSolicitada) {
+    throw new Error("La letra de la preview no coincide con la letra solicitada.");
+  }
+}
+
+export function parsePreviewEmisionFiscal(
+  value: unknown,
+  letraSolicitada?: LetraSolicitada,
+): PreviewEmisionFiscal {
   const preview = parsear(
     previewEmisionFiscalSchema,
     value,
@@ -380,14 +399,16 @@ export function parsePreviewEmisionFiscal(value: unknown): PreviewEmisionFiscal 
   );
   try {
     validarPreviewSemantica(preview);
-    return preview;
   } catch {
     throw new Error("ARCA no devolvió una previsualización fiscal completa y válida.");
   }
+  validarLetraSolicitada(preview, letraSolicitada);
+  return preview;
 }
 
 export function parsePreviewEmisionFiscalAutoritativa(
   value: unknown,
+  letraSolicitada?: LetraSolicitada,
 ): z.infer<typeof previewAutoritativaSchema> {
   const preview = parsear(
     previewAutoritativaSchema,
@@ -396,10 +417,11 @@ export function parsePreviewEmisionFiscalAutoritativa(
   );
   try {
     validarPreviewSemantica(preview);
-    return preview;
   } catch {
     throw new Error("ARCA no devolvió una previsualización fiscal autoritativa completa y válida.");
   }
+  validarLetraSolicitada(preview, letraSolicitada);
+  return preview;
 }
 
 export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfirmacionFiscal {
@@ -445,8 +467,9 @@ export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfi
 export function reconfirmarPreviewEmisionFiscal(
   _anterior: PreviewEmisionFiscal,
   respuesta: RespuestaReconfirmacion,
+  letraSolicitada?: LetraSolicitada,
 ): PreviewEmisionFiscal {
-  return parsePreviewEmisionFiscalAutoritativa(respuesta.preview_autoritativa);
+  return parsePreviewEmisionFiscalAutoritativa(respuesta.preview_autoritativa, letraSolicitada);
 }
 
 export function despacharRespuestaConfirmacionFiscal(

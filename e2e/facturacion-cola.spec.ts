@@ -1,3 +1,5 @@
+import type { Locator } from "@playwright/test";
+
 import { test, expect, ingresar } from "./apoyo";
 import {
   limpiarFixturesFiscales,
@@ -6,6 +8,23 @@ import {
 } from "./fixtures/fiscal";
 
 let fixture: FixtureFiscal;
+type LetraFactura = "A" | "B";
+
+function opcionLetra(dialogo: Locator, letra: LetraFactura) {
+  return dialogo.getByRole("radio", { name: new RegExp(`Factura ${letra}\\b`, "i") });
+}
+
+async function revisar(dialogo: Locator, letra: LetraFactura) {
+  const opcion = opcionLetra(dialogo, letra);
+  await opcion.check();
+  await expect(opcion).toBeChecked();
+  const boton = dialogo.getByRole("button", { name: "Revisar datos fiscales" });
+  await expect(boton).toBeEnabled();
+  await boton.click();
+  await expect(dialogo.getByRole("button", { name: /Emitir comprobante/ })).toBeVisible({
+    timeout: 20_000,
+  });
+}
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
@@ -132,9 +151,7 @@ test("empleado no puede confirmar ni facturar una venta fuera de ventana", async
   await expect(page.getByLabel(/Confirmo emitir fuera del plazo/i)).toHaveCount(0);
 });
 
-test("venta exacta abre el mismo diálogo y muestra total, cobrado y saldo separados", async ({
-  page,
-}) => {
+test("Sin facturar → Facturar exige letra y revisa B con CUIL opcional", async ({ page }) => {
   await ingresar(page, "fiscalAdmin");
   await page.goto(`/facturacion/cola?venta=${fixture.ventaPendienteId}`);
   const fila = page.locator("tbody tr", { hasText: "V-T13-E2E-001" });
@@ -142,10 +159,34 @@ test("venta exacta abre el mismo diálogo y muestra total, cobrado y saldo separ
   await expect(fila).toContainText(/Cobrado.*40/);
   await expect(fila).toContainText(/Saldo.*81/);
   await fila.getByRole("button", { name: "Facturar" }).click();
-  await expect(page.getByTestId("dialogo-emision-fiscal")).toBeVisible();
+  const dialogo = page.getByTestId("dialogo-emision-fiscal");
+  await expect(dialogo).toBeVisible();
+  await expect(opcionLetra(dialogo, "A")).not.toBeChecked();
+  await expect(opcionLetra(dialogo, "B")).not.toBeChecked();
+  await expect(dialogo.getByRole("button", { name: "Revisar datos fiscales" })).toBeDisabled();
+
+  const opcionB = opcionLetra(dialogo, "B");
+  await opcionB.check();
+  await expect(opcionB).toBeChecked();
+  await dialogo.getByText("Otro receptor", { exact: true }).click();
+  await dialogo.getByLabel("Tipo de documento (opcional)").selectOption("CUIL");
+  await dialogo.getByLabel("Número de documento (opcional)").fill(fixture.documentoCola);
+  await dialogo.getByLabel("Razón social").fill("T13-E2E RECEPTOR B IDENTIFICADO");
+  await dialogo.getByLabel("Condición de IVA").selectOption("CONSUMIDOR_FINAL");
+  await dialogo
+    .getByText(/Confirmo que revisé el documento/i)
+    .locator("..")
+    .getByRole("checkbox")
+    .check();
+  await revisar(dialogo, "B");
+  await expect(dialogo).toContainText("Factura B");
+  await expect(dialogo).toContainText("T13-E2E RECEPTOR B IDENTIFICADO");
+  await expect(dialogo).toContainText("CUIL 20345678906");
 });
 
-test("la NC hereda receptor y referencia original en modo sólo lectura", async ({ page }) => {
+test("la NC no ofrece selector y hereda letra, receptor y referencia original", async ({
+  page,
+}) => {
   await ingresar(page, "fiscalAdmin");
   await page.goto(`/facturacion/cola?venta=${fixture.notaCreditoId}`);
   const fila = page.locator("tbody tr", { hasText: "NC-T13-E2E-PENDIENTE" });
@@ -154,7 +195,10 @@ test("la NC hereda receptor y referencia original en modo sólo lectura", async 
   await expect(dialogo).toContainText(/conservan el receptor del comprobante original/i);
   await expect(dialogo.locator("fieldset")).toHaveAttribute("disabled", "");
   await expect(dialogo.getByText("Otro receptor", { exact: true })).toHaveCount(0);
-  await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
+  await expect(dialogo.getByRole("radio", { name: /Factura [AB]/i })).toHaveCount(0);
+  const revisarNota = dialogo.getByRole("button", { name: "Revisar datos fiscales" });
+  await expect(revisarNota).toBeEnabled();
+  await revisarNota.click();
   await expect(dialogo).toContainText("T13-E2E RECEPTOR CONGELADO", { timeout: 20_000 });
   await expect(dialogo).toContainText(/comprobante original/i);
   await expect(dialogo).toContainText("Domicilio fiscal receptor");

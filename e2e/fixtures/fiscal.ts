@@ -1226,32 +1226,6 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
             afip_estado: "CANCELADO",
             afip_version: 0,
           },
-          {
-            id: uuidVenta(35),
-            sucursal_id: principal.id,
-            cliente_id: CLIENTE_COMPRADOR_ID,
-            usuario_id: empleado.id,
-            numero_comprobante: "V-T13-E2E-LEGACY-PEND",
-            tipo_comprobante: "FACTURA_B",
-            fecha: fechas.instante("09:00"),
-            total: 121,
-            total_pagado: 121,
-            afip_estado: "PENDIENTE",
-            afip_version: 0,
-          },
-          {
-            id: uuidVenta(36),
-            sucursal_id: principal.id,
-            cliente_id: CLIENTE_COMPRADOR_ID,
-            usuario_id: empleado.id,
-            numero_comprobante: "V-T13-E2E-LEGACY-ERROR",
-            tipo_comprobante: "FACTURA_B",
-            fecha: fechas.instante("08:00"),
-            total: 121,
-            total_pagado: 121,
-            afip_estado: "ERROR",
-            afip_version: 0,
-          },
           ...Array.from({ length: 3 }, (_, index) => ({
             id: uuidVenta(37 + index),
             sucursal_id: sucursales[1].id,
@@ -1269,6 +1243,61 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       ).error,
       "No se pudieron crear los estados de cola E2E",
     );
+    // Son filas históricas anteriores al corte v2. El writer legacy ya está
+    // retirado y el trigger impide crearlas por la API; se suspende únicamente
+    // ese guard dentro de una transacción PostgreSQL local para probar el drain.
+    const sqlLocal = conexionPostgresLocal();
+    await sqlLocal.begin(async (transaccion) => {
+      await transaccion`
+        ALTER TABLE public.ventas
+        DISABLE TRIGGER trg_ventas_fiscales_legacy_retirado
+      `;
+      await transaccion`
+        INSERT INTO public.ventas (
+          id,
+          sucursal_id,
+          cliente_id,
+          usuario_id,
+          numero_comprobante,
+          tipo_comprobante,
+          fecha,
+          total,
+          total_pagado,
+          afip_estado,
+          afip_version
+        ) VALUES
+          (
+            ${uuidVenta(35)}::uuid,
+            ${principal.id}::uuid,
+            ${CLIENTE_COMPRADOR_ID}::uuid,
+            ${empleado.id}::uuid,
+            'V-T13-E2E-LEGACY-PEND',
+            'FACTURA_B'::public.tipo_comprobante,
+            ${fechas.instante("09:00")}::timestamptz,
+            121,
+            121,
+            'PENDIENTE',
+            0
+          ),
+          (
+            ${uuidVenta(36)}::uuid,
+            ${principal.id}::uuid,
+            ${CLIENTE_COMPRADOR_ID}::uuid,
+            ${empleado.id}::uuid,
+            'V-T13-E2E-LEGACY-ERROR',
+            'FACTURA_B'::public.tipo_comprobante,
+            ${fechas.instante("08:00")}::timestamptz,
+            121,
+            121,
+            'ERROR',
+            0
+          )
+      `;
+      await transaccion`
+        ALTER TABLE public.ventas
+        ENABLE TRIGGER trg_ventas_fiscales_legacy_retirado
+      `;
+    });
     const hashReconciliar = "b".repeat(64);
     errorDe(
       (

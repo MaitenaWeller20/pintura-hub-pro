@@ -15,6 +15,7 @@ import {
 
 const ESCENARIO = process.env.INVOICING_MOCK_SCENARIO ?? "OK";
 let fixture: FixtureFiscal;
+type LetraFactura = "A" | "B";
 
 test.beforeAll(async () => {
   fixture = await prepararFixturesFiscales();
@@ -41,8 +42,21 @@ async function cargarVentaBasica(page: Page, pago = 40) {
   await expect(page.getByText(/La factura se emite por el total/)).toBeVisible();
 }
 
-async function revisar(dialogo: Locator) {
-  await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
+function opcionLetra(dialogo: Locator, letra: LetraFactura) {
+  return dialogo.getByRole("radio", { name: new RegExp(`Factura ${letra}\\b`, "i") });
+}
+
+async function elegirLetra(dialogo: Locator, letra: LetraFactura) {
+  const opcion = opcionLetra(dialogo, letra);
+  await opcion.check();
+  await expect(opcion).toBeChecked();
+}
+
+async function revisar(dialogo: Locator, letra: LetraFactura) {
+  await elegirLetra(dialogo, letra);
+  const boton = dialogo.getByRole("button", { name: "Revisar datos fiscales" });
+  await expect(boton).toBeEnabled();
+  await boton.click();
   await expect(dialogo.getByRole("button", { name: /Emitir comprobante/ })).toBeVisible({
     timeout: 20_000,
   });
@@ -50,11 +64,24 @@ async function revisar(dialogo: Locator) {
 
 async function receptorManual(
   dialogo: Locator,
-  input: { tipo: "CUIT" | "CUIL" | "DNI"; numero: string; razon: string; iva: string },
+  input: {
+    letra: LetraFactura;
+    tipo: "CUIT" | "CUIL" | "DNI";
+    numero: string;
+    razon: string;
+    iva: string;
+  },
 ) {
+  await elegirLetra(dialogo, input.letra);
   await dialogo.getByText("Otro receptor", { exact: true }).click();
-  await dialogo.getByLabel("Tipo de documento").selectOption(input.tipo);
-  await dialogo.getByLabel("Número de documento").fill(input.numero);
+  if (input.letra === "B") {
+    await dialogo.getByLabel("Tipo de documento (opcional)").selectOption(input.tipo);
+  }
+  const campoDocumento =
+    input.letra === "A"
+      ? dialogo.getByLabel("CUIT", { exact: true })
+      : dialogo.getByLabel("Número de documento (opcional)");
+  await campoDocumento.fill(input.numero);
   await dialogo.getByLabel("Razón social").fill(input.razon);
   await dialogo.getByLabel("Condición de IVA").selectOption(input.iva);
   await dialogo
@@ -143,42 +170,21 @@ test("una VENTA neutral aprobada genera una NC total y abre la cola con receptor
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
   await expect(dialogo).toContainText(/conservan el receptor del comprobante original/i);
   await expect(dialogo.locator("fieldset")).toHaveAttribute("disabled", "");
-  await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
+  await expect(dialogo.getByRole("radio", { name: /Factura [AB]/i })).toHaveCount(0);
+  const revisarNota = dialogo.getByRole("button", { name: "Revisar datos fiscales" });
+  await expect(revisarNota).toBeEnabled();
+  await revisarNota.click();
   await expect(dialogo).toContainText("T13-E2E RECEPTOR NC HEREDADO", { timeout: 20_000 });
+  await expect(dialogo).toContainText("Factura A");
 });
 
-test("un cliente legacy obsoleto no puede guardar una ND después de activar v2", async ({
-  page,
-}) => {
-  test.skip(ESCENARIO !== "OK", "El fence comercial de ND pertenece al escenario OK.");
-  await configurarFlagsFacturacionFixture({ v2: false, legacy: true });
-  try {
-    await ingresar(page, "fiscalAdmin");
-    await page.goto("/ventas/nueva");
-    await page.getByRole("combobox", { name: /Tipo comprobante/i }).click();
-    await page.getByRole("option", { name: "Nota de Débito" }).click();
-    await page.getByRole("button", { name: "Buscar cliente…" }).click();
-    await page.getByPlaceholder("Nombre o CUIT…").last().fill("T13-E2E COMPRADOR");
-    await page.getByRole("button", { name: /T13-E2E COMPRADOR COMERCIAL/ }).click();
-    await page.getByRole("combobox", { name: /Factura que rectifica/i }).click();
-    await page.getByRole("option", { name: /V-T13-E2E-LEGACY-PEND/ }).click();
-    await page
-      .getByText("% sobre el total de la factura", { exact: true })
-      .locator("..")
-      .locator("input")
-      .fill("10");
-
-    const antes = await leerHuellaComercialFixture();
-    await configurarFlagsFacturacionFixture({ v2: true, legacy: false });
-    await page.getByTestId("guardar-venta").click();
-    await expect(page.locator("[data-sonner-toaster]")).toContainText(
-      /nota de débito.*fuera de alcance fiscal/i,
-    );
-    await expect(page).toHaveURL(/\/ventas\/nueva/);
-    await expect.poll(() => leerHuellaComercialFixture()).toEqual(antes);
-  } finally {
-    await configurarFlagsFacturacionFixture({ v2: true, legacy: false });
-  }
+test("el writer legacy retirado no se puede reactivar después del corte v2", async () => {
+  test.skip(ESCENARIO !== "OK", "El fence irreversible pertenece al escenario OK.");
+  const antes = await leerHuellaComercialFixture();
+  await expect(configurarFlagsFacturacionFixture({ v2: false, legacy: true })).rejects.toThrow(
+    /legacy.*retirado|ck_settings_legacy_writer_retirado/i,
+  );
+  await expect.poll(() => leerHuellaComercialFixture()).toEqual(antes);
 });
 
 test("registrar sin facturar no abre receptor ni ARCA y crea una sola venta", async ({ page }) => {
@@ -195,9 +201,7 @@ test("registrar sin facturar no abre receptor ni ARCA y crea una sola venta", as
   await expect.poll(() => cantidadVentasDelProductoE2E()).toBe(antes + 1);
 });
 
-test("el diálogo compartido separa comprador/receptor, deriva A y bloquea el doble submit", async ({
-  page,
-}) => {
+test("Registrar venta y facturar exige elegir letra y emite A con CUIT", async ({ page }) => {
   test.skip(ESCENARIO !== "OK", "La aprobación completa pertenece al escenario OK.");
   await ingresar(page, "fiscalAdmin");
   await cargarVentaBasica(page);
@@ -205,14 +209,19 @@ test("el diálogo compartido separa comprador/receptor, deriva A y bloquea el do
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
   await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText("T13-E2E COMPRADOR COMERCIAL");
+  const revisarDatos = dialogo.getByRole("button", { name: "Revisar datos fiscales" });
+  await expect(opcionLetra(dialogo, "A")).not.toBeChecked();
+  await expect(opcionLetra(dialogo, "B")).not.toBeChecked();
+  await expect(revisarDatos).toBeDisabled();
 
   await receptorManual(dialogo, {
+    letra: "A",
     tipo: "CUIT",
     numero: "30-71419966-4",
     razon: "T13-E2E RECEPTOR DISTINTO",
     iva: "RESPONSABLE_INSCRIPTO",
   });
-  await revisar(dialogo);
+  await revisar(dialogo, "A");
   await expect(dialogo).toContainText(/Factura A/i);
   await expect(dialogo).toContainText("T13-E2E RECEPTOR DISTINTO");
   await expect(dialogo).toContainText(fixture.emisorRazonSocial);
@@ -236,20 +245,22 @@ test("comercial, favorito CUIL y manual son fuentes explícitas; documento invá
   await page.getByTestId("registrar-y-facturar").click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
 
-  await revisar(dialogo);
+  await revisar(dialogo, "B");
   await expect(dialogo).toContainText(/Factura B/i);
 
   await dialogo.getByText("Guardado", { exact: true }).click();
   await expect(dialogo.getByLabel("Receptor guardado")).toContainText(/FAVORITO CUIL/);
-  await revisar(dialogo);
+  await revisar(dialogo, "B");
   await expect(dialogo).toContainText(/Factura B/i);
 
   await receptorManual(dialogo, {
+    letra: "A",
     tipo: "CUIT",
     numero: "123",
     razon: "Documento inválido",
     iva: "RESPONSABLE_INSCRIPTO",
   });
+  await elegirLetra(dialogo, "A");
   await dialogo.getByRole("button", { name: "Revisar datos fiscales" }).click();
   await expect(dialogo).toContainText(/CUIT.*válido|dígito verificador/i);
   await expect(dialogo.getByRole("button", { name: "Emitir comprobante" })).toHaveCount(0);
@@ -261,7 +272,7 @@ test("Escape devuelve foco y el diálogo queda contenido para teclado", async ({
   const boton = page.getByTestId("registrar-y-facturar");
   await boton.click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
-  await expect(dialogo.locator('input[name="origen-receptor"]').first()).toBeFocused();
+  await expect(opcionLetra(dialogo, "A")).toBeFocused();
   const caja = await dialogo.boundingBox();
   expect(caja).not.toBeNull();
   expect(caja!.y + caja!.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
@@ -294,7 +305,7 @@ test("resultado parcial: el timeout posterior al request conserva la venta y exi
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-y-facturar").click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
-  await revisar(dialogo);
+  await revisar(dialogo, "B");
   await confirmarHastaCerrar(dialogo);
   await expect(page).toHaveURL(/resultado=venta_creada_requiere_revision/, { timeout: 25_000 });
   await expect.poll(() => cantidadVentasDelProductoE2E()).toBe(antes + 1);
@@ -312,7 +323,7 @@ test("rechazo definitivo conserva la venta para corregir sin repetir el cobro", 
   await cargarVentaBasica(page);
   await page.getByTestId("registrar-y-facturar").click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
-  await revisar(dialogo);
+  await revisar(dialogo, "B");
   await confirmarHastaCerrar(dialogo);
   await expect(page).toHaveURL(/resultado=venta_creada_factura_pendiente/, { timeout: 25_000 });
   await expect.poll(() => cantidadVentasDelProductoE2E()).toBe(antes + 1);
@@ -390,6 +401,7 @@ test("dos pestañas sobre la misma venta no repiten efectos comerciales", async 
     await Promise.all(
       dialogos.map((dialogo) =>
         receptorManual(dialogo, {
+          letra: "B",
           tipo: "CUIT",
           numero: "20345678906",
           razon: "T13-E2E COMPRADOR PAGINACIÓN",
@@ -397,7 +409,7 @@ test("dos pestañas sobre la misma venta no repiten efectos comerciales", async 
         }),
       ),
     );
-    await Promise.all(dialogos.map(revisar));
+    await Promise.all(dialogos.map((dialogo) => revisar(dialogo, "B")));
     await Promise.all(
       dialogos.map((dialogo) =>
         dialogo.getByRole("button", { name: "Emitir comprobante" }).click(),

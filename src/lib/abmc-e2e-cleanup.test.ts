@@ -99,6 +99,20 @@ describe("cleanup owned-only de los ABMC E2E", () => {
     expect(borrados).toEqual([{ tabla: "clientes", id: CLIENTE_ID, razonSocial: nombre }]);
   });
 
+  it("conserva la intención si el alta aparece después de un primer cleanup sin fila", async () => {
+    const nombre = "ZZ-E2E-CLIENTE-VISIBILIDAD-TARDIA";
+    const { repo, filas, borrados } = repositorioEnMemoria({});
+    const gestor = crearGestorFixturesAbmc(repo);
+    gestor.reservar("clientes", nombre);
+
+    await expect(gestor.limpiar()).resolves.toBeUndefined();
+    filas.clientes.push({ id: CLIENTE_ID, razon_social: nombre });
+    await expect(gestor.limpiar()).resolves.toBeUndefined();
+
+    expect(filas.clientes).toEqual([]);
+    expect(borrados).toEqual([{ tabla: "clientes", id: CLIENTE_ID, razonSocial: nombre }]);
+  });
+
   it("detecta un DELETE silencioso que no dejó cero residuos", async () => {
     const nombre = "ZZ-E2E-CLIENTE-RESIDUO";
     const { repo, filas } = repositorioEnMemoria({
@@ -178,5 +192,37 @@ describe("adaptador HTTP local del cleanup ABMC", () => {
         SUPABASE_SERVICE_ROLE_KEY: "no-debe-usarse",
       }),
     ).toThrow(/sólo.*local/i);
+  });
+
+  it("no sigue un redirect ni reenvía la credencial service-role a otro origen", async () => {
+    let pedidosExternos = 0;
+    let credencialesExternas = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (_request, init) => {
+      if (init?.redirect !== "manual") {
+        pedidosExternos += 1;
+        if (new Headers(init?.headers).has("Authorization")) credencialesExternas += 1;
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(null, {
+        status: 307,
+        headers: { Location: "https://externo.invalid/robar" },
+      });
+    });
+    const repo = crearRepositorioFixturesAbmcLocalHttp(
+      {
+        SUPABASE_URL: "http://127.0.0.1:54321",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-local",
+      },
+      fetchImpl,
+    );
+
+    await expect(repo.buscarPorRazonSocialExacta("clientes", "ZZ-E2E-REDIRECT")).rejects.toThrow(
+      /307/,
+    );
+    expect(pedidosExternos).toBe(0);
+    expect(credencialesExternas).toBe(0);
   });
 });

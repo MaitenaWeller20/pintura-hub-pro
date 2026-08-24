@@ -30,6 +30,12 @@ export type GestorFixturesAbmc = {
   limpiar(): Promise<void>;
 };
 
+type OpcionesGestorFixturesAbmc = {
+  intentosAusencia?: number;
+  esperaAusenciaMs?: number;
+  esperar?: (milisegundos: number) => Promise<void>;
+};
+
 type EntornoSupabaseAbmc = {
   SUPABASE_URL?: string;
   VITE_SUPABASE_URL?: string;
@@ -58,12 +64,33 @@ function detalleError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function crearGestorFixturesAbmc(repo: RepositorioFixturesAbmc): GestorFixturesAbmc {
+export function crearGestorFixturesAbmc(
+  repo: RepositorioFixturesAbmc,
+  opciones: OpcionesGestorFixturesAbmc = {},
+): GestorFixturesAbmc {
   const registros = new Map<string, RegistroFixtureAbmc>();
+  const intentosAusencia = opciones.intentosAusencia ?? 3;
+  const esperaAusenciaMs = opciones.esperaAusenciaMs ?? 75;
+  const esperar =
+    opciones.esperar ??
+    ((milisegundos: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, milisegundos);
+      }));
+
+  if (!Number.isInteger(intentosAusencia) || intentosAusencia < 1 || intentosAusencia > 10) {
+    throw new Error("El cleanup ABMC exige entre 1 y 10 verificaciones de ausencia.");
+  }
 
   async function capturar(registro: RegistroFixtureAbmc, permitirAusente: boolean) {
     if (registro.id) return registro.id;
-    const encontrados = await repo.buscarPorRazonSocialExacta(registro.tabla, registro.razonSocial);
+    let encontrados: IdentidadFixtureAbmc[] = [];
+    const maximoIntentos = permitirAusente ? intentosAusencia : 1;
+    for (let intento = 1; intento <= maximoIntentos; intento += 1) {
+      encontrados = await repo.buscarPorRazonSocialExacta(registro.tabla, registro.razonSocial);
+      if (encontrados.length !== 0 || intento === maximoIntentos) break;
+      await esperar(esperaAusenciaMs);
+    }
     if (encontrados.length === 0 && permitirAusente) return null;
     if (encontrados.length !== 1) {
       throw new Error(
@@ -82,7 +109,9 @@ export function crearGestorFixturesAbmc(repo: RepositorioFixturesAbmc): GestorFi
   async function limpiarRegistro(registro: RegistroFixtureAbmc): Promise<void> {
     const id = await capturar(registro, true);
     if (!id) {
-      registros.delete(claveDe(registro));
+      // La intención se registró antes del click Guardar. Una respuesta tardía
+      // puede hacer visible el INSERT después de este sondeo; se conserva como
+      // tombstone para que afterAll vuelva a auditarla y no pierda el fixture.
       return;
     }
 
@@ -182,6 +211,7 @@ export function crearRepositorioFixturesAbmcLocalHttp(
   async function request(method: "GET" | "DELETE", path: string): Promise<unknown> {
     const respuesta = await fetchImpl(`${baseUrl}${path}`, {
       method,
+      redirect: "manual",
       headers: {
         apikey: serviceRole,
         Authorization: `Bearer ${serviceRole}`,

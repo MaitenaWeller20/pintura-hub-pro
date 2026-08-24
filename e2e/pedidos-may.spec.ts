@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { test, expect, ingresar, campo } from "./apoyo";
 import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fiscal";
 import {
+  leerEstadoIngresoLocalE2E,
   limpiarIngresoLocalE2E,
+  MOTIVO_CORRECCION_INGRESO_E2E,
   prepararIngresoLocalE2E,
   PRODUCTO_INGRESO_E2E,
   PROVEEDOR_INGRESO_E2E,
@@ -23,7 +25,7 @@ test.beforeAll(async () => {
     await prepararIngresoLocalE2E({
       productoId: fiscal.productoId,
       sucursalId: fiscal.sucursalPrincipalId,
-      usuarioId: fiscal.usuarioAdmin.id,
+      usuarioAdmin: fiscal.usuarioAdmin,
     });
   } catch (error) {
     await limpiarFixturesFiscales();
@@ -40,9 +42,7 @@ test.afterAll(async () => {
     }
   }
   if (errores.length > 0) {
-    throw new Error(
-      `Falló el cleanup de pedidos-may:\n${errores.map(String).join("\n")}`,
-    );
+    throw new Error(`Falló el cleanup de pedidos-may:\n${errores.map(String).join("\n")}`);
   }
 });
 test.beforeEach(async ({ page }) => {
@@ -193,5 +193,76 @@ test("ingresos: se puede ver qué se cargó en un ingreso", async ({ page }) => 
   // La grilla de productos con sus cantidades.
   await expect(dialogo.locator("thead")).toContainText(/cantidad/i);
   await expect(dialogo).toContainText(PRODUCTO_INGRESO_E2E);
-  await expect(dialogo.locator("tbody tr")).toContainText("2");
+  await expect(dialogo.locator("tbody tr")).toContainText("4");
+});
+
+test("ingresos: un administrador corrige la cantidad confirmada y queda auditada", async ({
+  page,
+}) => {
+  const antes = await leerEstadoIngresoLocalE2E();
+  expect(antes).toMatchObject({
+    estado: "CONFIRMADO",
+    cantidadItem: 4,
+    stock: 504,
+    correcciones: [],
+  });
+
+  await page.goto("/ingresos-mercaderia");
+  const filaIngreso = page.locator("tbody tr").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await filaIngreso.getByTitle("Ver qué se cargó").click();
+  const detalle = page.getByRole("dialog").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await expect(detalle).toBeVisible();
+  await detalle.getByRole("button", { name: /corregir cantidades/i }).click();
+
+  const correccion = page
+    .getByRole("dialog")
+    .filter({ hasText: /corregir cantidades/i })
+    .last();
+  await expect(correccion).toBeVisible();
+  const filaProducto = correccion.locator("tr").filter({ hasText: PRODUCTO_INGRESO_E2E });
+  await expect(filaProducto).toContainText("4");
+  await filaProducto.getByRole("spinbutton").fill("2");
+  await correccion.locator("textarea").fill(MOTIVO_CORRECCION_INGRESO_E2E);
+  await correccion.getByRole("button", { name: /aplicar corrección/i }).click();
+  await expect(page.locator("[data-sonner-toaster]")).toContainText(
+    /cantidades corregidas|corrección guardada/i,
+  );
+
+  // Se vuelve a abrir desde la lista para comprobar que no sea estado local del
+  // diálogo: la cantidad y el historial tienen que venir persistidos de la BD.
+  await page.goto("/ingresos-mercaderia");
+  const filaActualizada = page.locator("tbody tr").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await filaActualizada.getByTitle("Ver qué se cargó").click();
+  const detalleActualizado = page.getByRole("dialog").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  const productoActualizado = detalleActualizado
+    .locator("tbody tr")
+    .filter({ hasText: PRODUCTO_INGRESO_E2E });
+  await expect(productoActualizado).toContainText("2");
+  await expect(detalleActualizado).toContainText(/historial de correcciones/i);
+  await expect(detalleActualizado).toContainText("T13 Admin fiscal descartable");
+  await expect(detalleActualizado).toContainText(MOTIVO_CORRECCION_INGRESO_E2E);
+  await expect(detalleActualizado).toContainText(/4\s*→\s*2/);
+  await expect(detalleActualizado).toContainText(/(?:−|-)2/);
+
+  const despues = await leerEstadoIngresoLocalE2E();
+  expect(despues).toMatchObject({
+    estado: "CONFIRMADO",
+    cantidadItem: 2,
+    stock: 502,
+    correcciones: [
+      {
+        motivo: MOTIVO_CORRECCION_INGRESO_E2E,
+        usuarioNombre: "T13 Admin fiscal descartable",
+        cantidadAnterior: 4,
+        cantidadNueva: 2,
+        diferencia: -2,
+        movimiento: {
+          tipo: "CORRECCION_INGRESO_MERCADERIA",
+          cantidad: -2,
+          cantidadAnterior: 504,
+          cantidadNueva: 502,
+        },
+      },
+    ],
+  });
 });

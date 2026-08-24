@@ -1,11 +1,20 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
+import {
+  DialogoCorregirIngreso,
+  type ItemIngresoCorregible,
+} from "@/components/ingresos/dialogo-corregir-ingreso";
+import {
+  HistorialCorreccionesIngreso,
+  type CorreccionIngresoVisible,
+} from "@/components/ingresos/historial-correcciones-ingreso";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -18,6 +27,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -33,12 +43,31 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { fmtDate } from "@/lib/format";
+import { puedeAbrirCorreccionIngreso } from "@/lib/correccion-ingreso";
 import { Plus, Ban, Pencil, Eye } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/ingresos-mercaderia/")({
   component: IngresosPage,
 });
+
+type CorreccionIngresoRow = {
+  id: string;
+  usuario_nombre: string;
+  motivo: string;
+  created_at: string;
+  cambios: Array<{
+    ingreso_item_id: string;
+    descripcion: string;
+    cantidad_anterior: number;
+    cantidad_nueva: number;
+    diferencia: number;
+  }>;
+};
+
+// La tabla se crea junto con esta pantalla. El cast evita mezclar en este
+// cambio la regeneración completa del archivo automático de tipos de Supabase.
+const supabaseCorrecciones = supabase as unknown as SupabaseClient;
 
 /**
  * Qué se cargó en un ingreso.
@@ -47,25 +76,72 @@ export const Route = createFileRoute("/_authenticated/ingresos-mercaderia/")({
  * solapita que pueda ver lo que ingresé para ver si lo ingresé bien, como para
  * un control". Antes un ingreso confirmado sólo ofrecía anularlo.
  *
- * Es de sólo lectura a propósito. Un ingreso confirmado YA movió el stock:
- * editarle las cantidades por atrás dejaría el inventario diciendo una cosa y
- * lo que entró físicamente otra, sin rastro. Para corregirlo está anular y
- * volver a cargar, que sí deja historia.
+ * Un ingreso confirmado ya movió stock. La corrección no edita por atrás: abre
+ * una operación administrativa separada que ajusta sólo la diferencia y deja
+ * quién, cuándo, por qué y el antes/después de cada línea.
  */
-function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => void }) {
-  const { data: items = [], isLoading } = useQuery({
+function DetalleIngreso({
+  ingreso,
+  isAdmin,
+  onClose,
+  onCorregir,
+}: {
+  ingreso: any;
+  isAdmin: boolean;
+  onClose: () => void;
+  onCorregir: (items: ItemIngresoCorregible[]) => void;
+}) {
+  const itemsQuery = useQuery({
     queryKey: ["ingreso-items", ingreso.id],
-    queryFn: async () =>
-      ((
-        await supabase
-          .from("ingreso_mercaderia_items")
-          .select(
-            "id, linea, codigo, descripcion, cantidad, codigo_proveedor, descripcion_proveedor",
-          )
-          .eq("ingreso_id", ingreso.id)
-          .order("linea")
-      ).data ?? []) as any[],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ingreso_mercaderia_items")
+        .select(
+          "id, linea, producto_id, origen_match, codigo, descripcion, cantidad, codigo_proveedor, descripcion_proveedor",
+        )
+        .eq("ingreso_id", ingreso.id)
+        .order("linea");
+      if (error) throw error;
+      return data;
+    },
   });
+  const items = itemsQuery.data ?? [];
+
+  const correccionesQuery = useQuery({
+    queryKey: ["ingreso-correcciones", ingreso.id],
+    queryFn: async () => {
+      const { data, error } = await supabaseCorrecciones
+        .from("ingreso_mercaderia_correcciones")
+        .select(
+          "id, usuario_nombre, motivo, created_at, cambios:ingreso_mercaderia_correccion_items(ingreso_item_id, descripcion, cantidad_anterior, cantidad_nueva, diferencia)",
+        )
+        .eq("ingreso_id", ingreso.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as CorreccionIngresoRow[];
+    },
+  });
+
+  const correcciones: CorreccionIngresoVisible[] = (correccionesQuery.data ?? []).map(
+    (correccion) => ({
+      id: correccion.id,
+      corregidoPor: correccion.usuario_nombre,
+      corregidoEn: correccion.created_at,
+      motivo: correccion.motivo,
+      cambios: correccion.cambios.map((cambio) => ({
+        itemId: cambio.ingreso_item_id,
+        descripcion: cambio.descripcion,
+        cantidadAnterior: Number(cambio.cantidad_anterior),
+        cantidadNueva: Number(cambio.cantidad_nueva),
+        delta: Number(cambio.diferencia),
+      })),
+    }),
+  );
+
+  const itemsCorregibles = items.filter(
+    (item) =>
+      item.producto_id !== null && item.origen_match !== "IGNORADA" && item.cantidad !== null,
+  );
 
   const total = items.reduce((a, i) => a + Number(i.cantidad || 0), 0);
 
@@ -77,6 +153,9 @@ function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => voi
             Ingreso de {ingreso.proveedor?.razon_social ?? "—"}
             {ingreso.numero_remito_proveedor ? ` — remito ${ingreso.numero_remito_proveedor}` : ""}
           </DialogTitle>
+          <DialogDescription>
+            Productos y cantidades que impactaron en el stock de esta sucursal.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-5">
@@ -85,6 +164,7 @@ function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => voi
             <StatusPill tone={ESTADO_TONE[ingreso.estado as keyof typeof ESTADO_TONE] ?? "neutral"}>
               {ESTADO_LABEL[ingreso.estado as keyof typeof ESTADO_LABEL] ?? ingreso.estado}
             </StatusPill>
+            {correcciones.length > 0 && <StatusPill tone="warning">Corregido</StatusPill>}
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Cargado</p>
@@ -121,10 +201,16 @@ function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => voi
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading ? (
+              {itemsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
                     Cargando…
+                  </TableCell>
+                </TableRow>
+              ) : itemsQuery.isError ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-6 text-center text-destructive">
+                    No se pudieron cargar los productos del ingreso.
                   </TableCell>
                 </TableRow>
               ) : items.length === 0 ? (
@@ -159,18 +245,33 @@ function DetalleIngreso({ ingreso, onClose }: { ingreso: any; onClose: () => voi
           </Table>
         </div>
 
+        {correccionesQuery.isError && (
+          <p className="text-sm text-destructive">
+            No se pudo cargar el historial de correcciones.
+          </p>
+        )}
+        <HistorialCorreccionesIngreso correcciones={correcciones} />
+
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span className="text-muted-foreground">
             {items.length} {items.length === 1 ? "producto" : "productos"} · {total} unidades
           </span>
           {ingreso.estado === "CONFIRMADO" && (
             <span className="text-xs text-muted-foreground">
-              Ya sumó al stock. Para corregir una cantidad hay que anularlo y volver a cargarlo.
+              Ya sumó al stock. Una corrección aplica sólo la diferencia y conserva el historial.
             </span>
           )}
         </div>
 
         <DialogFooter>
+          {puedeAbrirCorreccionIngreso({ isAdmin, estado: ingreso.estado }) && (
+            <Button
+              onClick={() => onCorregir(itemsCorregibles)}
+              disabled={itemsQuery.isLoading || itemsQuery.isError || itemsCorregibles.length === 0}
+            >
+              <Pencil className="mr-1 h-4 w-4" /> Corregir cantidades
+            </Button>
+          )}
           <Button variant="outline" onClick={onClose}>
             Cerrar
           </Button>
@@ -192,6 +293,10 @@ function IngresosPage() {
   const qc = useQueryClient();
   const [anular, setAnular] = useState<any>(null);
   const [ver, setVer] = useState<any>(null);
+  const [corregir, setCorregir] = useState<{
+    ingreso: any;
+    items: ItemIngresoCorregible[];
+  } | null>(null);
 
   const { data: ingresos = [], isLoading } = useQuery({
     queryKey: ["ingresos-mercaderia"],
@@ -297,7 +402,32 @@ function IngresosPage() {
         ))}
       </DataTable>
 
-      {ver && <DetalleIngreso ingreso={ver} onClose={() => setVer(null)} />}
+      {ver && (
+        <DetalleIngreso
+          ingreso={ver}
+          isAdmin={!!cu?.isAdmin}
+          onClose={() => setVer(null)}
+          onCorregir={(items) => {
+            setCorregir({ ingreso: ver, items });
+            setVer(null);
+          }}
+        />
+      )}
+
+      {corregir && (
+        <DialogoCorregirIngreso
+          ingreso={corregir.ingreso}
+          items={corregir.items}
+          onClose={() => {
+            setVer(corregir.ingreso);
+            setCorregir(null);
+          }}
+          onSuccess={() => {
+            setVer(corregir.ingreso);
+            setCorregir(null);
+          }}
+        />
+      )}
 
       <AlertDialog open={!!anular} onOpenChange={(v) => !v && setAnular(null)}>
         <AlertDialogContent>

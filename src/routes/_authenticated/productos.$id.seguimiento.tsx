@@ -40,6 +40,7 @@ const MOVIMIENTO: Record<string, { txt: string; entrada: boolean }> = {
   ANULACION_COMPRA: { txt: "Anulación de compra", entrada: false },
   INGRESO_MERCADERIA: { txt: "Ingreso de mercadería", entrada: true },
   ANULACION_INGRESO_MERCADERIA: { txt: "Anulación de ingreso", entrada: false },
+  CORRECCION_INGRESO_MERCADERIA: { txt: "Corrección de ingreso", entrada: true },
   TRANSFERENCIA_IN: { txt: "Entró por transferencia", entrada: true },
   TRANSFERENCIA_OUT: { txt: "Salió por transferencia", entrada: false },
   AJUSTE: { txt: "Ajuste de inventario", entrada: true },

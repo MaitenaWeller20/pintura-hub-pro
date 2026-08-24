@@ -63,6 +63,21 @@ chequear "no mezcla productos de otro proveedor" "0" \
 chequear "un usuario autenticado conserva acceso con RLS" "40" \
   "$(q "SET ROLE authenticated; SELECT count(*) FROM public.buscar_productos_similares('SATIN','SATIN',500,'$QM') WHERE codigo LIKE 'BUSQ-ING-QM-%'; RESET ROLE")"
 
+# Producción concede EXECUTE a anon por ALTER DEFAULT PRIVILEGES. Simulamos ese
+# estado y ejecutamos la migración real para que esta regresión no dependa de
+# que Supabase local tenga exactamente los mismos defaults del proyecto remoto.
+shopt -s nullglob
+migraciones_acl=(supabase/migrations/*_restringir_busqueda_productos_ingreso.sql)
+if [[ ${#migraciones_acl[@]} -ne 1 ]]; then
+  echo "  ✗ falta una única migración para restringir la búsqueda de ingresos"
+  fallos=$((fallos+1))
+else
+  q "GRANT EXECUTE ON FUNCTION public.buscar_productos_similares(text,text,integer,uuid) TO anon"
+  $PSQL < "${migraciones_acl[0]}" > /dev/null
+  chequear "un visitante anónimo no puede ejecutar el buscador de ingresos" "f" \
+    "$(q "SELECT has_function_privilege('anon', 'public.buscar_productos_similares(text,text,integer,uuid)', 'EXECUTE')")"
+fi
+
 echo "── Limpieza ──────────────────────────────────────────────"
 $PSQL <<'SQL' > /dev/null
 DELETE FROM public.productos WHERE codigo LIKE 'BUSQ-ING-%';

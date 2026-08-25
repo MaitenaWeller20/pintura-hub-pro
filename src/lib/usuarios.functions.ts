@@ -43,6 +43,33 @@ export const setPuedeFacturar = createServerFn({ method: "POST" })
     ),
   );
 
+export async function ejecutarSetPuedeGestionarCreditoClientes(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_gestionar_credito_clientes", {
+    p_profile_id: input.user_id,
+    p_puede: input.value,
+  });
+  if (error) {
+    throw new Error(error.message ?? "No se pudo actualizar el permiso de cuenta corriente");
+  }
+  return { ok: true };
+}
+
+export const setPuedeGestionarCreditoClientes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarSetPuedeGestionarCreditoClientes(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
 export const crearUsuario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
@@ -357,10 +384,7 @@ export async function ejecutarToggleUsuarioActivo(
       }
       for (let intento = 0; intento < 2 && !dbCerrada; intento += 1) {
         try {
-          const { data, error } = await operaciones.forzarCierreFailSafe(
-            input.user_id,
-            cierreId,
-          );
+          const { data, error } = await operaciones.forzarCierreFailSafe(input.user_id, cierreId);
           if (error) {
             ultimoErrorCierre = error;
             continue;
@@ -444,12 +468,7 @@ export async function ejecutarToggleUsuarioActivo(
       const reconciliacionId = operaciones.generarOperacionId();
       try {
         estado = await rpcConReintento(
-          () =>
-            operaciones.reclamarReconciliacion(
-              input.user_id,
-              estado.version,
-              reconciliacionId,
-            ),
+          () => operaciones.reclamarReconciliacion(input.user_id, estado.version, reconciliacionId),
           "No se pudo reconciliar el cambio de acceso más reciente",
         );
       } catch (error) {
@@ -463,8 +482,7 @@ export async function ejecutarToggleUsuarioActivo(
     escriturasAuth += 1;
     try {
       estado = await rpcConReintento(
-        () =>
-          operaciones.finalizar(input.user_id, intentado.version, intentado.operacionId),
+        () => operaciones.finalizar(input.user_id, intentado.version, intentado.operacionId),
         "No se pudo finalizar el cambio de acceso",
       );
     } catch (errorFinalizar) {

@@ -1514,6 +1514,7 @@ export type Database = {
           nombre_completo: string | null
           permite_venta_sin_stock: boolean
           puede_facturar: boolean
+          puede_gestionar_credito_clientes: boolean
           secciones: string[] | null
           sucursal_id: string | null
           updated_at: string
@@ -1526,6 +1527,7 @@ export type Database = {
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
           puede_facturar?: boolean
+          puede_gestionar_credito_clientes?: boolean
           secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
@@ -1538,6 +1540,7 @@ export type Database = {
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
           puede_facturar?: boolean
+          puede_gestionar_credito_clientes?: boolean
           secciones?: string[] | null
           sucursal_id?: string | null
           updated_at?: string
@@ -3284,6 +3287,10 @@ export type Database = {
         Args: { p_profile_id: string; p_puede_facturar: boolean }
         Returns: undefined
       }
+      administrar_puede_gestionar_credito_clientes: {
+        Args: { p_profile_id: string; p_puede: boolean }
+        Returns: undefined
+      }
       ajustar_stock: {
         Args: {
           p_motivo: string
@@ -3700,6 +3707,10 @@ export type Database = {
       }
       proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
       puede_facturar: { Args: { _uid?: string }; Returns: boolean }
+      puede_gestionar_credito_clientes: {
+        Args: { _uid?: string }
+        Returns: boolean
+      }
       puede_vender_sin_stock: { Args: { _uid: string }; Returns: boolean }
       rechazar_remito: {
         Args: { p_motivo?: string; p_remito_id: string }

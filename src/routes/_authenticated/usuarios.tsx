@@ -30,6 +30,7 @@ import {
   crearUsuario,
   toggleUsuarioActivo,
   resetearPassword,
+  setPuedeGestionarCreditoClientes,
   setPuedeFacturar,
   setPermiteVentaSinStock,
   setSeccionesUsuario,
@@ -175,7 +176,13 @@ function UsuariosPage() {
       toast.success("Usuario creado");
       qc.invalidateQueries({ queryKey: ["usuarios"] });
       setOpen(false);
-      const creado = { ...form, id: r?.id, secciones: null, puede_facturar: false };
+      const creado = {
+        ...form,
+        id: r?.id,
+        secciones: null,
+        puede_facturar: false,
+        puede_gestionar_credito_clientes: false,
+      };
       setForm(formVacio);
       // Se abre solo el diálogo de permisos: crear el usuario y elegir qué ve
       // son un mismo momento, y si no se ofrece nadie va a ir a buscarlo.
@@ -452,6 +459,7 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   const guardarSecciones = useServerFn(setSeccionesUsuario);
   const guardarSinStock = useServerFn(setPermiteVentaSinStock);
   const guardarPuedeFacturar = useServerFn(setPuedeFacturar);
+  const guardarPuedeGestionarCredito = useServerFn(setPuedeGestionarCreditoClientes);
   const esAdmin = usuario.role === "admin";
 
   // null = "las de siempre". El radio es el que decide entre null y una lista.
@@ -460,6 +468,9 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   const [sinStock, setSinStock] = useState<boolean>(!!usuario.permite_venta_sin_stock);
   const [puedeFacturar, setPuedeFacturarLocal] = useState<boolean>(
     esAdmin || usuario.puede_facturar === true,
+  );
+  const [puedeGestionarCredito, setPuedeGestionarCredito] = useState<boolean>(
+    esAdmin || usuario.puede_gestionar_credito_clientes === true,
   );
 
   const toggle = (key: string) =>
@@ -481,6 +492,11 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
       if (!esAdmin && puedeFacturar !== !!usuario.puede_facturar) {
         await guardarPuedeFacturar({
           data: { user_id: usuario.id, value: puedeFacturar },
+        });
+      }
+      if (!esAdmin && puedeGestionarCredito !== !!usuario.puede_gestionar_credito_clientes) {
+        await guardarPuedeGestionarCredito({
+          data: { user_id: usuario.id, value: puedeGestionarCredito },
         });
       }
       if (sinStock !== !!usuario.permite_venta_sin_stock) {
@@ -589,6 +605,22 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
                   Éste no es de pantallas: cambia lo que el sistema lo deja hacer. Le permite
                   registrar ventas de productos sin stock disponible. Los administradores siempre
                   pueden.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2 text-sm border border-border rounded p-2 bg-muted/30 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={puedeGestionarCredito}
+                onChange={(e) => setPuedeGestionarCredito(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <strong>Puede gestionar cuenta corriente de clientes</strong>
+                <span className="block text-xs text-muted-foreground">
+                  Permite crear o modificar clientes con cuenta corriente y definir su límite de
+                  crédito. No le da permisos de administrador.
                 </span>
               </span>
             </label>

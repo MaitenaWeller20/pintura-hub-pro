@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ejecutarSetPuedeGestionarCreditoClientes,
   ejecutarSetPuedeFacturar,
   ejecutarToggleUsuarioActivo,
   type OperacionesToggleUsuario,
@@ -59,6 +60,69 @@ describe("setPuedeFacturar", () => {
   it("propaga un fallo de la RPC sin informar éxito", async () => {
     await expect(
       ejecutarSetPuedeFacturar(
+        { actorId: ADMIN, user_id: EMPLEADO, value: false },
+        {
+          async rpc(nombre) {
+            return nombre === "is_admin"
+              ? { data: true, error: null }
+              : { data: null, error: { message: "permiso denegado" } };
+          },
+        },
+      ),
+    ).rejects.toThrow("permiso denegado");
+  });
+});
+
+describe("setPuedeGestionarCreditoClientes", () => {
+  it("rechaza a quien no es admin antes de intentar cambiar el permiso", async () => {
+    const llamadas: string[] = [];
+
+    await expect(
+      ejecutarSetPuedeGestionarCreditoClientes(
+        { actorId: EMPLEADO, user_id: EMPLEADO, value: true },
+        {
+          async rpc(nombre) {
+            llamadas.push(nombre);
+            return nombre === "is_admin"
+              ? { data: false, error: null }
+              : { data: null, error: null };
+          },
+        },
+      ),
+    ).rejects.toThrow(/solo admin/i);
+
+    expect(llamadas).toEqual(["is_admin"]);
+  });
+
+  it("usa la RPC administrativa exacta después de revalidar al admin", async () => {
+    const llamadas: Array<{ nombre: string; args: Record<string, unknown> }> = [];
+
+    await expect(
+      ejecutarSetPuedeGestionarCreditoClientes(
+        { actorId: ADMIN, user_id: EMPLEADO, value: true },
+        {
+          async rpc(nombre, args) {
+            llamadas.push({ nombre, args });
+            return nombre === "is_admin"
+              ? { data: true, error: null }
+              : { data: null, error: null };
+          },
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(llamadas).toEqual([
+      { nombre: "is_admin", args: { _user_id: ADMIN } },
+      {
+        nombre: "administrar_puede_gestionar_credito_clientes",
+        args: { p_profile_id: EMPLEADO, p_puede: true },
+      },
+    ]);
+  });
+
+  it("propaga un fallo de la RPC sin informar éxito", async () => {
+    await expect(
+      ejecutarSetPuedeGestionarCreditoClientes(
         { actorId: ADMIN, user_id: EMPLEADO, value: false },
         {
           async rpc(nombre) {
@@ -520,10 +584,7 @@ describe("toggleUsuarioActivo", () => {
 
   it("relee el CAS tras timeouts finales y un retry supersedido repara Auth al deseo vigente", async () => {
     const doble = new ToggleCasDouble();
-    doble.ids = [
-      OP_RECONCILIAR,
-      "10000000-0000-4000-8000-000000000006",
-    ];
+    doble.ids = [OP_RECONCILIAR, "10000000-0000-4000-8000-000000000006"];
     doble.estado.perfilActivo = false;
     doble.estado.activoDeseado = false;
     doble.estado.authBloqueado = true;

@@ -334,6 +334,32 @@ describe("resolución server de receptor fiscal", () => {
     expect(receptor).toMatchObject({ condicionIva: "EXENTO", origen: "ARCA" });
   });
 
+  it.each(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"] as const)(
+    "falla cerrado una B declarada como %s cuando ARCA no confirma la condición",
+    async (condicionIva) => {
+      await expect(
+        resolverReceptorFiscal({
+          selector: {
+            origen: "MANUAL",
+            tipo_documento: "CUIT",
+            numero_documento: "30-71419966-4",
+            razon_social: "Nombre inventado",
+            condicion_iva: condicionIva,
+            domicilio: null,
+            guardar_para_proximas: false,
+            confirma_datos_manuales: true,
+          },
+          venta,
+          importeTotal: 100,
+          letraSolicitada: "B",
+          cargarFavorito: vi.fn(),
+          cargarOriginal: vi.fn(),
+          consultarPadron: async () => receptorPadron({ condicionIvaConfirmada: null }),
+        }),
+      ).rejects.toMatchObject({ codigoFiscalUsuario: "CONDICION_FISCAL_INCOMPATIBLE" });
+    },
+  );
+
   it("devuelve el receptor congelado del comprobante original sin consultar ARCA", async () => {
     const consultarPadron = vi.fn(async () => receptorPadron());
     const receptor = await resolverReceptorFiscal({

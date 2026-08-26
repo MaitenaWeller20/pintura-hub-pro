@@ -91,7 +91,11 @@ function receptorDesdePadron(input: {
   if (
     (input.letraSolicitada === "A" && confirmada === null) ||
     (input.letraSolicitada === "B" &&
-      (confirmada === "RESPONSABLE_INSCRIPTO" || confirmada === "MONOTRIBUTO"))
+      (confirmada === "RESPONSABLE_INSCRIPTO" ||
+        confirmada === "MONOTRIBUTO" ||
+        (confirmada === null &&
+          input.condicionDeclarada !== "EXENTO" &&
+          input.condicionDeclarada !== "CONSUMIDOR_FINAL")))
   ) {
     throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
   }

@@ -1,7 +1,7 @@
 # Validación obligatoria de receptores por padrón de ARCA
 
 - **Fecha:** 2026-08-26
-- **Estado:** diseño conversacional aprobado; pendiente de revisión del documento
+- **Estado:** aprobado
 - **Proyecto:** PinturaGest / Quimex
 - **Servicio ARCA:** `ws_sr_constancia_inscripcion`
 
@@ -348,6 +348,6 @@ código productivo.
 ## 13. Referencias oficiales
 
 - [Catálogo de Web Services de ARCA](https://www.arca.gob.ar/ws/documentacion/catalogo.asp)
-- [Manual de `ws_sr_constancia_inscripcion` v3.8](https://www.arca.gob.ar/ws/WSCI/manual_ws_sr_ws_constancia_inscripcion_v3.8.pdf)
+- [Manual de `ws_sr_constancia_inscripcion` v4.1](https://www.arca.gob.ar/ws/WSCI/manual_ws_sr_ws_constancia_inscripcion.pdf)
 - [WSAA: autenticación, certificados y asociación a servicios](https://www.afip.gob.ar/ws/documentacion/wsaa.asp)
 - [Certificados para producción](https://www.afip.gob.ar/ws/documentacion/certificados.asp)

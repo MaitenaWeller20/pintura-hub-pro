@@ -12,10 +12,8 @@ export type EstadoVisualPadron = "NO_CONFIGURADO" | "FALTA_PROBAR" | "ACTIVO" | 
 // eslint-disable-next-line react-refresh/only-export-components
 export function estadoVisualPadron(credencial: CredencialArcaPublica): EstadoVisualPadron {
   if (!credencial.tiene_certificado) return "NO_CONFIGURADO";
+  if (credencial.padron_ultimo_error_codigo) return "PRUEBA_FALLIDA";
   if (credencial.padron_validacion_activa && credencial.padron_probado_at) return "ACTIVO";
-  if (!credencial.padron_validacion_activa && credencial.padron_ultimo_error_codigo) {
-    return "PRUEBA_FALLIDA";
-  }
   return "FALTA_PROBAR";
 }
 

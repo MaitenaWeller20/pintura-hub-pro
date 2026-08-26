@@ -56,6 +56,24 @@ describe("contrato público de letra fiscal solicitada", () => {
     },
   );
 
+  it("rechaza una razón social vacía aunque el cliente omita la validación visual", () => {
+    expect(() =>
+      emitirInputSchema.parse({
+        ...emision,
+        receptor: {
+          origen: "MANUAL",
+          tipo_documento: "SIN_IDENTIFICAR",
+          numero_documento: null,
+          razon_social: "   ",
+          condicion_iva: "CONSUMIDOR_FINAL",
+          domicilio: null,
+          guardar_para_proximas: false,
+          confirma_datos_manuales: true,
+        },
+      }),
+    ).toThrow();
+  });
+
   it("exige A/B también al previsualizar borrador o venta ya registrada", () => {
     const esquema = esquemaPreviewFiscal();
     const ventaExistente = {
@@ -238,7 +256,10 @@ describe("detalle readonly de un incidente fiscal", () => {
       venta_id: INPUT.venta_id,
       estado: "BLOQUEADO",
       fase: "REQUEST_INICIADO",
-      mensaje: "La respuesta no coincide con la reserva.",
+      mensaje: {
+        tipo: "ERROR_FISCAL_USUARIO_V1",
+        codigo: "INCIDENTE_INTEGRIDAD",
+      },
       clase: "INTEGRIDAD",
       codigo: "RESPUESTA_DIVERGENTE",
       fase_error: "RESPUESTA_RECIBIDA",
@@ -249,20 +270,28 @@ describe("detalle readonly de un incidente fiscal", () => {
   });
 
   it("marca un incidente legacy sin inventar diferencias", () => {
-    expect(
-      proyectarIncidenteFiscal(
-        {
-          id: INPUT.venta_id,
-          afip_estado: "ERROR",
-          afip_fase: null,
-          afip_error: "Error heredado",
-          afip_error_clase: null,
-          afip_error_codigo: null,
-          afip_error_fase: null,
-          afip_ultimo_error_at: null,
-        },
-        null,
-      ),
-    ).toMatchObject({ legacy: true, diferencias: [] });
+    const incidente = proyectarIncidenteFiscal(
+      {
+        id: INPUT.venta_id,
+        afip_estado: "ERROR",
+        afip_fase: null,
+        afip_error: "Error heredado",
+        afip_error_clase: null,
+        afip_error_codigo: null,
+        afip_error_fase: null,
+        afip_ultimo_error_at: null,
+      },
+      null,
+    );
+
+    expect(incidente).toMatchObject({
+      legacy: true,
+      diferencias: [],
+      mensaje: {
+        tipo: "ERROR_FISCAL_USUARIO_V1",
+        codigo: "INCIDENTE_LEGACY_ERROR",
+      },
+    });
+    expect(JSON.stringify(incidente)).not.toContain("Error heredado");
   });
 });

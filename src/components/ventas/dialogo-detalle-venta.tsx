@@ -28,18 +28,19 @@ import {
   numeroFiscal,
   type VentaImpresa,
 } from "@/lib/fiscal/comprobante-pdf";
+import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import type { DatosFiscalesPreparados } from "@/lib/fiscal/impresion";
 import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { leerComprobanteAsociadoFiscal, leerReceptorFiscalCongelado } from "@/lib/ventas-ui";
+import type { VentaSeguraOperador } from "@/lib/ventas-proyeccion";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
 
-type VentaRow = Database["public"]["Tables"]["ventas"]["Row"];
 type ItemVenta = Database["public"]["Tables"]["venta_items"]["Row"];
 type PagoVenta = Database["public"]["Tables"]["venta_pagos"]["Row"];
 
-export type VentaDetalle = VentaRow & {
+export type VentaDetalle = VentaSeguraOperador & {
   cliente?: { razon_social: string | null; cuit_dni: string | null } | null;
   sucursal?: { nombre: string | null; telefono?: string | null } | null;
 };
@@ -137,8 +138,7 @@ export function DialogoDetalleVenta({
       );
       resultado.doc.save(resultado.nombre);
     } catch (error) {
-      const mensaje = error instanceof Error ? error.message : "No se pudo preparar el PDF fiscal.";
-      toast.error(mensaje, { duration: 12000 });
+      toast.error(mensajeErrorFiscal(error, "CONSULTA"), { duration: 12000 });
     } finally {
       setImprimiendo(false);
     }
@@ -283,9 +283,7 @@ export function DialogoDetalleVenta({
                 data-testid="error-detalle-venta"
               >
                 <p className="text-sm font-medium text-destructive">
-                  {detalleQuery.error instanceof Error
-                    ? detalleQuery.error.message
-                    : "No se pudo cargar el detalle completo de la venta."}
+                  {mensajeErrorFiscal(detalleQuery.error, "CONSULTA")}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   La descarga permanece deshabilitada hasta recuperar ítems y pagos.

@@ -28,6 +28,7 @@ import {
 import { decryptString, encryptString } from "./crypto";
 import { MOCK, ultimoAutorizado } from "./arca";
 import { autorizarAdministradorFiscal } from "./permiso.server";
+import { parsearEntradaFiscal } from "./error-usuario";
 
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -205,14 +206,16 @@ export const obtenerEstadoFiscalPublico = createServerFn({ method: "GET" })
 export const guardarPuntoVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
+    parsearEntradaFiscal(
+      z.object({
         sucursal_id: z.string().uuid(),
         numero: z.number().int().positive(),
         modo: ambienteSchema,
         activo: z.boolean(),
-      })
-      .parse(d),
+      }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
     const sb = await autorizarAntesDeClientePrivilegiado(
@@ -266,7 +269,11 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
 export const generarCsr = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ emisor_id: z.string().uuid(), ambiente: ambienteSchema }).parse(d),
+    parsearEntradaFiscal(
+      z.object({ emisor_id: z.string().uuid(), ambiente: ambienteSchema }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
     const sb = await autorizarAntesDeClientePrivilegiado(
@@ -335,9 +342,11 @@ export const generarCsr = createServerFn({ method: "POST" })
 export const guardarCertificado = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({ emisor_id: z.string().uuid(), ambiente: ambienteSchema, pem: z.string().min(1) })
-      .parse(d),
+    parsearEntradaFiscal(
+      z.object({ emisor_id: z.string().uuid(), ambiente: ambienteSchema, pem: z.string().min(1) }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
     const sb = await autorizarAntesDeClientePrivilegiado(
@@ -379,7 +388,9 @@ export const guardarCertificado = createServerFn({ method: "POST" })
 
 export const probarConexionAfip = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ sucursal_id: z.string().uuid() }).strict().parse(d))
+  .inputValidator((d: unknown) =>
+    parsearEntradaFiscal(z.object({ sucursal_id: z.string().uuid() }).strict(), d, "CONFIGURACION"),
+  )
   .handler(async ({ data, context }) => {
     const sb = await autorizarAntesDeClientePrivilegiado(
       () => exigirAdmin(context.supabase, context.userId),
@@ -403,7 +414,9 @@ export const probarConexionAfip = createServerFn({ method: "POST" })
 
 export const guardarModalidadFacturaA = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => confirmacionModalidadFacturaASchema.parse(d))
+  .inputValidator((d: unknown) =>
+    parsearEntradaFiscal(confirmacionModalidadFacturaASchema, d, "CONFIGURACION"),
+  )
   .handler(async ({ data, context }) => {
     const sb = await autorizarAntesDeClientePrivilegiado(
       () => exigirAdmin(context.supabase, context.userId),
@@ -429,13 +442,15 @@ export const guardarModalidadFacturaA = createServerFn({ method: "POST" })
 export const guardarHabilitacionCredencial = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
+    parsearEntradaFiscal(
+      z.object({
         emisor_id: z.string().uuid(),
         ambiente: ambienteSchema,
         habilitada: z.boolean(),
-      })
-      .parse(d),
+      }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
     const sb = await autorizarAntesDeClientePrivilegiado(

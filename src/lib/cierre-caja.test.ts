@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { calcularEfectivoCierre, generarCierreCajaPdf } from "./cierre-caja";
+import {
+  calcularCorreccionCierre,
+  calcularEfectivoCierre,
+  generarCierreCajaPdf,
+  mensajeErrorCorreccionCaja,
+  validarCorreccionCierre,
+} from "./cierre-caja";
 
 function textoDelPdf(doc: ReturnType<typeof generarCierreCajaPdf>): string {
   const raw = doc.output("arraybuffer");
@@ -29,6 +35,75 @@ describe("cierre de efectivo", () => {
       retirado: -13_400,
       dejadoValido: false,
     });
+  });
+});
+
+describe("corrección auditada de un cierre", () => {
+  it("recalcula diferencias y totales sin modificar lo contado en otras formas", () => {
+    expect(
+      calcularCorreccionCierre({
+        esperado: {
+          EFECTIVO: { neto: 125_933.17 },
+          CHEQUE: { neto: 2_000_000 },
+        },
+        contadoActual: { EFECTIVO: 12_533.17, CHEQUE: 1_999_000 },
+        efectivoContado: 125_933.17,
+        efectivoDejado: 25_933.17,
+      }),
+    ).toEqual({
+      contado: { EFECTIVO: 125_933.17, CHEQUE: 1_999_000 },
+      diferencia: { EFECTIVO: 0, CHEQUE: -1_000 },
+      totalEsperado: 2_125_933.17,
+      totalContado: 2_124_933.17,
+      totalDiferencia: -1_000,
+      efectivoRetirado: 100_000,
+    });
+  });
+
+  it("exige motivo y no deja alterar el fondo que ya originó un turno posterior", () => {
+    expect(
+      validarCorreccionCierre({
+        efectivoContadoActual: 100,
+        efectivoDejadoActual: 20,
+        efectivoContado: 110,
+        efectivoDejado: 30,
+        motivo: "",
+        tieneTurnoPosterior: false,
+      }),
+    ).toContain("motivo");
+
+    expect(
+      validarCorreccionCierre({
+        efectivoContadoActual: 100,
+        efectivoDejadoActual: 20,
+        efectivoContado: 110,
+        efectivoDejado: 30,
+        motivo: "Corrección del conteo informado",
+        tieneTurnoPosterior: true,
+      }),
+    ).toContain("turno posterior");
+  });
+
+  it("conserva errores operativos y oculta detalles técnicos", () => {
+    expect(
+      mensajeErrorCorreccionCaja(
+        new Error(
+          "Otra persona corrigió este cierre. Cerrá esta ventana, revisá los cambios y volvé a intentarlo.",
+        ),
+      ),
+    ).toContain("Otra persona corrigió");
+    expect(mensajeErrorCorreccionCaja(new Error('PGRST204: column "contado" does not exist'))).toBe(
+      "No pudimos guardar la corrección. El cierre no fue modificado; actualizá la página y volvé a intentar.",
+    );
+    expect(
+      mensajeErrorCorreccionCaja(
+        new Error(
+          "No se pudo guardar la corrección: value too long for type character varying(20)",
+        ),
+      ),
+    ).toBe(
+      "No pudimos guardar la corrección. El cierre no fue modificado; actualizá la página y volvé a intentar.",
+    );
   });
 });
 

@@ -10,7 +10,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
+import type { CondicionIva } from "@/lib/fiscal/codigos";
 import type { SelectorReceptorFiscal } from "@/lib/fiscal/receptor";
+import { crearErrorFiscalUsuario, mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import {
   ReceptorFiscalForm,
   type ReceptorFormulario,
@@ -38,9 +40,17 @@ import {
   reconfirmarPreviewEmisionFiscal,
   type ResultadoEmisionFiscalUi,
 } from "./dialogo-emision-contract";
+import {
+  validarSelectorReceptorFiscal,
+  type CampoReceptorFiscal,
+} from "./dialogo-emision-validacion";
 
 export type ContextoDialogoEmision = {
-  comprador: { razonSocial: string; documento: string | null };
+  comprador: {
+    razonSocial: string;
+    documento: string | null;
+    condicionIva: CondicionIva | null;
+  };
   emisor: { razonSocial: string; cuit: string };
   sucursal: {
     nombre: string;
@@ -51,55 +61,25 @@ export type ContextoDialogoEmision = {
   receptorHeredado?: ReceptorHeredadoVista | null;
 };
 
-function selectorListo(
-  value: ReceptorFormulario,
-  confirmaDatosManuales: boolean,
-  letraSolicitada: LetraSolicitada,
-): SelectorReceptorFiscal {
-  if (value.origen !== "MANUAL") return value;
-  if (!confirmaDatosManuales) {
-    throw new Error("Confirmá expresamente los datos del receptor manual.");
-  }
-  if (
-    letraSolicitada === "A" &&
-    (value.tipo_documento !== "CUIT" || !value.numero_documento.trim())
-  ) {
-    throw new Error("La factura A requiere el CUIT del receptor.");
-  }
-  if (
-    letraSolicitada === "A" &&
-    value.condicion_iva !== "RESPONSABLE_INSCRIPTO" &&
-    value.condicion_iva !== "MONOTRIBUTO"
-  ) {
-    throw new Error("La factura A requiere un receptor Responsable Inscripto o Monotributista.");
-  }
-  if (
-    letraSolicitada === "B" &&
-    value.condicion_iva !== "CONSUMIDOR_FINAL" &&
-    value.condicion_iva !== "EXENTO"
-  ) {
-    throw new Error("La factura B requiere un receptor Consumidor Final o Exento.");
-  }
-  const sinIdentificacion =
-    letraSolicitada === "B" &&
-    (value.tipo_documento === "SIN_IDENTIFICAR" || !value.numero_documento.trim());
-  return {
-    origen: "MANUAL",
-    tipo_documento: sinIdentificacion ? "SIN_IDENTIFICAR" : value.tipo_documento,
-    numero_documento: sinIdentificacion ? null : value.numero_documento.trim(),
-    razon_social: value.razon_social,
-    condicion_iva: value.condicion_iva,
-    domicilio: value.domicilio.trim() ? value.domicilio : null,
-    guardar_para_proximas: value.guardar_para_proximas,
-    confirma_datos_manuales: true,
-  };
-}
-
 function letraParaNota(receptor: ReceptorHeredadoVista | null | undefined): LetraSolicitada {
   return receptor?.condicionIva === "RESPONSABLE_INSCRIPTO" ||
     receptor?.condicionIva === "MONOTRIBUTO"
     ? "A"
     : "B";
+}
+
+function enfocarErrorReceptor(campo: CampoReceptorFiscal): void {
+  if (typeof document === "undefined") return;
+  const idPorCampo: Record<CampoReceptorFiscal, string> = {
+    cliente_comercial: "receptor-cliente-comercial",
+    receptor: "receptor-favorito",
+    tipo_documento: "receptor-tipo-documento",
+    numero_documento: "receptor-numero-documento",
+    razon_social: "receptor-razon-social",
+    condicion_iva: "receptor-condicion-iva",
+    confirmacion: "confirmar-datos-receptor",
+  };
+  document.getElementById(idPorCampo[campo])?.focus();
 }
 
 export function DialogoEmisionFiscal({
@@ -146,6 +126,9 @@ export function DialogoEmisionFiscal({
   const [previsualizando, setPrevisualizando] = useState(false);
   const [emitiendo, setEmitiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [erroresReceptor, setErroresReceptor] = useState<
+    Partial<Record<CampoReceptorFiscal, string>>
+  >({});
   const initialFocusRef = useRef<HTMLInputElement>(null);
   const previewControlRef = useRef(crearControlSolicitudPreview());
   const emitiendoRef = useRef(false);
@@ -157,6 +140,7 @@ export function DialogoEmisionFiscal({
     setConfirmaVentaAntigua(false);
     setPrevisualizando(false);
     setError(null);
+    setErroresReceptor({});
     invalidarSolicitudPreview(previewControlRef.current);
   };
 
@@ -174,6 +158,7 @@ export function DialogoEmisionFiscal({
     setPreview(null);
     setConfirmaVentaAntigua(false);
     setError(null);
+    setErroresReceptor({});
   };
 
   const cambiarLetra = (letraSolicitada: LetraSolicitada) => {
@@ -186,17 +171,40 @@ export function DialogoEmisionFiscal({
     setPreview(null);
     setConfirmaVentaAntigua(false);
     setError(null);
+    setErroresReceptor({});
+  };
+
+  const validarReceptor = (letraSolicitada: LetraSolicitada): SelectorReceptorFiscal | null => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: receptor,
+      confirmaDatosManuales: confirmacion.confirmaDatosManuales,
+      letraSolicitada,
+      clienteComercial: contexto.comprador,
+      favoritos,
+    });
+    if (resultado.ok) {
+      setErroresReceptor({});
+      return resultado.selector;
+    }
+    setError(null);
+    setErroresReceptor({ [resultado.campo]: resultado.mensaje });
+    enfocarErrorReceptor(resultado.campo);
+    return null;
   };
 
   const preparar = async () => {
+    const letraSolicitada = confirmacion.letraSolicitada;
+    if (!letraSolicitada) {
+      setError("Elegí si querés emitir una factura A o una factura B.");
+      return;
+    }
+    const selector = validarReceptor(letraSolicitada);
+    if (!selector) return;
     const token = iniciarSolicitudPreview(previewControlRef.current);
     if (token === null) return;
     setPrevisualizando(true);
     setError(null);
     try {
-      const letraSolicitada = confirmacion.letraSolicitada;
-      if (!letraSolicitada) throw new Error("Elegí si querés emitir factura A o factura B.");
-      const selector = selectorListo(receptor, confirmacion.confirmaDatosManuales, letraSolicitada);
       const resultado = parsePreviewEmisionFiscal(
         await onPrevisualizar({ receptor: selector, letraSolicitada }),
         esNota ? undefined : letraSolicitada,
@@ -208,7 +216,7 @@ export function DialogoEmisionFiscal({
       );
     } catch (cause) {
       if (esSolicitudPreviewActual(previewControlRef.current, token)) {
-        setError(cause instanceof Error ? cause.message : "No se pudo revisar la emisión fiscal.");
+        setError(mensajeErrorFiscal(cause, "REVISION"));
       }
     } finally {
       if (esSolicitudPreviewActual(previewControlRef.current, token)) {
@@ -231,7 +239,8 @@ export function DialogoEmisionFiscal({
     setError(null);
     try {
       const letraSolicitada = confirmacion.letraSolicitada;
-      const selector = selectorListo(receptor, confirmacion.confirmaDatosManuales, letraSolicitada);
+      const selector = validarReceptor(letraSolicitada);
+      if (!selector) return;
       const respuesta = await onConfirmar({
         receptor: selector,
         letraSolicitada,
@@ -251,7 +260,7 @@ export function DialogoEmisionFiscal({
             registrarReconfirmacion(actual, resultado.huella_confirmacion),
           );
           setConfirmaVentaAntigua(false);
-          setError(resultado.mensaje);
+          setError(mensajeErrorFiscal(crearErrorFiscalUsuario("RECONFIRMACION"), "EMISION"));
         },
         onCompletada(resultado) {
           onCompletada?.(resultado);
@@ -260,7 +269,7 @@ export function DialogoEmisionFiscal({
         },
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo emitir el comprobante.");
+      setError(mensajeErrorFiscal(cause, "EMISION"));
     } finally {
       emitiendoRef.current = false;
       setEmitiendo(false);
@@ -401,13 +410,15 @@ export function DialogoEmisionFiscal({
             receptorHeredado={contexto.receptorHeredado}
             letraSolicitada={confirmacion.letraSolicitada}
             confirmaDatosManuales={confirmacion.confirmaDatosManuales}
+            errores={erroresReceptor}
             disabled={
               emitiendo || previsualizando || (!esNota && confirmacion.letraSolicitada === null)
             }
             onChange={cambiarReceptor}
-            onConfirmaDatosManuales={(value) =>
-              setConfirmacion((actual) => ({ ...actual, confirmaDatosManuales: value }))
-            }
+            onConfirmaDatosManuales={(value) => {
+              setErroresReceptor({});
+              setConfirmacion((actual) => ({ ...actual, confirmaDatosManuales: value }));
+            }}
           />
 
           {preview ? (

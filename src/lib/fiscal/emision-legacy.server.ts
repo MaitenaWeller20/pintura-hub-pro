@@ -40,6 +40,7 @@ import {
   resolverReceptorFiscalLegacy,
   type ReceptorDeclaradoLegacy,
 } from "./snapshot";
+import { COLUMNAS_VENTA_SEGURAS } from "../ventas-proyeccion";
 
 // Ventana de gracia del claim anti doble-submit: si una emisión de la MISMA venta
 // se reservó hace menos que esto, un segundo request no puede re-reservar (se
@@ -93,7 +94,7 @@ export async function emitirComprobanteLegacy({
   // (otra sucursal), no puede facturarla.
   const { data: venta, error: vErr } = await supabase
     .from("ventas")
-    .select("*, cliente:clientes(razon_social, cuit_dni, tipo, direccion)")
+    .select(`${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social, cuit_dni, tipo, direccion)`)
     .eq("id", data.venta_id)
     .single();
   if (vErr || !venta) throw new Error("Venta no encontrada.");
@@ -588,7 +589,7 @@ export async function datosFiscalesComprobanteLegacy({
   const sb = await admin();
   const { data: venta } = await context.supabase
     .from("ventas")
-    .select("*, cliente:clientes(razon_social, cuit_dni, tipo, direccion)")
+    .select(`${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social, cuit_dni, tipo, direccion)`)
     .eq("id", data.venta_id)
     .single();
 

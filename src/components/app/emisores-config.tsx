@@ -17,6 +17,7 @@ import { AlertTriangle, Loader2, Upload, Trash2 } from "lucide-react";
 import { listarEmisores, guardarEmisor, guardarContactoSucursal } from "@/lib/emisores.functions";
 import { guardarModalidadFacturaA } from "@/lib/fiscal/config.functions";
 import { QUERY_KEY_CONFIG_FISCAL_ADMIN } from "@/lib/fiscal/config";
+import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 
 /**
  * Los datos que salen en el encabezado de presupuestos y remitos.
@@ -100,7 +101,11 @@ export function EmisoresConfig({ esAdmin = false }: { esAdmin?: boolean }) {
   const grabarModalidadA = useServerFn(guardarModalidadFacturaA);
   const [subiendo, setSubiendo] = useState<string | null>(null);
 
-  const { data: emisores = [], isLoading } = useQuery({
+  const {
+    data: emisores = [],
+    isLoading,
+    error: errorEmisores,
+  } = useQuery({
     queryKey: ["emisores"],
     queryFn: () => traer(),
   });
@@ -114,12 +119,12 @@ export function EmisoresConfig({ esAdmin = false }: { esAdmin?: boolean }) {
   const mEmisor = useMutation({
     mutationFn: (d: any) => grabarEmisor({ data: d }),
     onSuccess: refrescar,
-    onError: (e: any) => toast.error(e.message),
+    onError: (error: unknown) => toast.error(mensajeErrorFiscal(error, "CONFIGURACION")),
   });
   const mSucursal = useMutation({
     mutationFn: (d: any) => grabarSucursal({ data: d }),
     onSuccess: refrescar,
-    onError: (e: any) => toast.error(e.message),
+    onError: (error: unknown) => toast.error(mensajeErrorFiscal(error, "CONFIGURACION")),
   });
   const mModalidadA = useMutation({
     mutationFn: (d: {
@@ -129,7 +134,7 @@ export function EmisoresConfig({ esAdmin = false }: { esAdmin?: boolean }) {
       revalidar_at: string;
     }) => grabarModalidadA({ data: d }),
     onSuccess: refrescar,
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: unknown) => toast.error(mensajeErrorFiscal(error, "CONFIGURACION")),
   });
 
   const subirLogo = async (emisorId: string, file: File) => {
@@ -138,14 +143,23 @@ export function EmisoresConfig({ esAdmin = false }: { esAdmin?: boolean }) {
       const logo = await aDataUrl(file);
       const em = emisores.find((e: any) => e.id === emisorId);
       await mEmisor.mutateAsync({ ...soloCampos(em), id: emisorId, logo });
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (error: unknown) {
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"));
     } finally {
       setSubiendo(null);
     }
   };
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Cargando…</p>;
+  if (errorEmisores) {
+    return (
+      <SectionCard title="Identidad fiscal e impresos">
+        <p role="alert" className="text-sm font-medium text-destructive">
+          {mensajeErrorFiscal(errorEmisores, "CONFIGURACION")}
+        </p>
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard title="Identidad fiscal e impresos">

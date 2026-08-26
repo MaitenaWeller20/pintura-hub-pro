@@ -29,15 +29,32 @@ type ReceptorFiscalFormConLetra = (
 
 function renderFormulario(
   letraSolicitada: LetraSolicitada,
-  value: Extract<ReceptorFormulario, { origen: "MANUAL" }> = RECEPTOR_MANUAL,
+  value: ReceptorFormulario = RECEPTOR_MANUAL,
+  errores: Partial<
+    Record<
+      | "cliente_comercial"
+      | "receptor"
+      | "tipo_documento"
+      | "numero_documento"
+      | "razon_social"
+      | "condicion_iva"
+      | "confirmacion",
+      string
+    >
+  > = {},
 ): string {
   return renderToStaticMarkup(
     createElement(ReceptorFiscalForm as ReceptorFiscalFormConLetra, {
       value,
       letraSolicitada,
       favoritos: [],
-      clienteComercial: { razonSocial: "Cliente comercial", documento: null },
+      clienteComercial: {
+        razonSocial: "Cliente comercial",
+        documento: null,
+        condicionIva: "CONSUMIDOR_FINAL",
+      },
       confirmaDatosManuales: false,
+      errores,
       disabled: false,
       onChange: vi.fn(),
       onConfirmaDatosManuales: vi.fn(),
@@ -54,6 +71,29 @@ function select(html: string, id: string): string {
 }
 
 describe("receptor según la letra solicitada", () => {
+  it("explica cuándo usar el cliente comercial y cuándo otro receptor", () => {
+    const html = renderFormulario("B");
+
+    expect(html).toContain("Sólo para factura B a Consumidor Final sin identificación fiscal.");
+    expect(html).toContain("Ingresá los datos de otra persona o empresa.");
+  });
+
+  it("asocia la incompatibilidad del cliente comercial con su opción", () => {
+    const mensaje = "Cliente comercial sólo permite factura B sin identificación fiscal.";
+    const html = renderFormulario(
+      "A",
+      { origen: "CLIENTE_COMERCIAL" },
+      {
+        cliente_comercial: mensaje,
+      },
+    );
+    const opcion = html.match(/<input[^>]*id="receptor-cliente-comercial"[^>]*>/)?.[0] ?? "";
+
+    expect(opcion).toContain('aria-invalid="true"');
+    expect(opcion).toContain('aria-describedby="error-receptor-cliente-comercial"');
+    expect(html).toContain(mensaje);
+  });
+
   it("para factura A muestra CUIT y exige completar el documento", () => {
     const html = renderFormulario("A", { ...RECEPTOR_MANUAL, numero_documento: "" });
     const documento = inputDocumento(html);
@@ -63,6 +103,35 @@ describe("receptor según la letra solicitada", () => {
     );
     expect(documento).toContain('required=""');
     expect(documento).not.toContain('disabled=""');
+  });
+
+  it("marca la razón social y explica cómo corregirla", () => {
+    const mensaje =
+      "Completá la razón social del receptor. ARCA la necesita para identificar a quién se emite el comprobante.";
+    const html = renderFormulario(
+      "B",
+      { ...RECEPTOR_MANUAL, razon_social: "" },
+      {
+        razon_social: mensaje,
+      },
+    );
+    const razonSocial = html.match(/<input[^>]*id="receptor-razon-social"[^>]*>/)?.[0] ?? "";
+
+    expect(razonSocial).toContain('aria-invalid="true"');
+    expect(razonSocial).toContain('aria-describedby="error-receptor-razon-social"');
+    expect(html).toContain(`id="error-receptor-razon-social"`);
+    expect(html).toContain(mensaje);
+  });
+
+  it("asocia el error de confirmación con su casilla", () => {
+    const mensaje = "Confirmá que revisaste los datos fiscales ingresados antes de continuar.";
+    const html = renderFormulario("B", RECEPTOR_MANUAL, { confirmacion: mensaje });
+    const confirmacion = html.match(/<input[^>]*id="confirmar-datos-receptor"[^>]*>/)?.[0] ?? "";
+
+    expect(confirmacion).toContain('aria-invalid="true"');
+    expect(confirmacion).toContain('aria-describedby="error-confirmar-datos-receptor"');
+    expect(html).toContain(`id="error-confirmar-datos-receptor"`);
+    expect(html).toContain(mensaje);
   });
 
   it("para factura A sólo permite CUIT y condiciones Responsable Inscripto o Monotributo", () => {
@@ -83,6 +152,37 @@ describe("receptor según la letra solicitada", () => {
     expect(documento).toContain('value="30714199664"');
     expect(documento).not.toContain('required=""');
     expect(documento).not.toContain('disabled=""');
+  });
+
+  it("explica y marca como obligatorio el documento de un receptor Exento", () => {
+    const html = renderFormulario("B", {
+      ...RECEPTOR_MANUAL,
+      numero_documento: "",
+      condicion_iva: "EXENTO",
+    });
+
+    expect(html).toContain("Los receptores Exentos deben identificarse con un documento válido.");
+    expect(inputDocumento(html)).toContain('required=""');
+    expect(html).not.toContain("Número de documento (opcional)");
+  });
+
+  it("asocia el error de identificación del Exento con el selector de documento", () => {
+    const mensaje = "Un receptor Exento debe identificarse con un documento válido.";
+    const html = renderFormulario(
+      "B",
+      {
+        ...RECEPTOR_MANUAL,
+        tipo_documento: "SIN_IDENTIFICAR",
+        numero_documento: "",
+        condicion_iva: "EXENTO",
+      },
+      { tipo_documento: mensaje },
+    );
+    const tipoDocumento = html.match(/<select[^>]*id="receptor-tipo-documento"[^>]*>/)?.[0];
+
+    expect(tipoDocumento).toContain('aria-invalid="true"');
+    expect(tipoDocumento).toContain('aria-describedby="error-receptor-tipo-documento"');
+    expect(html).toContain(mensaje);
   });
 
   it("para factura B también permite continuar sin identificación", () => {

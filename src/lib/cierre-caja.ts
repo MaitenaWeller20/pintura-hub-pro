@@ -50,6 +50,112 @@ export type DatosCierreCajaPdf = {
 const redondearCentavos = (valor: number) =>
   Math.round((Number(valor) + Number.EPSILON) * 100) / 100;
 
+export function calcularCorreccionCierre({
+  esperado,
+  contadoActual,
+  efectivoContado,
+  efectivoDejado,
+}: {
+  esperado: Record<string, CajaForma>;
+  contadoActual: Record<string, number>;
+  efectivoContado: number;
+  efectivoDejado: number;
+}) {
+  const formas = Array.from(
+    new Set([...Object.keys(esperado), ...Object.keys(contadoActual), "EFECTIVO"]),
+  );
+  const contado = Object.fromEntries(
+    formas.map((forma) => [
+      forma,
+      redondearCentavos(forma === "EFECTIVO" ? efectivoContado : Number(contadoActual[forma] ?? 0)),
+    ]),
+  );
+  const diferencia = Object.fromEntries(
+    formas.map((forma) => [
+      forma,
+      redondearCentavos(contado[forma] - Number(esperado[forma]?.neto ?? 0)),
+    ]),
+  );
+  const totalEsperado = redondearCentavos(
+    formas.reduce((total, forma) => total + Number(esperado[forma]?.neto ?? 0), 0),
+  );
+  const totalContado = redondearCentavos(
+    formas.reduce((total, forma) => total + contado[forma], 0),
+  );
+
+  return {
+    contado,
+    diferencia,
+    totalEsperado,
+    totalContado,
+    totalDiferencia: redondearCentavos(totalContado - totalEsperado),
+    efectivoRetirado: redondearCentavos(efectivoContado - efectivoDejado),
+  };
+}
+
+export function validarCorreccionCierre({
+  efectivoDejadoActual,
+  efectivoContado,
+  efectivoDejado,
+  motivo,
+  tieneTurnoPosterior,
+}: {
+  efectivoContadoActual: number;
+  efectivoDejadoActual: number;
+  efectivoContado: number;
+  efectivoDejado: number;
+  motivo: string;
+  tieneTurnoPosterior: boolean;
+}): string | null {
+  if (!Number.isFinite(efectivoContado) || !Number.isFinite(efectivoDejado)) {
+    return "Completá el efectivo contado y el efectivo dejado con importes válidos.";
+  }
+  if (efectivoContado < 0 || efectivoDejado < 0 || efectivoDejado > efectivoContado) {
+    return "El efectivo dejado no puede superar al contado ni contener valores negativos.";
+  }
+  if (motivo.trim().length < 5) {
+    return "Escribí un motivo concreto para que la corrección quede auditada.";
+  }
+  if (
+    tieneTurnoPosterior &&
+    redondearCentavos(efectivoDejado) !== redondearCentavos(efectivoDejadoActual)
+  ) {
+    return "No se puede cambiar el efectivo dejado porque ya existe un turno posterior que tomó ese fondo inicial.";
+  }
+  return null;
+}
+
+const MENSAJES_CORRECCION_CAJA_USUARIO = new Set([
+  "Iniciá sesión nuevamente para corregir el cierre.",
+  "Sólo un administrador puede corregir un cierre de caja.",
+  "Elegí el cierre de caja que querés corregir.",
+  "Completá el efectivo contado y el efectivo dejado.",
+  "Completá el efectivo contado y el efectivo dejado con importes válidos.",
+  "El efectivo contado y el dejado no pueden ser negativos.",
+  "El efectivo dejado no puede superar al efectivo contado.",
+  "El efectivo dejado no puede superar al contado ni contener valores negativos.",
+  "Escribí un motivo concreto para que la corrección quede auditada.",
+  "Las observaciones no pueden superar los 2000 caracteres.",
+  "Volvé a abrir el cierre antes de corregirlo.",
+  "El cierre de caja seleccionado ya no existe.",
+  "La caja todavía está abierta y no se puede corregir como cierre.",
+  "Otra persona corrigió este cierre. Cerrá esta ventana, revisá los cambios y volvé a intentarlo.",
+  "Este cierre histórico no conserva el detalle necesario para recalcularlo. Avisale a un administrador técnico.",
+  "No se puede cambiar el efectivo dejado porque ya existe un turno posterior que tomó ese fondo inicial.",
+  "No hay cambios para guardar en este cierre.",
+]);
+
+export function mensajeErrorCorreccionCaja(error: unknown): string {
+  const mensaje =
+    error instanceof Error
+      ? error.message.trim()
+      : typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message: unknown }).message).trim()
+        : "";
+  if (MENSAJES_CORRECCION_CAJA_USUARIO.has(mensaje)) return mensaje;
+  return "No pudimos guardar la corrección. El cierre no fue modificado; actualizá la página y volvé a intentar.";
+}
+
 export function calcularEfectivoCierre(esperado: number, contado: number, dejado: number) {
   const diferencia = redondearCentavos(contado - esperado);
   const retirado = redondearCentavos(contado - dejado);

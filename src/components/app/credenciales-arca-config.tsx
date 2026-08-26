@@ -36,6 +36,7 @@ import {
 } from "@/lib/fiscal/config.functions";
 import type { AmbienteArca } from "@/lib/fiscal/contexto";
 import { QUERY_KEY_CONFIG_FISCAL_ADMIN } from "@/lib/fiscal/config";
+import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 
 type Emisor = ConfigFiscalPublica["emisores"][number];
 type Sucursal = Emisor["sucursales"][number];
@@ -106,7 +107,7 @@ export function CredencialesArcaConfig() {
       toast.success("Punto de venta guardado");
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: unknown) => toast.error(mensajeErrorFiscal(error, "CONFIGURACION")),
   });
 
   const mCsr = useMutation({
@@ -120,7 +121,8 @@ export function CredencialesArcaConfig() {
       toast.success("CSR descargado. Podés enviárselo a la contadora.");
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 8_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 8_000 }),
   });
 
   const mCert = useMutation({
@@ -130,7 +132,8 @@ export function CredencialesArcaConfig() {
       toast.success(`Certificado cargado. Vence el ${fmtDate(r.vence)}.`);
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 10_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 10_000 }),
   });
 
   const mPrueba = useMutation({
@@ -141,7 +144,8 @@ export function CredencialesArcaConfig() {
       else toast.success(mensaje);
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 10_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 10_000 }),
   });
 
   const mHabilitar = useMutation({
@@ -151,14 +155,17 @@ export function CredencialesArcaConfig() {
       toast.success(r.habilitada ? "Credencial habilitada" : "Credencial deshabilitada");
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 8_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 8_000 }),
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Cargando ARCA…</p>;
   if (error || !data) {
     return (
       <SectionCard>
-        <p className="text-sm text-destructive">No se pudo cargar la configuración de ARCA.</p>
+        <p role="alert" className="text-sm font-medium text-destructive">
+          {mensajeErrorFiscal(error, "CONFIGURACION")}
+        </p>
       </SectionCard>
     );
   }

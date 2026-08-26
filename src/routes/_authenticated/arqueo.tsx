@@ -21,13 +21,18 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { NumberInput } from "@/components/ui/number-input";
 import {
+  DialogoCorreccionCierre,
+  DialogoHistorialCorrecciones,
+  type CierreCajaCorregible,
+} from "@/components/caja/correccion-cierre";
+import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel } from "@/lib/format";
 import { calcularEfectivoCierre, generarCierreCajaPdf } from "@/lib/cierre-caja";
-import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
+import { History, LockOpen, Lock, Pencil, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/arqueo")({
@@ -121,7 +126,12 @@ function ArqueoPage() {
         </SectionCard>
       )}
 
-      <Historial sucId={effSucId} sucNombre={sucNombre} />
+      <Historial
+        sucId={effSucId}
+        sucNombre={sucNombre}
+        esAdmin={cu?.isAdmin === true}
+        haySesionAbierta={Boolean(sesion)}
+      />
     </div>
   );
 }
@@ -419,49 +429,104 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
 }
 
 // ---------------- Historial ----------------
-function Historial({ sucId, sucNombre }: { sucId: string; sucNombre: string }) {
+function Historial({ sucId, sucNombre, esAdmin, haySesionAbierta }: {
+  sucId: string; sucNombre: string; esAdmin: boolean; haySesionAbierta: boolean;
+}) {
+  const qc = useQueryClient();
+  const [corrigiendo, setCorrigiendo] = useState<{
+    sesion: CierreCajaCorregible; tieneTurnoPosterior: boolean;
+  } | null>(null);
+  const [viendoHistorial, setViendoHistorial] = useState<CierreCajaCorregible | null>(null);
   const { data: sesiones = [] } = useQuery({
     queryKey: ["caja-historial", sucId],
     enabled: !!sucId,
     queryFn: async () => ((await supabase.from("caja_sesiones")
       .select("*").eq("sucursal_id", sucId).eq("estado", "CERRADA")
-      .order("cerrada_en", { ascending: false }).limit(20)).data ?? []) as any[],
+      .order("cerrada_en", { ascending: false }).limit(20)).data ?? []) as CierreCajaCorregible[],
   });
 
   if (!sesiones.length) return null;
   return (
-    <SectionCard title="Cierres anteriores" className="mt-4">
-      <Table>
-        <TableHeader><TableRow>
-          <TableHead>Abierta</TableHead><TableHead>Cerrada</TableHead>
-          <TableHead className="text-right">Esperado</TableHead>
-          <TableHead className="text-right">Contado</TableHead>
-          <TableHead className="text-right">Diferencia</TableHead>
-          <TableHead className="text-right">Dejado</TableHead>
-          <TableHead></TableHead>
-        </TableRow></TableHeader>
-        <TableBody>
-          {sesiones.map((s) => (
-            <TableRow key={s.id}>
-              <TableCell className="text-xs">{fmtDateTime(s.abierta_en)}</TableCell>
-              <TableCell className="text-xs">{fmtDateTime(s.cerrada_en)}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.total_esperado)}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.total_contado)}</TableCell>
-              <TableCell className={`text-right font-mono tabular-nums ${
-                Number(s.total_diferencia) === 0 ? "text-success" : "text-destructive"
-              }`}>
-                {Number(s.total_diferencia) > 0 ? "+" : ""}{fmtMoney(s.total_diferencia)}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.efectivo_dejado ?? 0)}</TableCell>
-              <TableCell className="text-right">
-                <Button size="sm" variant="ghost" onClick={() => { pdfCierre(s, sucNombre).catch((e) => toast.error("No se pudo generar el PDF: " + e.message)); }} title="Descargar PDF del cierre">
-                  <Printer className="h-3.5 w-3.5" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </SectionCard>
+    <>
+      <SectionCard title="Cierres anteriores" className="mt-4">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>Abierta</TableHead><TableHead>Cerrada</TableHead>
+            <TableHead className="text-right">Esperado</TableHead>
+            <TableHead className="text-right">Contado</TableHead>
+            <TableHead className="text-right">Diferencia</TableHead>
+            <TableHead className="text-right">Dejado</TableHead>
+            <TableHead className="text-center">Correcciones</TableHead>
+            <TableHead></TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {sesiones.map((s, index) => (
+              <TableRow key={s.id}>
+                <TableCell className="text-xs">{fmtDateTime(s.abierta_en)}</TableCell>
+                <TableCell className="text-xs">{fmtDateTime(s.cerrada_en)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.total_esperado)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.total_contado)}</TableCell>
+                <TableCell className={`text-right font-mono tabular-nums ${
+                  Number(s.total_diferencia) === 0 ? "text-success" : "text-destructive"
+                }`}>
+                  {Number(s.total_diferencia) > 0 ? "+" : ""}{fmtMoney(s.total_diferencia)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.efectivo_dejado ?? 0)}</TableCell>
+                <TableCell className="text-center text-xs text-muted-foreground">
+                  {s.correccion_version > 0
+                    ? `${s.correccion_version} registrada${s.correccion_version === 1 ? "" : "s"}`
+                    : "Sin correcciones"}
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    {esAdmin ? (
+                      <Button size="sm" variant="ghost" title="Corregir cierre"
+                        aria-label={`Corregir cierre del ${fmtDateTime(s.cerrada_en)}`}
+                        onClick={() => setCorrigiendo({
+                          sesion: s,
+                          tieneTurnoPosterior: index > 0 || haySesionAbierta,
+                        })}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    {esAdmin && s.correccion_version > 0 ? (
+                      <Button size="sm" variant="ghost" title="Ver historial de correcciones"
+                        aria-label={`Ver correcciones del cierre del ${fmtDateTime(s.cerrada_en)}`}
+                        onClick={() => setViendoHistorial(s)}>
+                        <History className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    <Button size="sm" variant="ghost"
+                      onClick={() => { pdfCierre(s, sucNombre).catch((e) => toast.error("No se pudo generar el PDF: " + e.message)); }}
+                      title="Descargar PDF del cierre"
+                      aria-label={`Descargar PDF del cierre del ${fmtDateTime(s.cerrada_en)}`}>
+                      <Printer className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </SectionCard>
+
+      {corrigiendo ? (
+        <DialogoCorreccionCierre
+          sesion={corrigiendo.sesion}
+          tieneTurnoPosterior={corrigiendo.tieneTurnoPosterior}
+          onClose={() => setCorrigiendo(null)}
+          onSaved={() => {
+            setCorrigiendo(null);
+            void qc.invalidateQueries({ queryKey: ["caja-historial", sucId] });
+          }}
+        />
+      ) : null}
+      {viendoHistorial ? (
+        <DialogoHistorialCorrecciones
+          sesion={viendoHistorial}
+          onClose={() => setViendoHistorial(null)}
+        />
+      ) : null}
+    </>
   );
 }

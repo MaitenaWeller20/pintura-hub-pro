@@ -16,6 +16,7 @@ import { validarCuitEmisor } from "@/lib/fiscal/cert";
 import { autorizarAntesDeClientePrivilegiado } from "@/lib/fiscal/config";
 import type { Database } from "@/integrations/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parsearEntradaFiscal } from "@/lib/fiscal/error-usuario";
 
 // Los mismos dos helpers que usa fiscal.functions: el cliente de servicio para
 // escribir, y el chequeo de admin por la RPC `is_admin`, que es la que manda.
@@ -88,8 +89,8 @@ const logoValido = z
 export const guardarEmisor = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
+    parsearEntradaFiscal(
+      z.object({
         id: z.string().uuid(),
         // Los topes no son burocracia: esto va en el encabezado de cada
         // impreso, y un texto pegado de cientos de caracteres empuja el título
@@ -113,8 +114,10 @@ export const guardarEmisor = createServerFn({ method: "POST" })
           .optional()
           .nullable(),
         logo: logoValido.optional(),
-      })
-      .parse(d),
+      }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
     await exigirAdmin(context.supabase, context.userId);
@@ -131,8 +134,8 @@ export const guardarEmisor = createServerFn({ method: "POST" })
 export const guardarContactoSucursal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
+    parsearEntradaFiscal(
+      z.object({
         id: z.string().uuid(),
         direccion: z
           .string()
@@ -144,8 +147,10 @@ export const guardarContactoSucursal = createServerFn({ method: "POST" })
           .max(40, "El teléfono no puede pasar de 40 caracteres.")
           .optional()
           .nullable(),
-      })
-      .parse(d),
+      }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
     await exigirAdmin(context.supabase, context.userId);

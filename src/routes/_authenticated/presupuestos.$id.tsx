@@ -32,6 +32,7 @@ import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal
 import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
 import { emitirComprobante, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
 import { resultadoColaDespuesDeEmision } from "@/lib/ventas-ui";
+import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
 import {
   accionFiscalDespuesDeConvertirPresupuesto,
   destinoColaFiscalVentaConvertida,
@@ -92,7 +93,7 @@ function DetallePresupuesto() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("clientes")
-        .select("id,razon_social,cuit_dni")
+        .select("id,razon_social,cuit_dni,tipo")
         .eq("id", ventaParaFacturar!.clienteId)
         .maybeSingle();
       if (error || !data) throw new Error("No se pudo leer el comprador de la venta convertida.");
@@ -361,6 +362,7 @@ function DetallePresupuesto() {
             comprador: {
               razonSocial: clienteFiscal?.razon_social ?? "Cliente de la venta convertida",
               documento: clienteFiscal?.cuit_dni ?? null,
+              condicionIva: CONDICION_IVA_CLIENTE[clienteFiscal?.tipo ?? ""] ?? null,
             },
             emisor: {
               razonSocial: p.sucursal?.emisor?.razon_social ?? "Emisor de la sucursal",

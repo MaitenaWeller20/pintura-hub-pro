@@ -45,7 +45,11 @@ function renderDialogo(tipoComprobante = "VENTA"): string {
     createElement(DialogoEmisionFiscal, {
       open: true,
       contexto: {
-        comprador: { razonSocial: "Comprador", documento: null },
+        comprador: {
+          razonSocial: "Comprador",
+          documento: null,
+          condicionIva: "CONSUMIDOR_FINAL",
+        },
         emisor: { razonSocial: "Emisor", cuit: "30714199664" },
         sucursal: { nombre: "Casa central", puntoVenta: null, modo: null },
         tipoComprobante,

@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DialogoDetalleVenta, type VentaDetalle } from "@/components/ventas/dialogo-detalle-venta";
+import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
 import { supabase } from "@/integrations/supabase/client";
 import {
   listarColaFiscal,
@@ -60,6 +61,8 @@ import {
   reconciliarComprobante,
 } from "@/lib/fiscal.functions";
 import type { ReceptorHeredadoVista } from "@/components/fiscal/receptor-fiscal-form";
+import { crearErrorFiscalUsuario, mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
+import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
 
 const TAMANO_PAGINA = 25;
 const TABS: Array<{ value: TabColaFiscal; label: string }> = [
@@ -80,10 +83,6 @@ export const Route = createFileRoute("/_authenticated/facturacion/cola")({
   },
   component: ColaFiscalPage,
 });
-
-function mensajeError(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
 
 function esMantenimiento(value: unknown): value is { estado: "MANTENIMIENTO"; mensaje: string } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -117,11 +116,17 @@ function receptorHeredado(row: ColaFiscalFila): ReceptorHeredadoVista | null {
   };
 }
 
-function contextoDialogo(row: ColaFiscalFila): ContextoDialogoEmision {
+function contextoDialogo(
+  row: ColaFiscalFila,
+  tipoCliente: string | null | undefined,
+): ContextoDialogoEmision {
   return {
     comprador: {
       razonSocial: row.cliente_razon_social ?? "Comprador sin razón social",
       documento: row.documento_comercial,
+      condicionIva:
+        CONDICION_IVA_CLIENTE[tipoCliente ?? ""] ??
+        (row.cliente_id === null ? "CONSUMIDOR_FINAL" : null),
     },
     emisor: {
       razonSocial: row.emisor_razon_social ?? "Emisor a confirmar",
@@ -317,6 +322,18 @@ function ColaFiscalPage() {
       listarFavoritos({ data: { sucursal_id: seleccionada?.sucursal_id ?? undefined } }),
     enabled: seleccionada !== null,
   });
+  const tipoClienteSeleccionado = useQuery({
+    queryKey: ["cliente-condicion-fiscal-cola", seleccionada?.cliente_id ?? null],
+    enabled: seleccionada?.cliente_id != null,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("tipo")
+        .eq("id", seleccionada!.cliente_id!)
+        .maybeSingle();
+      return error ? null : (data?.tipo ?? null);
+    },
+  });
   const detalleVenta = useQuery({
     queryKey: ["venta-detalle-cola", detalleSeleccionado?.ventaId ?? null],
     enabled: detalleSeleccionado !== null,
@@ -324,7 +341,9 @@ function ColaFiscalPage() {
       if (!detalleSeleccionado) throw new Error("No hay una venta seleccionada para ver.");
       const { data, error } = await supabase
         .from("ventas")
-        .select("*, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)")
+        .select(
+          `${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)`,
+        )
         .eq("id", detalleSeleccionado.ventaId)
         .single();
       if (error) throw new Error(error.message || "No se pudo cargar el detalle de la venta.");
@@ -356,12 +375,12 @@ function ColaFiscalPage() {
     mutationFn: async ({ row, nombre }: { row: ColaFiscalFila; nombre: string }) => {
       if (nombre === "Verificar con ARCA") {
         const respuesta = await reconciliar({ data: { venta_id: row.venta_id } });
-        if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+        if (esMantenimiento(respuesta)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
         return parseResultadoConciliacionFiscal(respuesta);
       }
       if (nombre === "Liberar claim verificado") {
         const respuesta = await liberar({ data: { venta_id: row.venta_id } });
-        if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+        if (esMantenimiento(respuesta)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
         return parseResultadoLiberacionFiscal(respuesta);
       }
       throw new Error("La acción fiscal seleccionada no está habilitada en esta tarea.");
@@ -388,8 +407,7 @@ function ColaFiscalPage() {
             : "La verificación fiscal terminó; revisá el estado actualizado.",
       );
     },
-    onError: (error) =>
-      setErrorAccion(mensajeError(error, "No se pudo completar la acción fiscal.")),
+    onError: (error) => setErrorAccion(mensajeErrorFiscal(error, "EMISION")),
   });
 
   const cambiarSearch = (cambios: Partial<BusquedaColaFiscal>, replace = false) =>
@@ -450,7 +468,7 @@ function ColaFiscalPage() {
             role="alert"
           >
             <p className="mr-auto text-sm font-medium text-destructive">
-              {mensajeError(detalleVenta.error, "No se pudo cargar el detalle de la venta.")}
+              {mensajeErrorFiscal(detalleVenta.error, "CONSULTA")}
             </p>
             <Button
               type="button"
@@ -549,7 +567,7 @@ function ColaFiscalPage() {
           updating={cola.isFetching && !cola.isLoading}
           accionesHabilitadas={accionesHabilitadas}
           accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
-          error={cola.error ? mensajeError(cola.error, "No se pudo cargar la cola fiscal.") : null}
+          error={cola.error ? mensajeErrorFiscal(cola.error, "CONSULTA") : null}
           onRetry={() => void cola.refetch()}
           onAccion={(row, nombre, disparador) => {
             if (!accionesHabilitadas) return;
@@ -627,7 +645,7 @@ function ColaFiscalPage() {
       {seleccionada && accionesHabilitadas ? (
         <DialogoEmisionFiscal
           open
-          contexto={contextoDialogo(seleccionada)}
+          contexto={contextoDialogo(seleccionada, tipoClienteSeleccionado.data)}
           favoritos={favoritos.data ?? []}
           puedeConfirmarVentaAntigua={esAdmin}
           returnFocusRef={returnFocusRef}
@@ -643,7 +661,7 @@ function ColaFiscalPage() {
                 letra_solicitada: letraSolicitada,
               },
             }).then((respuesta) => {
-              if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+              if (esMantenimiento(respuesta)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
               return parsePreviewEmisionFiscalAutoritativa(respuesta);
             })
           }
@@ -662,11 +680,11 @@ function ColaFiscalPage() {
                 huella_confirmacion: huellaConfirmacion,
               },
             });
-            if (esMantenimiento(resultado)) throw new Error(resultado.mensaje);
+            if (esMantenimiento(resultado)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
             const respuesta = parseRespuestaConfirmacionFiscal(resultado);
             if (respuesta.estado === "ERROR_CORREGIBLE") {
               await queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
-              throw new Error(respuesta.mensaje);
+              throw crearErrorFiscalUsuario("ERROR_CORREGIBLE");
             }
             return respuesta;
           }}
@@ -722,7 +740,7 @@ function ColaFiscalPage() {
             </p>
           ) : incidente.error ? (
             <div role="alert" className="space-y-2 text-sm text-destructive">
-              <p>{mensajeError(incidente.error, "No se pudo cargar el incidente fiscal.")}</p>
+              <p>{mensajeErrorFiscal(incidente.error, "CONSULTA")}</p>
               <Button
                 type="button"
                 variant="outline"
@@ -750,10 +768,11 @@ function ColaFiscalPage() {
                 </div>
               </dl>
               <p className="rounded-lg bg-muted/40 p-3">
-                {incidente.data?.mensaje ??
-                  (incidenteSeleccionado?.legacy
+                {incidente.data?.mensaje
+                  ? mensajeErrorFiscal(incidente.data.mensaje, "CONSULTA")
+                  : incidenteSeleccionado?.legacy
                     ? "Incidente heredado sin diagnóstico estructurado."
-                    : "El incidente no informó un mensaje adicional.")}
+                    : "El incidente no informó un mensaje adicional."}
               </p>
               <div>
                 <h3 className="font-semibold">Diferencias detectadas</h3>

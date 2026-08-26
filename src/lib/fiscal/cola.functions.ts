@@ -13,6 +13,7 @@ import {
   decidirEscritorFiscal,
   type FlagsFacturacion,
 } from "./feature.server";
+import { parsearEntradaFiscal } from "./error-usuario";
 
 const tabs = ["pendientes", "revisar", "emitidas", "historial"] as const;
 const estadosCola = [
@@ -389,7 +390,9 @@ function dependenciasSupabase(supabase: SupabaseClient<Database>): DependenciasC
 
 export const listarColaFiscal = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => colaFiscalQuerySchema.parse(value))
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(colaFiscalQuerySchema, value, "CONSULTA"),
+  )
   .handler(async ({ data, context }) =>
     crearServicioColaFiscal(dependenciasSupabase(context.supabase)).listarColaFiscal(
       context.userId,
@@ -399,7 +402,9 @@ export const listarColaFiscal = createServerFn({ method: "GET" })
 
 export const listarReceptoresFiscales = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => listarFavoritosInputSchema.parse(value))
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(listarFavoritosInputSchema, value, "CONSULTA"),
+  )
   .handler(async ({ data, context }) =>
     crearServicioColaFiscal(dependenciasSupabase(context.supabase)).listarReceptoresFiscales(
       context.userId,
@@ -409,7 +414,9 @@ export const listarReceptoresFiscales = createServerFn({ method: "GET" })
 
 export const guardarReceptorFiscal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => guardarFavoritoInputSchema.parse(value))
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(guardarFavoritoInputSchema, value, "REVISION"),
+  )
   .handler(async ({ data, context }) =>
     crearServicioColaFiscal(dependenciasSupabase(context.supabase)).guardarReceptorFiscal(
       context.userId,
@@ -419,7 +426,9 @@ export const guardarReceptorFiscal = createServerFn({ method: "POST" })
 
 export const desactivarReceptorFiscal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => desactivarFavoritoInputSchema.parse(value))
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(desactivarFavoritoInputSchema, value, "REVISION"),
+  )
   .handler(async ({ data, context }) =>
     crearServicioColaFiscal(dependenciasSupabase(context.supabase)).desactivarReceptorFiscal(
       context.userId,

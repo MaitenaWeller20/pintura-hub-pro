@@ -43,6 +43,7 @@ import {
 } from "@/lib/fiscal/fecha";
 import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import { numeroFiscal } from "@/lib/fiscal/comprobante-pdf";
+import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import {
   camposExportacionReceptorFiscal,
   describirCaeLegacy,
@@ -59,6 +60,7 @@ import {
   solicitudAnulacion,
   type IntentoAnulacion,
 } from "@/lib/anulacion-venta-ui";
+import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -147,7 +149,7 @@ function VentasList() {
         .from("ventas")
         .select(
           `
-        *, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
+        ${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
         pagos:venta_pagos(forma_pago,monto)
       `,
         )
@@ -215,14 +217,14 @@ function VentasList() {
       qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });
       setAnularDlg(null);
     },
-    onError: (e: Error) => {
+    onError: () => {
       // La RPC es idempotente. Si se perdió la respuesta después del commit,
       // conservar este diálogo conserva también la clave: el siguiente click
       // recupera la misma NC en vez de intentar crear otra.
       qc.invalidateQueries({ queryKey: ["ventas"] });
       qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });
       toast.error(
-        `No se pudo confirmar la respuesta de la anulación. Reintentá desde este mismo diálogo para recuperar la operación; no abras otra anulación. ${e.message}`,
+        "No se pudo confirmar la respuesta de la anulación. Reintentá desde este mismo diálogo para recuperar la operación; no abras otra anulación.",
         { duration: 12000 },
       );
     },
@@ -261,8 +263,8 @@ function VentasList() {
       );
       qc.invalidateQueries({ queryKey: ["ventas"] });
     },
-    // Los errores de AFIP son largos y hay que poder leerlos.
-    onError: (e: any) => toast.error(e.message, { duration: 12000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "EMISION"), { duration: 12000 }),
   });
 
   const exportar = () => {
@@ -602,7 +604,7 @@ function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
   }
   if (venta.afip_estado === "ERROR") {
     return (
-      <span title={venta.afip_error ?? ""}>
+      <span title="La emisión fiscal requiere revisión. Abrí la cola fiscal para ver el estado y la acción recomendada.">
         <StatusPill tone="danger" icon={<AlertTriangle className="h-2.5 w-2.5" />}>
           ERROR
         </StatusPill>

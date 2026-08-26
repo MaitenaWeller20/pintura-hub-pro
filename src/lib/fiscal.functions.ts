@@ -22,6 +22,11 @@ import {
   type DatosFiscalesPreparados,
 } from "./fiscal/impresion";
 import { exigirPngDataUrlFiscal, type QrAfipInput } from "./fiscal/qr";
+import {
+  parsearEntradaFiscal,
+  referenciaErrorFiscalUsuario,
+  type CodigoErrorFiscalUsuario,
+} from "./fiscal/error-usuario";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -31,7 +36,7 @@ const receptorSchema = z.discriminatedUnion("origen", [
       origen: z.literal("MANUAL"),
       tipo_documento: z.enum(["CUIT", "CUIL", "DNI", "CDI", "SIN_IDENTIFICAR"]),
       numero_documento: z.string().nullable(),
-      razon_social: z.string().min(1),
+      razon_social: z.string().trim().min(1),
       condicion_iva: z.enum(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO", "EXENTO", "CONSUMIDOR_FINAL"]),
       domicilio: z.string().nullable(),
       guardar_para_proximas: z.boolean(),
@@ -203,6 +208,20 @@ function diferenciasIncidente(value: unknown): string[] {
     .sort();
 }
 
+function codigoMensajeIncidente(venta: VentaIncidenteFiscal): CodigoErrorFiscalUsuario {
+  if (venta.afip_error_clase === "RECHAZO") return "INCIDENTE_RECHAZO";
+  if (venta.afip_estado === "PENDIENTE" || venta.afip_estado === "RECONCILIAR") {
+    return "INCIDENTE_PENDIENTE";
+  }
+  if (venta.afip_estado === "BLOQUEADO" || venta.afip_error_clase === "INTEGRIDAD") {
+    return "INCIDENTE_INTEGRIDAD";
+  }
+  if (venta.afip_estado === "ERROR" && venta.afip_fase === null) {
+    return "INCIDENTE_LEGACY_ERROR";
+  }
+  return "INCIDENTE_FISCAL";
+}
+
 /** Proyección mínima: nunca entrega SOAP, credenciales ni el resumen privado completo. */
 export function proyectarIncidenteFiscal(
   venta: VentaIncidenteFiscal,
@@ -212,7 +231,9 @@ export function proyectarIncidenteFiscal(
     venta_id: venta.id,
     estado: venta.afip_estado,
     fase: venta.afip_fase,
-    mensaje: venta.afip_error,
+    // afip_error histórico puede contener SQL, red o stacks del escritor legacy.
+    // Sólo sale un código cerrado que la UI vuelve a traducir localmente.
+    mensaje: referenciaErrorFiscalUsuario(codigoMensajeIncidente(venta)),
     clase: venta.afip_error_clase,
     codigo: venta.afip_error_codigo,
     fase_error: venta.afip_error_fase,
@@ -241,7 +262,7 @@ export async function ejecutarFachadaEmisionPostBorrador<T>(
 /** Facade único: auth -> permiso user-bound -> flags -> import server-only -> writer exacto. */
 export const emitirComprobante = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => emitirInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(emitirInputSchema, value))
   .handler(async ({ data, context }) => {
     const entrada = tipoEntrada(data);
     // El click del cliente legacy era su única confirmación posible; sigue
@@ -293,7 +314,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
  */
 export const emitirComprobantePostBorrador = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => postBorradorInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(postBorradorInputSchema, value))
   .handler(async ({ data, context }) =>
     ejecutarFachadaEmisionPostBorrador(data, {
       async asegurarAutenticacion() {
@@ -336,7 +357,7 @@ export const emitirComprobantePostBorrador = createServerFn({ method: "POST" })
 
 export const reconciliarComprobante = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => legacyInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
   .handler(async ({ data, context }) => {
     await autorizarVenta(context, {
       ventaId: data.venta_id,
@@ -367,7 +388,7 @@ export const reconciliarComprobante = createServerFn({ method: "POST" })
 
 export const liberarClaimFiscal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => legacyInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
   .handler(async ({ data, context }) => {
     await autorizarVenta(context, {
       ventaId: data.venta_id,
@@ -396,7 +417,7 @@ export const liberarClaimFiscal = createServerFn({ method: "POST" })
 
 export const consultarIncidenteFiscal = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => incidenteInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(incidenteInputSchema, value))
   .handler(async ({ data, context }) => {
     const permiso = await autorizarVenta(context, {
       ventaId: data.venta_id,
@@ -430,7 +451,7 @@ export const consultarIncidenteFiscal = createServerFn({ method: "GET" })
 
 export const previsualizarEmisionFiscal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => previewInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(previewInputSchema, value))
   .handler(async ({ data, context }) => {
     if (data.origen === "VENTA_EXISTENTE") {
       await autorizarVenta(context, {
@@ -544,7 +565,7 @@ export async function resolverDatosFiscalesComprobanteDesdeFila(
 /** Lectura user-bound y fail-closed para PDF fiscal. No participa del writer v2. */
 export const datosFiscalesComprobante = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((value: unknown) => legacyInputSchema.parse(value))
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
   .handler(async ({ data, context }) => {
     await autorizarVenta(context, {
       ventaId: data.venta_id,

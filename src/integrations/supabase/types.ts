@@ -61,6 +61,60 @@ export type Database = {
         }
         Relationships: []
       }
+      caja_cierre_correcciones: {
+        Row: {
+          caja_sesion_id: string
+          campos_modificados: string[]
+          corregida_en: string
+          corregida_por: string
+          id: number
+          motivo: string
+          valores_anteriores: Json
+          valores_nuevos: Json
+          version_anterior: number
+          version_nueva: number
+        }
+        Insert: {
+          caja_sesion_id: string
+          campos_modificados: string[]
+          corregida_en?: string
+          corregida_por: string
+          id?: never
+          motivo: string
+          valores_anteriores: Json
+          valores_nuevos: Json
+          version_anterior: number
+          version_nueva: number
+        }
+        Update: {
+          caja_sesion_id?: string
+          campos_modificados?: string[]
+          corregida_en?: string
+          corregida_por?: string
+          id?: never
+          motivo?: string
+          valores_anteriores?: Json
+          valores_nuevos?: Json
+          version_anterior?: number
+          version_nueva?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "caja_cierre_correcciones_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "caja_cierre_correcciones_corregida_por_fkey"
+            columns: ["corregida_por"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       caja_movimientos: {
         Row: {
           caja_sesion_id: string
@@ -109,6 +163,7 @@ export type Database = {
           cerrada_en: string | null
           cerrada_por: string | null
           contado: Json | null
+          correccion_version: number
           created_at: string
           diferencia: Json | null
           efectivo_dejado: number | null
@@ -129,6 +184,7 @@ export type Database = {
           cerrada_en?: string | null
           cerrada_por?: string | null
           contado?: Json | null
+          correccion_version?: number
           created_at?: string
           diferencia?: Json | null
           efectivo_dejado?: number | null
@@ -149,6 +205,7 @@ export type Database = {
           cerrada_en?: string | null
           cerrada_por?: string | null
           contado?: Json | null
+          correccion_version?: number
           created_at?: string
           diferencia?: Json | null
           efectivo_dejado?: number | null
@@ -3385,6 +3442,23 @@ export type Database = {
           p_sesion_id: string
         }
         Returns: {
+          total_contado: number
+          total_diferencia: number
+          total_esperado: number
+        }[]
+      }
+      corregir_cierre_caja: {
+        Args: {
+          p_efectivo_contado: number
+          p_efectivo_dejado: number
+          p_motivo: string
+          p_notas: string
+          p_sesion_id: string
+          p_version_esperada: number
+        }
+        Returns: {
+          correccion_version: number
+          efectivo_retirado: number
           total_contado: number
           total_diferencia: number
           total_esperado: number

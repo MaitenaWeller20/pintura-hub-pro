@@ -37,6 +37,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { crearVenta } from "@/lib/ventas.functions";
 import { calcTotalesComprobante } from "@/lib/ventas-totales";
 import { round2 } from "@/lib/fiscal/iva";
+import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
 import { EditorPagos, type PagoVentaEditable } from "@/components/ventas/editor-pagos";
 import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
 import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
@@ -1316,6 +1317,7 @@ function NuevaVenta() {
             comprador: {
               razonSocial: clienteSel?.razon_social ?? "Cliente seleccionado",
               documento: clienteSel?.cuit_dni ? fmtDocumento(clienteSel.cuit_dni) : null,
+              condicionIva: CONDICION_IVA_CLIENTE[clienteSel?.tipo ?? ""] ?? null,
             },
             emisor: { razonSocial: "Emisor de la sucursal", cuit: "a confirmar" },
             sucursal: {

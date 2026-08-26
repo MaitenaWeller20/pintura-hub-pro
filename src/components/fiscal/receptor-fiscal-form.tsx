@@ -5,6 +5,7 @@ import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import type { ReceptorFiscalConfirmado, TipoDocumentoFiscal } from "@/lib/fiscal/receptor";
 import type { CondicionIva } from "@/lib/fiscal/codigos";
 import { adaptarReceptorFormularioALetra, type LetraSolicitada } from "./dialogo-emision-state";
+import type { CampoReceptorFiscal } from "./dialogo-emision-validacion";
 
 export type ReceptorFormulario =
   | { origen: "CLIENTE_COMERCIAL" }
@@ -41,6 +42,13 @@ const CONDICIONES_POR_LETRA: Record<
   ],
 };
 
+const ETIQUETA_CONDICION_IVA: Record<CondicionIva, string> = {
+  RESPONSABLE_INSCRIPTO: "Responsable inscripto",
+  MONOTRIBUTO: "Monotributo",
+  EXENTO: "Exento",
+  CONSUMIDOR_FINAL: "Consumidor final",
+};
+
 function crearReceptorManualVacio(letraSolicitada: LetraSolicitada): ReceptorManual {
   return {
     origen: "MANUAL",
@@ -75,6 +83,7 @@ export function ReceptorFiscalForm({
   receptorHeredado,
   letraSolicitada,
   confirmaDatosManuales,
+  errores = {},
   disabled,
   initialFocusRef,
   onChange,
@@ -82,10 +91,15 @@ export function ReceptorFiscalForm({
 }: {
   value: ReceptorFormulario;
   favoritos: ReceptorFiscalFavorito[];
-  clienteComercial: { razonSocial: string; documento: string | null };
+  clienteComercial: {
+    razonSocial: string;
+    documento: string | null;
+    condicionIva: CondicionIva | null;
+  };
   receptorHeredado?: ReceptorHeredadoVista | null;
   letraSolicitada: LetraSolicitada | null;
   confirmaDatosManuales: boolean;
+  errores?: Partial<Record<CampoReceptorFiscal, string>>;
   disabled: boolean;
   initialFocusRef?: RefObject<HTMLInputElement | null>;
   onChange(value: ReceptorFormulario): void;
@@ -112,24 +126,38 @@ export function ReceptorFiscalForm({
     );
   };
   const condiciones = letraSolicitada ? CONDICIONES_POR_LETRA[letraSolicitada] : [];
+  const requiereDocumento =
+    letraSolicitada === "A" || (value.origen === "MANUAL" && value.condicion_iva === "EXENTO");
 
   return (
     <fieldset disabled={disabled} className="space-y-3">
       <legend className="text-sm font-semibold">Facturar a</legend>
       <div className="grid gap-2 sm:grid-cols-3">
-        <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+        <label className="flex min-h-16 cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
           <input
+            id="receptor-cliente-comercial"
             ref={initialFocusRef}
             type="radio"
+            className="mt-1"
             name="origen-receptor"
             checked={value.origen === "CLIENTE_COMERCIAL"}
+            aria-invalid={errores.cliente_comercial ? true : undefined}
+            aria-describedby={
+              errores.cliente_comercial ? "error-receptor-cliente-comercial" : undefined
+            }
             onChange={() => onChange({ origen: "CLIENTE_COMERCIAL" })}
           />
-          Cliente comercial
+          <span>
+            <strong className="block">Cliente comercial</strong>
+            <span className="block text-xs text-muted-foreground">
+              Sólo para factura B a Consumidor Final sin identificación fiscal.
+            </span>
+          </span>
         </label>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+        <label className="flex min-h-16 cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
           <input
             type="radio"
+            className="mt-1"
             name="origen-receptor"
             checked={value.origen === "FAVORITO"}
             disabled={disabled || favoritos.length === 0}
@@ -138,25 +166,50 @@ export function ReceptorFiscalForm({
               if (primero) onChange({ origen: "FAVORITO", receptor_fiscal_id: primero.id });
             }}
           />
-          Guardado
+          <span>
+            <strong className="block">Guardado</strong>
+            <span className="block text-xs text-muted-foreground">
+              Reutiliza un receptor fiscal autorizado anteriormente.
+            </span>
+          </span>
         </label>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+        <label className="flex min-h-16 cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
           <input
             type="radio"
+            className="mt-1"
             name="origen-receptor"
             checked={value.origen === "MANUAL"}
             onChange={elegirManual}
           />
-          Otro receptor
+          <span>
+            <strong className="block">Otro receptor</strong>
+            <span className="block text-xs text-muted-foreground">
+              Ingresá los datos de otra persona o empresa.
+            </span>
+          </span>
         </label>
       </div>
 
       {value.origen === "CLIENTE_COMERCIAL" ? (
-        <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-          <p className="font-semibold">{clienteComercial.razonSocial}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {clienteComercial.documento ?? "Sin documento cargado"}
-          </p>
+        <div>
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+            <p className="font-semibold">{clienteComercial.razonSocial}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {clienteComercial.documento ?? "Sin documento cargado"} ·{" "}
+              {clienteComercial.condicionIva
+                ? ETIQUETA_CONDICION_IVA[clienteComercial.condicionIva]
+                : "Condición fiscal sin confirmar"}
+            </p>
+          </div>
+          {errores.cliente_comercial ? (
+            <p
+              id="error-receptor-cliente-comercial"
+              role="alert"
+              className="mt-1 text-xs font-medium text-destructive"
+            >
+              {errores.cliente_comercial}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -167,6 +220,8 @@ export function ReceptorFiscalForm({
             id="receptor-favorito"
             className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={value.receptor_fiscal_id}
+            aria-invalid={errores.receptor ? true : undefined}
+            aria-describedby={errores.receptor ? "error-receptor-favorito" : undefined}
             onChange={(event) =>
               onChange({ origen: "FAVORITO", receptor_fiscal_id: event.target.value })
             }
@@ -177,6 +232,15 @@ export function ReceptorFiscalForm({
               </option>
             ))}
           </select>
+          {errores.receptor ? (
+            <p
+              id="error-receptor-favorito"
+              role="alert"
+              className="mt-1 text-xs font-medium text-destructive"
+            >
+              {errores.receptor}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -184,11 +248,17 @@ export function ReceptorFiscalForm({
         <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
           {letraSolicitada === "B" ? (
             <div>
-              <Label htmlFor="receptor-tipo-documento">Tipo de documento (opcional)</Label>
+              <Label htmlFor="receptor-tipo-documento">
+                Tipo de documento{requiereDocumento ? "" : " (opcional)"}
+              </Label>
               <select
                 id="receptor-tipo-documento"
                 className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={value.tipo_documento}
+                aria-invalid={errores.tipo_documento ? true : undefined}
+                aria-describedby={
+                  errores.tipo_documento ? "error-receptor-tipo-documento" : undefined
+                }
                 onChange={(event) => {
                   const tipo = event.target.value as TipoDocumentoFiscal;
                   onChange({
@@ -206,11 +276,22 @@ export function ReceptorFiscalForm({
                 <option value="DNI">DNI</option>
                 <option value="CDI">CDI</option>
               </select>
+              {errores.tipo_documento ? (
+                <p
+                  id="error-receptor-tipo-documento"
+                  role="alert"
+                  className="mt-1 text-xs font-medium text-destructive"
+                >
+                  {errores.tipo_documento}
+                </p>
+              ) : null}
             </div>
           ) : null}
           <div>
             <Label htmlFor="receptor-numero-documento">
-              {letraSolicitada === "A" ? "CUIT" : "Número de documento (opcional)"}
+              {letraSolicitada === "A"
+                ? "CUIT"
+                : `Número de documento${requiereDocumento ? "" : " (opcional)"}`}
             </Label>
             <Input
               id="receptor-numero-documento"
@@ -218,15 +299,31 @@ export function ReceptorFiscalForm({
               inputMode="numeric"
               value={value.numero_documento}
               disabled={disabled || value.tipo_documento === "SIN_IDENTIFICAR"}
-              required={letraSolicitada === "A"}
-              aria-describedby="ayuda-documento-fiscal"
+              required={requiereDocumento}
+              aria-invalid={errores.numero_documento ? true : undefined}
+              aria-describedby={
+                errores.numero_documento
+                  ? "ayuda-documento-fiscal error-receptor-numero-documento"
+                  : "ayuda-documento-fiscal"
+              }
               onChange={(event) => onChange({ ...value, numero_documento: event.target.value })}
             />
             <p id="ayuda-documento-fiscal" className="mt-1 text-xs text-muted-foreground">
               {letraSolicitada === "A"
                 ? "La factura A requiere el CUIT del receptor."
-                : "Podés emitir sin identificación o elegir el tipo explícitamente."}
+                : requiereDocumento
+                  ? "Los receptores Exentos deben identificarse con un documento válido."
+                  : "Podés emitir sin identificación o elegir el tipo explícitamente."}
             </p>
+            {errores.numero_documento ? (
+              <p
+                id="error-receptor-numero-documento"
+                role="alert"
+                className="mt-1 text-xs font-medium text-destructive"
+              >
+                {errores.numero_documento}
+              </p>
+            ) : null}
           </div>
           <div className="sm:col-span-2">
             <Label htmlFor="receptor-razon-social">Razón social</Label>
@@ -234,8 +331,20 @@ export function ReceptorFiscalForm({
               id="receptor-razon-social"
               className="mt-1 min-h-11"
               value={value.razon_social}
+              required
+              aria-invalid={errores.razon_social ? true : undefined}
+              aria-describedby={errores.razon_social ? "error-receptor-razon-social" : undefined}
               onChange={(event) => onChange({ ...value, razon_social: event.target.value })}
             />
+            {errores.razon_social ? (
+              <p
+                id="error-receptor-razon-social"
+                role="alert"
+                className="mt-1 text-xs font-medium text-destructive"
+              >
+                {errores.razon_social}
+              </p>
+            ) : null}
           </div>
           <div>
             <Label htmlFor="receptor-condicion-iva">Condición de IVA</Label>
@@ -243,6 +352,8 @@ export function ReceptorFiscalForm({
               id="receptor-condicion-iva"
               className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               value={value.condicion_iva}
+              aria-invalid={errores.condicion_iva ? true : undefined}
+              aria-describedby={errores.condicion_iva ? "error-receptor-condicion-iva" : undefined}
               onChange={(event) =>
                 onChange({ ...value, condicion_iva: event.target.value as CondicionIva })
               }
@@ -253,6 +364,15 @@ export function ReceptorFiscalForm({
                 </option>
               ))}
             </select>
+            {errores.condicion_iva ? (
+              <p
+                id="error-receptor-condicion-iva"
+                role="alert"
+                className="mt-1 text-xs font-medium text-destructive"
+              >
+                {errores.condicion_iva}
+              </p>
+            ) : null}
           </div>
           <div>
             <Label htmlFor="receptor-domicilio">Domicilio</Label>
@@ -280,15 +400,31 @@ export function ReceptorFiscalForm({
               </span>
             </span>
           </label>
-          <label className="flex min-h-11 items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm sm:col-span-2">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={confirmaDatosManuales}
-              onChange={(event) => onConfirmaDatosManuales(event.target.checked)}
-            />
-            <span>Confirmo que revisé el documento y los datos fiscales ingresados.</span>
-          </label>
+          <div className="sm:col-span-2">
+            <label className="flex min-h-11 items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+              <input
+                id="confirmar-datos-receptor"
+                type="checkbox"
+                className="mt-1"
+                checked={confirmaDatosManuales}
+                aria-invalid={errores.confirmacion ? true : undefined}
+                aria-describedby={
+                  errores.confirmacion ? "error-confirmar-datos-receptor" : undefined
+                }
+                onChange={(event) => onConfirmaDatosManuales(event.target.checked)}
+              />
+              <span>Confirmo que revisé el documento y los datos fiscales ingresados.</span>
+            </label>
+            {errores.confirmacion ? (
+              <p
+                id="error-confirmar-datos-receptor"
+                role="alert"
+                className="mt-1 text-xs font-medium text-destructive"
+              >
+                {errores.confirmacion}
+              </p>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </fieldset>

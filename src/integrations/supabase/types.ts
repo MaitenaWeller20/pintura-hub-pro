@@ -615,6 +615,10 @@ export type Database = {
           emisor_id: string
           habilitada: boolean
           id: string
+          padron_probado_at: string | null
+          padron_ultimo_error_at: string | null
+          padron_ultimo_error_codigo: string | null
+          padron_validacion_activa: boolean
           probada_at: string | null
           updated_at: string
         }
@@ -628,6 +632,10 @@ export type Database = {
           emisor_id: string
           habilitada?: boolean
           id?: string
+          padron_probado_at?: string | null
+          padron_ultimo_error_at?: string | null
+          padron_ultimo_error_codigo?: string | null
+          padron_validacion_activa?: boolean
           probada_at?: string | null
           updated_at?: string
         }
@@ -641,6 +649,10 @@ export type Database = {
           emisor_id?: string
           habilitada?: boolean
           id?: string
+          padron_probado_at?: string | null
+          padron_ultimo_error_at?: string | null
+          padron_ultimo_error_codigo?: string | null
+          padron_validacion_activa?: boolean
           probada_at?: string | null
           updated_at?: string
         }

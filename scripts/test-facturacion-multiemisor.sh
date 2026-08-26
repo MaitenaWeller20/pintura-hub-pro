@@ -30,6 +30,16 @@ check "credenciales con RLS" "true" \
   "$(q "select relrowsecurity::text from pg_class where oid='public.credenciales_arca'::regclass")"
 check "se registra la prueba real antes de habilitar" "probada_at" \
   "$(q "select column_name from information_schema.columns where table_schema='public' and table_name='credenciales_arca' and column_name='probada_at'")"
+check "padrón nace desactivado" "false" \
+  "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='credenciales_arca' and column_name='padron_validacion_activa'")"
+check "padrón registra prueba real" "padron_probado_at" \
+  "$(q "select column_name from information_schema.columns where table_schema='public' and table_name='credenciales_arca' and column_name='padron_probado_at'")"
+check "padrón registra sólo código cerrado" "padron_ultimo_error_codigo" \
+  "$(q "select column_name from information_schema.columns where table_schema='public' and table_name='credenciales_arca' and column_name='padron_ultimo_error_codigo'")"
+check "RLS de credenciales sigue activa" "true" \
+  "$(q "select relrowsecurity::text from pg_class where oid='public.credenciales_arca'::regclass")"
+check "authenticated sigue sin leer credenciales" "false" \
+  "$(q "select has_table_privilege('authenticated','public.credenciales_arca','select')::text")"
 check "credenciales sin policies de navegador" "0" \
   "$(q "select count(*) from pg_policies where schemaname='public' and tablename='credenciales_arca'")"
 check "authenticated no puede leer credenciales" "false" \
@@ -47,6 +57,83 @@ fi
 
 "${PSQL[@]}" <<'SQL'
 BEGIN;
+
+-- Cambiar la identidad fiscal invalida la prueba del padrón.
+DO $$
+DECLARE
+  v_credencial uuid;
+  v_emisor uuid;
+BEGIN
+  SELECT c.id, c.emisor_id INTO v_credencial, v_emisor
+  FROM public.credenciales_arca c
+  JOIN public.emisores e ON e.id = c.emisor_id
+  WHERE e.cuit = '30714199664'
+  ORDER BY c.ambiente
+  LIMIT 1;
+
+  UPDATE public.credenciales_arca
+  SET
+    padron_probado_at = now(),
+    padron_validacion_activa = true,
+    padron_ultimo_error_codigo = 'CUIT_INACTIVO',
+    padron_ultimo_error_at = now()
+  WHERE id = v_credencial;
+
+  UPDATE public.emisores SET cuit = '30714199663' WHERE id = v_emisor;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.credenciales_arca
+    WHERE id = v_credencial
+      AND (
+        padron_probado_at IS NOT NULL
+        OR padron_validacion_activa
+        OR padron_ultimo_error_codigo IS NOT NULL
+        OR padron_ultimo_error_at IS NOT NULL
+      )
+  ) THEN
+    RAISE EXCEPTION 'cambiar CUIT no reinició la validación de padrón';
+  END IF;
+END $$;
+
+-- Cambiar el certificado también invalida la prueba del padrón.
+DO $$
+DECLARE
+  v_credencial uuid;
+BEGIN
+  SELECT c.id INTO v_credencial
+  FROM public.credenciales_arca c
+  JOIN public.emisores e ON e.id = c.emisor_id
+  WHERE e.cuit = '30714199663'
+  ORDER BY c.ambiente
+  LIMIT 1;
+
+  UPDATE public.credenciales_arca
+  SET
+    padron_probado_at = now(),
+    padron_validacion_activa = true,
+    padron_ultimo_error_codigo = 'CUIT_INACTIVO',
+    padron_ultimo_error_at = now()
+  WHERE id = v_credencial;
+
+  UPDATE public.credenciales_arca
+  SET arca_cert_enc = coalesce(arca_cert_enc, '') || '-padron-test'
+  WHERE id = v_credencial;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.credenciales_arca
+    WHERE id = v_credencial
+      AND (
+        padron_probado_at IS NOT NULL
+        OR padron_validacion_activa
+        OR padron_ultimo_error_codigo IS NOT NULL
+        OR padron_ultimo_error_at IS NOT NULL
+      )
+  ) THEN
+    RAISE EXCEPTION 'cambiar certificado no reinició la validación de padrón';
+  END IF;
+END $$;
 
 -- Dos CUIT distintos pueden usar el mismo número de PV.
 UPDATE public.puntos_venta SET numero=99, modo='HOMOLOGACION';
@@ -83,6 +170,9 @@ INSERT INTO public.user_roles (user_id,role)
 VALUES ('aaaaaaaa-1111-1111-1111-111111111111','admin');
 INSERT INTO public.clientes (id,razon_social)
 VALUES ('bbbbbbbb-1111-1111-1111-111111111111','CLIENTE TEST MULTIEMISOR');
+
+-- Historia fiscal sintética previa al corte; esta transacción siempre revierte.
+ALTER TABLE public.ventas DISABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
 
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
@@ -129,6 +219,8 @@ BEGIN
     NULL;
   END;
 END $$;
+
+ALTER TABLE public.ventas ENABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
 
 -- Aunque tenga permiso para crear la venta, authenticated no puede adjudicar
 -- el CUIT fiscal desde el navegador.

@@ -42,6 +42,27 @@ function renderFormulario(
       string
     >
   > = {},
+  estadoConsultaPadron:
+    | { estado: "SIN_CUIT" }
+    | { estado: "CONSULTANDO"; cuit: string; token: number }
+    | { estado: "INACTIVO"; cuit: string }
+    | {
+        estado: "VERIFICADO";
+        cuit: string;
+        receptor: {
+          cuit: string;
+          razonSocial: string;
+          domicilioFiscal: string | null;
+          estado: "ACTIVO";
+          tipoPersona: "FISICA" | "JURIDICA";
+          condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO" | null;
+          verificadoArcaAt: string;
+        };
+      }
+    | { estado: "ERROR"; cuit: string; mensaje: string } = {
+    estado: "INACTIVO",
+    cuit: "30714199664",
+  },
 ): string {
   return renderToStaticMarkup(
     createElement(ReceptorFiscalForm as ReceptorFiscalFormConLetra, {
@@ -54,6 +75,7 @@ function renderFormulario(
         condicionIva: "CONSUMIDOR_FINAL",
       },
       confirmaDatosManuales: false,
+      estadoConsultaPadron,
       errores,
       disabled: false,
       onChange: vi.fn(),
@@ -71,6 +93,52 @@ function select(html: string, id: string): string {
 }
 
 describe("receptor según la letra solicitada", () => {
+  it("muestra estado live, identidad oficial readonly y hora de verificación", () => {
+    const html = renderFormulario(
+      "A",
+      RECEPTOR_MANUAL,
+      {},
+      {
+        estado: "VERIFICADO",
+        cuit: "30714199664",
+        receptor: {
+          cuit: "30714199664",
+          razonSocial: "IDENTIDAD OFICIAL SA",
+          domicilioFiscal: "Sarmiento 123, Cordoba",
+          estado: "ACTIVO",
+          tipoPersona: "JURIDICA",
+          condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+          verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+        },
+      },
+    );
+    const razon = html.match(/<input[^>]*id="receptor-razon-social"[^>]*>/)?.[0] ?? "";
+    const domicilio = html.match(/<input[^>]*id="receptor-domicilio"[^>]*>/)?.[0] ?? "";
+
+    expect(html).toContain("CUIT verificado por ARCA");
+    expect(html).toContain('dateTime="2026-08-26T12:34:56.000-03:00"');
+    expect(razon).toContain('value="IDENTIDAD OFICIAL SA"');
+    expect(razon).toContain('readOnly=""');
+    expect(domicilio).toContain('value="Sarmiento 123, Cordoba"');
+    expect(domicilio).toContain('readOnly=""');
+    expect(html).not.toContain('id="confirmar-datos-receptor"');
+  });
+
+  it("anuncia la consulta en curso de manera accesible", () => {
+    const html = renderFormulario(
+      "A",
+      RECEPTOR_MANUAL,
+      {},
+      {
+        estado: "CONSULTANDO",
+        cuit: "30714199664",
+        token: 3,
+      },
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Consultando CUIT en ARCA…");
+  });
   it("explica cuándo usar el cliente comercial y cuándo otro receptor", () => {
     const html = renderFormulario("B");
 

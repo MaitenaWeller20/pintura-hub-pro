@@ -1323,6 +1323,7 @@ function NuevaVenta() {
             },
             emisor: { razonSocial: "Emisor de la sucursal", cuit: "a confirmar" },
             sucursal: {
+              id: effSucursal,
               nombre:
                 sucs.find((sucursal: any) => sucursal.id === effSucursal)?.nombre ??
                 cu?.sucursal?.nombre ??

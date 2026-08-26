@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import * as fiscalFunctions from "./fiscal.functions";
 import {
+  consultaCuitPadronInputSchema,
   emitirInputSchema,
+  ejecutarConsultaPadronOperador,
   ejecutarFachadaEmisionPostBorrador,
   postBorradorInputSchema,
   proyectarIncidenteFiscal,
 } from "./fiscal.functions";
+import type { ContextoFiscal } from "./fiscal/contexto";
+import type { ReceptorPadronArca } from "./fiscal/padron-arca";
+import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./fiscal/error-usuario";
 
 const INPUT = {
   venta_id: "71000000-0000-4000-8000-000000000001",
@@ -24,6 +29,155 @@ function esquemaPreviewFiscal(): EsquemaEntrada {
   expect(esquema).toBeDefined();
   return esquema!;
 }
+
+const RECEPTOR_PADRON: ReceptorPadronArca = {
+  cuit: "30714199664",
+  razonSocial: "QUIMEX PRUEBA SA",
+  domicilioFiscal: "Sarmiento 123, Cordoba",
+  estado: "ACTIVO",
+  tipoPersona: "JURIDICA",
+  condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+  verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+};
+
+function contextoPadron(validacionActiva: boolean): ContextoFiscal {
+  return {
+    padron: { validacionActiva, probadoAt: validacionActiva ? "2026-08-26T12:00:00Z" : null },
+  } as ContextoFiscal;
+}
+
+describe("consulta autorizada del CUIT para el operador", () => {
+  it("autoriza la sucursal antes de cargar contexto privilegiado", async () => {
+    const orden: string[] = [];
+
+    await expect(
+      ejecutarConsultaPadronOperador(
+        {
+          sucursalId: "71000000-0000-4000-8000-000000000301",
+          cuit: "30714199664",
+        },
+        {
+          autorizarSucursal: async () => {
+            orden.push("permiso");
+            throw new Error("sin permiso");
+          },
+          cargarContexto: async () => {
+            orden.push("service-role");
+            throw new Error("no debe ejecutarse");
+          },
+          consultar: async () => {
+            orden.push("ARCA");
+            throw new Error("no debe ejecutarse");
+          },
+        },
+      ),
+    ).rejects.toThrow(/permiso/i);
+    expect(orden).toEqual(["permiso"]);
+  });
+
+  it("devuelve INACTIVO sin consultar ARCA", async () => {
+    const orden: string[] = [];
+
+    await expect(
+      ejecutarConsultaPadronOperador(
+        {
+          sucursalId: "71000000-0000-4000-8000-000000000301",
+          cuit: "30714199664",
+        },
+        {
+          autorizarSucursal: async () => {
+            orden.push("permiso");
+          },
+          cargarContexto: async () => {
+            orden.push("contexto");
+            return contextoPadron(false);
+          },
+          consultar: async () => {
+            orden.push("ARCA");
+            return RECEPTOR_PADRON;
+          },
+        },
+      ),
+    ).resolves.toEqual({ estado: "INACTIVO" });
+    expect(orden).toEqual(["permiso", "contexto"]);
+  });
+
+  it("cuando está activo proyecta únicamente el receptor canónico", async () => {
+    const resultado = await ejecutarConsultaPadronOperador(
+      {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+      },
+      {
+        autorizarSucursal: async () => undefined,
+        cargarContexto: async () => contextoPadron(true),
+        consultar: async () => RECEPTOR_PADRON,
+      },
+    );
+
+    expect(resultado).toEqual({ estado: "VERIFICADO", receptor: RECEPTOR_PADRON });
+    expect(JSON.stringify(resultado)).not.toMatch(/cert|key|ticket|soap/i);
+  });
+
+  it("cierra fallos privilegiados sin transportar detalles internos", async () => {
+    const errorContexto = await ejecutarConsultaPadronOperador(
+      {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+      },
+      {
+        autorizarSucursal: async () => undefined,
+        cargarContexto: async () => {
+          throw new Error("SQL credencial secreta");
+        },
+        consultar: async () => RECEPTOR_PADRON,
+      },
+    ).catch((error: unknown) => error);
+    expect(codigoErrorFiscalUsuario(errorContexto)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(String(errorContexto)).not.toContain("SQL credencial secreta");
+
+    const caida = crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    const errorConsulta = await ejecutarConsultaPadronOperador(
+      {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+      },
+      {
+        autorizarSucursal: async () => undefined,
+        cargarContexto: async () => contextoPadron(true),
+        consultar: async () => {
+          throw caida;
+        },
+      },
+    ).catch((error: unknown) => error);
+    expect(errorConsulta).toBe(caida);
+  });
+
+  it("valida una sucursal UUID estricta pero deja el checksum para después de auth", () => {
+    expect(
+      consultaCuitPadronInputSchema.parse({
+        sucursal_id: "71000000-0000-4000-8000-000000000301",
+        cuit: "30621146314",
+      }),
+    ).toEqual({
+      sucursal_id: "71000000-0000-4000-8000-000000000301",
+      cuit: "30621146314",
+    });
+    expect(() =>
+      consultaCuitPadronInputSchema.parse({
+        sucursal_id: "no-es-uuid",
+        cuit: "30714199664",
+      }),
+    ).toThrow();
+    expect(() =>
+      consultaCuitPadronInputSchema.parse({
+        sucursal_id: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+        credencial: "no debe entrar",
+      }),
+    ).toThrow();
+  });
+});
 
 describe("contrato público de letra fiscal solicitada", () => {
   const emision = {

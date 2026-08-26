@@ -120,6 +120,7 @@ function contextoDialogo(
   row: ColaFiscalFila,
   tipoCliente: string | null | undefined,
 ): ContextoDialogoEmision {
+  if (!row.sucursal_id) throw new Error("La venta no tiene una sucursal fiscal asociada.");
   return {
     comprador: {
       razonSocial: row.cliente_razon_social ?? "Comprador sin razón social",
@@ -133,6 +134,7 @@ function contextoDialogo(
       cuit: row.emisor_cuit ?? "a confirmar",
     },
     sucursal: {
+      id: row.sucursal_id,
       nombre: row.sucursal_nombre ?? "Sucursal a confirmar",
       puntoVenta: row.afip_punto_venta,
       modo:

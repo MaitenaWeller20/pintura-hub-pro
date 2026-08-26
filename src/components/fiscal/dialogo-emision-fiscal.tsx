@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +30,7 @@ import {
   finalizarSolicitudPreview,
   iniciarSolicitudPreview,
   invalidarSolicitudPreview,
+  invalidarHuellaConfirmacion,
   registrarPreviewConfirmacion,
   registrarReconfirmacion,
   type LetraSolicitada,
@@ -45,6 +46,15 @@ import {
   validarSelectorReceptorFiscal,
   type CampoReceptorFiscal,
 } from "./dialogo-emision-validacion";
+import {
+  bloqueaAccionesPorConsultaPadron,
+  crearControlConsultaPadron,
+  cuitParaConsulta,
+  invalidarConsultaPadron,
+  programarConsultaPadron,
+  resultadoConsultaCuitPadronSchema,
+  type EstadoConsultaPadronUi,
+} from "./padron-receptor";
 
 export type ContextoDialogoEmision = {
   comprador: {
@@ -54,6 +64,7 @@ export type ContextoDialogoEmision = {
   };
   emisor: { razonSocial: string; cuit: string };
   sucursal: {
+    id: string;
     nombre: string;
     puntoVenta: number | null;
     modo: "PRODUCCION" | "HOMOLOGACION" | null;
@@ -61,6 +72,70 @@ export type ContextoDialogoEmision = {
   tipoComprobante: string;
   receptorHeredado?: ReceptorHeredadoVista | null;
 };
+
+function SincronizarPadronReceptor({
+  cuit,
+  revision,
+  sucursalId,
+  control,
+  onConsultarCuit,
+  onIniciar,
+  onEstado,
+}: {
+  cuit: string | null;
+  revision: number;
+  sucursalId: string;
+  control: ReturnType<typeof crearControlConsultaPadron>;
+  onConsultarCuit(input: { sucursalId: string; cuit: string }): Promise<unknown>;
+  onIniciar(): void;
+  onEstado(estado: EstadoConsultaPadronUi): void;
+}) {
+  const consultarRef = useRef(onConsultarCuit);
+  const iniciarRef = useRef(onIniciar);
+
+  useEffect(() => {
+    consultarRef.current = onConsultarCuit;
+  }, [onConsultarCuit]);
+  useEffect(() => {
+    iniciarRef.current = onIniciar;
+  }, [onIniciar]);
+
+  useEffect(() => {
+    iniciarRef.current();
+    if (!cuit) {
+      invalidarConsultaPadron(control);
+      onEstado({ estado: "SIN_CUIT" });
+      return;
+    }
+
+    const solicitud = programarConsultaPadron(control, cuit, {
+      consultar: async () =>
+        resultadoConsultaCuitPadronSchema.parse(await consultarRef.current({ sucursalId, cuit })),
+      onResultado(resultado, cuitConsultado) {
+        onEstado(
+          resultado.estado === "INACTIVO"
+            ? { estado: "INACTIVO", cuit: cuitConsultado }
+            : {
+                estado: "VERIFICADO",
+                cuit: cuitConsultado,
+                receptor: resultado.receptor,
+              },
+        );
+      },
+      onError(cause, cuitConsultado) {
+        onEstado({
+          estado: "ERROR",
+          cuit: cuitConsultado,
+          mensaje: mensajeErrorFiscal(cause, "REVISION"),
+        });
+      },
+    });
+    onEstado({ estado: "CONSULTANDO", cuit, token: solicitud.token });
+    return solicitud.cancelar;
+  }, [control, cuit, onEstado, revision, sucursalId]);
+
+  return null;
+}
 
 function letraParaNota(receptor: ReceptorHeredadoVista | null | undefined): LetraSolicitada {
   return receptor?.condicionIva === "RESPONSABLE_INSCRIPTO" ||
@@ -90,6 +165,7 @@ export function DialogoEmisionFiscal({
   returnFocusRef,
   puedeConfirmarVentaAntigua = false,
   onOpenChange,
+  onConsultarCuit,
   onPrevisualizar,
   onConfirmar,
   onCompletada,
@@ -100,6 +176,7 @@ export function DialogoEmisionFiscal({
   returnFocusRef?: RefObject<HTMLElement | null>;
   puedeConfirmarVentaAntigua?: boolean;
   onOpenChange(open: boolean): void;
+  onConsultarCuit?(input: { sucursalId: string; cuit: string }): Promise<unknown>;
   onPrevisualizar(input: {
     receptor: SelectorReceptorFiscal;
     letraSolicitada: LetraSolicitada;
@@ -114,6 +191,14 @@ export function DialogoEmisionFiscal({
 }) {
   const esNota =
     contexto.tipoComprobante === "NOTA_CREDITO" || contexto.tipoComprobante === "NOTA_DEBITO";
+  const consultarCuit =
+    onConsultarCuit ??
+    (async (input: { sucursalId: string; cuit: string }) => {
+      const { consultarCuitPadronArca } = await import("@/lib/fiscal.functions");
+      return consultarCuitPadronArca({
+        data: { sucursal_id: input.sucursalId, cuit: input.cuit },
+      });
+    });
   const receptorInicial: ReceptorFormulario = esNota
     ? { origen: "COMPROBANTE_ORIGINAL" }
     : { origen: "CLIENTE_COMERCIAL" };
@@ -130,9 +215,49 @@ export function DialogoEmisionFiscal({
   const [erroresReceptor, setErroresReceptor] = useState<
     Partial<Record<CampoReceptorFiscal, string>>
   >({});
+  const [estadoConsultaPadron, setEstadoConsultaPadron] = useState<EstadoConsultaPadronUi>({
+    estado: "SIN_CUIT",
+  });
+  const [revisionConsultaPadron, setRevisionConsultaPadron] = useState(0);
   const initialFocusRef = useRef<HTMLInputElement>(null);
   const previewControlRef = useRef(crearControlSolicitudPreview());
   const emitiendoRef = useRef(false);
+  const padronControlRef = useRef(crearControlConsultaPadron());
+
+  const cuitActual = esNota
+    ? null
+    : cuitParaConsulta({
+        receptor,
+        cliente: contexto.comprador,
+        favoritos,
+      });
+
+  const limpiarConfirmacionPorConsulta = useCallback(() => {
+    invalidarSolicitudPreview(previewControlRef.current);
+    setPrevisualizando(false);
+    setPreview(null);
+    setConfirmaVentaAntigua(false);
+    setConfirmacion(invalidarHuellaConfirmacion);
+  }, []);
+
+  const marcarCambioConsulta = (siguiente: ReceptorFormulario) => {
+    invalidarConsultaPadron(padronControlRef.current);
+    setRevisionConsultaPadron((actual) => actual + 1);
+    const siguienteCuit = cuitParaConsulta({
+      receptor: siguiente,
+      cliente: contexto.comprador,
+      favoritos,
+    });
+    setEstadoConsultaPadron(
+      siguienteCuit
+        ? {
+            estado: "CONSULTANDO",
+            cuit: siguienteCuit,
+            token: padronControlRef.current.secuencia,
+          }
+        : { estado: "SIN_CUIT" },
+    );
+  };
 
   const reiniciar = () => {
     setReceptor(receptorInicial);
@@ -143,6 +268,8 @@ export function DialogoEmisionFiscal({
     setError(null);
     setErroresReceptor({});
     invalidarSolicitudPreview(previewControlRef.current);
+    invalidarConsultaPadron(padronControlRef.current);
+    setEstadoConsultaPadron({ estado: "SIN_CUIT" });
   };
 
   const cerrar = () => {
@@ -155,6 +282,7 @@ export function DialogoEmisionFiscal({
     invalidarSolicitudPreview(previewControlRef.current);
     setPrevisualizando(false);
     setReceptor(siguiente);
+    marcarCambioConsulta(siguiente);
     setConfirmacion((actual) => cambiarReceptorConfirmacion(actual));
     setPreview(null);
     setConfirmaVentaAntigua(false);
@@ -165,7 +293,9 @@ export function DialogoEmisionFiscal({
   const cambiarLetra = (letraSolicitada: LetraSolicitada) => {
     if (esNota || emitiendoRef.current) return;
     setPrevisualizando(false);
-    setReceptor((actual) => adaptarReceptorFormularioALetra(actual, letraSolicitada));
+    const siguienteReceptor = adaptarReceptorFormularioALetra(receptor, letraSolicitada);
+    setReceptor(siguienteReceptor);
+    marcarCambioConsulta(siguienteReceptor);
     setConfirmacion(
       cambiarLetraConfirmacion(confirmacion, letraSolicitada, previewControlRef.current),
     );
@@ -182,6 +312,7 @@ export function DialogoEmisionFiscal({
       letraSolicitada,
       clienteComercial: contexto.comprador,
       favoritos,
+      estadoConsultaPadron,
     });
     if (resultado.ok) {
       setErroresReceptor({});
@@ -291,13 +422,21 @@ export function DialogoEmisionFiscal({
     }
   };
 
+  const consultaPadronVerificada =
+    estadoConsultaPadron.estado === "VERIFICADO" &&
+    estadoConsultaPadron.cuit === cuitActual &&
+    estadoConsultaPadron.receptor.cuit === cuitActual;
   const puedeEmitir =
     preview !== null &&
     confirmacion.letraSolicitada !== null &&
     confirmacion.huellaConfirmacion !== null &&
     (!preview.advertencia_demora || (puedeConfirmarVentaAntigua && confirmaVentaAntigua)) &&
     !(preview.letra === "A" && !preview.confirmacion_factura_a_permitida) &&
-    (receptor.origen !== "MANUAL" || confirmacion.confirmaDatosManuales);
+    (receptor.origen !== "MANUAL" ||
+      confirmacion.confirmaDatosManuales ||
+      consultaPadronVerificada);
+  const consultaPadronBloquea =
+    !esNota && bloqueaAccionesPorConsultaPadron(cuitActual, estadoConsultaPadron);
 
   return (
     <Dialog
@@ -326,6 +465,17 @@ export function DialogoEmisionFiscal({
           }
         }}
       >
+        {open && !esNota ? (
+          <SincronizarPadronReceptor
+            cuit={cuitActual}
+            revision={revisionConsultaPadron}
+            sucursalId={contexto.sucursal.id}
+            control={padronControlRef.current}
+            onConsultarCuit={consultarCuit}
+            onIniciar={limpiarConfirmacionPorConsulta}
+            onEstado={setEstadoConsultaPadron}
+          />
+        ) : null}
         <div className="px-4 pt-5 sm:px-6">
           <DialogHeader>
             <DialogTitle>Revisar y emitir comprobante</DialogTitle>
@@ -425,6 +575,7 @@ export function DialogoEmisionFiscal({
             receptorHeredado={contexto.receptorHeredado}
             letraSolicitada={confirmacion.letraSolicitada}
             confirmaDatosManuales={confirmacion.confirmaDatosManuales}
+            estadoConsultaPadron={estadoConsultaPadron}
             errores={erroresReceptor}
             disabled={
               emitiendo || previsualizando || (!esNota && confirmacion.letraSolicitada === null)
@@ -494,7 +645,7 @@ export function DialogoEmisionFiscal({
             <Button
               type="button"
               className="min-h-11 w-full sm:w-auto"
-              disabled={!puedeEmitir || emitiendo}
+              disabled={!puedeEmitir || consultaPadronBloquea || emitiendo}
               onClick={confirmar}
             >
               {emitiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck />}
@@ -508,7 +659,12 @@ export function DialogoEmisionFiscal({
             <Button
               type="button"
               className="min-h-11 w-full sm:w-auto"
-              disabled={previsualizando || emitiendo || confirmacion.letraSolicitada === null}
+              disabled={
+                previsualizando ||
+                emitiendo ||
+                consultaPadronBloquea ||
+                confirmacion.letraSolicitada === null
+              }
               onClick={preparar}
             >
               {previsualizando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

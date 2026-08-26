@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DialogoEmisionFiscal } from "./dialogo-emision-fiscal";
 import * as dialogoEmisionContract from "./dialogo-emision-contract";
 import * as estadoDialogo from "./dialogo-emision-state";
@@ -11,10 +13,16 @@ import {
   esSolicitudPreviewActual,
   finalizarSolicitudPreview,
   iniciarSolicitudPreview,
+  invalidarHuellaConfirmacion,
   invalidarSolicitudPreview,
   registrarPreviewConfirmacion,
   registrarReconfirmacion,
 } from "./dialogo-emision-state";
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 // Radix monta el contenido en un portal del navegador. Para esta prueba de
 // componente sólo reemplazamos ese transporte: el contenido y sus controles
@@ -67,7 +75,12 @@ function renderDialogo(tipoComprobante = "VENTA"): string {
           condicionIva: "CONSUMIDOR_FINAL",
         },
         emisor: { razonSocial: "Emisor", cuit: "30714199664" },
-        sucursal: { nombre: "Casa central", puntoVenta: null, modo: null },
+        sucursal: {
+          id: "71000000-0000-4000-8000-000000000301",
+          nombre: "Casa central",
+          puntoVenta: null,
+          modo: null,
+        },
         tipoComprobante,
         receptorHeredado: {
           razonSocial: "Receptor original",
@@ -80,12 +93,28 @@ function renderDialogo(tipoComprobante = "VENTA"): string {
       favoritos: [],
       onOpenChange: vi.fn(),
       onPrevisualizar: vi.fn(),
+      onConsultarCuit: vi.fn(),
       onConfirmar: vi.fn(),
     }),
   );
 }
 
 describe("estado seguro del diálogo fiscal", () => {
+  it("iniciar una consulta nueva borra huella y reconfirmación sin alterar la declaración manual", () => {
+    expect(
+      invalidarHuellaConfirmacion({
+        letraSolicitada: "B",
+        huellaConfirmacion: "a".repeat(64),
+        confirmaDatosManuales: true,
+        requiereSegundaConfirmacion: true,
+      }),
+    ).toEqual({
+      letraSolicitada: "B",
+      huellaConfirmacion: null,
+      confirmaDatosManuales: true,
+      requiereSegundaConfirmacion: false,
+    });
+  });
   it("nace sin letra para obligar al operador a elegir A o B", () => {
     expect(crearEstadoConfirmacionFiscal()).toHaveProperty("letraSolicitada", null);
   });
@@ -218,5 +247,99 @@ describe("selector de letra del diálogo compartido", () => {
     expect(html).not.toContain('name="letra-solicitada"');
     expect(html).toContain("Las notas conservan el receptor del comprobante original.");
     expect(html).toContain("Receptor original");
+  });
+
+  it("bloquea revisar y reprograma la consulta si la selección cambia durante el debounce", async () => {
+    vi.useFakeTimers();
+    const onConsultarCuit = vi.fn(() => new Promise<never>(() => undefined));
+    render(
+      createElement(DialogoEmisionFiscal, {
+        open: true,
+        contexto: {
+          comprador: {
+            razonSocial: "Comprador",
+            documento: "30-71419966-4",
+            condicionIva: "CONSUMIDOR_FINAL",
+          },
+          emisor: { razonSocial: "Emisor", cuit: "30714199664" },
+          sucursal: {
+            id: "71000000-0000-4000-8000-000000000301",
+            nombre: "Casa central",
+            puntoVenta: null,
+            modo: null,
+          },
+          tipoComprobante: "VENTA",
+        },
+        favoritos: [],
+        onOpenChange: vi.fn(),
+        onConsultarCuit,
+        onPrevisualizar: vi.fn(),
+        onConfirmar: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /Factura A/i }));
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(document.body.contains(screen.getByText("Consultando CUIT en ARCA…"))).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(onConsultarCuit).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(onConsultarCuit).toHaveBeenCalledWith({
+      sucursalId: "71000000-0000-4000-8000-000000000301",
+      cuit: "30714199664",
+    });
+  });
+
+  it("una nota de crédito no monta la consulta viva del padrón", async () => {
+    vi.useFakeTimers();
+    const onConsultarCuit = vi.fn();
+    render(
+      createElement(DialogoEmisionFiscal, {
+        open: true,
+        contexto: {
+          comprador: {
+            razonSocial: "Comprador",
+            documento: "30-71419966-4",
+            condicionIva: "CONSUMIDOR_FINAL",
+          },
+          emisor: { razonSocial: "Emisor", cuit: "30714199664" },
+          sucursal: {
+            id: "71000000-0000-4000-8000-000000000301",
+            nombre: "Casa central",
+            puntoVenta: null,
+            modo: null,
+          },
+          tipoComprobante: "NOTA_CREDITO",
+          receptorHeredado: {
+            razonSocial: "Receptor original",
+            tipoDocumento: "CUIT",
+            numeroDocumento: "30714199664",
+            condicionIva: "RESPONSABLE_INSCRIPTO",
+            domicilio: "Sarmiento 123",
+          },
+        },
+        favoritos: [],
+        onOpenChange: vi.fn(),
+        onConsultarCuit,
+        onPrevisualizar: vi.fn(),
+        onConfirmar: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(onConsultarCuit).not.toHaveBeenCalled();
   });
 });

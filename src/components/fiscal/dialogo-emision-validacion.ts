@@ -4,6 +4,8 @@ import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import type { CondicionIva } from "@/lib/fiscal/codigos";
 import type { ReceptorFormulario } from "./receptor-fiscal-form";
 import type { LetraSolicitada } from "./dialogo-emision-state";
+import { cuitParaConsulta, type EstadoConsultaPadronUi } from "./padron-receptor";
+import { mensajeCodigoErrorFiscalUsuario } from "@/lib/fiscal/error-usuario";
 
 export type CampoReceptorFiscal =
   | "cliente_comercial"
@@ -24,6 +26,31 @@ export type ClienteComercialFiscal = {
   condicionIva: CondicionIva | null;
 };
 
+function condicionDeclaradaB(input: {
+  value: ReceptorFormulario;
+  clienteComercial?: ClienteComercialFiscal;
+  favoritos: ReceptorFiscalFavorito[];
+}): CondicionIva | null {
+  if (input.value.origen === "MANUAL") return input.value.condicion_iva;
+  if (input.value.origen === "CLIENTE_COMERCIAL") {
+    return input.clienteComercial?.condicionIva ?? null;
+  }
+  if (input.value.origen === "FAVORITO") {
+    const receptorFiscalId = input.value.receptor_fiscal_id;
+    return input.favoritos.find((item) => item.id === receptorFiscalId)?.condicion_iva ?? null;
+  }
+  return null;
+}
+
+function condicionCompatibleConLetra(
+  condicion: CondicionIva,
+  letraSolicitada: LetraSolicitada,
+): boolean {
+  return letraSolicitada === "A"
+    ? condicion === "RESPONSABLE_INSCRIPTO" || condicion === "MONOTRIBUTO"
+    : condicion === "CONSUMIDOR_FINAL" || condicion === "EXENTO";
+}
+
 function error(
   campo: CampoReceptorFiscal,
   mensaje: string,
@@ -37,15 +64,70 @@ export function validarSelectorReceptorFiscal({
   letraSolicitada,
   clienteComercial,
   favoritos = [],
+  estadoConsultaPadron,
 }: {
   value: ReceptorFormulario;
   confirmaDatosManuales: boolean;
   letraSolicitada: LetraSolicitada;
   clienteComercial?: ClienteComercialFiscal;
   favoritos?: ReceptorFiscalFavorito[];
+  estadoConsultaPadron?: EstadoConsultaPadronUi;
 }): ResultadoValidacionSelector {
   if (value.origen === "COMPROBANTE_ORIGINAL") {
     return { ok: true, selector: value };
+  }
+
+  const cuitActual = cuitParaConsulta({
+    receptor: value,
+    cliente: clienteComercial ?? {
+      razonSocial: "",
+      documento: null,
+      condicionIva: null,
+    },
+    favoritos,
+  });
+  const padronInactivo =
+    estadoConsultaPadron?.estado === "INACTIVO" && estadoConsultaPadron.cuit === cuitActual;
+
+  if (cuitActual && estadoConsultaPadron && !padronInactivo) {
+    if (estadoConsultaPadron.estado === "ERROR" && estadoConsultaPadron.cuit === cuitActual) {
+      return error("numero_documento", estadoConsultaPadron.mensaje);
+    }
+    if (
+      estadoConsultaPadron.estado !== "VERIFICADO" ||
+      estadoConsultaPadron.cuit !== cuitActual ||
+      estadoConsultaPadron.receptor.cuit !== cuitActual
+    ) {
+      return error("numero_documento", "Esperá a que ARCA termine de verificar el CUIT.");
+    }
+
+    const condicionConfirmada = estadoConsultaPadron.receptor.condicionIvaConfirmada;
+    const condicion =
+      condicionConfirmada ??
+      (letraSolicitada === "B"
+        ? condicionDeclaradaB({ value, clienteComercial, favoritos })
+        : null);
+    if (!condicion || !condicionCompatibleConLetra(condicion, letraSolicitada)) {
+      return error(
+        "condicion_iva",
+        mensajeCodigoErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE"),
+      );
+    }
+
+    if (value.origen !== "MANUAL") return { ok: true, selector: value };
+    return {
+      ok: true,
+      selector: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: cuitActual,
+        razon_social: estadoConsultaPadron.receptor.razonSocial,
+        condicion_iva: condicion,
+        domicilio: estadoConsultaPadron.receptor.domicilioFiscal,
+        guardar_para_proximas: value.guardar_para_proximas,
+        confirma_datos_manuales: true,
+      },
+    };
   }
   if (value.origen === "CLIENTE_COMERCIAL") {
     if (letraSolicitada === "A") {

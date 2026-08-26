@@ -371,6 +371,7 @@ function DetallePresupuesto() {
               cuit: p.sucursal?.emisor?.cuit ?? "a confirmar",
             },
             sucursal: {
+              id: p.sucursal_id,
               nombre: p.sucursal?.nombre ?? "Sucursal del presupuesto",
               puntoVenta: null,
               modo: null,

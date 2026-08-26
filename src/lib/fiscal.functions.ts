@@ -23,10 +23,15 @@ import {
 } from "./fiscal/impresion";
 import { exigirPngDataUrlFiscal, type QrAfipInput } from "./fiscal/qr";
 import {
+  codigoErrorFiscalUsuario,
   parsearEntradaFiscal,
+  crearErrorFiscalUsuario,
   referenciaErrorFiscalUsuario,
   type CodigoErrorFiscalUsuario,
 } from "./fiscal/error-usuario";
+import { cuitValido } from "./fiscal/codigos";
+import type { ContextoFiscal } from "./fiscal/contexto";
+import { receptorPadronArcaSchema, type ReceptorPadronArca } from "./fiscal/padron-arca";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -65,6 +70,42 @@ export const postBorradorInputSchema = v2BaseInputSchema
     huella_confirmacion_provisional: z.string().regex(/^[0-9a-f]{64}$/),
   })
   .strict();
+
+export type ResultadoConsultaCuitPadron =
+  | { estado: "INACTIVO" }
+  | { estado: "VERIFICADO"; receptor: ReceptorPadronArca };
+
+export const consultaCuitPadronInputSchema = z
+  .object({
+    sucursal_id: z.string().uuid(),
+    cuit: z.string(),
+  })
+  .strict();
+
+export async function ejecutarConsultaPadronOperador(
+  input: { sucursalId: string; cuit: string },
+  deps: {
+    autorizarSucursal(): Promise<void>;
+    cargarContexto(): Promise<ContextoFiscal>;
+    consultar(contexto: ContextoFiscal, cuit: string): Promise<ReceptorPadronArca>;
+  },
+): Promise<ResultadoConsultaCuitPadron> {
+  await deps.autorizarSucursal();
+  let contexto: ContextoFiscal;
+  try {
+    contexto = await deps.cargarContexto();
+  } catch {
+    throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+  }
+  if (!contexto.padron.validacionActiva) return { estado: "INACTIVO" };
+  try {
+    const receptor = receptorPadronArcaSchema.parse(await deps.consultar(contexto, input.cuit));
+    return { estado: "VERIFICADO", receptor };
+  } catch (cause) {
+    if (codigoErrorFiscalUsuario(cause)) throw cause;
+    throw crearErrorFiscalUsuario("RESPUESTA_PADRON_INVALIDA");
+  }
+}
 
 const itemBorradorSchema = z
   .object({
@@ -258,6 +299,55 @@ export async function ejecutarFachadaEmisionPostBorrador<T>(
   if (escritor === "MANTENIMIENTO") return mantenimiento();
   return deps.ejecutar();
 }
+
+/** Consulta visual acotada: auth -> permiso user-bound -> service-role -> ARCA. */
+export const consultarCuitPadronArca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(consultaCuitPadronInputSchema, value, "REVISION"),
+  )
+  .handler(async ({ data, context }) => {
+    if (!cuitValido(data.cuit)) throw crearErrorFiscalUsuario("CUIT_INVALIDO");
+
+    return ejecutarConsultaPadronOperador(
+      { sucursalId: data.sucursal_id, cuit: data.cuit.replace(/\D/g, "") },
+      {
+        async autorizarSucursal() {
+          const lecturas = lecturasPermiso(context.supabase);
+          const [esAdmin, perfil] = await Promise.all([
+            lecturas.consultarEsAdmin(context.userId),
+            lecturas.cargarPerfil(context.userId),
+          ]);
+          evaluarPermisoFiscal({
+            venta: { id: "CONSULTA_PADRON", sucursalId: data.sucursal_id, diasAntiguedad: 0 },
+            perfil,
+            esAdmin,
+            accion: "PREVISUALIZAR",
+            confirmaVentaAntigua: false,
+          });
+        },
+        async cargarContexto() {
+          const [{ supabaseAdmin }, { cargarContextoFiscal }] = await Promise.all([
+            import("@/integrations/supabase/client.server"),
+            import("./fiscal/contexto.server"),
+          ]);
+          return cargarContextoFiscal(supabaseAdmin, data.sucursal_id);
+        },
+        async consultar(contextoFiscal, cuit) {
+          const [{ supabaseAdmin }, { consultarPadronArcaDesdeContexto }] = await Promise.all([
+            import("@/integrations/supabase/client.server"),
+            import("./fiscal/padron-arca.server"),
+          ]);
+          return consultarPadronArcaDesdeContexto({
+            cuit,
+            emisor: contextoFiscal.emisor,
+            ambiente: contextoFiscal.pv.modo,
+            admin: supabaseAdmin,
+          });
+        },
+      },
+    );
+  });
 
 /** Facade único: auth -> permiso user-bound -> flags -> import server-only -> writer exacto. */
 export const emitirComprobante = createServerFn({ method: "POST" })

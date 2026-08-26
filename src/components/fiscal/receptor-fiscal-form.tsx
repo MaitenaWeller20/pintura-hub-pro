@@ -6,6 +6,7 @@ import type { ReceptorFiscalConfirmado, TipoDocumentoFiscal } from "@/lib/fiscal
 import type { CondicionIva } from "@/lib/fiscal/codigos";
 import { adaptarReceptorFormularioALetra, type LetraSolicitada } from "./dialogo-emision-state";
 import type { CampoReceptorFiscal } from "./dialogo-emision-validacion";
+import { cuitParaConsulta, type EstadoConsultaPadronUi } from "./padron-receptor";
 
 export type ReceptorFormulario =
   | { origen: "CLIENTE_COMERCIAL" }
@@ -76,6 +77,64 @@ function DocumentoReceptor({ receptor }: { receptor: ReceptorHeredadoVista }) {
   );
 }
 
+function horaPadron(fecha: string): string {
+  return new Intl.DateTimeFormat("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(fecha));
+}
+
+function EstadoPadron({
+  estado,
+  cuitActual,
+}: {
+  estado: EstadoConsultaPadronUi;
+  cuitActual: string | null;
+}) {
+  if (!cuitActual || estado.estado === "INACTIVO") return null;
+  if (
+    estado.estado === "VERIFICADO" &&
+    estado.cuit === cuitActual &&
+    estado.receptor.cuit === cuitActual
+  ) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm sm:col-span-2"
+      >
+        <strong className="block text-primary">CUIT verificado por ARCA</strong>
+        <span className="text-xs text-muted-foreground">
+          Verificado a las{" "}
+          <time dateTime={estado.receptor.verificadoArcaAt}>
+            {horaPadron(estado.receptor.verificadoArcaAt)}
+          </time>
+        </span>
+      </div>
+    );
+  }
+  if (estado.estado === "ERROR" && estado.cuit === cuitActual) {
+    return (
+      <p
+        role="alert"
+        className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive sm:col-span-2"
+      >
+        {estado.mensaje}
+      </p>
+    );
+  }
+  return (
+    <p
+      role="status"
+      aria-live="polite"
+      className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-medium sm:col-span-2"
+    >
+      Consultando CUIT en ARCA…
+    </p>
+  );
+}
+
 export function ReceptorFiscalForm({
   value,
   favoritos,
@@ -83,6 +142,7 @@ export function ReceptorFiscalForm({
   receptorHeredado,
   letraSolicitada,
   confirmaDatosManuales,
+  estadoConsultaPadron = { estado: "SIN_CUIT" },
   errores = {},
   disabled,
   initialFocusRef,
@@ -99,6 +159,7 @@ export function ReceptorFiscalForm({
   receptorHeredado?: ReceptorHeredadoVista | null;
   letraSolicitada: LetraSolicitada | null;
   confirmaDatosManuales: boolean;
+  estadoConsultaPadron?: EstadoConsultaPadronUi;
   errores?: Partial<Record<CampoReceptorFiscal, string>>;
   disabled: boolean;
   initialFocusRef?: RefObject<HTMLInputElement | null>;
@@ -128,6 +189,17 @@ export function ReceptorFiscalForm({
   const condiciones = letraSolicitada ? CONDICIONES_POR_LETRA[letraSolicitada] : [];
   const requiereDocumento =
     letraSolicitada === "A" || (value.origen === "MANUAL" && value.condicion_iva === "EXENTO");
+  const cuitActual = cuitParaConsulta({
+    receptor: value,
+    cliente: clienteComercial,
+    favoritos,
+  });
+  const receptorVerificado =
+    estadoConsultaPadron.estado === "VERIFICADO" &&
+    estadoConsultaPadron.cuit === cuitActual &&
+    estadoConsultaPadron.receptor.cuit === cuitActual
+      ? estadoConsultaPadron.receptor
+      : null;
 
   return (
     <fieldset disabled={disabled} className="space-y-3">
@@ -244,6 +316,46 @@ export function ReceptorFiscalForm({
         </div>
       ) : null}
 
+      {value.origen !== "MANUAL" ? (
+        <EstadoPadron estado={estadoConsultaPadron} cuitActual={cuitActual} />
+      ) : null}
+
+      {value.origen !== "MANUAL" && receptorVerificado ? (
+        <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label htmlFor="receptor-razon-social">Razón social oficial</Label>
+            <Input
+              id="receptor-razon-social"
+              className="mt-1 min-h-11"
+              value={receptorVerificado.razonSocial}
+              readOnly
+            />
+          </div>
+          <div>
+            <Label htmlFor="receptor-condicion-iva">Condición de IVA informada</Label>
+            <Input
+              id="receptor-condicion-iva"
+              className="mt-1 min-h-11"
+              value={
+                receptorVerificado.condicionIvaConfirmada
+                  ? ETIQUETA_CONDICION_IVA[receptorVerificado.condicionIvaConfirmada]
+                  : "ARCA no confirmó una condición"
+              }
+              readOnly
+            />
+          </div>
+          <div>
+            <Label htmlFor="receptor-domicilio">Domicilio fiscal oficial</Label>
+            <Input
+              id="receptor-domicilio"
+              className="mt-1 min-h-11"
+              value={receptorVerificado.domicilioFiscal ?? "Sin domicilio informado"}
+              readOnly
+            />
+          </div>
+        </div>
+      ) : null}
+
       {value.origen === "MANUAL" ? (
         <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
           {letraSolicitada === "B" ? (
@@ -325,13 +437,15 @@ export function ReceptorFiscalForm({
               </p>
             ) : null}
           </div>
+          <EstadoPadron estado={estadoConsultaPadron} cuitActual={cuitActual} />
           <div className="sm:col-span-2">
             <Label htmlFor="receptor-razon-social">Razón social</Label>
             <Input
               id="receptor-razon-social"
               className="mt-1 min-h-11"
-              value={value.razon_social}
+              value={receptorVerificado?.razonSocial ?? value.razon_social}
               required
+              readOnly={receptorVerificado !== null}
               aria-invalid={errores.razon_social ? true : undefined}
               aria-describedby={errores.razon_social ? "error-receptor-razon-social" : undefined}
               onChange={(event) => onChange({ ...value, razon_social: event.target.value })}
@@ -348,22 +462,33 @@ export function ReceptorFiscalForm({
           </div>
           <div>
             <Label htmlFor="receptor-condicion-iva">Condición de IVA</Label>
-            <select
-              id="receptor-condicion-iva"
-              className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={value.condicion_iva}
-              aria-invalid={errores.condicion_iva ? true : undefined}
-              aria-describedby={errores.condicion_iva ? "error-receptor-condicion-iva" : undefined}
-              onChange={(event) =>
-                onChange({ ...value, condicion_iva: event.target.value as CondicionIva })
-              }
-            >
-              {condiciones.map((condicion) => (
-                <option key={condicion.value} value={condicion.value}>
-                  {condicion.label}
-                </option>
-              ))}
-            </select>
+            {receptorVerificado?.condicionIvaConfirmada ? (
+              <Input
+                id="receptor-condicion-iva"
+                className="mt-1 min-h-11"
+                value={ETIQUETA_CONDICION_IVA[receptorVerificado.condicionIvaConfirmada]}
+                readOnly
+              />
+            ) : (
+              <select
+                id="receptor-condicion-iva"
+                className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={value.condicion_iva}
+                aria-invalid={errores.condicion_iva ? true : undefined}
+                aria-describedby={
+                  errores.condicion_iva ? "error-receptor-condicion-iva" : undefined
+                }
+                onChange={(event) =>
+                  onChange({ ...value, condicion_iva: event.target.value as CondicionIva })
+                }
+              >
+                {condiciones.map((condicion) => (
+                  <option key={condicion.value} value={condicion.value}>
+                    {condicion.label}
+                  </option>
+                ))}
+              </select>
+            )}
             {errores.condicion_iva ? (
               <p
                 id="error-receptor-condicion-iva"
@@ -379,7 +504,8 @@ export function ReceptorFiscalForm({
             <Input
               id="receptor-domicilio"
               className="mt-1 min-h-11"
-              value={value.domicilio}
+              value={receptorVerificado?.domicilioFiscal ?? value.domicilio}
+              readOnly={receptorVerificado !== null}
               onChange={(event) => onChange({ ...value, domicilio: event.target.value })}
             />
           </div>
@@ -400,31 +526,33 @@ export function ReceptorFiscalForm({
               </span>
             </span>
           </label>
-          <div className="sm:col-span-2">
-            <label className="flex min-h-11 items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
-              <input
-                id="confirmar-datos-receptor"
-                type="checkbox"
-                className="mt-1"
-                checked={confirmaDatosManuales}
-                aria-invalid={errores.confirmacion ? true : undefined}
-                aria-describedby={
-                  errores.confirmacion ? "error-confirmar-datos-receptor" : undefined
-                }
-                onChange={(event) => onConfirmaDatosManuales(event.target.checked)}
-              />
-              <span>Confirmo que revisé el documento y los datos fiscales ingresados.</span>
-            </label>
-            {errores.confirmacion ? (
-              <p
-                id="error-confirmar-datos-receptor"
-                role="alert"
-                className="mt-1 text-xs font-medium text-destructive"
-              >
-                {errores.confirmacion}
-              </p>
-            ) : null}
-          </div>
+          {receptorVerificado ? null : (
+            <div className="sm:col-span-2">
+              <label className="flex min-h-11 items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+                <input
+                  id="confirmar-datos-receptor"
+                  type="checkbox"
+                  className="mt-1"
+                  checked={confirmaDatosManuales}
+                  aria-invalid={errores.confirmacion ? true : undefined}
+                  aria-describedby={
+                    errores.confirmacion ? "error-confirmar-datos-receptor" : undefined
+                  }
+                  onChange={(event) => onConfirmaDatosManuales(event.target.checked)}
+                />
+                <span>Confirmo que revisé el documento y los datos fiscales ingresados.</span>
+              </label>
+              {errores.confirmacion ? (
+                <p
+                  id="error-confirmar-datos-receptor"
+                  role="alert"
+                  className="mt-1 text-xs font-medium text-destructive"
+                >
+                  {errores.confirmacion}
+                </p>
+              ) : null}
+            </div>
+          )}
         </div>
       ) : null}
     </fieldset>

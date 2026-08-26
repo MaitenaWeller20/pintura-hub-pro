@@ -128,7 +128,7 @@ export async function ejecutarPruebaPadronAdministrativa(
   try {
     credencialResultado = await sb
       .from("credenciales_arca")
-      .select("emisor_id,ambiente,arca_key_enc,arca_cert_enc")
+      .select("emisor_id,ambiente,arca_key_enc,arca_cert_enc,updated_at")
       .eq("emisor_id", input.entrada.emisor_id)
       .eq("ambiente", input.entrada.ambiente)
       .maybeSingle();
@@ -140,11 +140,16 @@ export async function ejecutarPruebaPadronAdministrativa(
     credencialError ||
     !credencial ||
     credencial.emisor_id !== input.entrada.emisor_id ||
-    credencial.ambiente !== input.entrada.ambiente
+    credencial.ambiente !== input.entrada.ambiente ||
+    typeof credencial.updated_at !== "string" ||
+    credencial.updated_at.length === 0
   ) {
     errorConfiguracionPadron();
   }
+  const versionCredencial = credencial.updated_at;
 
+  // El trigger genérico mueve updated_at para credenciales, resets por CUIT y
+  // resets por cambio de PV. Éste mismo snapshot protege éxito y fallo.
   const actualizar = async (
     campos: Database["public"]["Tables"]["credenciales_arca"]["Update"],
   ) => {
@@ -153,6 +158,7 @@ export async function ejecutarPruebaPadronAdministrativa(
       .update(campos)
       .eq("emisor_id", input.entrada.emisor_id)
       .eq("ambiente", input.entrada.ambiente)
+      .eq("updated_at", versionCredencial)
       .select("emisor_id,ambiente")
       .maybeSingle();
     if (

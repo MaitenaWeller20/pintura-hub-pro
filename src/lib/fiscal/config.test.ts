@@ -364,6 +364,22 @@ describe("acción administrativa de prueba del padrón", () => {
 
   function clienteAdmin(input?: { consultaError?: Error; actualizacionError?: Error }) {
     const operaciones: Operacion[] = [];
+    const estado = {
+      cuitEmisor: receptor.cuit,
+      updatedAt: "2026-08-26T11:50:00.000Z",
+      padronProbadoAt: null as string | null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null as CodigoErrorPadronArca | null,
+      padronUltimoErrorAt: null as string | null,
+    };
+    const simularResetConcurrente = (nuevoCuit?: string) => {
+      if (nuevoCuit) estado.cuitEmisor = nuevoCuit;
+      estado.updatedAt = "2026-08-26T12:00:01.000Z";
+      estado.padronProbadoAt = null;
+      estado.padronValidacionActiva = false;
+      estado.padronUltimoErrorCodigo = null;
+      estado.padronUltimoErrorAt = null;
+    };
     const cliente = {
       from(tabla: string) {
         const operacion: Operacion = { tabla, select: null, filtros: [], update: null };
@@ -383,16 +399,34 @@ describe("acción administrativa de prueba del padrón", () => {
           },
           async maybeSingle() {
             if (operacion.update) {
-              return input?.actualizacionError
-                ? { data: null, error: input.actualizacionError }
-                : {
-                    data: { emisor_id: entrada.emisor_id, ambiente: entrada.ambiente },
-                    error: null,
-                  };
+              if (input?.actualizacionError) {
+                return { data: null, error: input.actualizacionError };
+              }
+              const versionEsperada = operacion.filtros.find(
+                ([campo]) => campo === "updated_at",
+              )?.[1];
+              if (versionEsperada !== undefined && versionEsperada !== estado.updatedAt) {
+                return { data: null, error: null };
+              }
+              const campos = operacion.update as {
+                padron_probado_at: string | null;
+                padron_validacion_activa: boolean;
+                padron_ultimo_error_codigo: CodigoErrorPadronArca | null;
+                padron_ultimo_error_at: string | null;
+              };
+              estado.padronProbadoAt = campos.padron_probado_at;
+              estado.padronValidacionActiva = campos.padron_validacion_activa;
+              estado.padronUltimoErrorCodigo = campos.padron_ultimo_error_codigo;
+              estado.padronUltimoErrorAt = campos.padron_ultimo_error_at;
+              estado.updatedAt = "2026-08-26T12:00:02.000Z";
+              return {
+                data: { emisor_id: entrada.emisor_id, ambiente: entrada.ambiente },
+                error: null,
+              };
             }
             if (input?.consultaError) return { data: null, error: input.consultaError };
             if (tabla === "emisores") {
-              return { data: { id: entrada.emisor_id, cuit: receptor.cuit }, error: null };
+              return { data: { id: entrada.emisor_id, cuit: estado.cuitEmisor }, error: null };
             }
             return {
               data: {
@@ -400,6 +434,7 @@ describe("acción administrativa de prueba del padrón", () => {
                 ambiente: entrada.ambiente,
                 arca_key_enc: "key-cifrada",
                 arca_cert_enc: "cert-cifrado",
+                updated_at: estado.updatedAt,
               },
               error: null,
             };
@@ -408,7 +443,7 @@ describe("acción administrativa de prueba del padrón", () => {
         return builder;
       },
     };
-    return { cliente, operaciones };
+    return { cliente, operaciones, estado, simularResetConcurrente };
   }
 
   function deps(
@@ -475,7 +510,7 @@ describe("acción administrativa de prueba del padrón", () => {
       },
       {
         tabla: "credenciales_arca",
-        select: "emisor_id,ambiente,arca_key_enc,arca_cert_enc",
+        select: "emisor_id,ambiente,arca_key_enc,arca_cert_enc,updated_at",
         filtros: [
           ["emisor_id", entrada.emisor_id],
           ["ambiente", "PRODUCCION"],
@@ -488,6 +523,7 @@ describe("acción administrativa de prueba del padrón", () => {
         filtros: [
           ["emisor_id", entrada.emisor_id],
           ["ambiente", "PRODUCCION"],
+          ["updated_at", "2026-08-26T11:50:00.000Z"],
         ],
         update: {
           padron_probado_at: "2026-08-26T12:00:00.000Z",
@@ -518,6 +554,7 @@ describe("acción administrativa de prueba del padrón", () => {
       filtros: [
         ["emisor_id", entrada.emisor_id],
         ["ambiente", "PRODUCCION"],
+        ["updated_at", "2026-08-26T11:50:00.000Z"],
       ],
       update: {
         padron_probado_at: null,
@@ -556,6 +593,56 @@ describe("acción administrativa de prueba del padrón", () => {
     expect(mensajeErrorFiscal(error, "CONFIGURACION")).toBe(
       mensajeCodigoErrorFiscalUsuario("PADRON_CONFIG_INVALIDA"),
     );
+  });
+
+  it("no reactiva ni sobrescribe una credencial que cambió durante una consulta exitosa", async () => {
+    const escenario = clienteAdmin();
+    const consultarPadron = vi.fn(async () => {
+      escenario.simularResetConcurrente();
+      return receptor;
+    });
+    const dependencias = deps(escenario.cliente, consultarPadron);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(escenario.estado).toEqual({
+      cuitEmisor: receptor.cuit,
+      updatedAt: "2026-08-26T12:00:01.000Z",
+      padronProbadoAt: null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null,
+      padronUltimoErrorAt: null,
+    });
+    expect(escenario.operaciones.filter((operacion) => operacion.update)).toHaveLength(2);
+  });
+
+  it("no guarda el fallo viejo si cambió el CUIT y su trigger reseteó la credencial", async () => {
+    const escenario = clienteAdmin();
+    const consultarPadron = vi.fn(async (): Promise<ReceptorPadronArca> => {
+      escenario.simularResetConcurrente("30621146315");
+      throw crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    });
+    const dependencias = deps(escenario.cliente, consultarPadron);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(escenario.estado).toEqual({
+      cuitEmisor: "30621146315",
+      updatedAt: "2026-08-26T12:00:01.000Z",
+      padronProbadoAt: null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null,
+      padronUltimoErrorAt: null,
+    });
+    expect(escenario.operaciones.filter((operacion) => operacion.update)).toHaveLength(1);
   });
 
   it("no filtra errores de creación del cliente privilegiado ni de lectura de configuración", async () => {

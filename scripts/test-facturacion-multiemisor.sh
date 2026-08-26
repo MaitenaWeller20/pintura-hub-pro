@@ -58,6 +58,13 @@ fi
 "${PSQL[@]}" <<'SQL'
 BEGIN;
 
+-- Fixture rollback-only: independiza esta prueba de secretos legacy ausentes.
+INSERT INTO public.credenciales_arca (emisor_id, ambiente)
+SELECT id, 'HOMOLOGACION'
+FROM public.emisores
+WHERE cuit = '30714199664'
+ON CONFLICT (emisor_id, ambiente) DO NOTHING;
+
 -- Cambiar la identidad fiscal invalida la prueba del padrón.
 DO $$
 DECLARE
@@ -70,6 +77,10 @@ BEGIN
   WHERE e.cuit = '30714199664'
   ORDER BY c.ambiente
   LIMIT 1;
+
+  IF v_credencial IS NULL OR v_emisor IS NULL THEN
+    RAISE EXCEPTION 'faltan credencial/emisor para probar reset de padrón por CUIT';
+  END IF;
 
   UPDATE public.credenciales_arca
   SET
@@ -100,13 +111,18 @@ END $$;
 DO $$
 DECLARE
   v_credencial uuid;
+  v_emisor uuid;
 BEGIN
-  SELECT c.id INTO v_credencial
+  SELECT c.id, c.emisor_id INTO v_credencial, v_emisor
   FROM public.credenciales_arca c
   JOIN public.emisores e ON e.id = c.emisor_id
   WHERE e.cuit = '30714199663'
   ORDER BY c.ambiente
   LIMIT 1;
+
+  IF v_credencial IS NULL OR v_emisor IS NULL THEN
+    RAISE EXCEPTION 'faltan credencial/emisor para probar reset de padrón por certificado';
+  END IF;
 
   UPDATE public.credenciales_arca
   SET
@@ -133,6 +149,9 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'cambiar certificado no reinició la validación de padrón';
   END IF;
+
+  -- Aísla el fixture multiemisor legacy que sigue en esta transacción.
+  UPDATE public.emisores SET cuit = '30714199664' WHERE id = v_emisor;
 END $$;
 
 -- Dos CUIT distintos pueden usar el mismo número de PV.

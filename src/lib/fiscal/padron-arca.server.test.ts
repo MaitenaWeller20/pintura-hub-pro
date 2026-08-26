@@ -117,6 +117,21 @@ describe("adaptador server-only del padrón ARCA", () => {
       errorRemoto("unauthorized certificate for ws_sr_constancia_inscripcion"),
       "PADRON_NO_AUTORIZADO",
     ],
+    [
+      "HTTP 401",
+      errorRemoto("estado sin texto de autorización", { status: 401 }),
+      "PADRON_NO_AUTORIZADO",
+    ],
+    [
+      "HTTP 403 anidado",
+      errorRemoto("estado anidado sin texto de autorización", { response: { status: 403 } }),
+      "PADRON_NO_AUTORIZADO",
+    ],
+    [
+      "falla de autorización en español",
+      errorRemoto("No autorizado para consultar"),
+      "PADRON_NO_AUTORIZADO",
+    ],
     ["falla PEM", errorRemoto("PEM routines private key"), "PADRON_CONFIG_INVALIDA"],
     ["falla de descifrado", errorRemoto("failed to decrypt certificate"), "PADRON_CONFIG_INVALIDA"],
     [

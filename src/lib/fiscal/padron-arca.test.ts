@@ -76,6 +76,10 @@ async function codigoDeRechazo(promesa: Promise<unknown>) {
   return codigoErrorFiscalUsuario(error);
 }
 
+async function capturarError(promesa: Promise<unknown>): Promise<Error> {
+  return (await promesa.catch((cause) => cause)) as Error;
+}
+
 describe("normalizador del padrón ARCA", () => {
   it("normaliza una persona jurídica RI en la identidad canónica", async () => {
     const deps = dependencias(juridicaRi());
@@ -163,6 +167,44 @@ describe("normalizador del padrón ARCA", () => {
     await expect(
       codigoDeRechazo(consultarPadronArca(CUIT_JURIDICA, dependencias(crearRespuesta()))),
     ).resolves.toBe("RESPUESTA_PADRON_INVALIDA");
+  });
+
+  it("rechaza un índice accessor del array remoto sin ejecutar su texto", async () => {
+    let accessorEjecutado = false;
+    const conAccessor = modificarFixture(juridicaRi(), (persona) => {
+      const impuesto: unknown[] = [];
+      Object.defineProperty(impuesto, "0", {
+        enumerable: true,
+        get() {
+          accessorEjecutado = true;
+          throw new Error("SENSITIVE-PADRON-ARRAY-GETTER");
+        },
+      });
+      (persona.datosRegimenGeneral as Record<string, unknown>).impuesto = impuesto;
+    });
+
+    const error = await capturarError(
+      consultarPadronArca(CUIT_JURIDICA, dependencias(conAccessor)),
+    );
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error.message).not.toContain("SENSITIVE-PADRON-ARRAY-GETTER");
+    expect(accessorEjecutado).toBe(false);
+  });
+
+  it("rechaza un proxy revocado del array remoto sin filtrar su causa", async () => {
+    const revocable = Proxy.revocable([], {});
+    revocable.revoke();
+    const conProxyRevocado = modificarFixture(juridicaRi(), (persona) => {
+      (persona.datosRegimenGeneral as Record<string, unknown>).impuesto = revocable.proxy;
+    });
+
+    const error = await capturarError(
+      consultarPadronArca(CUIT_JURIDICA, dependencias(conProxyRevocado)),
+    );
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error.message).not.toContain("revoked");
   });
 
   it("rechaza un contribuyente inactivo", async () => {

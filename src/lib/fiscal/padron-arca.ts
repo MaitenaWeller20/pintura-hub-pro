@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { cuitValido } from "./codigos";
-import { crearErrorFiscalUsuario } from "./error-usuario";
+import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./error-usuario";
 
 const IMPUESTO_MONOTRIBUTO = 20;
 const IMPUESTO_IVA = 30;
@@ -47,6 +47,14 @@ function respuestaInvalida(): never {
   throw crearErrorFiscalUsuario("RESPUESTA_PADRON_INVALIDA");
 }
 
+function codigoMarcadoSeguro(cause: unknown) {
+  try {
+    return codigoErrorFiscalUsuario(cause);
+  } catch {
+    return null;
+  }
+}
+
 function esRegistro(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   try {
@@ -83,12 +91,42 @@ function entero(value: unknown): number | null {
 
 function listaRegistros(value: unknown): Record<string, unknown>[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
-    respuestaInvalida();
-  return value.map((item) => {
-    if (!esRegistro(item)) respuestaInvalida();
-    return item;
-  });
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
+      respuestaInvalida();
+    const descriptorLongitud = Object.getOwnPropertyDescriptor(value, "length");
+    if (
+      !descriptorLongitud ||
+      !("value" in descriptorLongitud) ||
+      !Number.isSafeInteger(descriptorLongitud.value) ||
+      descriptorLongitud.value < 0
+    ) {
+      respuestaInvalida();
+    }
+    const longitud = descriptorLongitud.value;
+    const claves = Reflect.ownKeys(value);
+    if (
+      claves.some(
+        (clave) =>
+          typeof clave !== "string" || (clave !== "length" && !/^(0|[1-9]\d*)$/.test(clave)),
+      ) ||
+      claves.length !== longitud + 1
+    ) {
+      respuestaInvalida();
+    }
+    const registros: Record<string, unknown>[] = [];
+    for (let index = 0; index < longitud; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set)
+        respuestaInvalida();
+      if (!esRegistro(descriptor.value)) respuestaInvalida();
+      registros.push(descriptor.value);
+    }
+    return registros;
+  } catch (cause) {
+    if (codigoMarcadoSeguro(cause)) throw cause;
+    return respuestaInvalida();
+  }
 }
 
 function impuestoActivo(bloque: unknown, idImpuesto: number): boolean {

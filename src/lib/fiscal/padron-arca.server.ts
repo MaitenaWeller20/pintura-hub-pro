@@ -70,11 +70,13 @@ function clasificarErrorPadronArca(cause: unknown): CodigoErrorPadronArca {
   } catch {
     // Un error remoto no confiable no puede impedir su traducción a un código cerrado.
   }
-  if ([502, 503, 504].includes(estadoHttp(cause) ?? 0)) return "PADRON_ARCA_CAIDO";
+  const status = estadoHttp(cause);
+  if ([502, 503, 504].includes(status ?? 0)) return "PADRON_ARCA_CAIDO";
+  if ([401, 403].includes(status ?? 0)) return "PADRON_NO_AUTORIZADO";
 
   const detalle = textoError(cause);
   if (
-    /not.?authori[sz]ed|unauthori[sz]ed|forbidden|access denied|certificad[oa].*(?:no.*autoriz|not.*authoriz)|ws_sr_constancia_inscripcion.*(?:no|not).*authoriz/i.test(
+    /not.?authori[sz]ed|unauthori[sz]ed|forbidden|access denied|no(?:\s+está)?\s+autorizad[oa]|certificad[oa].*(?:no.*autoriz|not.*authoriz)|ws_sr_constancia_inscripcion.*(?:no|not).*authoriz/i.test(
       detalle,
     )
   ) {

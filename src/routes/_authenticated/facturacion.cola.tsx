@@ -684,7 +684,6 @@ function ColaFiscalPage() {
             const respuesta = parseRespuestaConfirmacionFiscal(resultado);
             if (respuesta.estado === "ERROR_CORREGIBLE") {
               await queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
-              throw crearErrorFiscalUsuario("ERROR_CORREGIBLE");
             }
             return respuesta;
           }}

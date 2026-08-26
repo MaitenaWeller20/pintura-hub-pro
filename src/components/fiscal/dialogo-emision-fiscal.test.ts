@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DialogoEmisionFiscal } from "./dialogo-emision-fiscal";
+import * as dialogoEmisionContract from "./dialogo-emision-contract";
 import * as estadoDialogo from "./dialogo-emision-state";
 import {
   cambiarReceptorConfirmacion,
@@ -39,6 +40,21 @@ type CambiarLetraConfirmacion = (
   letra: "A" | "B",
   control: ReturnType<typeof crearControlSolicitudPreview>,
 ) => EstadoConLetra;
+
+type ManejarErrorCorregibleDialogo = (
+  resultado: {
+    estado: "ERROR_CORREGIBLE";
+    codigo: "PADRON_ARCA_CAIDO";
+    mensaje: string;
+  },
+  acciones: {
+    invalidarPreview(): void;
+    limpiarPreview(): void;
+    limpiarHuella(): void;
+    limpiarConfirmacionVentaAntigua(): void;
+    mostrarError(mensaje: string): void;
+  },
+) => void;
 
 function renderDialogo(tipoComprobante = "VENTA"): string {
   return renderToStaticMarkup(
@@ -142,6 +158,45 @@ describe("estado seguro del diálogo fiscal", () => {
     expect(esSolicitudPreviewActual(control, actual!)).toBe(true);
     finalizarSolicitudPreview(control, actual!);
     expect(iniciarSolicitudPreview(control)).toBeTypeOf("number");
+  });
+
+  it("un error corregible invalida preview y huella y muestra el mensaje seguro", () => {
+    const manejarError = (
+      dialogoEmisionContract as typeof dialogoEmisionContract & {
+        manejarErrorCorregibleDialogo?: ManejarErrorCorregibleDialogo;
+      }
+    ).manejarErrorCorregibleDialogo;
+    expect(manejarError).toBeTypeOf("function");
+    if (!manejarError) return;
+    const invalidarPreview = vi.fn();
+    const limpiarPreview = vi.fn();
+    const limpiarHuella = vi.fn();
+    const limpiarConfirmacionVentaAntigua = vi.fn();
+    const mostrarError = vi.fn();
+
+    manejarError(
+      {
+        estado: "ERROR_CORREGIBLE",
+        codigo: "PADRON_ARCA_CAIDO",
+        mensaje:
+          "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+      },
+      {
+        invalidarPreview,
+        limpiarPreview,
+        limpiarHuella,
+        limpiarConfirmacionVentaAntigua,
+        mostrarError,
+      },
+    );
+
+    expect(invalidarPreview).toHaveBeenCalledOnce();
+    expect(limpiarPreview).toHaveBeenCalledOnce();
+    expect(limpiarHuella).toHaveBeenCalledOnce();
+    expect(limpiarConfirmacionVentaAntigua).toHaveBeenCalledOnce();
+    expect(mostrarError).toHaveBeenCalledWith(
+      "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+    );
   });
 });
 

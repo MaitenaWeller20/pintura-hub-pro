@@ -41,8 +41,10 @@ import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
 import { EditorPagos, type PagoVentaEditable } from "@/components/ventas/editor-pagos";
 import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
 import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
+import { parseRespuestaConfirmacionFiscal } from "@/components/fiscal/dialogo-emision-contract";
 import { emitirComprobantePostBorrador, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
 import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
+import { mensajeCodigoErrorFiscalUsuario } from "@/lib/fiscal/error-usuario";
 import {
   confirmarCierreFiscalInmediato,
   crearControlCreacionVenta,
@@ -1398,20 +1400,20 @@ function NuevaVenta() {
                 "estado" in respuesta &&
                 respuesta.estado === "MANTENIMIENTO"
               ) {
-                return {
+                return parseRespuestaConfirmacionFiscal({
                   estado: "ERROR_CORREGIBLE" as const,
-                  mensaje:
-                    "La venta quedó registrada y la emisión está en mantenimiento. No repitas la venta ni el cobro.",
-                };
+                  codigo: "MANTENIMIENTO_POST_VENTA" as const,
+                  mensaje: mensajeCodigoErrorFiscalUsuario("MANTENIMIENTO_POST_VENTA"),
+                });
               }
-              return respuesta;
+              return parseRespuestaConfirmacionFiscal(respuesta);
             } catch (cause) {
               if (!controlCreacionRef.current.ventaId) throw cause;
-              return {
+              return parseRespuestaConfirmacionFiscal({
                 estado: "RECONCILIAR" as const,
                 mensaje:
                   "La venta quedó registrada, pero no se pudo confirmar la respuesta fiscal. No repitas la venta ni el cobro.",
-              };
+              });
             }
           }}
           onCompletada={(resultado) => {

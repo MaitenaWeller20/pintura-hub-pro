@@ -36,6 +36,7 @@ import {
 } from "./dialogo-emision-state";
 import {
   despacharRespuestaConfirmacionFiscal,
+  manejarErrorCorregibleDialogo,
   parsePreviewEmisionFiscal,
   reconfirmarPreviewEmisionFiscal,
   type ResultadoEmisionFiscalUi,
@@ -261,6 +262,20 @@ export function DialogoEmisionFiscal({
           );
           setConfirmaVentaAntigua(false);
           setError(mensajeErrorFiscal(crearErrorFiscalUsuario("RECONFIRMACION"), "EMISION"));
+        },
+        onErrorCorregible(resultado) {
+          manejarErrorCorregibleDialogo(resultado, {
+            invalidarPreview: () => invalidarSolicitudPreview(previewControlRef.current),
+            limpiarPreview: () => setPreview(null),
+            limpiarHuella: () =>
+              setConfirmacion((actual) => ({
+                ...actual,
+                huellaConfirmacion: null,
+                requiereSegundaConfirmacion: false,
+              })),
+            limpiarConfirmacionVentaAntigua: () => setConfirmaVentaAntigua(false),
+            mostrarError: setError,
+          });
         },
         onCompletada(resultado) {
           onCompletada?.(resultado);

@@ -6,6 +6,11 @@ import {
   crearHuellaConfirmacionFiscal,
   type ConfirmacionFiscalPostBorrador,
 } from "./confirmacion";
+import {
+  codigoErrorFiscalUsuario,
+  mensajeCodigoErrorFiscalUsuario,
+  type CodigoErrorFiscalUsuario,
+} from "./error-usuario";
 
 export type AccionTransicionFiscal =
   | "RECLAMAR"
@@ -132,7 +137,11 @@ export type ResultadoEmisionFiscal =
       recuperado: boolean;
       advertencias: string[];
     }
-  | { estado: "ERROR_CORREGIBLE"; mensaje: string }
+  | {
+      estado: "ERROR_CORREGIBLE";
+      codigo: CodigoErrorFiscalUsuario;
+      mensaje: string;
+    }
   | { estado: "RECONCILIAR"; mensaje: string }
   | { estado: "BLOQUEADO"; diferencias: string[] }
   | { estado: "EN_CURSO"; mensaje: string }
@@ -291,20 +300,18 @@ async function marcarPreflightCorregible(
   ventaId: string,
   claimToken: string,
   version: number,
+  cause: unknown,
   deps: DependenciasEmisionFiscal,
 ): Promise<ResultadoEmisionFiscal> {
+  const codigo = codigoErrorFiscalUsuario(cause) ?? "ERROR_CORREGIBLE";
+  const mensaje = mensajeCodigoErrorFiscalUsuario(codigo);
   try {
     await deps.transicionar({
       ventaId,
       accion: "ERROR_CORREGIBLE",
       claimToken,
       payload: {
-        ...errorEnmascarado(
-          "PREFLIGHT",
-          "PREFLIGHT_FALLIDO",
-          "La preparación fiscal falló antes de iniciar el request.",
-          version,
-        ),
+        ...errorEnmascarado("PREFLIGHT", codigo, mensaje, version),
         liberar_identidad: true,
       },
     });
@@ -320,7 +327,8 @@ async function marcarPreflightCorregible(
   }
   return {
     estado: "ERROR_CORREGIBLE",
-    mensaje: "La preparación fiscal falló antes de iniciar el request.",
+    codigo,
+    mensaje,
   };
 }
 
@@ -579,7 +587,12 @@ async function procesarRequestCae(
           );
         }
       }
-      return { estado: "ERROR_CORREGIBLE", mensaje: respuesta.mensajeMascarado };
+      const codigo = "ERROR_CORREGIBLE";
+      return {
+        estado: "ERROR_CORREGIBLE",
+        codigo,
+        mensaje: mensajeCodigoErrorFiscalUsuario(codigo),
+      };
     } catch {
       const persistido = await recargarEstado(reserva.ventaId, deps);
       return marcarReconciliacion(reserva, persistido.afip_version, deps, "PERSISTENCIA_RECHAZO");
@@ -722,9 +735,15 @@ export async function ejecutarEmisionFiscal(
     }
     secuencia = await deps.consultarSecuencia(preparacion);
     deps.validarFechaFiscal(preparacion.fechaComprobante, secuencia.ultimaFechaRemota);
-  } catch {
+  } catch (cause) {
     const persistido = await recargarEstado(input.ventaId, deps);
-    return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
+    return marcarPreflightCorregible(
+      input.ventaId,
+      claimToken,
+      persistido.afip_version,
+      cause,
+      deps,
+    );
   }
 
   let numero = 0;
@@ -783,7 +802,13 @@ export async function ejecutarEmisionFiscal(
         deps.esConflictoSecuencia(error) &&
         esFase(persistido, "EMITIENDO", "PREFLIGHT", claimToken);
       if (!puedeReintentarSecuencia) {
-        return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
+        return marcarPreflightCorregible(
+          input.ventaId,
+          claimToken,
+          persistido.afip_version,
+          error,
+          deps,
+        );
       }
       estado = persistido;
       try {
@@ -803,8 +828,14 @@ export async function ejecutarEmisionFiscal(
         }
         secuencia = await deps.consultarSecuencia(preparacion);
         deps.validarFechaFiscal(preparacion.fechaComprobante, secuencia.ultimaFechaRemota);
-      } catch {
-        return marcarPreflightCorregible(input.ventaId, claimToken, estado.afip_version, deps);
+      } catch (cause) {
+        return marcarPreflightCorregible(
+          input.ventaId,
+          claimToken,
+          estado.afip_version,
+          cause,
+          deps,
+        );
       }
     }
   }
@@ -850,9 +881,15 @@ export async function ejecutarEmisionFiscal(
         estado = persistido;
       }
     }
-  } catch {
+  } catch (cause) {
     const persistido = await recargarEstado(input.ventaId, deps);
-    return marcarPreflightCorregible(input.ventaId, claimToken, persistido.afip_version, deps);
+    return marcarPreflightCorregible(
+      input.ventaId,
+      claimToken,
+      persistido.afip_version,
+      cause,
+      deps,
+    );
   }
   return procesarRequestCae(reserva, estado, deps, input);
 }

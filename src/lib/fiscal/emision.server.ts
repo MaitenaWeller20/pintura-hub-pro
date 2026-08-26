@@ -26,6 +26,7 @@ import {
 } from "./confirmacion";
 import { cargarContextoFiscal } from "./contexto.server";
 import { validarModalidadFacturaA, type ContextoFiscal } from "./contexto";
+import { crearErrorFiscalUsuario } from "./error-usuario";
 import {
   type DependenciasEmisionFiscal,
   type EstadoTransicionFiscal,
@@ -41,6 +42,8 @@ import {
   type VentaParaReceptor,
 } from "./receptor.server";
 import type { ReceptorFiscalConfirmado, SelectorReceptorFiscal } from "./receptor";
+import { consultarPadronArcaDesdeContexto } from "./padron-arca.server";
+import type { ReceptorPadronArca } from "./padron-arca";
 import {
   crearSnapshotFiscalV2,
   validarSnapshotFiscalV2,
@@ -192,6 +195,7 @@ export type DependenciasPreviewBorradorFiscal = {
   cargarCliente(clienteId: string): Promise<ClienteBorradorFiscal | null>;
   cargarProductos(ids: string[]): Promise<ProductoBorradorFiscal[]>;
   cargarFavorito(id: string): Promise<FavoritoFiscalRow | null>;
+  consultarPadron?: (contexto: ContextoFiscal, cuit: string) => Promise<ReceptorPadronArca>;
   ahora(): Date;
 };
 
@@ -310,6 +314,30 @@ function facturaAPermitida(
   }
 }
 
+function consultaPadronParaContexto(
+  contexto: ContextoFiscal,
+  admin: SupabaseLike,
+  consultar: typeof consultarPadronArcaDesdeContexto = consultarPadronArcaDesdeContexto,
+) {
+  if (!contexto.padron.validacionActiva) return undefined;
+  return (cuit: string) =>
+    consultar({
+      cuit,
+      emisor: contexto.emisor,
+      ambiente: contexto.pv.modo,
+      admin,
+    });
+}
+
+function consultaPadronParaPreview(
+  contexto: ContextoFiscal,
+  deps: DependenciasPreviewBorradorFiscal,
+) {
+  if (!contexto.padron.validacionActiva) return undefined;
+  if (!deps.consultarPadron) throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+  return (cuit: string) => deps.consultarPadron!(contexto, cuit);
+}
+
 /**
  * Preview deliberadamente no autoritativo para una venta todavía inexistente.
  * Replica las reglas visibles de `crear_venta` con catálogo vivo, pero obliga a
@@ -396,6 +424,7 @@ export async function construirPreviewBorradorFiscalProvisional(
     letraSolicitada: input.letraSolicitada,
     cargarFavorito: deps.cargarFavorito,
     cargarOriginal: async () => null,
+    consultarPadron: consultaPadronParaPreview(contexto, deps),
   });
   const letra = validarLetraSolicitada(
     contexto.emisor.condicion_iva,
@@ -728,12 +757,17 @@ export async function observarUltimoNumeroFiscalLocal(
   return Number(data?.afip_numero ?? 0);
 }
 
-export function crearDependenciasEmisionFiscalServer(input: {
+export type CrearDependenciasEmisionFiscalServerInput = {
   admin: SupabaseLike;
   usuario: SupabaseLike;
   ventaIdAutorizada: string;
   validarModalidadFacturaA?: boolean;
-}): DependenciasEmisionFiscal & {
+  consultarPadron?: typeof consultarPadronArcaDesdeContexto;
+};
+
+export function crearDependenciasEmisionFiscalServer(
+  input: CrearDependenciasEmisionFiscalServerInput,
+): DependenciasEmisionFiscal & {
   obtenerVistaPreparacion(ventaId: string): {
     receptor: ReceptorFiscalConfirmado;
     letra: Letra;
@@ -839,6 +873,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
         letraSolicitada,
         cargarFavorito: (id) => cargarFavorito(usuario, id),
         cargarOriginal,
+        consultarPadron: consultaPadronParaContexto(contexto, admin, input.consultarPadron),
       });
       const original =
         tipo === "NOTA_CREDITO"
@@ -1194,12 +1229,14 @@ export async function previsualizarVentaFiscalExistente(input: {
   letraSolicitada: LetraFacturaSolicitada;
   admin: SupabaseLike;
   usuario: SupabaseLike;
+  consultarPadron?: typeof consultarPadronArcaDesdeContexto;
 }) {
   const deps = crearDependenciasEmisionFiscalServer({
     admin: input.admin,
     usuario: input.usuario,
     ventaIdAutorizada: input.ventaId,
     validarModalidadFacturaA: false,
+    consultarPadron: input.consultarPadron,
   });
   const preparacion = await deps.prepararEmision({
     ventaId: input.ventaId,
@@ -1287,11 +1324,17 @@ export async function previsualizarBorradorFiscalProvisionalServer(input: {
   borrador: EntradaPreviewBorradorFiscal;
   admin: SupabaseLike;
   usuario: SupabaseLike;
+  consultarPadron?: typeof consultarPadronArcaDesdeContexto;
 }) {
   return construirPreviewBorradorFiscalProvisional(input.borrador, {
     cargarContexto: (sucursalId) => cargarContextoFiscal(input.admin, sucursalId),
     cargarCliente: (clienteId) => cargarCliente(input.usuario, clienteId),
     cargarFavorito: (id) => cargarFavorito(input.usuario, id),
+    consultarPadron: (contexto, cuit) => {
+      const consultar = consultaPadronParaContexto(contexto, input.admin, input.consultarPadron);
+      if (!consultar) throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+      return consultar(cuit);
+    },
     async cargarProductos(ids) {
       const { data, error } = await input.admin
         .from("productos")

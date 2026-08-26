@@ -29,10 +29,12 @@ import {
   type PresupuestoConvertido,
 } from "@/components/presupuestos/dialogo-convertir-presupuesto";
 import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
+import { parseRespuestaConfirmacionFiscal } from "@/components/fiscal/dialogo-emision-contract";
 import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
 import { emitirComprobante, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
 import { resultadoColaDespuesDeEmision } from "@/lib/ventas-ui";
 import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
+import { mensajeCodigoErrorFiscalUsuario } from "@/lib/fiscal/error-usuario";
 import {
   accionFiscalDespuesDeConvertirPresupuesto,
   destinoColaFiscalVentaConvertida,
@@ -415,19 +417,19 @@ function DetallePresupuesto() {
                 },
               });
               if (esMantenimiento(respuesta)) {
-                return {
+                return parseRespuestaConfirmacionFiscal({
                   estado: "ERROR_CORREGIBLE" as const,
-                  mensaje:
-                    "El presupuesto quedó convertido y la emisión está en mantenimiento. No repitas la conversión ni el cobro.",
-                };
+                  codigo: "MANTENIMIENTO_POST_VENTA" as const,
+                  mensaje: mensajeCodigoErrorFiscalUsuario("MANTENIMIENTO_POST_VENTA"),
+                });
               }
-              return respuesta;
+              return parseRespuestaConfirmacionFiscal(respuesta);
             } catch {
-              return {
+              return parseRespuestaConfirmacionFiscal({
                 estado: "RECONCILIAR" as const,
                 mensaje:
                   "El presupuesto quedó convertido, pero no se pudo confirmar la respuesta fiscal. No repitas la conversión ni el cobro.",
-              };
+              });
             }
           }}
           onCompletada={(resultado) => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ejecutarConciliacionFiscal,
   ejecutarEmisionFiscal,
@@ -12,6 +12,7 @@ import {
 import type { SelectorReceptorFiscal } from "./receptor";
 import type { SnapshotFiscalV2 } from "./snapshot";
 import { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
+import { crearErrorFiscalUsuario } from "./error-usuario";
 
 const MANUAL_A: SelectorReceptorFiscal = {
   origen: "MANUAL",
@@ -514,6 +515,46 @@ describe("ejecutarEmisionFiscal", () => {
     expect(result.estado).toBe("ERROR_CORREGIBLE");
     expect(acciones(doble)).toEqual(["RECLAMAR", "ERROR_CORREGIBLE"]);
     expect(doble.payloadsCae).toHaveLength(0);
+  });
+
+  it("un padrón caído libera PREFLIGHT sin reservar ni pedir CAE", async () => {
+    const doble = new FiscalDouble();
+    const deps = doble.deps();
+    const solicitarCae = vi.fn(deps.solicitarCae);
+    deps.prepararEmision = async () => {
+      throw crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    };
+    deps.solicitarCae = solicitarCae;
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        letraSolicitada: "A",
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
+      },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "PADRON_ARCA_CAIDO",
+      mensaje:
+        "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+    });
+    expect(acciones(doble)).toEqual(["RECLAMAR", "ERROR_CORREGIBLE"]);
+    expect(acciones(doble)).not.toContain("RESERVAR");
+    expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
+    expect(solicitarCae).not.toHaveBeenCalled();
+    expect(doble.calls[1].payload).toMatchObject({
+      error_clase: "APLICACION",
+      error_codigo: "PADRON_ARCA_CAIDO",
+      error_fase: "PREFLIGHT",
+      mensaje_mascarado:
+        "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+      liberar_identidad: true,
+    });
   });
 
   it("un timeout después de REQUEST_INICIADO concilia y nunca libera ni reemite", async () => {

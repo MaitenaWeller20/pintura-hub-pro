@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   cargarContextoArcaCongelado,
   crearDependenciasEmisionFiscalServer,
@@ -10,6 +10,7 @@ import {
   liberarClaimFiscalVerificado,
   observarUltimoNumeroFiscalLocal,
   previsualizarVentaFiscalExistente,
+  previsualizarBorradorFiscalProvisionalServer,
   proyectarReceptorFiscalConfirmado,
   type ConfirmacionFiscalPostBorrador,
 } from "./emision.server";
@@ -19,6 +20,8 @@ import {
   type ReservaFiscalPersistida,
 } from "./emision";
 import { validarSnapshotFiscalV2 } from "./snapshot";
+import { codigoErrorFiscalUsuario } from "./error-usuario";
+import type { ReceptorPadronArca } from "./padron-arca";
 
 describe("liberación administrativa de claims", () => {
   function dependenciasLiberacion(
@@ -340,6 +343,7 @@ function preparacion(percepciones = "0.00") {
         emisor_id: "71000000-0000-4000-8000-000000000201",
       },
       facturaA: { modalidad: "ESTANDAR_CONFIRMADA", revalidar_at: "2027-01-01" },
+      padron: { probadoAt: null, validacionActiva: false },
     },
     direccionSucursal: "Domicilio sucursal",
     receptor: {
@@ -358,6 +362,240 @@ function preparacion(percepciones = "0.00") {
     original: null,
   } as const;
 }
+
+function receptorPadron(cambios: Partial<ReceptorPadronArca> = {}): ReceptorPadronArca {
+  return {
+    cuit: "30714199664",
+    razonSocial: "RAZON SOCIAL AUTORITATIVA S.A.",
+    domicilioFiscal: "DOMICILIO FISCAL ARCA",
+    estado: "ACTIVO",
+    tipoPersona: "JURIDICA",
+    condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+    verificadoArcaAt: "2026-08-26T15:00:00.000Z",
+    ...cambios,
+  };
+}
+
+function adminVentaConPadron(validacionActiva = true) {
+  const base = preparacion();
+  const emisorId = base.contexto.sucursal.emisor_id;
+  return {
+    async rpc(nombre: string) {
+      if (nombre !== "leer_venta_fiscal_exacta") {
+        throw new Error(`RPC inesperada: ${nombre}.`);
+      }
+      return { data: base.lectura, error: null };
+    },
+    from(tabla: string) {
+      return {
+        select(columnas: string) {
+          const consulta = {
+            eq() {
+              return consulta;
+            },
+            async maybeSingle() {
+              if (tabla === "sucursales" && columnas === "direccion") {
+                return { data: { direccion: "Domicilio sucursal" }, error: null };
+              }
+              if (tabla === "sucursales") {
+                return {
+                  data: {
+                    id: base.contexto.sucursal.id,
+                    nombre: base.contexto.sucursal.nombre,
+                    telefono: base.contexto.sucursal.telefono,
+                    emisor_id: emisorId,
+                    emisor: {
+                      id: emisorId,
+                      razon_social: base.contexto.emisorImpreso.razon_social,
+                      nombre_fantasia: null,
+                      cuit: base.contexto.emisor.cuit,
+                      domicilio_fiscal: base.contexto.emisorImpreso.domicilio_fiscal,
+                      condicion_iva: base.contexto.emisor.condicion_iva,
+                      ingresos_brutos: null,
+                      inicio_actividades: base.contexto.emisorImpreso.inicio_actividades,
+                      factura_a_modalidad: base.contexto.facturaA.modalidad,
+                      factura_a_revalidar_at: base.contexto.facturaA.revalidar_at,
+                    },
+                  },
+                  error: null,
+                };
+              }
+              if (tabla === "puntos_venta") {
+                return {
+                  data: {
+                    sucursal_id: base.contexto.sucursal.id,
+                    emisor_id: emisorId,
+                    numero: base.contexto.pv.numero,
+                    modo: base.contexto.pv.modo,
+                    activo: true,
+                  },
+                  error: null,
+                };
+              }
+              if (tabla === "credenciales_arca") {
+                return {
+                  data: {
+                    emisor_id: emisorId,
+                    ambiente: base.contexto.pv.modo,
+                    arca_key_enc: "key",
+                    arca_cert_enc: "cert",
+                    habilitada: true,
+                    padron_probado_at: validacionActiva ? "2026-08-26T14:00:00.000Z" : null,
+                    padron_validacion_activa: validacionActiva,
+                  },
+                  error: null,
+                };
+              }
+              throw new Error(`Consulta inesperada a ${tabla}.`);
+            },
+          };
+          return consulta;
+        },
+      };
+    },
+  };
+}
+
+describe("padrón autoritativo en preview y preparación final", () => {
+  const selectorForjado = {
+    origen: "MANUAL" as const,
+    tipo_documento: "CUIT" as const,
+    numero_documento: "30-71419966-4",
+    razon_social: "NOMBRE FORJADO EN EL NAVEGADOR",
+    condicion_iva: "RESPONSABLE_INSCRIPTO" as const,
+    domicilio: "DOMICILIO FORJADO",
+    guardar_para_proximas: false,
+    confirma_datos_manuales: true as const,
+  };
+
+  it("consulta otra vez al preparar la emisión aunque ya exista una preview visual", async () => {
+    const admin = adminVentaConPadron();
+    const usuario = { from: () => Promise.reject(new Error("Consulta inesperada.")) };
+    const consultarPadron = vi.fn(async ({ cuit }: { cuit: string }) => receptorPadron({ cuit }));
+
+    const preview = await previsualizarVentaFiscalExistente({
+      ventaId: preparacion().lectura.venta.id,
+      receptor: selectorForjado,
+      letraSolicitada: "A",
+      admin: admin as never,
+      usuario: usuario as never,
+      consultarPadron,
+    } as never);
+    const deps = crearDependenciasEmisionFiscalServer({
+      admin: admin as never,
+      usuario: usuario as never,
+      ventaIdAutorizada: preparacion().lectura.venta.id,
+      validarModalidadFacturaA: false,
+      consultarPadron,
+    } as never);
+    const preparacionFinal = await deps.prepararEmision({
+      ventaId: preparacion().lectura.venta.id,
+      receptor: selectorForjado,
+      letraSolicitada: "A",
+    });
+
+    expect(consultarPadron).toHaveBeenCalledTimes(2);
+    expect(consultarPadron).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ cuit: "30714199664", ambiente: "HOMOLOGACION" }),
+    );
+    expect(consultarPadron).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ cuit: "30714199664", ambiente: "HOMOLOGACION" }),
+    );
+    expect(preview.receptor.razonSocial).toBe("RAZON SOCIAL AUTORITATIVA S.A.");
+    expect(preparacionFinal.confirmacionAutoritativa.receptor.razonSocial).toBe(
+      "RAZON SOCIAL AUTORITATIVA S.A.",
+    );
+    expect(JSON.stringify([preview, preparacionFinal])).not.toContain(
+      "NOMBRE FORJADO EN EL NAVEGADOR",
+    );
+  });
+
+  it("el wrapper real de borrador inyecta el adaptador sin tocar la red", async () => {
+    const baseAdmin = adminVentaConPadron();
+    const admin = {
+      ...baseAdmin,
+      from(tabla: string) {
+        if (tabla === "productos") {
+          return {
+            select() {
+              return {
+                async in() {
+                  return {
+                    data: [
+                      {
+                        id: "71000000-0000-4000-8000-000000000501",
+                        activo: true,
+                        precio_sin_iva: 100,
+                        iva_porcentaje: 21,
+                      },
+                    ],
+                    error: null,
+                  };
+                },
+              };
+            },
+          };
+        }
+        return baseAdmin.from(tabla);
+      },
+    };
+    const usuario = {
+      from(tabla: string) {
+        if (tabla !== "clientes") throw new Error(`Consulta inesperada a ${tabla}.`);
+        return {
+          select() {
+            const consulta = {
+              eq() {
+                return consulta;
+              },
+              async maybeSingle() {
+                return {
+                  data: {
+                    id: "71000000-0000-4000-8000-000000000401",
+                    razon_social: "Cliente comercial",
+                    cuit_dni: null,
+                    tipo: "CONSUMIDOR_FINAL",
+                    direccion: null,
+                  },
+                  error: null,
+                };
+              },
+            };
+            return consulta;
+          },
+        };
+      },
+    };
+    const consultarPadron = vi.fn(async ({ cuit }: { cuit: string }) => receptorPadron({ cuit }));
+
+    const resultado = await previsualizarBorradorFiscalProvisionalServer({
+      borrador: {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        clienteId: "71000000-0000-4000-8000-000000000401",
+        fechaComercial: "2026-08-26T15:00:00.000Z",
+        items: [
+          {
+            producto_id: "71000000-0000-4000-8000-000000000501",
+            cantidad: 1,
+            descuento_porcentaje: 0,
+          },
+        ],
+        pagos: [],
+        percepciones: 0,
+        receptor: selectorForjado,
+        letraSolicitada: "A",
+      },
+      admin: admin as never,
+      usuario: usuario as never,
+      consultarPadron,
+    } as never);
+
+    expect(consultarPadron).toHaveBeenCalledOnce();
+    expect(resultado.receptor.razonSocial).toBe("RAZON SOCIAL AUTORITATIVA S.A.");
+  });
+});
 
 describe("Snapshot desde lectura PostgreSQL exacta", () => {
   it("conserva el redondeo fixed-point 0.02 × 7.25 = 0.15 sin iva.ts", () => {
@@ -516,6 +754,8 @@ describe("preview autoritativa de una nota de crédito", () => {
                       arca_key_enc: "key",
                       arca_cert_enc: "cert",
                       habilitada: true,
+                      padron_probado_at: "2026-08-26T14:00:00.000Z",
+                      padron_validacion_activa: true,
                     },
                     error: null,
                   };
@@ -528,13 +768,15 @@ describe("preview autoritativa de una nota de crédito", () => {
         };
       },
     };
+    const consultarPadron = vi.fn(async ({ cuit }: { cuit: string }) => receptorPadron({ cuit }));
 
     const dependencias = crearDependenciasEmisionFiscalServer({
       admin: admin as never,
       usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
       ventaIdAutorizada: notaId,
       validarModalidadFacturaA: false,
-    });
+      consultarPadron,
+    } as never);
     const preparacionRuntime = await dependencias.prepararEmision({
       ventaId: notaId,
       receptor: { origen: "COMPROBANTE_ORIGINAL" },
@@ -553,7 +795,8 @@ describe("preview autoritativa de una nota de crédito", () => {
       letraSolicitada: "A",
       admin: admin as never,
       usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
-    });
+      consultarPadron,
+    } as never);
 
     expect(preview.emisor_razon_social).toBe("EMISOR ORIGINAL CONGELADO");
     expect(preview.sucursal_nombre).toBe("SUCURSAL ORIGINAL CONGELADA");
@@ -578,6 +821,7 @@ describe("preview autoritativa de una nota de crédito", () => {
         sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",
       }),
     );
+    expect(consultarPadron).not.toHaveBeenCalled();
   });
 });
 
@@ -844,12 +1088,72 @@ describe("preview provisional de borrador", () => {
     origen: "MANUAL",
     tipo_documento: "CUIT",
     numero_documento: "30-71419966-4",
-    razon_social: "Receptor A",
+    razon_social: "NOMBRE FORJADO EN EL NAVEGADOR",
     condicion_iva: "RESPONSABLE_INSCRIPTO",
     domicilio: null,
     guardar_para_proximas: false,
     confirma_datos_manuales: true,
   };
+
+  it("consulta el padrón activo en el preview y no devuelve el nombre forjado", async () => {
+    const contexto = {
+      ...preparacion().contexto,
+      padron: { probadoAt: "2026-08-26T14:00:00.000Z", validacionActiva: true },
+    };
+    const consultarPadron = vi.fn(async (_contexto, cuit: string) => receptorPadron({ cuit }));
+
+    const resultado = await construirPreviewBorradorFiscalProvisional(
+      entradaConLetra("A", receptorA) as never,
+      {
+        ...dependenciasPreviewLetra(),
+        cargarContexto: async () => contexto as never,
+        consultarPadron,
+      },
+    );
+
+    expect(consultarPadron).toHaveBeenCalledOnce();
+    expect(consultarPadron).toHaveBeenCalledWith(contexto, "30714199664");
+    expect(resultado.receptor).toMatchObject({
+      razonSocial: "RAZON SOCIAL AUTORITATIVA S.A.",
+      domicilio: "DOMICILIO FISCAL ARCA",
+      origen: "ARCA",
+      verificadoArcaAt: "2026-08-26T15:00:00.000Z",
+    });
+    expect(JSON.stringify(resultado)).not.toContain("NOMBRE FORJADO EN EL NAVEGADOR");
+  });
+
+  it("preserva el preview actual sin consultar cuando la validación está inactiva", async () => {
+    const consultarPadron = vi.fn(async () => receptorPadron());
+
+    const resultado = await construirPreviewBorradorFiscalProvisional(
+      entradaConLetra("A", receptorA) as never,
+      { ...dependenciasPreviewLetra(), consultarPadron },
+    );
+
+    expect(consultarPadron).not.toHaveBeenCalled();
+    expect(resultado.receptor).toMatchObject({
+      razonSocial: "NOMBRE FORJADO EN EL NAVEGADOR",
+      origen: "MANUAL",
+      verificadoArcaAt: null,
+    });
+  });
+
+  it("falla con código cerrado si el padrón está activo pero el adaptador no está disponible", async () => {
+    const contexto = {
+      ...preparacion().contexto,
+      padron: { probadoAt: "2026-08-26T14:00:00.000Z", validacionActiva: true },
+    };
+
+    const error = await construirPreviewBorradorFiscalProvisional(
+      entradaConLetra("A", receptorA) as never,
+      {
+        ...dependenciasPreviewLetra(),
+        cargarContexto: async () => contexto as never,
+      },
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+  });
 
   it("deriva CbteTipo 1/6 desde la letra A/B solicitada", async () => {
     const [facturaA, facturaB] = await Promise.all([

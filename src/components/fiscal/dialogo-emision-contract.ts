@@ -7,6 +7,10 @@ import {
 } from "@/lib/fiscal/confirmacion";
 import { validarFechaIsoCalendario } from "@/lib/fiscal/fecha";
 import { validarReceptorFiscalConfirmado } from "@/lib/fiscal/receptor";
+import {
+  CODIGOS_ERROR_FISCAL_USUARIO,
+  mensajeCodigoErrorFiscalUsuario,
+} from "@/lib/fiscal/error-usuario";
 import type { LetraSolicitada } from "./dialogo-emision-state";
 
 const uuid = z.string().uuid();
@@ -176,7 +180,13 @@ const resultadoEmisionFiscalSchema = z.discriminatedUnion("estado", [
       advertencias: z.array(textoSemantico),
     })
     .strict(),
-  z.object({ estado: z.literal("ERROR_CORREGIBLE"), mensaje: textoSemantico }).strict(),
+  z
+    .object({
+      estado: z.literal("ERROR_CORREGIBLE"),
+      codigo: z.enum(CODIGOS_ERROR_FISCAL_USUARIO),
+      mensaje: textoSemantico,
+    })
+    .strict(),
   z.object({ estado: z.literal("RECONCILIAR"), mensaje: textoSemantico }).strict(),
   z
     .object({ estado: z.literal("BLOQUEADO"), diferencias: z.array(textoSemantico).min(1) })
@@ -204,6 +214,23 @@ export type PreviewEmisionFiscal = z.infer<typeof previewEmisionFiscalSchema>;
 export type ResultadoEmisionFiscalUi = z.infer<typeof resultadoEmisionFiscalSchema>;
 export type RespuestaReconfirmacion = z.infer<typeof reconfirmacionSchema>;
 export type RespuestaConfirmacionFiscal = z.infer<typeof respuestaConfirmacionSchema>;
+
+export function manejarErrorCorregibleDialogo(
+  resultado: Extract<ResultadoEmisionFiscalUi, { estado: "ERROR_CORREGIBLE" }>,
+  acciones: {
+    invalidarPreview(): void;
+    limpiarPreview(): void;
+    limpiarHuella(): void;
+    limpiarConfirmacionVentaAntigua(): void;
+    mostrarError(mensaje: string): void;
+  },
+): void {
+  acciones.invalidarPreview();
+  acciones.limpiarPreview();
+  acciones.limpiarHuella();
+  acciones.limpiarConfirmacionVentaAntigua();
+  acciones.mostrarError(resultado.mensaje);
+}
 
 type PreviewAutoritativa = z.infer<typeof previewAutoritativaSchema>;
 type PreviewProvisional = z.infer<typeof previewProvisionalSchema>;
@@ -430,6 +457,12 @@ export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfi
     value,
     "ARCA devolvió una respuesta fiscal desconocida o incompleta.",
   );
+  if (respuesta.estado === "ERROR_CORREGIBLE") {
+    return {
+      ...respuesta,
+      mensaje: mensajeCodigoErrorFiscalUsuario(respuesta.codigo),
+    };
+  }
   if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") return respuesta;
   try {
     validarPreviewSemantica(respuesta.preview_autoritativa);
@@ -476,24 +509,34 @@ export function despacharRespuestaConfirmacionFiscal(
   value: unknown,
   handlers: {
     onReconfirmacion(result: RespuestaReconfirmacion): void;
+    onErrorCorregible(
+      result: Extract<ResultadoEmisionFiscalUi, { estado: "ERROR_CORREGIBLE" }>,
+    ): void;
     onCompletada(result: ResultadoEmisionFiscalUi): void;
   },
-): "RECONFIRMACION" | "COMPLETADA" {
+): "RECONFIRMACION" | "ERROR_CORREGIBLE" | "COMPLETADA" {
   const resultado = parseRespuestaConfirmacionFiscal(value);
   if (resultado.estado === "RECONFIRMACION_REQUERIDA") {
     handlers.onReconfirmacion(resultado);
     return "RECONFIRMACION";
+  }
+  if (resultado.estado === "ERROR_CORREGIBLE") {
+    handlers.onErrorCorregible(resultado);
+    return "ERROR_CORREGIBLE";
   }
   handlers.onCompletada(resultado);
   return "COMPLETADA";
 }
 
 export function parseResultadoConciliacionFiscal(value: unknown): ResultadoEmisionFiscalUi {
-  return parsear(
+  const resultado = parsear(
     resultadoEmisionFiscalSchema,
     value,
     "ARCA devolvió una conciliación fiscal desconocida o incompleta.",
   );
+  return resultado.estado === "ERROR_CORREGIBLE"
+    ? { ...resultado, mensaje: mensajeCodigoErrorFiscalUsuario(resultado.codigo) }
+    : resultado;
 }
 
 export function parseResultadoLiberacionFiscal(value: unknown): { estado: "LIBERADO" } {

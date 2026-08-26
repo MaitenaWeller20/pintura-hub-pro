@@ -46,8 +46,8 @@ import {
   navegarTabColaPorTecla,
   presentarEstadoColaFiscal,
   presentarResultadoCola,
-  resolverSeleccionColaFiscal,
-  resolverTabAutoritativo,
+  retenerSeleccionColaFiscalHastaCerrar,
+  resolverCicloSeleccionColaFiscal,
   type BusquedaColaFiscal,
   type ResultadoColaFiscal,
   type SeleccionColaFiscal,
@@ -304,12 +304,15 @@ function ColaFiscalPage() {
     isFetching: cola.isFetching,
   });
   const huellaConsulta = huellaConsultaCola(search);
-  const seleccionVigente = resolverSeleccionColaFiscal({
+  const cicloSeleccion = resolverCicloSeleccionColaFiscal({
     seleccion,
     huellaConsulta,
     isPlaceholderData: cola.isPlaceholderData,
+    tab: search.tab,
+    venta: search.venta,
     filas,
   });
+  const seleccionVigente = cicloSeleccion.seleccion;
   const seleccionada = seleccionVigente?.fila ?? null;
 
   useEffect(() => {
@@ -359,9 +362,7 @@ function ColaFiscalPage() {
   const filaResultado = search.venta
     ? filas.find((fila) => fila.venta_id === search.venta)
     : undefined;
-  const tabAutoritativo = accionesHabilitadas
-    ? resolverTabAutoritativo(search.tab, search.venta, filas)
-    : search.tab;
+  const tabAutoritativo = accionesHabilitadas ? cicloSeleccion.tabAutoritativo : search.tab;
 
   useEffect(() => {
     if (tabAutoritativo === search.tab) return;
@@ -683,7 +684,8 @@ function ColaFiscalPage() {
             if (esMantenimiento(resultado)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
             const respuesta = parseRespuestaConfirmacionFiscal(resultado);
             if (respuesta.estado === "ERROR_CORREGIBLE") {
-              await queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
+              setSeleccion(retenerSeleccionColaFiscalHastaCerrar);
+              void queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
             }
             return respuesta;
           }}

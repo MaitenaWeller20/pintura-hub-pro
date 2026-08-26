@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { cuitValido } from "./codigos";
-import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./error-usuario";
+import { crearErrorFiscalUsuario } from "./error-usuario";
 
 const IMPUESTO_MONOTRIBUTO = 20;
 const IMPUESTO_IVA = 30;
@@ -45,14 +45,6 @@ export type DependenciasPadronArca = {
 
 function respuestaInvalida(): never {
   throw crearErrorFiscalUsuario("RESPUESTA_PADRON_INVALIDA");
-}
-
-function codigoMarcadoSeguro(cause: unknown) {
-  try {
-    return codigoErrorFiscalUsuario(cause);
-  } catch {
-    return null;
-  }
 }
 
 function esRegistro(value: unknown): value is Record<string, unknown> {
@@ -123,8 +115,7 @@ function listaRegistros(value: unknown): Record<string, unknown>[] {
       registros.push(descriptor.value);
     }
     return registros;
-  } catch (cause) {
-    if (codigoMarcadoSeguro(cause)) throw cause;
+  } catch {
     return respuestaInvalida();
   }
 }

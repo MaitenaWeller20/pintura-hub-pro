@@ -207,6 +207,28 @@ describe("normalizador del padrón ARCA", () => {
     expect(error.message).not.toContain("revoked");
   });
 
+  it("reemplaza un marcador fiscal falsificado por un error público nuevo", async () => {
+    const atacante = Object.assign(new Error("SENSITIVE-PADRON-SPOOFED-MARKER"), {
+      codigoFiscalUsuario: "RESPUESTA_PADRON_INVALIDA",
+    });
+    const impuesto = new Proxy([], {
+      getPrototypeOf() {
+        throw atacante;
+      },
+    });
+    const conMarcadorFalsificado = modificarFixture(juridicaRi(), (persona) => {
+      (persona.datosRegimenGeneral as Record<string, unknown>).impuesto = impuesto;
+    });
+
+    const error = await capturarError(
+      consultarPadronArca(CUIT_JURIDICA, dependencias(conMarcadorFalsificado)),
+    );
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-PADRON-SPOOFED-MARKER");
+  });
+
   it("rechaza un contribuyente inactivo", async () => {
     const inactivo = modificarFixture(juridicaRi(), (persona) => {
       persona.estadoClave = "INACTIVO";

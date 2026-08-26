@@ -2,25 +2,37 @@ import type { ZodType } from "zod";
 
 export type MomentoErrorFiscal = "REVISION" | "EMISION" | "CONSULTA" | "CONFIGURACION";
 
-export type CodigoErrorFiscalUsuario =
-  | "VALIDACION_RAZON_SOCIAL"
-  | "VALIDACION_DOCUMENTO"
-  | "VALIDACION_RECEPTOR_GUARDADO"
-  | "VALIDACION_CONFIRMACION"
-  | "VALIDACION_LETRA"
-  | "VALIDACION_VENTA"
-  | "VALIDACION_DATOS"
-  | "CONSULTA_INVALIDA"
-  | "CONFIGURACION_INVALIDA"
-  | "ARCA_RECHAZO"
-  | "MANTENIMIENTO"
-  | "RECONFIRMACION"
-  | "ERROR_CORREGIBLE"
-  | "INCIDENTE_RECHAZO"
-  | "INCIDENTE_PENDIENTE"
-  | "INCIDENTE_INTEGRIDAD"
-  | "INCIDENTE_LEGACY_ERROR"
-  | "INCIDENTE_FISCAL";
+export const CODIGOS_ERROR_FISCAL_USUARIO = [
+  "VALIDACION_RAZON_SOCIAL",
+  "VALIDACION_DOCUMENTO",
+  "VALIDACION_RECEPTOR_GUARDADO",
+  "VALIDACION_CONFIRMACION",
+  "VALIDACION_LETRA",
+  "VALIDACION_VENTA",
+  "VALIDACION_DATOS",
+  "CONSULTA_INVALIDA",
+  "CONFIGURACION_INVALIDA",
+  "ARCA_RECHAZO",
+  "MANTENIMIENTO",
+  "RECONFIRMACION",
+  "ERROR_CORREGIBLE",
+  "INCIDENTE_RECHAZO",
+  "INCIDENTE_PENDIENTE",
+  "INCIDENTE_INTEGRIDAD",
+  "INCIDENTE_LEGACY_ERROR",
+  "INCIDENTE_FISCAL",
+  "MANTENIMIENTO_POST_VENTA",
+  "PADRON_ARCA_CAIDO",
+  "PADRON_NO_AUTORIZADO",
+  "PADRON_CONFIG_INVALIDA",
+  "CUIT_INVALIDO",
+  "CUIT_NO_ENCONTRADO",
+  "CUIT_INACTIVO",
+  "RESPUESTA_PADRON_INVALIDA",
+  "CONDICION_FISCAL_INCOMPATIBLE",
+] as const;
+
+export type CodigoErrorFiscalUsuario = (typeof CODIGOS_ERROR_FISCAL_USUARIO)[number];
 
 type IssueValidacion = {
   path?: unknown;
@@ -64,6 +76,23 @@ const MENSAJES_USUARIO: Record<CodigoErrorFiscalUsuario, string> = {
     "Una emisión anterior terminó con error y no conserva un diagnóstico seguro. Revisá los datos antes de reintentar.",
   INCIDENTE_FISCAL:
     "La emisión requiere revisión. Consultá el estado, la fase y las diferencias indicadas antes de realizar otra acción.",
+  MANTENIMIENTO_POST_VENTA:
+    "La venta quedó registrada y la emisión está en mantenimiento. No repitas la venta ni el cobro; revisá el estado en la cola fiscal.",
+  PADRON_ARCA_CAIDO:
+    "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+  PADRON_NO_AUTORIZADO:
+    "El certificado no está habilitado para consultar el padrón de ARCA. Un administrador debe asociarlo al servicio ws_sr_constancia_inscripcion y probar nuevamente la conexión.",
+  PADRON_CONFIG_INVALIDA:
+    "No se pudo usar la configuración del padrón de ARCA. Un administrador debe revisar el certificado y volver a probar la conexión. No se emitió ningún comprobante.",
+  CUIT_INVALIDO: "El CUIT ingresado no es válido. Revisá los 11 dígitos y volvé a intentar.",
+  CUIT_NO_ENCONTRADO:
+    "ARCA no encontró el CUIT ingresado. Revisalo antes de continuar. No se emitió ningún comprobante.",
+  CUIT_INACTIVO:
+    "El CUIT figura inactivo en ARCA. No se puede emitir el comprobante a ese receptor.",
+  RESPUESTA_PADRON_INVALIDA:
+    "ARCA devolvió datos incompletos o inconsistentes para este CUIT. No se emitió ningún comprobante. Intentá nuevamente o avisale a un administrador.",
+  CONDICION_FISCAL_INCOMPATIBLE:
+    "La condición fiscal informada por ARCA no es compatible con la letra elegida. Revisá la letra del comprobante antes de continuar.",
 };
 
 const CODIGO_POR_CAMPO: Record<string, CodigoErrorFiscalUsuario> = {
@@ -187,6 +216,14 @@ function codigoMarcado(error: unknown, mensaje: string): CodigoErrorFiscalUsuari
   return esCodigoErrorFiscalUsuario(codigo) ? codigo : null;
 }
 
+export function codigoErrorFiscalUsuario(error: unknown): CodigoErrorFiscalUsuario | null {
+  return codigoMarcado(error, textoError(error));
+}
+
+export function mensajeCodigoErrorFiscalUsuario(codigo: CodigoErrorFiscalUsuario): string {
+  return MENSAJES_USUARIO[codigo];
+}
+
 /**
  * Crea el único tipo de Error cuyo significado puede sobrevivir el transporte
  * cliente/servidor. El mensaje sólo lleva un código cerrado; nunca concatena
@@ -217,8 +254,8 @@ export function mensajeErrorFiscal(error: unknown, momento: MomentoErrorFiscal):
   if (codigoValidacion) return MENSAJES_USUARIO[codigoValidacion];
 
   const mensaje = textoError(error);
-  const codigo = codigoMarcado(error, mensaje);
-  if (codigo) return MENSAJES_USUARIO[codigo];
+  const codigo = codigoErrorFiscalUsuario(error);
+  if (codigo) return mensajeCodigoErrorFiscalUsuario(codigo);
   return mensajeFallback(momento, PATRON_CONEXION.test(mensaje));
 }
 

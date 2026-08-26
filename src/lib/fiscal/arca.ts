@@ -97,7 +97,9 @@ export class ArcaRechazoDefinitivo extends Error {
 
 type ClienteSupabaseTicketStorage = ConstructorParameters<typeof SupabaseTicketStorage>[0];
 
-function conTimeout<T>(p: Promise<T>, etiqueta: string): Promise<T> {
+export type ClienteArcaSdk = InstanceType<(typeof import("@arcasdk/core"))["Arca"]>;
+
+export function conTimeoutArca<T>(p: Promise<T>, etiqueta: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new AfipTimeout(`AFIP no respondió al ${etiqueta} (${TIMEOUT_MS / 1000}s).`)),
@@ -611,7 +613,11 @@ export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaCo
  * cualquier módulo que toque este archivo. Así se carga sólo cuando de verdad
  * hay que pedir un CAE.
  */
-async function buildArca(emisor: EmisorFiscal, pv: PuntoVenta, supabaseAdmin: unknown) {
+export async function crearClienteArca(
+  emisor: EmisorFiscal,
+  ambiente: PuntoVenta["modo"],
+  supabaseAdmin: unknown,
+): Promise<ClienteArcaSdk> {
   const cert = decryptString(emisor.arca_cert_enc);
   const key = decryptString(emisor.arca_key_enc);
   if (!cert || !key) {
@@ -620,7 +626,7 @@ async function buildArca(emisor: EmisorFiscal, pv: PuntoVenta, supabaseAdmin: un
 
   const { Arca } = await import("@arcasdk/core");
   const cuit = Number(emisor.cuit.replace(/\D/g, ""));
-  const production = pv.modo === "PRODUCCION";
+  const production = ambiente === "PRODUCCION";
 
   return new Arca({
     cuit,
@@ -652,8 +658,8 @@ export async function ultimoAutorizado(
   supabaseAdmin: unknown,
 ): Promise<number> {
   if (MOCK) return 0;
-  const arca = await buildArca(emisor, pv, supabaseAdmin);
-  const r = await conTimeout(
+  const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
+  const r = await conTimeoutArca(
     arca.electronicBillingService.getLastVoucher(pv.numero, cbteTipo),
     "consultar el último comprobante",
   );
@@ -699,10 +705,10 @@ export async function consultarComprobanteCompleto(
   supabaseAdmin: unknown,
 ): Promise<ComprobanteArcaConsultado | null> {
   if (MOCK) return null;
-  const arca = await buildArca(emisor, pv, supabaseAdmin);
+  const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
   let raw: unknown;
   try {
-    raw = await conTimeout(
+    raw = await conTimeoutArca(
       arca.genericService.call("wsfe", "FECompConsultar", {
         FeCompConsReq: { CbteNro: numero, PtoVta: pv.numero, CbteTipo: cbteTipo },
       }),
@@ -768,7 +774,7 @@ export async function solicitarCae(
     return { cae, vencimiento: venc, modo: pv.modo };
   }
 
-  const arca = await buildArca(emisor, pv, supabaseAdmin);
+  const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
   const esC = TIPOS_C.has(d.cbteTipo);
   const tributos = Math.abs(d.tributos ?? 0);
 
@@ -823,7 +829,7 @@ export async function solicitarCae(
   }
 
   const identidadDetalle = identidadDetalleDesdePayload(payload);
-  const result = await conTimeout(
+  const result = await conTimeoutArca(
     arca.electronicBillingService.createVoucher(payload as never),
     "solicitar el CAE",
   );
@@ -865,8 +871,8 @@ export async function solicitarCaeConPayload(
   }
 
   const identidadDetalle = identidadDetalleDesdePayload(payload);
-  const arca = await buildArca(emisor, pv, supabaseAdmin);
-  const result = await conTimeout(
+  const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
+  const result = await conTimeoutArca(
     arca.electronicBillingService.createVoucher(payload as never),
     "solicitar el CAE",
   );

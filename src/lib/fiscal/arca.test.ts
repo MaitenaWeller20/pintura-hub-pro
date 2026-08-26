@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SnapshotFiscalV2 } from "./snapshot";
-import { crearPayloadCaeDesdeSnapshot, normalizarComprobanteArca } from "./arca";
+import { conTimeoutArca, crearPayloadCaeDesdeSnapshot, normalizarComprobanteArca } from "./arca";
 
 export const snapshotFiscalFixture = {
   version: 2,
@@ -111,6 +111,12 @@ export const resultGetFixture = {
 };
 
 describe("adaptador fiscal ARCA", () => {
+  it("expone el timeout compartido sin alterar una respuesta del SDK que llega a tiempo", async () => {
+    await expect(conTimeoutArca(Promise.resolve("respuesta SDK"), "prueba")).resolves.toBe(
+      "respuesta SDK",
+    );
+  });
+
   it("crea el payload de emisión solamente desde el snapshot v2 completo", () => {
     expect(crearPayloadCaeDesdeSnapshot(snapshotFiscalFixture)).toEqual({
       CantReg: 1,

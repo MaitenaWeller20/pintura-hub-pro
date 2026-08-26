@@ -393,6 +393,7 @@ export async function construirPreviewBorradorFiscalProvisional(
       comprobanteOriginalId: null,
     },
     importeTotal: total,
+    letraSolicitada: input.letraSolicitada,
     cargarFavorito: deps.cargarFavorito,
     cargarOriginal: async () => null,
   });
@@ -835,6 +836,7 @@ export function crearDependenciasEmisionFiscalServer(input: {
         selector,
         venta: ventaReceptor,
         importeTotal: Number(lectura.venta.total),
+        letraSolicitada,
         cargarFavorito: (id) => cargarFavorito(usuario, id),
         cargarOriginal,
       });

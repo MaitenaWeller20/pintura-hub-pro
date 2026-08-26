@@ -34,6 +34,8 @@ const base = {
     arca_key_enc: "key",
     arca_cert_enc: "cert",
     habilitada: true,
+    padron_probado_at: null,
+    padron_validacion_activa: false,
   },
 };
 
@@ -48,6 +50,41 @@ describe("contexto fiscal multiemisor", () => {
       modalidad: "ESTANDAR_CONFIRMADA",
       revalidar_at: "2027-08-22",
     });
+  });
+
+  it("expone la activación probada del padrón de la credencial autoritativa", () => {
+    expect(
+      construirContextoFiscal(
+        {
+          ...base,
+          credencial: {
+            ...base.credencial,
+            padron_probado_at: "2026-08-26T12:00:00.000Z",
+            padron_validacion_activa: true,
+          },
+        },
+        { exigirHabilitada: true },
+      ).padron,
+    ).toEqual({
+      probadoAt: "2026-08-26T12:00:00.000Z",
+      validacionActiva: true,
+    });
+  });
+
+  it("falla cerrado si se activa el padrón sin evidencia de prueba", () => {
+    expect(() =>
+      construirContextoFiscal(
+        {
+          ...base,
+          credencial: {
+            ...base.credencial,
+            padron_probado_at: null,
+            padron_validacion_activa: true,
+          },
+        },
+        { exigirHabilitada: true },
+      ),
+    ).toThrow("FISCAL_USUARIO_V1:PADRON_CONFIG_INVALIDA");
   });
 
   it("General Paz no acepta el emisor, PV ni credencial de O'Higgins", () => {

@@ -168,6 +168,64 @@ function validarReglasDeCondicion(receptor: ReceptorFiscalConfirmado, importeTot
   }
 }
 
+const FECHA_ARCA_CON_OFFSET =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+
+function fechaArcaValida(valor: string): boolean {
+  const match = FECHA_ARCA_CON_OFFSET.exec(valor);
+  if (!match) return false;
+
+  const [, year, month, day, hour, minute, second, millisecond = "0", offset] = match;
+  const offsetHoras = offset === "Z" ? 0 : Number(offset.slice(1, 3));
+  const offsetMinutos = offset === "Z" ? 0 : Number(offset.slice(4, 6));
+  if (Number(year) === 0 || offsetHoras > 23 || offsetMinutos > 59) return false;
+
+  const milisegundos = Number(millisecond.padEnd(3, "0"));
+  const fechaLocal = new Date(0);
+  fechaLocal.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+  fechaLocal.setUTCHours(Number(hour), Number(minute), Number(second), milisegundos);
+  const localUtc = fechaLocal.getTime();
+  if (
+    fechaLocal.getUTCFullYear() !== Number(year) ||
+    fechaLocal.getUTCMonth() !== Number(month) - 1 ||
+    fechaLocal.getUTCDate() !== Number(day) ||
+    fechaLocal.getUTCHours() !== Number(hour) ||
+    fechaLocal.getUTCMinutes() !== Number(minute) ||
+    fechaLocal.getUTCSeconds() !== Number(second) ||
+    fechaLocal.getUTCMilliseconds() !== milisegundos
+  ) {
+    return false;
+  }
+  const signo = offset.startsWith("-") ? -1 : 1;
+  const instante = localUtc - signo * (offsetHoras * 60 + offsetMinutos) * 60_000;
+  return Number.isFinite(instante) && new Date(instante).getTime() === new Date(valor).getTime();
+}
+
+function validarOrigenArca(
+  receptor: ReceptorFiscalConfirmado,
+  documento: DocumentoFiscalArca,
+): void {
+  if (receptor.origen !== "ARCA") {
+    if (receptor.verificadoArcaAt !== null) {
+      throw new Error("Sólo un receptor de origen ARCA puede declarar una verificación ARCA.");
+    }
+    return;
+  }
+
+  if (
+    documento.tipoDocumento !== "CUIT" ||
+    documento.docTipoArca !== 80 ||
+    !cuitValido(documento.numeroDocumento)
+  ) {
+    throw new Error("Un receptor de origen ARCA exige CUIT válido y DocTipo 80.");
+  }
+  if (!receptor.verificadoArcaAt || !fechaArcaValida(receptor.verificadoArcaAt)) {
+    throw new Error(
+      "Un receptor de origen ARCA exige una fecha de verificación ARCA ISO con offset válida.",
+    );
+  }
+}
+
 /** Valida la forma canónica completa que se congelará en el snapshot fiscal v2. */
 export function validarReceptorFiscalConfirmado(
   value: unknown,
@@ -208,6 +266,8 @@ export function validarReceptorFiscalConfirmado(
   ) {
     throw new Error("El documento lógico no coincide con el documento ARCA confirmado.");
   }
+
+  validarOrigenArca(receptor, documento);
 
   if (receptor.origen === "MANUAL" && receptor.origenId !== null) {
     throw new Error("Un receptor manual no admite identificador de origen.");

@@ -1,4 +1,5 @@
 import { cuitValido, type CondicionIva } from "./codigos";
+import { crearErrorFiscalUsuario } from "./error-usuario";
 import { fechaFiscalHoyAr } from "./fecha";
 
 export type AmbienteArca = "HOMOLOGACION" | "PRODUCCION";
@@ -38,6 +39,8 @@ export type CredencialFiscalRow = {
   arca_key_enc: string | null;
   arca_cert_enc: string | null;
   habilitada: boolean;
+  padron_probado_at: string | null;
+  padron_validacion_activa: boolean;
 };
 
 export type ContextoFiscalInput = {
@@ -69,6 +72,10 @@ export type ContextoFiscal = {
   facturaA: {
     modalidad: ModalidadFacturaA;
     revalidar_at: string | null;
+  };
+  padron: {
+    probadoAt: string | null;
+    validacionActiva: boolean;
   };
 };
 
@@ -166,6 +173,9 @@ export function construirContextoFiscal(
   if (opciones.exigirHabilitada && !credencial.habilitada) {
     throw new Error("La facturación electrónica de este emisor está deshabilitada.");
   }
+  if (credencial.padron_validacion_activa && !credencial.padron_probado_at) {
+    throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+  }
 
   return {
     emisor: {
@@ -189,6 +199,10 @@ export function construirContextoFiscal(
     facturaA: {
       modalidad: emisor.factura_a_modalidad,
       revalidar_at: emisor.factura_a_revalidar_at,
+    },
+    padron: {
+      probadoAt: credencial.padron_probado_at,
+      validacionActiva: credencial.padron_validacion_activa,
     },
   };
 }

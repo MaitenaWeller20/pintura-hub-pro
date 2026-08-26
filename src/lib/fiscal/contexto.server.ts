@@ -102,7 +102,9 @@ export async function cargarContextoFiscal(
   if (emisor && pv) {
     const { data: credencialData, error: credencialError } = await sb
       .from("credenciales_arca")
-      .select("emisor_id,ambiente,arca_key_enc,arca_cert_enc,habilitada")
+      .select(
+        "emisor_id,ambiente,arca_key_enc,arca_cert_enc,habilitada,padron_probado_at,padron_validacion_activa",
+      )
       .eq("emisor_id", emisor.id)
       .eq("ambiente", pv.modo)
       .maybeSingle();
@@ -114,6 +116,8 @@ export async function cargarContextoFiscal(
           arca_key_enc: credencialData.arca_key_enc,
           arca_cert_enc: credencialData.arca_cert_enc,
           habilitada: credencialData.habilitada,
+          padron_probado_at: credencialData.padron_probado_at,
+          padron_validacion_activa: credencialData.padron_validacion_activa,
         }
       : null;
   }

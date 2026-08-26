@@ -373,6 +373,17 @@ function notaInputV2() {
   return input;
 }
 
+function prepararReceptorArcaParaVerificacion(input: any) {
+  input.receptor = {
+    ...input.receptor,
+    tipoDocumento: "CUIT",
+    numeroDocumento: "30714199664",
+    docTipoArca: 80,
+    docNroArca: "30714199664",
+    origen: "ARCA",
+  };
+}
+
 function inputV2ConReceptorRi() {
   const input = inputV2() as any;
   input.receptor = {
@@ -620,6 +631,7 @@ describe("snapshot fiscal v2", () => {
 
   it("acepta instantes canónicos con segundos y con exactamente tres milisegundos", () => {
     const input = inputV2() as any;
+    prepararReceptorArcaParaVerificacion(input);
     input.venta.fechaComercial = "2026-08-20T15:00:00Z";
     input.receptor.verificadoArcaAt = "2026-08-21T14:59:58.123Z";
 
@@ -635,7 +647,10 @@ describe("snapshot fiscal v2", () => {
     ["verificación 24:00", "2026-08-22T24:00:00.000Z", true],
   ])("rechaza %s", (_caso, instante, esVerificacion) => {
     const input = inputV2() as any;
-    if (esVerificacion) input.receptor.verificadoArcaAt = instante;
+    if (esVerificacion) {
+      prepararReceptorArcaParaVerificacion(input);
+      input.receptor.verificadoArcaAt = instante;
+    }
     else input.venta.fechaComercial = instante;
 
     expect(() => crearSnapshotFiscalV2(input)).toThrow(/instante|fecha|verificación/i);
@@ -652,6 +667,7 @@ describe("snapshot fiscal v2", () => {
     ["cbtesAsoc.fecha", (input: any) => (input.cbtesAsoc[0].fecha = "0000-01-01")],
   ])("rechaza el año 0000 en %s", (_campo, mutar) => {
     const input = notaInputV2();
+    if (_campo === "receptor.verificadoArcaAt") prepararReceptorArcaParaVerificacion(input);
     mutar(input);
     expect(() => crearSnapshotFiscalV2(input)).toThrow(/fecha|instante|año/i);
   });
@@ -667,6 +683,7 @@ describe("snapshot fiscal v2", () => {
     ["cbtesAsoc.fecha", (input: any) => (input.cbtesAsoc[0].fecha = "2100-02-29")],
   ])("rechaza 2100-02-29 en %s", (_campo, mutar) => {
     const input = notaInputV2();
+    if (_campo === "receptor.verificadoArcaAt") prepararReceptorArcaParaVerificacion(input);
     mutar(input);
     expect(() => crearSnapshotFiscalV2(input)).toThrow(/fecha|instante/i);
   });
@@ -676,6 +693,7 @@ describe("snapshot fiscal v2", () => {
     ["2024-02-29", "2024-02-29T00:00:00Z", "2024-02-29T00:00:00.000Z"],
   ])("acepta la fecha gregoriana válida %s en los cinco campos", (dia, instanteVenta, instanteArca) => {
     const input = notaInputV2();
+    prepararReceptorArcaParaVerificacion(input);
     input.venta.fechaComercial = instanteVenta;
     input.receptor.verificadoArcaAt = instanteArca;
     input.fechaComprobante = dia;

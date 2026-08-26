@@ -103,27 +103,8 @@ export async function ejecutarPruebaPadronAdministrativa(
     errorConfiguracionPadron();
   }
 
-  let emisorResultado;
-  try {
-    emisorResultado = await sb
-      .from("emisores")
-      .select("id,cuit")
-      .eq("id", input.entrada.emisor_id)
-      .maybeSingle();
-  } catch {
-    errorConfiguracionPadron();
-  }
-  const { data: emisor, error: emisorError } = emisorResultado;
-  if (
-    emisorError ||
-    !emisor ||
-    emisor.id !== input.entrada.emisor_id ||
-    typeof emisor.cuit !== "string"
-  ) {
-    errorConfiguracionPadron();
-  }
-  const cuitEmisor = emisor.cuit;
-
+  // La versión se captura antes del CUIT: el trigger por CUIT invalida este
+  // snapshot incluso cuando el cambio ocurre entre ambas lecturas.
   let credencialResultado;
   try {
     credencialResultado = await sb
@@ -147,6 +128,27 @@ export async function ejecutarPruebaPadronAdministrativa(
     errorConfiguracionPadron();
   }
   const versionCredencial = credencial.updated_at;
+
+  let emisorResultado;
+  try {
+    emisorResultado = await sb
+      .from("emisores")
+      .select("id,cuit")
+      .eq("id", input.entrada.emisor_id)
+      .maybeSingle();
+  } catch {
+    errorConfiguracionPadron();
+  }
+  const { data: emisor, error: emisorError } = emisorResultado;
+  if (
+    emisorError ||
+    !emisor ||
+    emisor.id !== input.entrada.emisor_id ||
+    typeof emisor.cuit !== "string"
+  ) {
+    errorConfiguracionPadron();
+  }
+  const cuitEmisor = emisor.cuit;
 
   // El trigger genérico mueve updated_at para credenciales, resets por CUIT y
   // resets por cambio de PV. Éste mismo snapshot protege éxito y fallo.

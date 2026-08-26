@@ -362,7 +362,11 @@ describe("acción administrativa de prueba del padrón", () => {
     update: unknown;
   };
 
-  function clienteAdmin(input?: { consultaError?: Error; actualizacionError?: Error }) {
+  function clienteAdmin(input?: {
+    consultaError?: Error;
+    actualizacionError?: Error;
+    cambiarCuitDuranteLecturaEmisor?: boolean;
+  }) {
     const operaciones: Operacion[] = [];
     const estado = {
       cuitEmisor: receptor.cuit,
@@ -426,7 +430,11 @@ describe("acción administrativa de prueba del padrón", () => {
             }
             if (input?.consultaError) return { data: null, error: input.consultaError };
             if (tabla === "emisores") {
-              return { data: { id: entrada.emisor_id, cuit: estado.cuitEmisor }, error: null };
+              const cuitLeido = estado.cuitEmisor;
+              if (input?.cambiarCuitDuranteLecturaEmisor) {
+                simularResetConcurrente("30621146315");
+              }
+              return { data: { id: entrada.emisor_id, cuit: cuitLeido }, error: null };
             }
             return {
               data: {
@@ -503,18 +511,18 @@ describe("acción administrativa de prueba del padrón", () => {
     });
     expect(operaciones).toEqual([
       {
-        tabla: "emisores",
-        select: "id,cuit",
-        filtros: [["id", entrada.emisor_id]],
-        update: null,
-      },
-      {
         tabla: "credenciales_arca",
         select: "emisor_id,ambiente,arca_key_enc,arca_cert_enc,updated_at",
         filtros: [
           ["emisor_id", entrada.emisor_id],
           ["ambiente", "PRODUCCION"],
         ],
+        update: null,
+      },
+      {
+        tabla: "emisores",
+        select: "id,cuit",
+        filtros: [["id", entrada.emisor_id]],
         update: null,
       },
       {
@@ -618,6 +626,36 @@ describe("acción administrativa de prueba del padrón", () => {
       padronUltimoErrorAt: null,
     });
     expect(escenario.operaciones.filter((operacion) => operacion.update)).toHaveLength(2);
+  });
+
+  it("no mezcla un CUIT viejo con la versión nueva si el CUIT cambia entre las lecturas", async () => {
+    const escenario = clienteAdmin({ cambiarCuitDuranteLecturaEmisor: true });
+    const dependencias = deps(escenario.cliente);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(dependencias.consultarPadron).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cuit: receptor.cuit,
+        emisor: expect.objectContaining({
+          cuit: receptor.cuit,
+          arca_key_enc: "key-cifrada",
+          arca_cert_enc: "cert-cifrado",
+        }),
+      }),
+    );
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(escenario.estado).toEqual({
+      cuitEmisor: "30621146315",
+      updatedAt: "2026-08-26T12:00:01.000Z",
+      padronProbadoAt: null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null,
+      padronUltimoErrorAt: null,
+    });
   });
 
   it("no guarda el fallo viejo si cambió el CUIT y su trigger reseteó la credencial", async () => {

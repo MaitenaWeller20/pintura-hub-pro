@@ -6,7 +6,11 @@ import type { ReceptorFiscalConfirmado, TipoDocumentoFiscal } from "@/lib/fiscal
 import type { CondicionIva } from "@/lib/fiscal/codigos";
 import { adaptarReceptorFormularioALetra, type LetraSolicitada } from "./dialogo-emision-state";
 import type { CampoReceptorFiscal } from "./dialogo-emision-validacion";
-import { cuitParaConsulta, type EstadoConsultaPadronUi } from "./padron-receptor";
+import {
+  mismaClaveConsultaPadron,
+  type ClaveConsultaPadron,
+  type EstadoConsultaPadronUi,
+} from "./padron-receptor";
 
 export type ReceptorFormulario =
   | { origen: "CLIENTE_COMERCIAL" }
@@ -87,16 +91,20 @@ function horaPadron(fecha: string): string {
 
 function EstadoPadron({
   estado,
-  cuitActual,
+  claveActual,
 }: {
   estado: EstadoConsultaPadronUi;
-  cuitActual: string | null;
+  claveActual: ClaveConsultaPadron | null;
 }) {
-  if (!cuitActual || estado.estado === "INACTIVO") return null;
+  if (
+    !claveActual ||
+    (estado.estado === "INACTIVO" && mismaClaveConsultaPadron(estado.clave, claveActual))
+  )
+    return null;
   if (
     estado.estado === "VERIFICADO" &&
-    estado.cuit === cuitActual &&
-    estado.receptor.cuit === cuitActual
+    mismaClaveConsultaPadron(estado.clave, claveActual) &&
+    estado.receptor.cuit === claveActual.cuit
   ) {
     return (
       <div
@@ -114,7 +122,7 @@ function EstadoPadron({
       </div>
     );
   }
-  if (estado.estado === "ERROR" && estado.cuit === cuitActual) {
+  if (estado.estado === "ERROR" && mismaClaveConsultaPadron(estado.clave, claveActual)) {
     return (
       <p
         role="alert"
@@ -143,6 +151,7 @@ export function ReceptorFiscalForm({
   letraSolicitada,
   confirmaDatosManuales,
   estadoConsultaPadron = { estado: "SIN_CUIT" },
+  claveConsultaPadron,
   errores = {},
   disabled,
   initialFocusRef,
@@ -160,6 +169,7 @@ export function ReceptorFiscalForm({
   letraSolicitada: LetraSolicitada | null;
   confirmaDatosManuales: boolean;
   estadoConsultaPadron?: EstadoConsultaPadronUi;
+  claveConsultaPadron: ClaveConsultaPadron | null;
   errores?: Partial<Record<CampoReceptorFiscal, string>>;
   disabled: boolean;
   initialFocusRef?: RefObject<HTMLInputElement | null>;
@@ -189,15 +199,10 @@ export function ReceptorFiscalForm({
   const condiciones = letraSolicitada ? CONDICIONES_POR_LETRA[letraSolicitada] : [];
   const requiereDocumento =
     letraSolicitada === "A" || (value.origen === "MANUAL" && value.condicion_iva === "EXENTO");
-  const cuitActual = cuitParaConsulta({
-    receptor: value,
-    cliente: clienteComercial,
-    favoritos,
-  });
   const receptorVerificado =
     estadoConsultaPadron.estado === "VERIFICADO" &&
-    estadoConsultaPadron.cuit === cuitActual &&
-    estadoConsultaPadron.receptor.cuit === cuitActual
+    mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron) &&
+    estadoConsultaPadron.receptor.cuit === claveConsultaPadron?.cuit
       ? estadoConsultaPadron.receptor
       : null;
 
@@ -317,7 +322,7 @@ export function ReceptorFiscalForm({
       ) : null}
 
       {value.origen !== "MANUAL" ? (
-        <EstadoPadron estado={estadoConsultaPadron} cuitActual={cuitActual} />
+        <EstadoPadron estado={estadoConsultaPadron} claveActual={claveConsultaPadron} />
       ) : null}
 
       {value.origen !== "MANUAL" && receptorVerificado ? (
@@ -349,7 +354,7 @@ export function ReceptorFiscalForm({
             <Input
               id="receptor-domicilio"
               className="mt-1 min-h-11"
-              value={receptorVerificado.domicilioFiscal ?? "Sin domicilio informado"}
+              value={receptorVerificado.domicilioFiscal ?? "Sin domicilio informado por ARCA"}
               readOnly
             />
           </div>
@@ -437,7 +442,7 @@ export function ReceptorFiscalForm({
               </p>
             ) : null}
           </div>
-          <EstadoPadron estado={estadoConsultaPadron} cuitActual={cuitActual} />
+          <EstadoPadron estado={estadoConsultaPadron} claveActual={claveConsultaPadron} />
           <div className="sm:col-span-2">
             <Label htmlFor="receptor-razon-social">Razón social</Label>
             <Input
@@ -500,11 +505,17 @@ export function ReceptorFiscalForm({
             ) : null}
           </div>
           <div>
-            <Label htmlFor="receptor-domicilio">Domicilio</Label>
+            <Label htmlFor="receptor-domicilio">
+              {receptorVerificado ? "Domicilio fiscal oficial" : "Domicilio"}
+            </Label>
             <Input
               id="receptor-domicilio"
               className="mt-1 min-h-11"
-              value={receptorVerificado?.domicilioFiscal ?? value.domicilio}
+              value={
+                receptorVerificado
+                  ? (receptorVerificado.domicilioFiscal ?? "Sin domicilio informado por ARCA")
+                  : value.domicilio
+              }
               readOnly={receptorVerificado !== null}
               onChange={(event) => onChange({ ...value, domicilio: event.target.value })}
             />

@@ -4,7 +4,12 @@ import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import type { CondicionIva } from "@/lib/fiscal/codigos";
 import type { ReceptorFormulario } from "./receptor-fiscal-form";
 import type { LetraSolicitada } from "./dialogo-emision-state";
-import { cuitParaConsulta, type EstadoConsultaPadronUi } from "./padron-receptor";
+import {
+  cuitParaConsulta,
+  mismaClaveConsultaPadron,
+  type ClaveConsultaPadron,
+  type EstadoConsultaPadronUi,
+} from "./padron-receptor";
 import { mensajeCodigoErrorFiscalUsuario } from "@/lib/fiscal/error-usuario";
 
 export type CampoReceptorFiscal =
@@ -65,6 +70,7 @@ export function validarSelectorReceptorFiscal({
   clienteComercial,
   favoritos = [],
   estadoConsultaPadron,
+  claveConsultaPadron,
 }: {
   value: ReceptorFormulario;
   confirmaDatosManuales: boolean;
@@ -72,6 +78,7 @@ export function validarSelectorReceptorFiscal({
   clienteComercial?: ClienteComercialFiscal;
   favoritos?: ReceptorFiscalFavorito[];
   estadoConsultaPadron?: EstadoConsultaPadronUi;
+  claveConsultaPadron?: ClaveConsultaPadron | null;
 }): ResultadoValidacionSelector {
   if (value.origen === "COMPROBANTE_ORIGINAL") {
     return { ok: true, selector: value };
@@ -87,15 +94,19 @@ export function validarSelectorReceptorFiscal({
     favoritos,
   });
   const padronInactivo =
-    estadoConsultaPadron?.estado === "INACTIVO" && estadoConsultaPadron.cuit === cuitActual;
+    estadoConsultaPadron?.estado === "INACTIVO" &&
+    mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron ?? null);
 
   if (cuitActual && estadoConsultaPadron && !padronInactivo) {
-    if (estadoConsultaPadron.estado === "ERROR" && estadoConsultaPadron.cuit === cuitActual) {
+    if (
+      estadoConsultaPadron.estado === "ERROR" &&
+      mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron ?? null)
+    ) {
       return error("numero_documento", estadoConsultaPadron.mensaje);
     }
     if (
       estadoConsultaPadron.estado !== "VERIFICADO" ||
-      estadoConsultaPadron.cuit !== cuitActual ||
+      !mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron ?? null) ||
       estadoConsultaPadron.receptor.cuit !== cuitActual
     ) {
       return error("numero_documento", "Esperá a que ARCA termine de verificar el CUIT.");

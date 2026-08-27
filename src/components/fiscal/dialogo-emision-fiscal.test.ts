@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
+import { createElement, StrictMode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DialogoEmisionFiscal } from "./dialogo-emision-fiscal";
+import type { ContextoDialogoEmision } from "./dialogo-emision-fiscal";
 import * as dialogoEmisionContract from "./dialogo-emision-contract";
 import * as estadoDialogo from "./dialogo-emision-state";
 import {
@@ -97,6 +98,52 @@ function renderDialogo(tipoComprobante = "VENTA"): string {
       onConfirmar: vi.fn(),
     }),
   );
+}
+
+const CONTEXTO_ACTIVO: ContextoDialogoEmision = {
+  comprador: {
+    razonSocial: "Comprador",
+    documento: "30-71419966-4",
+    condicionIva: "CONSUMIDOR_FINAL",
+  },
+  emisor: { razonSocial: "Emisor", cuit: "30714199664" },
+  sucursal: {
+    id: "71000000-0000-4000-8000-000000000301",
+    nombre: "Casa central",
+    puntoVenta: null,
+    modo: null,
+  },
+  tipoComprobante: "VENTA",
+};
+
+function receptorArca(razonSocial = "IDENTIDAD OFICIAL SA") {
+  return {
+    estado: "VERIFICADO" as const,
+    receptor: {
+      cuit: "30714199664",
+      razonSocial,
+      domicilioFiscal: null,
+      estado: "ACTIVO" as const,
+      tipoPersona: "JURIDICA" as const,
+      condicionIvaConfirmada: null,
+      verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+    },
+  };
+}
+
+function propsDialogo(
+  overrides: Partial<Parameters<typeof DialogoEmisionFiscal>[0]> = {},
+): Parameters<typeof DialogoEmisionFiscal>[0] {
+  return {
+    open: true,
+    contexto: CONTEXTO_ACTIVO,
+    favoritos: [],
+    onOpenChange: vi.fn(),
+    onConsultarCuit: vi.fn(async () => receptorArca()),
+    onPrevisualizar: vi.fn(),
+    onConfirmar: vi.fn(),
+    ...overrides,
+  };
 }
 
 describe("estado seguro del diálogo fiscal", () => {
@@ -249,7 +296,7 @@ describe("selector de letra del diálogo compartido", () => {
     expect(html).toContain("Receptor original");
   });
 
-  it("bloquea revisar y reprograma la consulta si la selección cambia durante el debounce", async () => {
+  it("bloquea revisar pero conserva el debounce si la letra no cambia la clave fiscal", async () => {
     vi.useFakeTimers();
     const onConsultarCuit = vi.fn(() => new Promise<never>(() => undefined));
     render(
@@ -291,14 +338,181 @@ describe("selector de letra del diálogo compartido", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
-    expect(onConsultarCuit).not.toHaveBeenCalled();
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
     });
-    expect(onConsultarCuit).toHaveBeenCalledWith({
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+    expect(onConsultarCuit).toHaveBeenLastCalledWith({
       sucursalId: "71000000-0000-4000-8000-000000000301",
       cuit: "30714199664",
     });
+  });
+
+  it("no reutiliza el verificado de otra sucursal con el mismo CUIT", async () => {
+    vi.useFakeTimers();
+    const onConsultarCuit = vi.fn(async ({ sucursalId }: { sucursalId: string }) =>
+      receptorArca(sucursalId.endsWith("301") ? "OFICIAL SUCURSAL A" : "OFICIAL SUCURSAL B"),
+    );
+    const props = propsDialogo({ onConsultarCuit });
+    const vista = render(createElement(DialogoEmisionFiscal, props));
+    fireEvent.click(screen.getByRole("radio", { name: /Factura A/i }));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+
+    expect(screen.getByDisplayValue("OFICIAL SUCURSAL A")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+
+    vista.rerender(
+      createElement(DialogoEmisionFiscal, {
+        ...props,
+        contexto: {
+          ...CONTEXTO_ACTIVO,
+          sucursal: {
+            ...CONTEXTO_ACTIVO.sucursal,
+            id: "71000000-0000-4000-8000-000000000302",
+            nombre: "Sucursal B",
+          },
+        },
+      }),
+    );
+
+    expect(screen.queryByDisplayValue("OFICIAL SUCURSAL A")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(screen.getByDisplayValue("OFICIAL SUCURSAL B")).toBeTruthy();
+  });
+
+  it("descarta una respuesta tardía de la sucursal anterior con el mismo CUIT", async () => {
+    vi.useFakeTimers();
+    let resolverA!: (value: ReturnType<typeof receptorArca>) => void;
+    let resolverB!: (value: ReturnType<typeof receptorArca>) => void;
+    const respuestaA = new Promise<ReturnType<typeof receptorArca>>((resolve) => {
+      resolverA = resolve;
+    });
+    const respuestaB = new Promise<ReturnType<typeof receptorArca>>((resolve) => {
+      resolverB = resolve;
+    });
+    const onConsultarCuit = vi.fn(({ sucursalId }: { sucursalId: string }) =>
+      sucursalId.endsWith("301") ? respuestaA : respuestaB,
+    );
+    const props = propsDialogo({ onConsultarCuit });
+    const vista = render(createElement(DialogoEmisionFiscal, props));
+    fireEvent.click(screen.getByRole("radio", { name: /Factura A/i }));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+
+    vista.rerender(
+      createElement(DialogoEmisionFiscal, {
+        ...props,
+        contexto: {
+          ...CONTEXTO_ACTIVO,
+          sucursal: { ...CONTEXTO_ACTIVO.sucursal, id: "71000000-0000-4000-8000-000000000302" },
+        },
+      }),
+    );
+    await act(async () => {
+      resolverA(receptorArca("RESPUESTA VIEJA A"));
+      await Promise.resolve();
+    });
+    expect(screen.queryByDisplayValue("RESPUESTA VIEJA A")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    await act(async () => {
+      resolverB(receptorArca("RESPUESTA ACTUAL B"));
+      await Promise.resolve();
+    });
+    expect(screen.getByDisplayValue("RESPUESTA ACTUAL B")).toBeTruthy();
+  });
+
+  it("no reconsulta por guardar, condición B ni letra si la clave fiscal no cambió", async () => {
+    vi.useFakeTimers();
+    const onConsultarCuit = vi.fn(async () => receptorArca());
+    render(createElement(DialogoEmisionFiscal, propsDialogo({ onConsultarCuit })));
+    fireEvent.click(screen.getByRole("radio", { name: /^Factura B/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /Otro receptor/i }));
+    fireEvent.change(screen.getByLabelText(/Tipo de documento/i), { target: { value: "CUIT" } });
+    fireEvent.change(screen.getByLabelText(/Número de documento/i), {
+      target: { value: "30-71419966-4" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Guardar para próximas facturas/i }));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+
+    fireEvent.change(screen.getByLabelText("Condición de IVA"), { target: { value: "EXENTO" } });
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Factura A/i }));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+  });
+
+  it("reconsulta al cambiar el origen fiscal aunque sucursal y CUIT coincidan", async () => {
+    vi.useFakeTimers();
+    const favorito = {
+      id: "10000000-0000-4000-8000-000000000001",
+      sucursal_id: CONTEXTO_ACTIVO.sucursal.id,
+      cliente_comercial_id: null,
+      tipo_documento: "CUIT" as const,
+      numero_documento: "30-71419966-4",
+      razon_social: "Guardado viejo",
+      condicion_iva: "EXENTO" as const,
+      domicilio: null,
+    };
+    const onConsultarCuit = vi.fn(async () => receptorArca());
+    render(
+      createElement(DialogoEmisionFiscal, propsDialogo({ favoritos: [favorito], onConsultarCuit })),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /^Factura B/i }));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("radio", { name: /Guardado/i }));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledTimes(2);
+  });
+
+  it("en StrictMode el cleanup conserva una sola consulta efectiva", async () => {
+    vi.useFakeTimers();
+    const onConsultarCuit = vi.fn(async () => receptorArca());
+    render(
+      createElement(
+        StrictMode,
+        null,
+        createElement(DialogoEmisionFiscal, propsDialogo({ onConsultarCuit })),
+      ),
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(onConsultarCuit).toHaveBeenCalledOnce();
+  });
+
+  it("usa el callback más reciente sin reiniciar el debounce de una clave estable", async () => {
+    vi.useFakeTimers();
+    const anterior = vi.fn(async () => receptorArca("CALLBACK ANTERIOR"));
+    const actual = vi.fn(async () => receptorArca("CALLBACK ACTUAL"));
+    const props = propsDialogo({ onConsultarCuit: anterior });
+    const vista = render(createElement(DialogoEmisionFiscal, props));
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+
+    vista.rerender(createElement(DialogoEmisionFiscal, { ...props, onConsultarCuit: actual }));
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+
+    expect(anterior).not.toHaveBeenCalled();
+    expect(actual).toHaveBeenCalledOnce();
+    expect(screen.getByDisplayValue("CALLBACK ACTUAL")).toBeTruthy();
   });
 
   it("una nota de crédito no monta la consulta viva del padrón", async () => {

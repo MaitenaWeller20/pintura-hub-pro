@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,11 +48,14 @@ import {
 } from "./dialogo-emision-validacion";
 import {
   bloqueaAccionesPorConsultaPadron,
+  claveConsultaPadronId,
+  claveParaConsultaPadron,
   crearControlConsultaPadron,
-  cuitParaConsulta,
   invalidarConsultaPadron,
+  mismaClaveConsultaPadron,
   programarConsultaPadron,
   resultadoConsultaCuitPadronSchema,
+  type ClaveConsultaPadron,
   type EstadoConsultaPadronUi,
 } from "./padron-receptor";
 
@@ -74,17 +77,13 @@ export type ContextoDialogoEmision = {
 };
 
 function SincronizarPadronReceptor({
-  cuit,
-  revision,
-  sucursalId,
+  clave,
   control,
   onConsultarCuit,
   onIniciar,
   onEstado,
 }: {
-  cuit: string | null;
-  revision: number;
-  sucursalId: string;
+  clave: ClaveConsultaPadron | null;
   control: ReturnType<typeof crearControlConsultaPadron>;
   onConsultarCuit(input: { sucursalId: string; cuit: string }): Promise<unknown>;
   onIniciar(): void;
@@ -92,47 +91,58 @@ function SincronizarPadronReceptor({
 }) {
   const consultarRef = useRef(onConsultarCuit);
   const iniciarRef = useRef(onIniciar);
+  const claveRef = useRef(clave);
+  const claveId = claveConsultaPadronId(clave);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     consultarRef.current = onConsultarCuit;
   }, [onConsultarCuit]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     iniciarRef.current = onIniciar;
   }, [onIniciar]);
+  useLayoutEffect(() => {
+    claveRef.current = clave;
+  }, [clave, claveId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     iniciarRef.current();
-    if (!cuit) {
+    const claveProgramada = claveRef.current;
+    if (!claveProgramada) {
       invalidarConsultaPadron(control);
       onEstado({ estado: "SIN_CUIT" });
       return;
     }
 
-    const solicitud = programarConsultaPadron(control, cuit, {
+    const solicitud = programarConsultaPadron(control, claveProgramada, {
       consultar: async () =>
-        resultadoConsultaCuitPadronSchema.parse(await consultarRef.current({ sucursalId, cuit })),
-      onResultado(resultado, cuitConsultado) {
+        resultadoConsultaCuitPadronSchema.parse(
+          await consultarRef.current({
+            sucursalId: claveProgramada.sucursalId,
+            cuit: claveProgramada.cuit,
+          }),
+        ),
+      onResultado(resultado, claveConsultada) {
         onEstado(
           resultado.estado === "INACTIVO"
-            ? { estado: "INACTIVO", cuit: cuitConsultado }
+            ? { estado: "INACTIVO", clave: claveConsultada }
             : {
                 estado: "VERIFICADO",
-                cuit: cuitConsultado,
+                clave: claveConsultada,
                 receptor: resultado.receptor,
               },
         );
       },
-      onError(cause, cuitConsultado) {
+      onError(cause, claveConsultada) {
         onEstado({
           estado: "ERROR",
-          cuit: cuitConsultado,
+          clave: claveConsultada,
           mensaje: mensajeErrorFiscal(cause, "REVISION"),
         });
       },
     });
-    onEstado({ estado: "CONSULTANDO", cuit, token: solicitud.token });
+    onEstado({ estado: "CONSULTANDO", clave: claveProgramada, token: solicitud.token });
     return solicitud.cancelar;
-  }, [control, cuit, onEstado, revision, sucursalId]);
+  }, [claveId, control, onEstado]);
 
   return null;
 }
@@ -218,19 +228,20 @@ export function DialogoEmisionFiscal({
   const [estadoConsultaPadron, setEstadoConsultaPadron] = useState<EstadoConsultaPadronUi>({
     estado: "SIN_CUIT",
   });
-  const [revisionConsultaPadron, setRevisionConsultaPadron] = useState(0);
   const initialFocusRef = useRef<HTMLInputElement>(null);
   const previewControlRef = useRef(crearControlSolicitudPreview());
   const emitiendoRef = useRef(false);
   const padronControlRef = useRef(crearControlConsultaPadron());
 
-  const cuitActual = esNota
+  const claveConsultaPadron = esNota
     ? null
-    : cuitParaConsulta({
+    : claveParaConsultaPadron({
+        sucursalId: contexto.sucursal.id,
         receptor,
         cliente: contexto.comprador,
         favoritos,
       });
+  const cuitActual = claveConsultaPadron?.cuit ?? null;
 
   const limpiarConfirmacionPorConsulta = useCallback(() => {
     invalidarSolicitudPreview(previewControlRef.current);
@@ -241,18 +252,19 @@ export function DialogoEmisionFiscal({
   }, []);
 
   const marcarCambioConsulta = (siguiente: ReceptorFormulario) => {
-    invalidarConsultaPadron(padronControlRef.current);
-    setRevisionConsultaPadron((actual) => actual + 1);
-    const siguienteCuit = cuitParaConsulta({
+    const siguienteClave = claveParaConsultaPadron({
+      sucursalId: contexto.sucursal.id,
       receptor: siguiente,
       cliente: contexto.comprador,
       favoritos,
     });
+    if (mismaClaveConsultaPadron(claveConsultaPadron, siguienteClave)) return;
+    invalidarConsultaPadron(padronControlRef.current);
     setEstadoConsultaPadron(
-      siguienteCuit
+      siguienteClave
         ? {
             estado: "CONSULTANDO",
-            cuit: siguienteCuit,
+            clave: siguienteClave,
             token: padronControlRef.current.secuencia,
           }
         : { estado: "SIN_CUIT" },
@@ -313,6 +325,7 @@ export function DialogoEmisionFiscal({
       clienteComercial: contexto.comprador,
       favoritos,
       estadoConsultaPadron,
+      claveConsultaPadron,
     });
     if (resultado.ok) {
       setErroresReceptor({});
@@ -424,7 +437,7 @@ export function DialogoEmisionFiscal({
 
   const consultaPadronVerificada =
     estadoConsultaPadron.estado === "VERIFICADO" &&
-    estadoConsultaPadron.cuit === cuitActual &&
+    mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron) &&
     estadoConsultaPadron.receptor.cuit === cuitActual;
   const puedeEmitir =
     preview !== null &&
@@ -436,7 +449,7 @@ export function DialogoEmisionFiscal({
       confirmacion.confirmaDatosManuales ||
       consultaPadronVerificada);
   const consultaPadronBloquea =
-    !esNota && bloqueaAccionesPorConsultaPadron(cuitActual, estadoConsultaPadron);
+    !esNota && bloqueaAccionesPorConsultaPadron(claveConsultaPadron, estadoConsultaPadron);
 
   return (
     <Dialog
@@ -467,9 +480,7 @@ export function DialogoEmisionFiscal({
       >
         {open && !esNota ? (
           <SincronizarPadronReceptor
-            cuit={cuitActual}
-            revision={revisionConsultaPadron}
-            sucursalId={contexto.sucursal.id}
+            clave={claveConsultaPadron}
             control={padronControlRef.current}
             onConsultarCuit={consultarCuit}
             onIniciar={limpiarConfirmacionPorConsulta}
@@ -576,6 +587,7 @@ export function DialogoEmisionFiscal({
             letraSolicitada={confirmacion.letraSolicitada}
             confirmaDatosManuales={confirmacion.confirmaDatosManuales}
             estadoConsultaPadron={estadoConsultaPadron}
+            claveConsultaPadron={claveConsultaPadron}
             errores={erroresReceptor}
             disabled={
               emitiendo || previsualizando || (!esNota && confirmacion.letraSolicitada === null)

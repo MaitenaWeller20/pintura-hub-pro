@@ -7,10 +7,21 @@ import type { ReceptorFormulario } from "./receptor-fiscal-form";
 
 export type EstadoConsultaPadronUi =
   | { estado: "SIN_CUIT" }
-  | { estado: "CONSULTANDO"; cuit: string; token: number }
-  | { estado: "INACTIVO"; cuit: string }
-  | { estado: "VERIFICADO"; cuit: string; receptor: ReceptorPadronArca }
-  | { estado: "ERROR"; cuit: string; mensaje: string };
+  | { estado: "CONSULTANDO"; clave: ClaveConsultaPadron; token: number }
+  | { estado: "INACTIVO"; clave: ClaveConsultaPadron }
+  | { estado: "VERIFICADO"; clave: ClaveConsultaPadron; receptor: ReceptorPadronArca }
+  | { estado: "ERROR"; clave: ClaveConsultaPadron; mensaje: string };
+
+export type SelectorConsultaPadron =
+  | { origen: "CLIENTE_COMERCIAL" }
+  | { origen: "FAVORITO"; receptorFiscalId: string }
+  | { origen: "MANUAL" };
+
+export type ClaveConsultaPadron = Readonly<{
+  sucursalId: string;
+  selector: SelectorConsultaPadron;
+  cuit: string;
+}>;
 
 export const resultadoConsultaCuitPadronSchema = z.discriminatedUnion("estado", [
   z.object({ estado: z.literal("INACTIVO") }).strict(),
@@ -49,54 +60,90 @@ export function cuitParaConsulta(input: {
   return null;
 }
 
+export function claveParaConsultaPadron(input: {
+  sucursalId: string;
+  receptor: ReceptorFormulario;
+  cliente: ClienteComercialFiscal;
+  favoritos: ReceptorFiscalFavorito[];
+}): ClaveConsultaPadron | null {
+  const cuit = cuitParaConsulta(input);
+  if (!cuit || input.receptor.origen === "COMPROBANTE_ORIGINAL") return null;
+
+  const selector: SelectorConsultaPadron =
+    input.receptor.origen === "FAVORITO"
+      ? { origen: "FAVORITO", receptorFiscalId: input.receptor.receptor_fiscal_id }
+      : { origen: input.receptor.origen };
+  return { sucursalId: input.sucursalId, selector, cuit };
+}
+
+export function claveConsultaPadronId(clave: ClaveConsultaPadron | null): string | null {
+  if (!clave) return null;
+  return [
+    clave.sucursalId,
+    clave.selector.origen,
+    clave.selector.origen === "FAVORITO" ? clave.selector.receptorFiscalId : "",
+    clave.cuit,
+  ].join("\u0000");
+}
+
+export function mismaClaveConsultaPadron(
+  izquierda: ClaveConsultaPadron | null,
+  derecha: ClaveConsultaPadron | null,
+): boolean {
+  return claveConsultaPadronId(izquierda) === claveConsultaPadronId(derecha);
+}
+
 export type ControlConsultaPadron = {
   secuencia: number;
-  cuit: string | null;
+  clave: ClaveConsultaPadron | null;
 };
 
 export function crearControlConsultaPadron(): ControlConsultaPadron {
-  return { secuencia: 0, cuit: null };
+  return { secuencia: 0, clave: null };
 }
 
-export function iniciarConsultaPadron(control: ControlConsultaPadron, cuit: string): number {
+export function iniciarConsultaPadron(
+  control: ControlConsultaPadron,
+  clave: ClaveConsultaPadron,
+): number {
   control.secuencia += 1;
-  control.cuit = cuit;
+  control.clave = clave;
   return control.secuencia;
 }
 
 export function invalidarConsultaPadron(control: ControlConsultaPadron): void {
   control.secuencia += 1;
-  control.cuit = null;
+  control.clave = null;
 }
 
 export function esConsultaPadronActual(
   control: ControlConsultaPadron,
   token: number,
-  cuit: string,
+  clave: ClaveConsultaPadron,
 ): boolean {
-  return control.secuencia === token && control.cuit === cuit;
+  return control.secuencia === token && mismaClaveConsultaPadron(control.clave, clave);
 }
 
 export function programarConsultaPadron(
   control: ControlConsultaPadron,
-  cuit: string,
+  clave: ClaveConsultaPadron,
   deps: {
     consultar(): Promise<ResultadoConsultaCuitPadronPublico>;
-    onResultado(resultado: ResultadoConsultaCuitPadronPublico, cuit: string): void;
-    onError(cause: unknown, cuit: string): void;
+    onResultado(resultado: ResultadoConsultaCuitPadronPublico, clave: ClaveConsultaPadron): void;
+    onError(cause: unknown, clave: ClaveConsultaPadron): void;
   },
 ): { token: number; cancelar(): void } {
-  const token = iniciarConsultaPadron(control, cuit);
+  const token = iniciarConsultaPadron(control, clave);
   const timer = setTimeout(() => {
     void deps
       .consultar()
       .then((resultado) => {
-        if (esConsultaPadronActual(control, token, cuit)) {
-          deps.onResultado(resultado, cuit);
+        if (esConsultaPadronActual(control, token, clave)) {
+          deps.onResultado(resultado, clave);
         }
       })
       .catch((cause: unknown) => {
-        if (esConsultaPadronActual(control, token, cuit)) deps.onError(cause, cuit);
+        if (esConsultaPadronActual(control, token, clave)) deps.onError(cause, clave);
       });
   }, 300);
 
@@ -104,7 +151,7 @@ export function programarConsultaPadron(
     token,
     cancelar() {
       clearTimeout(timer);
-      if (esConsultaPadronActual(control, token, cuit)) invalidarConsultaPadron(control);
+      if (esConsultaPadronActual(control, token, clave)) invalidarConsultaPadron(control);
     },
   };
 }
@@ -114,11 +161,14 @@ export function programarConsultaPadron(
  * válido se adelante al effect que inicia la consulta.
  */
 export function bloqueaAccionesPorConsultaPadron(
-  cuitActual: string | null,
+  claveActual: ClaveConsultaPadron | null,
   estado: EstadoConsultaPadronUi,
 ): boolean {
-  if (!cuitActual) return false;
-  if (estado.estado === "INACTIVO") return estado.cuit !== cuitActual;
+  if (!claveActual) return false;
+  if (estado.estado === "INACTIVO") return !mismaClaveConsultaPadron(estado.clave, claveActual);
   if (estado.estado !== "VERIFICADO") return true;
-  return estado.cuit !== cuitActual || estado.receptor.cuit !== cuitActual;
+  return (
+    !mismaClaveConsultaPadron(estado.clave, claveActual) ||
+    estado.receptor.cuit !== claveActual.cuit
+  );
 }

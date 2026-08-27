@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ReceptorFiscalForm, type ReceptorFormulario } from "./receptor-fiscal-form";
 import * as estadoDialogo from "./dialogo-emision-state";
+import type { ClaveConsultaPadron, EstadoConsultaPadronUi } from "./padron-receptor";
 
 const RECEPTOR_MANUAL: Extract<ReceptorFormulario, { origen: "MANUAL" }> = {
   origen: "MANUAL",
@@ -12,6 +13,12 @@ const RECEPTOR_MANUAL: Extract<ReceptorFormulario, { origen: "MANUAL" }> = {
   condicion_iva: "CONSUMIDOR_FINAL",
   domicilio: "",
   guardar_para_proximas: false,
+};
+
+const CLAVE_MANUAL: ClaveConsultaPadron = {
+  sucursalId: "20000000-0000-4000-8000-000000000001",
+  selector: { origen: "MANUAL" },
+  cuit: "30714199664",
 };
 
 type LetraSolicitada = "A" | "B";
@@ -42,26 +49,9 @@ function renderFormulario(
       string
     >
   > = {},
-  estadoConsultaPadron:
-    | { estado: "SIN_CUIT" }
-    | { estado: "CONSULTANDO"; cuit: string; token: number }
-    | { estado: "INACTIVO"; cuit: string }
-    | {
-        estado: "VERIFICADO";
-        cuit: string;
-        receptor: {
-          cuit: string;
-          razonSocial: string;
-          domicilioFiscal: string | null;
-          estado: "ACTIVO";
-          tipoPersona: "FISICA" | "JURIDICA";
-          condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO" | null;
-          verificadoArcaAt: string;
-        };
-      }
-    | { estado: "ERROR"; cuit: string; mensaje: string } = {
+  estadoConsultaPadron: EstadoConsultaPadronUi = {
     estado: "INACTIVO",
-    cuit: "30714199664",
+    clave: CLAVE_MANUAL,
   },
 ): string {
   return renderToStaticMarkup(
@@ -76,6 +66,7 @@ function renderFormulario(
       },
       confirmaDatosManuales: false,
       estadoConsultaPadron,
+      claveConsultaPadron: CLAVE_MANUAL,
       errores,
       disabled: false,
       onChange: vi.fn(),
@@ -100,7 +91,7 @@ describe("receptor según la letra solicitada", () => {
       {},
       {
         estado: "VERIFICADO",
-        cuit: "30714199664",
+        clave: CLAVE_MANUAL,
         receptor: {
           cuit: "30714199664",
           razonSocial: "IDENTIDAD OFICIAL SA",
@@ -124,6 +115,32 @@ describe("receptor según la letra solicitada", () => {
     expect(html).not.toContain('id="confirmar-datos-receptor"');
   });
 
+  it("no presenta un domicilio manual viejo como oficial cuando ARCA no informó domicilio", () => {
+    const html = renderFormulario(
+      "A",
+      { ...RECEPTOR_MANUAL, domicilio: "DOMICILIO MANUAL HOSTIL" },
+      {},
+      {
+        estado: "VERIFICADO",
+        clave: CLAVE_MANUAL,
+        receptor: {
+          cuit: "30714199664",
+          razonSocial: "IDENTIDAD OFICIAL SA",
+          domicilioFiscal: null,
+          estado: "ACTIVO",
+          tipoPersona: "JURIDICA",
+          condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+          verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+        },
+      },
+    );
+    const domicilio = html.match(/<input[^>]*id="receptor-domicilio"[^>]*>/)?.[0] ?? "";
+
+    expect(html).not.toContain("DOMICILIO MANUAL HOSTIL");
+    expect(domicilio).toContain('value="Sin domicilio informado por ARCA"');
+    expect(domicilio).toContain('readOnly=""');
+  });
+
   it("anuncia la consulta en curso de manera accesible", () => {
     const html = renderFormulario(
       "A",
@@ -131,7 +148,7 @@ describe("receptor según la letra solicitada", () => {
       {},
       {
         estado: "CONSULTANDO",
-        cuit: "30714199664",
+        clave: CLAVE_MANUAL,
         token: 3,
       },
     );

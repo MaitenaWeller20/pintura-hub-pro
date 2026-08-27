@@ -198,7 +198,7 @@ function impuestoActivo(
   campo: "datosRegimenGeneral" | "datosMonotributo",
   idImpuestoBuscado: number,
 ): boolean {
-  if (!tieneCampo(persona, campo)) return false;
+  if (!tieneCampo(persona, campo) || persona[campo] === undefined) return false;
   const bloque = snapshotRegistro(persona[campo]);
   const impuestos = snapshotListaRegistros(
     tieneCampo(bloque, "impuesto") ? bloque.impuesto : undefined,

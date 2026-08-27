@@ -109,6 +109,24 @@ describe("normalizador del padrón ARCA", () => {
     });
   });
 
+  it("acepta el DTO RI del SDK con monotributo propio en undefined", async () => {
+    const respuesta = juridicaRi() as Record<string, unknown>;
+    respuesta.datosMonotributo = undefined;
+
+    await expect(
+      consultarPadronArca(CUIT_JURIDICA, dependencias(respuesta)),
+    ).resolves.toMatchObject({ condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO" });
+  });
+
+  it("acepta el DTO monotributo del SDK con régimen general propio en undefined", async () => {
+    const respuesta = fisicaMonotributo() as Record<string, unknown>;
+    respuesta.datosRegimenGeneral = undefined;
+
+    await expect(consultarPadronArca(CUIT_FISICA, dependencias(respuesta))).resolves.toMatchObject({
+      condicionIvaConfirmada: "MONOTRIBUTO",
+    });
+  });
+
   it("mantiene la ausencia de impuestos activos como condición nula", async () => {
     const sinImpuestos = modificarFixture(juridicaRi(), (persona) => {
       delete persona.datosRegimenGeneral;

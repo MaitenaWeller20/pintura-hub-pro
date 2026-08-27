@@ -121,6 +121,46 @@ describe("normalizador del padrón ARCA", () => {
     });
   });
 
+  it("acepta un bloque fiscal sin la lista opcional impuesto", async () => {
+    const sinLista = modificarFixture(juridicaRi(), (persona) => {
+      delete (persona.datosRegimenGeneral as Record<string, unknown>).impuesto;
+    });
+
+    await expect(consultarPadronArca(CUIT_JURIDICA, dependencias(sinLista))).resolves.toMatchObject(
+      { condicionIvaConfirmada: null },
+    );
+  });
+
+  it.each([
+    ["régimen general texto", "datosRegimenGeneral", "MALFORMADO"],
+    ["monotributo nulo", "datosMonotributo", null],
+    ["régimen general arreglo", "datosRegimenGeneral", []],
+  ])("rechaza el bloque fiscal presente y malformado: %s", async (_caso, campo, valor) => {
+    const malformado = modificarFixture(juridicaRi(), (persona) => {
+      persona[campo] = valor;
+    });
+
+    const error = await capturarError(consultarPadronArca(CUIT_JURIDICA, dependencias(malformado)));
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toHaveProperty("cause");
+  });
+
+  it.each([
+    [{ idImpuesto: "30", estadoImpuesto: "AC" }, "id no numérico"],
+    [{ idImpuesto: 30, estadoImpuesto: 1 }, "estado no textual"],
+    [{ estadoImpuesto: "AC" }, "id ausente"],
+    [{ idImpuesto: 30 }, "estado ausente"],
+  ])("rechaza un ítem de impuesto malformado: %s", async (item, _caso) => {
+    const malformado = modificarFixture(juridicaRi(), (persona) => {
+      (persona.datosRegimenGeneral as Record<string, unknown>).impuesto = [item];
+    });
+
+    await expect(
+      codigoDeRechazo(consultarPadronArca(CUIT_JURIDICA, dependencias(malformado))),
+    ).resolves.toBe("RESPUESTA_PADRON_INVALIDA");
+  });
+
   it("rechaza impuestos activos incompatibles", async () => {
     const ambosActivos = modificarFixture(juridicaRi(), (persona) => {
       persona.datosMonotributo = {
@@ -227,6 +267,87 @@ describe("normalizador del padrón ARCA", () => {
     expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
     expect(error).not.toBe(atacante);
     expect(error.message).not.toContain("SENSITIVE-PADRON-SPOOFED-MARKER");
+  });
+
+  it("no permite que un proxy falsifique el marcador interno privado", async () => {
+    const atacante = new Proxy(new Error("SENSITIVE-PADRON-PRIVATE-MARKER"), {
+      getOwnPropertyDescriptor(_target, clave) {
+        if (typeof clave === "symbol") {
+          return {
+            value: "CUIT_INACTIVO",
+            configurable: true,
+          };
+        }
+        return undefined;
+      },
+    });
+    const deps: DependenciasPadronArca = {
+      obtenerContribuyente: vi.fn(() => Promise.reject(atacante)),
+      ahora: () => FECHA_VERIFICACION,
+    };
+
+    const error = await capturarError(consultarPadronArca(CUIT_JURIDICA, deps));
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-PADRON-PRIVATE-MARKER");
+  });
+
+  it("encierra un proxy raíz cuyo descriptor falla con un marcador falsificado", async () => {
+    const atacante = Object.assign(new Error("SENSITIVE-PADRON-ROOT-PROXY"), {
+      codigoFiscalUsuario: "PADRON_ARCA_CAIDO",
+    });
+    const respuesta = new Proxy(juridicaRi() as Record<string, unknown>, {
+      ownKeys() {
+        throw atacante;
+      },
+    });
+
+    const error = await capturarError(consultarPadronArca(CUIT_JURIDICA, dependencias(respuesta)));
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-PADRON-ROOT-PROXY");
+  });
+
+  it("rechaza un proxy raíz de descriptores de datos sin ejecutar su trap get", async () => {
+    let getEjecutado = false;
+    const atacante = Object.assign(new Error("SENSITIVE-PADRON-DATA-PROXY"), {
+      codigoFiscalUsuario: "PADRON_ARCA_CAIDO",
+    });
+    const respuesta = new Proxy(juridicaRi() as Record<string, unknown>, {
+      get(_target, property) {
+        if (property === "then") return undefined;
+        getEjecutado = true;
+        throw atacante;
+      },
+    });
+
+    const error = await capturarError(consultarPadronArca(CUIT_JURIDICA, dependencias(respuesta)));
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(getEjecutado).toBe(false);
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-PADRON-DATA-PROXY");
+  });
+
+  it("no ejecuta un accessor fiscal anidado y devuelve un error nuevo", async () => {
+    let accessorEjecutado = false;
+    const malformado = modificarFixture(juridicaRi(), (persona) => {
+      Object.defineProperty(persona, "datosRegimenGeneral", {
+        enumerable: true,
+        get() {
+          accessorEjecutado = true;
+          throw new Error("SENSITIVE-PADRON-TAX-GETTER");
+        },
+      });
+    });
+
+    const error = await capturarError(consultarPadronArca(CUIT_JURIDICA, dependencias(malformado)));
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(accessorEjecutado).toBe(false);
+    expect(error.message).not.toContain("SENSITIVE-PADRON-TAX-GETTER");
   });
 
   it("rechaza un contribuyente inactivo", async () => {

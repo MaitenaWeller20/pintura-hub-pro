@@ -21,7 +21,7 @@ import {
 } from "./emision";
 import { validarSnapshotFiscalV2 } from "./snapshot";
 import { codigoErrorFiscalUsuario } from "./error-usuario";
-import type { ReceptorPadronArca } from "./padron-arca";
+import type { ReceptorPadronArca } from "./padron-arca-shared";
 
 describe("liberación administrativa de claims", () => {
   function dependenciasLiberacion(

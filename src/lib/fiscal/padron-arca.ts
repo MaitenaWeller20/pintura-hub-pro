@@ -1,64 +1,121 @@
-import { z } from "zod";
+import { types as tiposNode } from "node:util";
 import { cuitValido } from "./codigos";
 import { crearErrorFiscalUsuario } from "./error-usuario";
+import {
+  esCodigoErrorPadronArca,
+  receptorPadronArcaSchema,
+  type CodigoErrorPadronArca,
+  type ReceptorPadronArca,
+} from "./padron-arca-shared";
+
+export {
+  CODIGOS_ERROR_PADRON_ARCA,
+  esCodigoErrorPadronArca,
+  receptorPadronArcaSchema,
+  type CodigoErrorPadronArca,
+  type ReceptorPadronArca,
+} from "./padron-arca-shared";
 
 const IMPUESTO_MONOTRIBUTO = 20;
 const IMPUESTO_IVA = 30;
-
-export const receptorPadronArcaSchema = z
-  .object({
-    cuit: z.string().refine(cuitValido),
-    razonSocial: z.string().trim().min(1),
-    domicilioFiscal: z.string().trim().min(1).nullable(),
-    estado: z.literal("ACTIVO"),
-    tipoPersona: z.enum(["FISICA", "JURIDICA"]),
-    condicionIvaConfirmada: z.enum(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"]).nullable(),
-    verificadoArcaAt: z.string().datetime({ offset: true }),
-  })
-  .strict();
-
-export type ReceptorPadronArca = z.infer<typeof receptorPadronArcaSchema>;
-
-export const CODIGOS_ERROR_PADRON_ARCA = [
-  "PADRON_ARCA_CAIDO",
-  "PADRON_NO_AUTORIZADO",
-  "PADRON_CONFIG_INVALIDA",
-  "CUIT_INVALIDO",
-  "CUIT_NO_ENCONTRADO",
-  "CUIT_INACTIVO",
-  "RESPUESTA_PADRON_INVALIDA",
-  "CONDICION_FISCAL_INCOMPATIBLE",
-] as const;
-
-export type CodigoErrorPadronArca = (typeof CODIGOS_ERROR_PADRON_ARCA)[number];
-
-export function esCodigoErrorPadronArca(value: unknown): value is CodigoErrorPadronArca {
-  return (
-    typeof value === "string" && (CODIGOS_ERROR_PADRON_ARCA as readonly string[]).includes(value)
-  );
-}
 
 export type DependenciasPadronArca = {
   obtenerContribuyente(cuit: number): Promise<unknown | null>;
   ahora(): Date;
 };
 
-function respuestaInvalida(): never {
-  throw crearErrorFiscalUsuario("RESPUESTA_PADRON_INVALIDA");
+const CODIGO_ERROR_PADRON_INTERNO = Symbol("codigoErrorPadronArcaInterno");
+
+type ErrorPadronArcaInterno = Error & {
+  [CODIGO_ERROR_PADRON_INTERNO]: CodigoErrorPadronArca;
+};
+
+function crearErrorPadronInterno(codigo: CodigoErrorPadronArca): ErrorPadronArcaInterno {
+  const error = new Error("PADRON_ARCA_INTERNO") as ErrorPadronArcaInterno;
+  Object.defineProperty(error, CODIGO_ERROR_PADRON_INTERNO, {
+    value: codigo,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return error;
 }
 
-function esRegistro(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+/**
+ * Reconoce sólo errores creados por este módulo. El símbolo privado impide
+ * que una respuesta o un rechazo del SDK falsifique un código de dominio.
+ */
+export function codigoErrorPadronArcaInterno(cause: unknown): CodigoErrorPadronArca | null {
+  if (typeof cause !== "object" || cause === null || tiposNode.isProxy(cause)) return null;
   try {
-    const prototipo = Object.getPrototypeOf(value);
-    if (prototipo !== Object.prototype && prototipo !== null) return false;
-    return Reflect.ownKeys(value).every((clave) => {
-      if (typeof clave !== "string") return false;
-      const descriptor = Object.getOwnPropertyDescriptor(value, clave);
-      return Boolean(descriptor && "value" in descriptor && !descriptor.get && !descriptor.set);
-    });
+    const descriptor = Object.getOwnPropertyDescriptor(cause, CODIGO_ERROR_PADRON_INTERNO);
+    return descriptor && "value" in descriptor && esCodigoErrorPadronArca(descriptor.value)
+      ? descriptor.value
+      : null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function errorPadron(codigo: CodigoErrorPadronArca): never {
+  throw crearErrorPadronInterno(codigo);
+}
+
+function respuestaInvalida(): never {
+  return errorPadron("RESPUESTA_PADRON_INVALIDA");
+}
+
+function snapshotRegistroUnaVez(value: unknown): Record<string, unknown> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    tiposNode.isProxy(value) ||
+    Array.isArray(value)
+  ) {
+    respuestaInvalida();
+  }
+  const prototipo = Object.getPrototypeOf(value);
+  if (prototipo !== Object.prototype && prototipo !== null) respuestaInvalida();
+  const copia: Record<string, unknown> = Object.create(null);
+  for (const clave of Reflect.ownKeys(value)) {
+    if (typeof clave !== "string") respuestaInvalida();
+    const descriptor = Object.getOwnPropertyDescriptor(value, clave);
+    if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set) {
+      respuestaInvalida();
+    }
+    Object.defineProperty(copia, clave, {
+      value: descriptor.value,
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
+  }
+  return copia;
+}
+
+function snapshotsIguales(
+  primero: Record<string, unknown>,
+  segundo: Record<string, unknown>,
+): boolean {
+  const primerasClaves = Object.keys(primero);
+  const segundasClaves = Object.keys(segundo);
+  return (
+    primerasClaves.length === segundasClaves.length &&
+    primerasClaves.every(
+      (clave, index) =>
+        clave === segundasClaves[index] && Object.is(primero[clave], segundo[clave]),
+    )
+  );
+}
+
+function snapshotRegistro(value: unknown): Record<string, unknown> {
+  try {
+    const primero = snapshotRegistroUnaVez(value);
+    const segundo = snapshotRegistroUnaVez(value);
+    if (!snapshotsIguales(primero, segundo)) respuestaInvalida();
+    return segundo;
+  } catch {
+    return respuestaInvalida();
   }
 }
 
@@ -81,57 +138,84 @@ function entero(value: unknown): number | null {
     : null;
 }
 
-function listaRegistros(value: unknown): Record<string, unknown>[] {
+function snapshotListaUnaVez(value: unknown): unknown[] {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    tiposNode.isProxy(value) ||
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype
+  )
+    respuestaInvalida();
+  const descriptorLongitud = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    !descriptorLongitud ||
+    !("value" in descriptorLongitud) ||
+    !Number.isSafeInteger(descriptorLongitud.value) ||
+    descriptorLongitud.value < 0
+  ) {
+    respuestaInvalida();
+  }
+  const longitud = descriptorLongitud.value;
+  const claves = Reflect.ownKeys(value);
+  if (
+    claves.some(
+      (clave) => typeof clave !== "string" || (clave !== "length" && !/^(0|[1-9]\d*)$/.test(clave)),
+    ) ||
+    claves.length !== longitud + 1
+  ) {
+    respuestaInvalida();
+  }
+  const valores: unknown[] = [];
+  for (let index = 0; index < longitud; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set)
+      respuestaInvalida();
+    valores.push(descriptor.value);
+  }
+  return valores;
+}
+
+function snapshotListaRegistros(value: unknown): Record<string, unknown>[] {
   if (value === undefined) return [];
   try {
-    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
-      respuestaInvalida();
-    const descriptorLongitud = Object.getOwnPropertyDescriptor(value, "length");
+    const primeros = snapshotListaUnaVez(value);
+    const segundos = snapshotListaUnaVez(value);
     if (
-      !descriptorLongitud ||
-      !("value" in descriptorLongitud) ||
-      !Number.isSafeInteger(descriptorLongitud.value) ||
-      descriptorLongitud.value < 0
+      primeros.length !== segundos.length ||
+      primeros.some((item, index) => !Object.is(item, segundos[index]))
     ) {
       respuestaInvalida();
     }
-    const longitud = descriptorLongitud.value;
-    const claves = Reflect.ownKeys(value);
-    if (
-      claves.some(
-        (clave) =>
-          typeof clave !== "string" || (clave !== "length" && !/^(0|[1-9]\d*)$/.test(clave)),
-      ) ||
-      claves.length !== longitud + 1
-    ) {
-      respuestaInvalida();
-    }
-    const registros: Record<string, unknown>[] = [];
-    for (let index = 0; index < longitud; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-      if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set)
-        respuestaInvalida();
-      if (!esRegistro(descriptor.value)) respuestaInvalida();
-      registros.push(descriptor.value);
-    }
-    return registros;
+    return segundos.map(snapshotRegistro);
   } catch {
     return respuestaInvalida();
   }
 }
 
-function impuestoActivo(bloque: unknown, idImpuesto: number): boolean {
-  if (!esRegistro(bloque)) return false;
-  return listaRegistros(bloque.impuesto).some(
-    (item) => entero(item.idImpuesto) === idImpuesto && texto(item.estadoImpuesto) === "AC",
+function impuestoActivo(
+  persona: Record<string, unknown>,
+  campo: "datosRegimenGeneral" | "datosMonotributo",
+  idImpuestoBuscado: number,
+): boolean {
+  if (!tieneCampo(persona, campo)) return false;
+  const bloque = snapshotRegistro(persona[campo]);
+  const impuestos = snapshotListaRegistros(
+    tieneCampo(bloque, "impuesto") ? bloque.impuesto : undefined,
   );
+  return impuestos.some((item) => {
+    const idImpuesto = entero(item.idImpuesto);
+    const estadoImpuesto = texto(item.estadoImpuesto);
+    if (idImpuesto === null || estadoImpuesto === null) respuestaInvalida();
+    return idImpuesto === idImpuestoBuscado && estadoImpuesto === "AC";
+  });
 }
 
 function condicionConfirmada(
   persona: Record<string, unknown>,
 ): ReceptorPadronArca["condicionIvaConfirmada"] {
-  const ri = impuestoActivo(persona.datosRegimenGeneral, IMPUESTO_IVA);
-  const mono = impuestoActivo(persona.datosMonotributo, IMPUESTO_MONOTRIBUTO);
+  const ri = impuestoActivo(persona, "datosRegimenGeneral", IMPUESTO_IVA);
+  const mono = impuestoActivo(persona, "datosMonotributo", IMPUESTO_MONOTRIBUTO);
   if (ri && mono) respuestaInvalida();
   return ri ? "RESPONSABLE_INSCRIPTO" : mono ? "MONOTRIBUTO" : null;
 }
@@ -178,7 +262,7 @@ function validarEstadoActivo(
     respuestaInvalida();
   }
   if (estados.some((estado) => estado !== "ACTIVO")) {
-    throw crearErrorFiscalUsuario("CUIT_INACTIVO");
+    errorPadron("CUIT_INACTIVO");
   }
 }
 
@@ -207,9 +291,9 @@ function parteDomicilio(domicilio: Record<string, unknown>, campo: string): stri
 
 function domicilioFiscal(generales: Record<string, unknown>): string | null {
   if (!tieneCampo(generales, "domicilioFiscal") || generales.domicilioFiscal === null) return null;
-  if (!esRegistro(generales.domicilioFiscal)) respuestaInvalida();
+  const domicilio = snapshotRegistro(generales.domicilioFiscal);
   const segmentos = ["direccion", "localidad", "descripcionProvincia", "codPostal"]
-    .map((campo) => parteDomicilio(generales.domicilioFiscal as Record<string, unknown>, campo))
+    .map((campo) => parteDomicilio(domicilio, campo))
     .filter((parte): parte is string => parte !== null);
   const vistos = new Set<string>();
   return (
@@ -238,20 +322,20 @@ function normalizarContribuyente(
   respuesta: unknown,
   ahora: Date,
 ): ReceptorPadronArca {
-  if (!esRegistro(respuesta)) respuestaInvalida();
-  if (!esRegistro(respuesta.datosGenerales)) respuestaInvalida();
-  const generales = respuesta.datosGenerales;
+  const persona = snapshotRegistro(respuesta);
+  if (!tieneCampo(persona, "datosGenerales")) respuestaInvalida();
+  const generales = snapshotRegistro(persona.datosGenerales);
   const cuitNumerico = Number(cuit);
-  validarIdentidad(respuesta, generales, cuitNumerico);
-  const tipo = tipoPersona(respuesta, generales);
-  validarEstadoActivo(respuesta, generales);
+  validarIdentidad(persona, generales, cuitNumerico);
+  const tipo = tipoPersona(persona, generales);
+  validarEstadoActivo(persona, generales);
   const resultado = {
     cuit,
     razonSocial: identidad(generales, tipo),
     domicilioFiscal: domicilioFiscal(generales),
     estado: "ACTIVO" as const,
     tipoPersona: tipo,
-    condicionIvaConfirmada: condicionConfirmada(respuesta),
+    condicionIvaConfirmada: condicionConfirmada(persona),
     verificadoArcaAt: fechaVerificacion(ahora),
   };
   const validacion = receptorPadronArcaSchema.safeParse(resultado);
@@ -259,14 +343,14 @@ function normalizarContribuyente(
   return validacion.data;
 }
 
-export async function consultarPadronArca(
+export async function consultarPadronArcaInterno(
   cuit: string,
   deps: DependenciasPadronArca,
 ): Promise<ReceptorPadronArca> {
-  if (!cuitValido(cuit)) throw crearErrorFiscalUsuario("CUIT_INVALIDO");
+  if (!cuitValido(cuit)) errorPadron("CUIT_INVALIDO");
   const cuitCanonico = cuit.replace(/\D/g, "");
   const respuesta = await deps.obtenerContribuyente(Number(cuitCanonico));
-  if (respuesta === null) throw crearErrorFiscalUsuario("CUIT_NO_ENCONTRADO");
+  if (respuesta === null) errorPadron("CUIT_NO_ENCONTRADO");
   let ahora: Date;
   try {
     ahora = deps.ahora();
@@ -274,4 +358,16 @@ export async function consultarPadronArca(
     return respuestaInvalida();
   }
   return normalizarContribuyente(cuitCanonico, respuesta, ahora);
+}
+
+export async function consultarPadronArca(
+  cuit: string,
+  deps: DependenciasPadronArca,
+): Promise<ReceptorPadronArca> {
+  try {
+    return await consultarPadronArcaInterno(cuit, deps);
+  } catch (cause) {
+    const codigo = codigoErrorPadronArcaInterno(cause) ?? "RESPUESTA_PADRON_INVALIDA";
+    throw crearErrorFiscalUsuario(codigo);
+  }
 }

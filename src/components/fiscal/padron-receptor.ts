@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { cuitValido } from "@/lib/fiscal/codigos";
-import { receptorPadronArcaSchema, type ReceptorPadronArca } from "@/lib/fiscal/padron-arca";
+import { receptorPadronArcaSchema, type ReceptorPadronArca } from "@/lib/fiscal/padron-arca-shared";
 import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import type { ClienteComercialFiscal } from "./dialogo-emision-validacion";
 import type { ReceptorFormulario } from "./receptor-fiscal-form";

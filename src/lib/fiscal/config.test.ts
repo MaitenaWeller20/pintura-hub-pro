@@ -1,10 +1,56 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+
+const accionPuntoVenta = vi.hoisted(() => ({
+  admin: null as unknown,
+}));
+
+vi.mock("@tanstack/react-start", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-start")>();
+  return {
+    ...actual,
+    createServerFn: () => {
+      let validar: ((value: unknown) => unknown) | undefined;
+      const builder = {
+        middleware() {
+          return builder;
+        },
+        inputValidator(validator: (value: unknown) => unknown) {
+          validar = validator;
+          return builder;
+        },
+        handler(...args: unknown[]) {
+          const handler = args.at(-1) as (input: {
+            data: unknown;
+            context: unknown;
+          }) => Promise<unknown>;
+          return (input: { data: unknown; context: unknown }) =>
+            handler({
+              data: validar ? validar(input.data) : input.data,
+              context: input.context,
+            });
+        },
+      };
+      return builder;
+    },
+  };
+});
+
+vi.mock("@/integrations/supabase/client.server", () => ({
+  supabaseAdmin: new Proxy(
+    {},
+    {
+      get(_target, property) {
+        return Reflect.get(accionPuntoVenta.admin as object, property);
+      },
+    },
+  ),
+}));
+
 import { ModalidadFacturaAEditor } from "@/components/app/emisores-config";
 import {
   actualizacionModalidadFacturaA,
-  actualizacionResetCredencialPorCambioPuntoVenta,
   autorizarAntesDeClientePrivilegiado,
   confirmacionModalidadFacturaASchema,
   ejecutarPruebaActivacionPadron,
@@ -23,8 +69,8 @@ import {
   mensajeCodigoErrorFiscalUsuario,
   mensajeErrorFiscal,
 } from "./error-usuario";
-import type { CodigoErrorPadronArca, ReceptorPadronArca } from "./padron-arca";
-import { ejecutarPruebaPadronAdministrativa } from "./config.functions";
+import type { CodigoErrorPadronArca, ReceptorPadronArca } from "./padron-arca-shared";
+import { ejecutarPruebaPadronAdministrativa, guardarPuntoVenta } from "./config.functions";
 
 describe("estado público de credenciales ARCA", () => {
   it("si sólo existe producción igual devuelve ambos ambientes sin secretos", () => {
@@ -317,26 +363,99 @@ describe("prueba y activación del padrón ARCA", () => {
   });
 });
 
-describe("reset de evidencia ARCA al cambiar el punto de venta", () => {
-  it("resetea WSFE y padrón en ambos ambientes cuando cambia el modo", () => {
-    expect(actualizacionResetCredencialPorCambioPuntoVenta("HOMOLOGACION", "PRODUCCION")).toEqual({
-      ambientes: ["HOMOLOGACION", "PRODUCCION"],
-      campos: {
-        probada_at: null,
-        habilitada: false,
-        padron_probado_at: null,
-        padron_validacion_activa: false,
-        padron_ultimo_error_codigo: null,
-        padron_ultimo_error_at: null,
+describe("acción administrativa de punto de venta", () => {
+  const sucursalId = "36d48748-42ff-4aa5-a7d7-d476572cb429";
+  const emisorId = "77f9f76c-c943-410f-bbcc-78e5f29282b4";
+  const entrada = {
+    sucursal_id: sucursalId,
+    numero: 5,
+    modo: "PRODUCCION" as const,
+    activo: true,
+  };
+
+  function usuarioAdmin() {
+    return {
+      rpc: vi.fn(async () => ({ data: true, error: null })),
+      from(tabla: string) {
+        if (tabla !== "profiles") throw new Error(`tabla de usuario inesperada: ${tabla}`);
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: async () => ({ data: { activo: true }, error: null }),
+        };
+        return builder;
       },
+    };
+  }
+
+  function clientePrivilegiado(upsertError: Error | null = null) {
+    const operaciones: Array<{ tabla: string; tipo: string }> = [];
+    return {
+      operaciones,
+      cliente: {
+        from(tabla: string) {
+          const builder = {
+            select() {
+              operaciones.push({ tabla, tipo: "select" });
+              return builder;
+            },
+            eq() {
+              return builder;
+            },
+            maybeSingle: async () =>
+              tabla === "sucursales"
+                ? { data: { id: sucursalId, emisor_id: emisorId }, error: null }
+                : {
+                    data: { numero: 4, modo: "HOMOLOGACION", activo: true },
+                    error: null,
+                  },
+            upsert: async () => {
+              operaciones.push({ tabla, tipo: "upsert" });
+              return { data: null, error: upsertError };
+            },
+            update() {
+              operaciones.push({ tabla, tipo: "update" });
+              return builder;
+            },
+            in: async () => ({ data: null, error: null }),
+          };
+          return builder;
+        },
+      },
+    };
+  }
+
+  async function ejecutar(cliente: ReturnType<typeof clientePrivilegiado>["cliente"]) {
+    accionPuntoVenta.admin = cliente;
+    const accion = guardarPuntoVenta as unknown as (input: {
+      data: typeof entrada;
+      context: { supabase: ReturnType<typeof usuarioAdmin>; userId: string };
+    }) => Promise<unknown>;
+    return accion({
+      data: entrada,
+      context: { supabase: usuarioAdmin(), userId: "admin-id" },
     });
+  }
+
+  it("delega el reset al upsert atómico sin una segunda escritura PostgREST", async () => {
+    const escenario = clientePrivilegiado();
+
+    await expect(ejecutar(escenario.cliente)).resolves.toEqual({ ok: true });
+
+    expect(escenario.operaciones).toEqual([
+      { tabla: "sucursales", tipo: "select" },
+      { tabla: "puntos_venta", tipo: "upsert" },
+    ]);
   });
 
-  it("un cambio de número en el mismo modo conserva la evidencia del padrón", () => {
-    expect(actualizacionResetCredencialPorCambioPuntoVenta("PRODUCCION", "PRODUCCION")).toEqual({
-      ambientes: ["PRODUCCION"],
-      campos: { probada_at: null, habilitada: false },
-    });
+  it("propaga el fallo del upsert que contiene toda la mutación atómica", async () => {
+    const escenario = clientePrivilegiado(new Error("RESET_ATOMICO_FALLO"));
+
+    await expect(ejecutar(escenario.cliente)).rejects.toThrow("RESET_ATOMICO_FALLO");
+    expect(escenario.operaciones).toEqual([
+      { tabla: "sucursales", tipo: "select" },
+      { tabla: "puntos_venta", tipo: "upsert" },
+    ]);
   });
 });
 

@@ -4,7 +4,7 @@ import {
   esCodigoErrorPadronArca,
   type CodigoErrorPadronArca,
   type ReceptorPadronArca,
-} from "./padron-arca";
+} from "./padron-arca-shared";
 import { z } from "zod";
 
 export type EstadoPadronArcaPublico = {
@@ -128,25 +128,6 @@ export async function ejecutarPruebaActivacionPadron(
     }
     throw crearErrorFiscalUsuario(codigo);
   }
-}
-
-export function actualizacionResetCredencialPorCambioPuntoVenta(
-  modoAnterior: AmbienteArca | undefined,
-  modoNuevo: AmbienteArca,
-) {
-  const ambientes = [...new Set([modoAnterior, modoNuevo].filter(Boolean))] as AmbienteArca[];
-  const resetWsfe = { probada_at: null, habilitada: false } as const;
-  if (modoAnterior === modoNuevo) return { ambientes, campos: resetWsfe };
-  return {
-    ambientes,
-    campos: {
-      ...resetWsfe,
-      padron_probado_at: null,
-      padron_validacion_activa: false,
-      padron_ultimo_error_codigo: null,
-      padron_ultimo_error_at: null,
-    },
-  } as const;
 }
 
 type EstadoPrivadoCredencial = Pick<

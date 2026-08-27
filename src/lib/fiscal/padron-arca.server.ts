@@ -1,7 +1,9 @@
-import { conTimeoutArca, crearClienteArca, esErrorTransitorio, type EmisorFiscal } from "./arca";
-import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./error-usuario";
+import { types as tiposNode } from "node:util";
+import { conTimeoutArca, crearClienteArca, type EmisorFiscal } from "./arca";
+import { crearErrorFiscalUsuario } from "./error-usuario";
 import {
-  consultarPadronArca,
+  codigoErrorPadronArcaInterno,
+  consultarPadronArcaInterno,
   esCodigoErrorPadronArca,
   type CodigoErrorPadronArca,
   type ReceptorPadronArca,
@@ -30,7 +32,7 @@ type EntradaConsultaPadronArca = {
 };
 
 function valorPropio(value: unknown, campo: string): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
+  if (typeof value !== "object" || value === null || tiposNode.isProxy(value)) return undefined;
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, campo);
     return descriptor && "value" in descriptor ? descriptor.value : undefined;
@@ -56,25 +58,71 @@ function textoError(cause: unknown): string {
   return typeof mensaje === "string" ? mensaje : "";
 }
 
-function codigoMarcadoSeguro(cause: unknown) {
+const CODIGO_ERROR_TRANSPORTE_PADRON = Symbol("codigoErrorTransportePadron");
+
+type ErrorTransportePadron = Error & {
+  [CODIGO_ERROR_TRANSPORTE_PADRON]: CodigoErrorPadronArca;
+};
+
+function crearErrorTransportePadron(cause: unknown): ErrorTransportePadron {
+  let codigo: CodigoErrorPadronArca = "RESPUESTA_PADRON_INVALIDA";
   try {
-    return codigoErrorFiscalUsuario(cause);
+    codigo = clasificarErrorPadronArca(cause);
+  } catch {
+    // Una causa hostil no puede escapar de la clasificación cerrada.
+  }
+  const error = new Error("PADRON_ARCA_TRANSPORTE_INTERNO") as ErrorTransportePadron;
+  Object.defineProperty(error, CODIGO_ERROR_TRANSPORTE_PADRON, {
+    value: codigo,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return error;
+}
+
+function codigoErrorTransportePadron(cause: unknown): CodigoErrorPadronArca | null {
+  if (typeof cause !== "object" || cause === null || tiposNode.isProxy(cause)) return null;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(cause, CODIGO_ERROR_TRANSPORTE_PADRON);
+    return descriptor && "value" in descriptor && esCodigoErrorPadronArca(descriptor.value)
+      ? descriptor.value
+      : null;
   } catch {
     return null;
   }
 }
 
 function clasificarErrorPadronArca(cause: unknown): CodigoErrorPadronArca {
-  try {
-    if (esErrorTransitorio(cause)) return "PADRON_ARCA_CAIDO";
-  } catch {
-    // Un error remoto no confiable no puede impedir su traducción a un código cerrado.
+  if (typeof cause === "object" && cause !== null && tiposNode.isProxy(cause)) {
+    return "RESPUESTA_PADRON_INVALIDA";
   }
   const status = estadoHttp(cause);
   if ([502, 503, 504].includes(status ?? 0)) return "PADRON_ARCA_CAIDO";
   if ([401, 403].includes(status ?? 0)) return "PADRON_NO_AUTORIZADO";
 
+  const nombre = valorPropio(cause, "name");
+  const codigo = valorPropio(cause, "code");
   const detalle = textoError(cause);
+  if (
+    nombre === "AfipTimeout" ||
+    nombre === "ArcaRespuestaIncierta" ||
+    (typeof codigo === "string" &&
+      [
+        "ECONNREFUSED",
+        "ETIMEDOUT",
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "ECONNRESET",
+        "ENETUNREACH",
+        "EPIPE",
+      ].includes(codigo)) ||
+    /AfipTimeout|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNRESET|ENETUNREACH|socket hang up|network error|getaddrinfo|\b50[234]\b|Service Unavailable|Gateway Time-?out|Bad Gateway|ECONNABORTED/i.test(
+      detalle,
+    )
+  ) {
+    return "PADRON_ARCA_CAIDO";
+  }
   if (
     /not.?authori[sz]ed|unauthori[sz]ed|forbidden|access denied|no(?:\s+está)?\s+autorizad[oa]|certificad[oa].*(?:no.*autoriz|not.*authoriz)|ws_sr_constancia_inscripcion.*(?:no|not).*authoriz/i.test(
       detalle,
@@ -121,13 +169,18 @@ export async function consultarPadronArcaDesdeContexto({
 }: EntradaConsultaPadronArca): Promise<ReceptorPadronArca> {
   const inicio = ahoraMs();
   try {
-    const arca = await crearClienteArca(emisor, ambiente, admin);
-    const resultado = await consultarPadronArca(cuit, {
-      obtenerContribuyente: (id) =>
-        conTimeoutArca(
-          arca.registerInscriptionProofService.getTaxpayerDetails(id),
-          "consultar el padrón",
-        ),
+    const resultado = await consultarPadronArcaInterno(cuit, {
+      obtenerContribuyente: async (id) => {
+        try {
+          const arca = await crearClienteArca(emisor, ambiente, admin);
+          return await conTimeoutArca(
+            arca.registerInscriptionProofService.getTaxpayerDetails(id),
+            "consultar el padrón",
+          );
+        } catch (cause) {
+          throw crearErrorTransportePadron(cause);
+        }
+      },
       ahora: () => new Date(),
     });
     registrarSinFiltrar(registrarEvento, {
@@ -139,9 +192,10 @@ export async function consultarPadronArcaDesdeContexto({
     });
     return resultado;
   } catch (cause) {
-    const marcado = codigoMarcadoSeguro(cause);
     const codigo =
-      marcado && esCodigoErrorPadronArca(marcado) ? marcado : clasificarErrorPadronArca(cause);
+      codigoErrorTransportePadron(cause) ??
+      codigoErrorPadronArcaInterno(cause) ??
+      "RESPUESTA_PADRON_INVALIDA";
     registrarSinFiltrar(registrarEvento, {
       resultado: "ERROR",
       codigo,
@@ -150,7 +204,6 @@ export async function consultarPadronArcaDesdeContexto({
       ambiente,
       duracion_ms: duracionMs(inicio, ahoraMs),
     });
-    if (marcado && esCodigoErrorPadronArca(marcado)) throw cause;
     throw crearErrorFiscalUsuario(codigo);
   }
 }

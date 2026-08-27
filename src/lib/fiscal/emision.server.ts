@@ -43,7 +43,7 @@ import {
 } from "./receptor.server";
 import type { ReceptorFiscalConfirmado, SelectorReceptorFiscal } from "./receptor";
 import { consultarPadronArcaDesdeContexto } from "./padron-arca.server";
-import type { ReceptorPadronArca } from "./padron-arca";
+import type { ReceptorPadronArca } from "./padron-arca-shared";
 import {
   crearSnapshotFiscalV2,
   validarSnapshotFiscalV2,

@@ -1,6 +1,6 @@
 import { CONDICION_IVA_CLIENTE, cuitValido, type CondicionIva } from "./codigos";
 import { crearErrorFiscalUsuario } from "./error-usuario";
-import type { ReceptorPadronArca } from "./padron-arca";
+import type { ReceptorPadronArca } from "./padron-arca-shared";
 import {
   confirmarReceptorManual,
   validarReceptorFiscalConfirmado,
@@ -99,8 +99,7 @@ function receptorDesdePadron(input: {
   ) {
     throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
   }
-  const condicion =
-    confirmada ?? (input.letraSolicitada === "B" ? input.condicionDeclarada : null);
+  const condicion = confirmada ?? (input.letraSolicitada === "B" ? input.condicionDeclarada : null);
   if (
     condicion !== "RESPONSABLE_INSCRIPTO" &&
     condicion !== "MONOTRIBUTO" &&
@@ -219,8 +218,7 @@ export async function resolverReceptorFiscal(input: {
     throw new Error("Favorito fiscal inexistente, no visible o de otra sucursal.");
   }
   if (!favorito.activo) throw new Error("El favorito fiscal está inactivo.");
-  const cuit =
-    favorito.tipoDocumento === "CUIT" ? cuitCanonico(favorito.numeroDocumento) : null;
+  const cuit = favorito.tipoDocumento === "CUIT" ? cuitCanonico(favorito.numeroDocumento) : null;
   if (cuit && input.consultarPadron) {
     return receptorDesdePadron({
       padron: await input.consultarPadron(cuit),

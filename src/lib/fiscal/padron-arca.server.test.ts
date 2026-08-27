@@ -180,9 +180,11 @@ describe("adaptador server-only del padrón ARCA", () => {
   });
 
   it("mantiene un error remoto malformado detrás del código público", async () => {
+    let getterEjecutado = false;
     const causa = new Error();
     Object.defineProperty(causa, "message", {
       get() {
+        getterEjecutado = true;
         throw new Error("SENSITIVE-SOAP-FAULT getter");
       },
     });
@@ -190,6 +192,104 @@ describe("adaptador server-only del padrón ARCA", () => {
     const error = await errorDeConsulta(causa);
 
     expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(getterEjecutado).toBe(false);
     expect(error.message).not.toContain("SENSITIVE-SOAP-FAULT");
+  });
+
+  it("no confía en un marcador fiscal enviado por un rechazo del SDK", async () => {
+    const atacante = Object.assign(new Error("SENSITIVE-RAW-SOAP-MARKER"), {
+      codigoFiscalUsuario: "PADRON_ARCA_CAIDO",
+    });
+    const registrarEvento = vi.fn();
+    clienteQueResponde(Promise.reject(atacante));
+
+    const error = await consultarPadronArcaDesdeContexto({
+      cuit: "30-71419966-4",
+      emisor,
+      ambiente: "HOMOLOGACION",
+      admin: {},
+      registrarEvento,
+    }).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-RAW-SOAP-MARKER");
+    expect(JSON.stringify(registrarEvento.mock.calls)).not.toContain("SENSITIVE-RAW-SOAP-MARKER");
+  });
+
+  it("encierra un proxy revocado en la raíz de la respuesta", async () => {
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+    clienteQueResponde(revocable.proxy);
+
+    const error = await consultarPadronArcaDesdeContexto({
+      cuit: "30-71419966-4",
+      emisor,
+      ambiente: "PRODUCCION",
+      admin: {},
+      registrarEvento: vi.fn(),
+    }).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error.message).not.toContain("revoked");
+  });
+
+  it("encierra un proxy fiscal anidado que arroja un marcador falsificado", async () => {
+    const atacante = Object.assign(new Error("SENSITIVE-NESTED-DESCRIPTOR-PROXY"), {
+      codigoFiscalUsuario: "CUIT_INACTIVO",
+    });
+    const respuesta = respuestaJuridica() as Record<string, unknown>;
+    respuesta.datosRegimenGeneral = new Proxy(
+      { impuesto: [{ idImpuesto: 30, estadoImpuesto: "AC" }] },
+      {
+        ownKeys() {
+          throw atacante;
+        },
+      },
+    );
+    clienteQueResponde(respuesta);
+
+    const error = await consultarPadronArcaDesdeContexto({
+      cuit: "30-71419966-4",
+      emisor,
+      ambiente: "HOMOLOGACION",
+      admin: {},
+      registrarEvento: vi.fn(),
+    }).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-NESTED-DESCRIPTOR-PROXY");
+  });
+
+  it("rechaza un proxy de descriptores que cambia de estado entre snapshots", async () => {
+    const atacante = Object.assign(new Error("SENSITIVE-STATEFUL-DESCRIPTOR-PROXY"), {
+      codigoFiscalUsuario: "PADRON_NO_AUTORIZADO",
+    });
+    const respuesta = respuestaJuridica() as Record<string, unknown>;
+    let lecturasClaves = 0;
+    respuesta.datosRegimenGeneral = new Proxy(
+      { impuesto: [{ idImpuesto: 30, estadoImpuesto: "AC" }] },
+      {
+        ownKeys(target) {
+          lecturasClaves += 1;
+          if (lecturasClaves > 1) throw atacante;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    clienteQueResponde(respuesta);
+
+    const error = await consultarPadronArcaDesdeContexto({
+      cuit: "30-71419966-4",
+      emisor,
+      ambiente: "HOMOLOGACION",
+      admin: {},
+      registrarEvento: vi.fn(),
+    }).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toBe(atacante);
+    expect(error.message).not.toContain("SENSITIVE-STATEFUL-DESCRIPTOR-PROXY");
   });
 });

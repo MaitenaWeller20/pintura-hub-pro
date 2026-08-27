@@ -5,7 +5,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
   actualizacionModalidadFacturaA,
-  actualizacionResetCredencialPorCambioPuntoVenta,
   autorizarAntesDeClientePrivilegiado,
   confirmacionModalidadFacturaASchema,
   estadoFiscalPublicoMinimo,
@@ -373,17 +372,12 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
       admin,
     );
 
-    const [{ data: sucursal, error: sucursalError }, { data: anterior, error: pvError }] =
-      await Promise.all([
-        sb.from("sucursales").select("id,emisor_id").eq("id", data.sucursal_id).maybeSingle(),
-        sb
-          .from("puntos_venta")
-          .select("numero,modo,activo")
-          .eq("sucursal_id", data.sucursal_id)
-          .maybeSingle(),
-      ]);
+    const { data: sucursal, error: sucursalError } = await sb
+      .from("sucursales")
+      .select("id,emisor_id")
+      .eq("id", data.sucursal_id)
+      .maybeSingle();
     if (sucursalError) throw new Error(sucursalError.message);
-    if (pvError) throw new Error(pvError.message);
     if (!sucursal?.emisor_id) throw new Error("La sucursal no tiene un emisor fiscal asignado.");
 
     const { error } = await sb.from("puntos_venta").upsert(
@@ -397,24 +391,6 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
       { onConflict: "sucursal_id" },
     );
     if (error) throw new Error(error.message);
-
-    const cambio =
-      !anterior ||
-      Number(anterior.numero) !== data.numero ||
-      anterior.modo !== data.modo ||
-      Boolean(anterior.activo) !== data.activo;
-    if (cambio) {
-      const reset = actualizacionResetCredencialPorCambioPuntoVenta(
-        anterior ? ambienteArca(anterior.modo) : undefined,
-        data.modo,
-      );
-      const { error: resetError } = await sb
-        .from("credenciales_arca")
-        .update(reset.campos)
-        .eq("emisor_id", sucursal.emisor_id)
-        .in("ambiente", reset.ambientes);
-      if (resetError) throw new Error(resetError.message);
-    }
 
     return { ok: true };
   });

@@ -31,7 +31,7 @@ import {
 } from "./fiscal/error-usuario";
 import { cuitValido } from "./fiscal/codigos";
 import type { ContextoFiscal } from "./fiscal/contexto";
-import { receptorPadronArcaSchema, type ReceptorPadronArca } from "./fiscal/padron-arca";
+import { receptorPadronArcaSchema, type ReceptorPadronArca } from "./fiscal/padron-arca-shared";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),

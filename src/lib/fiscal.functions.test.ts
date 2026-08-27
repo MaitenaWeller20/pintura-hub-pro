@@ -9,7 +9,7 @@ import {
   proyectarIncidenteFiscal,
 } from "./fiscal.functions";
 import type { ContextoFiscal } from "./fiscal/contexto";
-import type { ReceptorPadronArca } from "./fiscal/padron-arca";
+import type { ReceptorPadronArca } from "./fiscal/padron-arca-shared";
 import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./fiscal/error-usuario";
 
 const INPUT = {

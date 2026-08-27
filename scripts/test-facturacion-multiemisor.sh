@@ -46,6 +46,14 @@ check "authenticated no puede leer credenciales" "false" \
   "$(q "select has_table_privilege('authenticated','public.credenciales_arca','select')::text")"
 check "service_role sí puede leer credenciales" "true" \
   "$(q "select has_table_privilege('service_role','public.credenciales_arca','select')::text")"
+check "trigger atómico de PV instalado" "trg_puntos_venta_reset_credenciales_arca" \
+  "$(q "select tgname from pg_trigger where tgrelid='public.puntos_venta'::regclass and tgname='trg_puntos_venta_reset_credenciales_arca' and not tgisinternal")"
+check "reset de PV conserva privilegios del invocador" "false" \
+  "$(q "select prosecdef::text from pg_proc where oid='public.reset_credenciales_arca_por_punto_venta()'::regprocedure")"
+check "reset de PV no es API pública" "false" \
+  "$(q "select has_function_privilege('public','public.reset_credenciales_arca_por_punto_venta()','execute')::text")"
+check "authenticated no puede mutar puntos de venta" "false" \
+  "$(q "select has_table_privilege('authenticated','public.puntos_venta','update')::text")"
 
 legacy_key_hash="$(q "select coalesce(md5(arca_key_enc),'') from public.fiscal_config where id=true")"
 if [[ -n "$legacy_key_hash" ]]; then
@@ -152,6 +160,268 @@ BEGIN
 
   -- Aísla el fixture multiemisor legacy que sigue en esta transacción.
   UPDATE public.emisores SET cuit = '30714199664' WHERE id = v_emisor;
+END $$;
+
+-- El upsert del PV y el reset de credenciales deben ser una sola sentencia
+-- atómica. El trigger temporal fuerza un fallo en el reset y la subtransacción
+-- comprueba que tampoco sobreviva el cambio del PV.
+DO $$
+DECLARE
+  v_emisor uuid;
+  v_pv uuid;
+BEGIN
+  SELECT id INTO v_emisor FROM public.emisores WHERE cuit = '30714199664';
+  SELECT p.id INTO v_pv
+  FROM public.puntos_venta p
+  JOIN public.sucursales s ON s.id = p.sucursal_id
+  WHERE s.codigo::text = 'GENERALPAZ';
+
+  IF v_emisor IS NULL OR v_pv IS NULL THEN
+    RAISE EXCEPTION 'faltan emisor/PV para probar reset atómico';
+  END IF;
+
+  INSERT INTO public.credenciales_arca (emisor_id, ambiente)
+  VALUES (v_emisor, 'HOMOLOGACION'), (v_emisor, 'PRODUCCION')
+  ON CONFLICT (emisor_id, ambiente) DO NOTHING;
+
+  UPDATE public.puntos_venta
+  SET numero = 9001, modo = 'HOMOLOGACION', activo = true
+  WHERE id = v_pv;
+
+  UPDATE public.credenciales_arca
+  SET
+    probada_at = '2026-08-26 12:00:00+00',
+    habilitada = true,
+    padron_probado_at = '2026-08-26 12:00:00+00',
+    padron_validacion_activa = true,
+    padron_ultimo_error_codigo = NULL,
+    padron_ultimo_error_at = NULL
+  WHERE emisor_id = v_emisor;
+END $$;
+
+CREATE FUNCTION pg_temp.forzar_fallo_reset_pv()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'RESET_PV_FORZADO';
+END;
+$$;
+
+CREATE TRIGGER zz_forzar_fallo_reset_pv
+  BEFORE UPDATE ON public.credenciales_arca
+  FOR EACH ROW
+  EXECUTE FUNCTION pg_temp.forzar_fallo_reset_pv();
+
+DO $$
+DECLARE
+  v_pv uuid;
+BEGIN
+  SELECT p.id INTO v_pv
+  FROM public.puntos_venta p
+  JOIN public.sucursales s ON s.id = p.sucursal_id
+  WHERE s.codigo::text = 'GENERALPAZ';
+
+  BEGIN
+    UPDATE public.puntos_venta SET numero = 9002 WHERE id = v_pv;
+    RAISE EXCEPTION 'el cambio de PV sobrevivió sin ejecutar el reset atómico';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM <> 'RESET_PV_FORZADO' THEN
+      RAISE;
+    END IF;
+  END;
+
+  IF (SELECT numero FROM public.puntos_venta WHERE id = v_pv) <> 9001 THEN
+    RAISE EXCEPTION 'el fallo del reset no revirtió el cambio de PV';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.credenciales_arca c
+    JOIN public.emisores e ON e.id = c.emisor_id
+    WHERE e.cuit = '30714199664'
+      AND (c.probada_at IS NULL OR NOT c.habilitada)
+  ) THEN
+    RAISE EXCEPTION 'el fallo atómico alteró evidencia WSFE';
+  END IF;
+END $$;
+
+DROP TRIGGER zz_forzar_fallo_reset_pv ON public.credenciales_arca;
+
+-- Semántica completa del reset: no-op, número, modo, versión CAS y emisor.
+DO $$
+DECLARE
+  v_emisor uuid;
+  v_otro_emisor uuid;
+  v_pv uuid;
+  v_sucursal uuid;
+  v_version_vieja timestamptz;
+  v_filas integer;
+BEGIN
+  SELECT id INTO v_emisor FROM public.emisores WHERE cuit = '30714199664';
+  SELECT id INTO v_otro_emisor FROM public.emisores WHERE cuit = '30717322467';
+  SELECT p.id, p.sucursal_id INTO v_pv, v_sucursal
+  FROM public.puntos_venta p
+  JOIN public.sucursales s ON s.id = p.sucursal_id
+  WHERE s.codigo::text = 'GENERALPAZ';
+
+  -- Un no-op no toca evidencia ni la versión de credenciales.
+  UPDATE public.credenciales_arca
+  SET
+    probada_at = '2026-08-26 12:00:00+00',
+    habilitada = true,
+    padron_probado_at = '2026-08-26 12:00:00+00',
+    padron_validacion_activa = true
+  WHERE emisor_id = v_emisor AND ambiente = 'HOMOLOGACION';
+  SELECT updated_at INTO v_version_vieja
+  FROM public.credenciales_arca
+  WHERE emisor_id = v_emisor AND ambiente = 'HOMOLOGACION';
+
+  INSERT INTO public.puntos_venta (sucursal_id, emisor_id, numero, modo, activo)
+  VALUES (v_sucursal, v_emisor, 9001, 'HOMOLOGACION', true)
+  ON CONFLICT (sucursal_id) DO UPDATE SET
+    emisor_id = EXCLUDED.emisor_id,
+    numero = EXCLUDED.numero,
+    modo = EXCLUDED.modo,
+    activo = EXCLUDED.activo;
+
+  IF EXISTS (
+    SELECT 1 FROM public.credenciales_arca
+    WHERE emisor_id = v_emisor AND ambiente = 'HOMOLOGACION'
+      AND (
+        probada_at IS DISTINCT FROM '2026-08-26 12:00:00+00'::timestamptz
+        OR NOT habilitada
+        OR padron_probado_at IS DISTINCT FROM '2026-08-26 12:00:00+00'::timestamptz
+        OR NOT padron_validacion_activa
+        OR updated_at IS DISTINCT FROM v_version_vieja
+      )
+  ) THEN
+    RAISE EXCEPTION 'un upsert no-op reinició evidencia';
+  END IF;
+
+  -- Sólo el número reinicia WSFE pero conserva padrón.
+  UPDATE public.puntos_venta SET numero = 9003 WHERE id = v_pv;
+  IF EXISTS (
+    SELECT 1 FROM public.credenciales_arca
+    WHERE emisor_id = v_emisor AND ambiente = 'HOMOLOGACION'
+      AND (
+        probada_at IS NOT NULL
+        OR habilitada
+        OR padron_probado_at IS DISTINCT FROM '2026-08-26 12:00:00+00'::timestamptz
+        OR NOT padron_validacion_activa
+      )
+  ) THEN
+    RAISE EXCEPTION 'cambiar número no respetó la separación WSFE/padrón';
+  END IF;
+
+  -- Prepara ambos ambientes y una versión inequívocamente vieja para CAS.
+  UPDATE public.credenciales_arca
+  SET
+    probada_at = '2026-08-26 12:01:00+00',
+    habilitada = true,
+    padron_probado_at = '2026-08-26 12:01:00+00',
+    padron_validacion_activa = true
+  WHERE emisor_id = v_emisor;
+  ALTER TABLE public.credenciales_arca DISABLE TRIGGER trg_credenciales_arca_upd;
+  UPDATE public.credenciales_arca
+  SET updated_at = '2020-01-01 00:00:00+00'
+  WHERE emisor_id = v_emisor;
+  ALTER TABLE public.credenciales_arca ENABLE TRIGGER trg_credenciales_arca_upd;
+  SELECT updated_at INTO v_version_vieja
+  FROM public.credenciales_arca
+  WHERE emisor_id = v_emisor AND ambiente = 'HOMOLOGACION';
+
+  UPDATE public.puntos_venta SET modo = 'PRODUCCION' WHERE id = v_pv;
+  IF EXISTS (
+    SELECT 1 FROM public.credenciales_arca
+    WHERE emisor_id = v_emisor
+      AND ambiente IN ('HOMOLOGACION', 'PRODUCCION')
+      AND (
+        probada_at IS NOT NULL
+        OR habilitada
+        OR padron_probado_at IS NOT NULL
+        OR padron_validacion_activa
+        OR padron_ultimo_error_codigo IS NOT NULL
+        OR padron_ultimo_error_at IS NOT NULL
+      )
+  ) THEN
+    RAISE EXCEPTION 'cambiar modo no reinició ambos ambientes';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.credenciales_arca
+    WHERE emisor_id = v_emisor AND updated_at <= v_version_vieja
+  ) THEN
+    RAISE EXCEPTION 'el reset de PV no avanzó updated_at para CAS';
+  END IF;
+
+  UPDATE public.credenciales_arca
+  SET padron_probado_at = now(), padron_validacion_activa = true
+  WHERE emisor_id = v_emisor
+    AND ambiente = 'HOMOLOGACION'
+    AND updated_at = v_version_vieja;
+  GET DIAGNOSTICS v_filas = ROW_COUNT;
+  IF v_filas <> 0 THEN
+    RAISE EXCEPTION 'una activación CAS obsoleta sobrevivió al reset de PV';
+  END IF;
+
+  -- La función de trigger también cubre una reasociación excepcional de emisor.
+  INSERT INTO public.credenciales_arca (emisor_id, ambiente)
+  VALUES (v_otro_emisor, 'PRODUCCION')
+  ON CONFLICT (emisor_id, ambiente) DO NOTHING;
+
+  CREATE TEMP TABLE pv_reset_emisor_test (
+    LIKE public.puntos_venta INCLUDING DEFAULTS
+  ) ON COMMIT DROP;
+  CREATE TRIGGER trg_pv_reset_emisor_test
+    AFTER INSERT OR UPDATE ON pv_reset_emisor_test
+    FOR EACH ROW
+    EXECUTE FUNCTION public.reset_credenciales_arca_por_punto_venta();
+
+  UPDATE public.credenciales_arca
+  SET
+    probada_at = now(),
+    habilitada = true,
+    padron_probado_at = now(),
+    padron_validacion_activa = true
+  WHERE emisor_id = v_emisor AND ambiente = 'PRODUCCION';
+  INSERT INTO pv_reset_emisor_test (sucursal_id, emisor_id, numero, modo, activo)
+  VALUES (v_sucursal, v_emisor, 9100, 'PRODUCCION', true);
+  IF EXISTS (
+    SELECT 1 FROM public.credenciales_arca
+    WHERE emisor_id = v_emisor AND ambiente = 'PRODUCCION'
+      AND (
+        probada_at IS NOT NULL
+        OR habilitada
+        OR padron_probado_at IS NOT NULL
+        OR padron_validacion_activa
+      )
+  ) THEN
+    RAISE EXCEPTION 'crear la asociación de PV no reinició WSFE y padrón';
+  END IF;
+
+  UPDATE public.credenciales_arca
+  SET
+    probada_at = now(),
+    habilitada = true,
+    padron_probado_at = now(),
+    padron_validacion_activa = true
+  WHERE (emisor_id = v_emisor OR emisor_id = v_otro_emisor)
+    AND ambiente = 'PRODUCCION';
+  UPDATE pv_reset_emisor_test SET emisor_id = v_otro_emisor;
+
+  IF EXISTS (
+    SELECT 1 FROM public.credenciales_arca
+    WHERE (emisor_id = v_emisor OR emisor_id = v_otro_emisor)
+      AND ambiente = 'PRODUCCION'
+      AND (
+        probada_at IS NOT NULL
+        OR habilitada
+        OR padron_probado_at IS NOT NULL
+        OR padron_validacion_activa
+      )
+  ) THEN
+    RAISE EXCEPTION 'cambiar emisor no reinició credenciales viejas y nuevas';
+  END IF;
 END $$;
 
 -- Dos CUIT distintos pueden usar el mismo número de PV.

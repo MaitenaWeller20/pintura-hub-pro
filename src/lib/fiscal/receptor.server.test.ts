@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { validarSnapshotFiscalV2 } from "./snapshot";
-import type { ReceptorPadronArca } from "./padron-arca";
+import { consultarPadronArca } from "./padron-arca";
+import type { ReceptorPadronArca } from "./padron-arca-shared";
+import { codigoErrorFiscalUsuario } from "./error-usuario";
 import { resolverReceptorFiscal } from "./receptor.server";
 
 const venta = {
@@ -18,9 +20,7 @@ const venta = {
   comprobanteOriginalId: null,
 };
 
-const receptorPadron = (
-  cambios: Partial<ReceptorPadronArca> = {},
-): ReceptorPadronArca => ({
+const receptorPadron = (cambios: Partial<ReceptorPadronArca> = {}): ReceptorPadronArca => ({
   cuit: "30714199664",
   razonSocial: "IDENTIDAD OFICIAL S.A.",
   domicilioFiscal: "Domicilio ARCA",
@@ -185,35 +185,42 @@ describe("resolución server de receptor fiscal", () => {
       },
       undefined,
     ],
-    ["FAVORITO", { origen: "FAVORITO" as const, receptor_fiscal_id: "favorito-dni" }, "favorito-dni"],
-  ] as const)("no consulta ARCA para un receptor %s con DNI", async (_origen, selector, favoritoId) => {
-    const consultarPadron = vi.fn(async () => receptorPadron());
+    [
+      "FAVORITO",
+      { origen: "FAVORITO" as const, receptor_fiscal_id: "favorito-dni" },
+      "favorito-dni",
+    ],
+  ] as const)(
+    "no consulta ARCA para un receptor %s con DNI",
+    async (_origen, selector, favoritoId) => {
+      const consultarPadron = vi.fn(async () => receptorPadron());
 
-    const receptor = await resolverReceptorFiscal({
-      selector,
-      venta,
-      importeTotal: 100,
-      letraSolicitada: "B",
-      cargarFavorito: async (id) =>
-        id === favoritoId
-          ? {
-              id,
-              sucursalId: venta.sucursalId,
-              activo: true,
-              tipoDocumento: "DNI",
-              numeroDocumento: "12345678",
-              razonSocial: "Persona",
-              condicionIva: "CONSUMIDOR_FINAL",
-              domicilio: null,
-            }
-          : null,
-      cargarOriginal: vi.fn(),
-      consultarPadron,
-    });
+      const receptor = await resolverReceptorFiscal({
+        selector,
+        venta,
+        importeTotal: 100,
+        letraSolicitada: "B",
+        cargarFavorito: async (id) =>
+          id === favoritoId
+            ? {
+                id,
+                sucursalId: venta.sucursalId,
+                activo: true,
+                tipoDocumento: "DNI",
+                numeroDocumento: "12345678",
+                razonSocial: "Persona",
+                condicionIva: "CONSUMIDOR_FINAL",
+                domicilio: null,
+              }
+            : null,
+        cargarOriginal: vi.fn(),
+        consultarPadron,
+      });
 
-    expect(receptor).toMatchObject({ tipoDocumento: "DNI", origen: _origen });
-    expect(consultarPadron).not.toHaveBeenCalled();
-  });
+      expect(receptor).toMatchObject({ tipoDocumento: "DNI", origen: _origen });
+      expect(consultarPadron).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserva el receptor CUIT actual cuando no se inyecta consulta de padrón", async () => {
     const receptor = await resolverReceptorFiscal({
@@ -332,6 +339,44 @@ describe("resolución server de receptor fiscal", () => {
     });
 
     expect(receptor).toMatchObject({ condicionIva: "EXENTO", origen: "ARCA" });
+  });
+
+  it("no permite que evidencia fiscal malformada llegue al fallback EXENTO de una B", async () => {
+    const respuestaMalformada = {
+      idPersona: 30714199664,
+      tipoPersona: "JURIDICA",
+      estadoClave: "ACTIVO",
+      datosGenerales: {
+        razonSocial: "IDENTIDAD OFICIAL S.A.",
+      },
+      datosRegimenGeneral: "MALFORMADO",
+    };
+
+    const error = await resolverReceptorFiscal({
+      selector: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30-71419966-4",
+        razon_social: "Nombre inventado",
+        condicion_iva: "EXENTO",
+        domicilio: null,
+        guardar_para_proximas: false,
+        confirma_datos_manuales: true,
+      },
+      venta,
+      importeTotal: 100,
+      letraSolicitada: "B",
+      cargarFavorito: vi.fn(),
+      cargarOriginal: vi.fn(),
+      consultarPadron: (cuit) =>
+        consultarPadronArca(cuit, {
+          obtenerContribuyente: async () => respuestaMalformada,
+          ahora: () => new Date("2026-08-26T12:00:00.000Z"),
+        }),
+    }).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("RESPUESTA_PADRON_INVALIDA");
+    expect(error).not.toMatchObject({ condicionIva: "EXENTO" });
   });
 
   it.each(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"] as const)(

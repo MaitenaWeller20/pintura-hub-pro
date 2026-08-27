@@ -51,6 +51,7 @@ import {
   claveConsultaPadronId,
   claveParaConsultaPadron,
   crearControlConsultaPadron,
+  estadoConsultaPadronEfectivo,
   invalidarConsultaPadron,
   mismaClaveConsultaPadron,
   programarConsultaPadron,
@@ -140,7 +141,6 @@ function SincronizarPadronReceptor({
         });
       },
     });
-    onEstado({ estado: "CONSULTANDO", clave: claveProgramada, token: solicitud.token });
     return solicitud.cancelar;
   }, [claveId, control, onEstado]);
 
@@ -242,6 +242,10 @@ export function DialogoEmisionFiscal({
         favoritos,
       });
   const cuitActual = claveConsultaPadron?.cuit ?? null;
+  const estadoPadronEfectivo = estadoConsultaPadronEfectivo(
+    claveConsultaPadron,
+    estadoConsultaPadron,
+  );
 
   const limpiarConfirmacionPorConsulta = useCallback(() => {
     invalidarSolicitudPreview(previewControlRef.current);
@@ -324,7 +328,7 @@ export function DialogoEmisionFiscal({
       letraSolicitada,
       clienteComercial: contexto.comprador,
       favoritos,
-      estadoConsultaPadron,
+      estadoConsultaPadron: estadoPadronEfectivo,
       claveConsultaPadron,
     });
     if (resultado.ok) {
@@ -436,9 +440,8 @@ export function DialogoEmisionFiscal({
   };
 
   const consultaPadronVerificada =
-    estadoConsultaPadron.estado === "VERIFICADO" &&
-    mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron) &&
-    estadoConsultaPadron.receptor.cuit === cuitActual;
+    estadoPadronEfectivo.estado === "VERIFICADO" &&
+    estadoPadronEfectivo.receptor.cuit === cuitActual;
   const puedeEmitir =
     preview !== null &&
     confirmacion.letraSolicitada !== null &&
@@ -449,7 +452,7 @@ export function DialogoEmisionFiscal({
       confirmacion.confirmaDatosManuales ||
       consultaPadronVerificada);
   const consultaPadronBloquea =
-    !esNota && bloqueaAccionesPorConsultaPadron(claveConsultaPadron, estadoConsultaPadron);
+    !esNota && bloqueaAccionesPorConsultaPadron(claveConsultaPadron, estadoPadronEfectivo);
 
   return (
     <Dialog
@@ -586,7 +589,7 @@ export function DialogoEmisionFiscal({
             receptorHeredado={contexto.receptorHeredado}
             letraSolicitada={confirmacion.letraSolicitada}
             confirmaDatosManuales={confirmacion.confirmaDatosManuales}
-            estadoConsultaPadron={estadoConsultaPadron}
+            estadoConsultaPadron={estadoPadronEfectivo}
             claveConsultaPadron={claveConsultaPadron}
             errores={erroresReceptor}
             disabled={

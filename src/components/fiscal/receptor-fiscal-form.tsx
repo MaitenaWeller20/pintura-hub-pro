@@ -6,11 +6,7 @@ import type { ReceptorFiscalConfirmado, TipoDocumentoFiscal } from "@/lib/fiscal
 import type { CondicionIva } from "@/lib/fiscal/codigos";
 import { adaptarReceptorFormularioALetra, type LetraSolicitada } from "./dialogo-emision-state";
 import type { CampoReceptorFiscal } from "./dialogo-emision-validacion";
-import {
-  mismaClaveConsultaPadron,
-  type ClaveConsultaPadron,
-  type EstadoConsultaPadronUi,
-} from "./padron-receptor";
+import { type ClaveConsultaPadron, type EstadoConsultaPadronUi } from "./padron-receptor";
 
 export type ReceptorFormulario =
   | { origen: "CLIENTE_COMERCIAL" }
@@ -96,16 +92,8 @@ function EstadoPadron({
   estado: EstadoConsultaPadronUi;
   claveActual: ClaveConsultaPadron | null;
 }) {
-  if (
-    !claveActual ||
-    (estado.estado === "INACTIVO" && mismaClaveConsultaPadron(estado.clave, claveActual))
-  )
-    return null;
-  if (
-    estado.estado === "VERIFICADO" &&
-    mismaClaveConsultaPadron(estado.clave, claveActual) &&
-    estado.receptor.cuit === claveActual.cuit
-  ) {
+  if (!claveActual || estado.estado === "INACTIVO") return null;
+  if (estado.estado === "VERIFICADO" && estado.receptor.cuit === claveActual.cuit) {
     return (
       <div
         role="status"
@@ -122,7 +110,7 @@ function EstadoPadron({
       </div>
     );
   }
-  if (estado.estado === "ERROR" && mismaClaveConsultaPadron(estado.clave, claveActual)) {
+  if (estado.estado === "ERROR") {
     return (
       <p
         role="alert"
@@ -201,7 +189,6 @@ export function ReceptorFiscalForm({
     letraSolicitada === "A" || (value.origen === "MANUAL" && value.condicion_iva === "EXENTO");
   const receptorVerificado =
     estadoConsultaPadron.estado === "VERIFICADO" &&
-    mismaClaveConsultaPadron(estadoConsultaPadron.clave, claveConsultaPadron) &&
     estadoConsultaPadron.receptor.cuit === claveConsultaPadron?.cuit
       ? estadoConsultaPadron.receptor
       : null;

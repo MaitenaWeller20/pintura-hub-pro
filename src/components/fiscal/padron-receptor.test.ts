@@ -6,6 +6,7 @@ import {
   claveParaConsultaPadron,
   crearControlConsultaPadron,
   cuitParaConsulta,
+  estadoConsultaPadronEfectivo,
   esConsultaPadronActual,
   iniciarConsultaPadron,
   invalidarConsultaPadron,
@@ -219,6 +220,42 @@ describe("clave fiscal de la consulta visual", () => {
 });
 
 describe("fencing monotónico de consultas", () => {
+  it("proyecta CONSULTANDO durante render si el estado almacenado pertenece a otro scope", () => {
+    const estadosViejos = [
+      { estado: "SIN_CUIT" as const },
+      { estado: "CONSULTANDO" as const, clave: CLAVE_COMERCIAL_A, token: 8 },
+      { estado: "INACTIVO" as const, clave: CLAVE_COMERCIAL_A },
+      {
+        estado: "VERIFICADO",
+        clave: CLAVE_COMERCIAL_A,
+        receptor: RECEPTOR_PADRON,
+      } as const,
+      { estado: "ERROR" as const, clave: CLAVE_COMERCIAL_A, mensaje: "Seguro" },
+    ];
+    for (const estadoViejo of estadosViejos) {
+      expect(estadoConsultaPadronEfectivo(CLAVE_COMERCIAL_B, estadoViejo)).toEqual({
+        estado: "CONSULTANDO",
+        clave: CLAVE_COMERCIAL_B,
+        token: 0,
+      });
+    }
+    expect(
+      estadoConsultaPadronEfectivo(null, {
+        estado: "VERIFICADO",
+        clave: CLAVE_COMERCIAL_A,
+        receptor: RECEPTOR_PADRON,
+      }),
+    ).toEqual({ estado: "SIN_CUIT" });
+    const verificadoActual = {
+      estado: "VERIFICADO" as const,
+      clave: CLAVE_COMERCIAL_B,
+      receptor: RECEPTOR_PADRON,
+    };
+    expect(estadoConsultaPadronEfectivo(CLAVE_COMERCIAL_B, verificadoActual)).toBe(
+      verificadoActual,
+    );
+  });
+
   it("cambiar el documento invalida en el acto el token en vuelo", () => {
     const control = crearControlConsultaPadron();
     const anterior = iniciarConsultaPadron(control, CLAVE_COMERCIAL_A);

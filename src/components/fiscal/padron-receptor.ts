@@ -93,6 +93,25 @@ export function mismaClaveConsultaPadron(
   return claveConsultaPadronId(izquierda) === claveConsultaPadronId(derecha);
 }
 
+/**
+ * Proyección sincrónica para render. El estado almacenado puede pertenecer al
+ * commit anterior; mientras el layout cleanup inicia el scope nuevo, la UI ya
+ * debe ocultar esa identidad y representar la consulta actual como pendiente.
+ */
+export function estadoConsultaPadronEfectivo(
+  claveActual: ClaveConsultaPadron | null,
+  estadoAlmacenado: EstadoConsultaPadronUi,
+): EstadoConsultaPadronUi {
+  if (!claveActual) return { estado: "SIN_CUIT" };
+  if (
+    estadoAlmacenado.estado !== "SIN_CUIT" &&
+    mismaClaveConsultaPadron(estadoAlmacenado.clave, claveActual)
+  ) {
+    return estadoAlmacenado;
+  }
+  return { estado: "CONSULTANDO", clave: claveActual, token: 0 };
+}
+
 export type ControlConsultaPadron = {
   secuencia: number;
   clave: ClaveConsultaPadron | null;

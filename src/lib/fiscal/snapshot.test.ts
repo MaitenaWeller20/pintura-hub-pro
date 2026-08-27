@@ -373,7 +373,7 @@ function notaInputV2() {
   return input;
 }
 
-function prepararReceptorArcaParaVerificacion(input: any) {
+function prepararReceptorArcaParaVerificacion(input: { receptor: Record<string, unknown> }) {
   input.receptor = {
     ...input.receptor,
     tipoDocumento: "CUIT",
@@ -650,8 +650,9 @@ describe("snapshot fiscal v2", () => {
     if (esVerificacion) {
       prepararReceptorArcaParaVerificacion(input);
       input.receptor.verificadoArcaAt = instante;
+    } else {
+      input.venta.fechaComercial = instante;
     }
-    else input.venta.fechaComercial = instante;
 
     expect(() => crearSnapshotFiscalV2(input)).toThrow(/instante|fecha|verificación/i);
   });
@@ -691,19 +692,22 @@ describe("snapshot fiscal v2", () => {
   it.each([
     ["0001-01-01", "0001-01-01T00:00:00Z", "0001-01-01T00:00:00.000Z"],
     ["2024-02-29", "2024-02-29T00:00:00Z", "2024-02-29T00:00:00.000Z"],
-  ])("acepta la fecha gregoriana válida %s en los cinco campos", (dia, instanteVenta, instanteArca) => {
-    const input = notaInputV2();
-    prepararReceptorArcaParaVerificacion(input);
-    input.venta.fechaComercial = instanteVenta;
-    input.receptor.verificadoArcaAt = instanteArca;
-    input.fechaComprobante = dia;
-    input.emisor.inicioActividades = dia;
-    input.cbtesAsoc[0].fecha = dia;
+  ])(
+    "acepta la fecha gregoriana válida %s en los cinco campos",
+    (dia, instanteVenta, instanteArca) => {
+      const input = notaInputV2();
+      prepararReceptorArcaParaVerificacion(input);
+      input.venta.fechaComercial = instanteVenta;
+      input.receptor.verificadoArcaAt = instanteArca;
+      input.fechaComprobante = dia;
+      input.emisor.inicioActividades = dia;
+      input.cbtesAsoc[0].fecha = dia;
 
-    const snapshot = crearSnapshotFiscalV2(input);
-    expect(snapshot.fechaComprobante).toBe(dia);
-    expect(snapshot.cbtesAsoc[0].fecha).toBe(dia);
-  });
+      const snapshot = crearSnapshotFiscalV2(input);
+      expect(snapshot.fechaComprobante).toBe(dia);
+      expect(snapshot.cbtesAsoc[0].fecha).toBe(dia);
+    },
+  );
 
   it.each(["00000000000", "30-71419966-4"])(
     "rechaza CUIT de emisor no canónico o inválido: %s",

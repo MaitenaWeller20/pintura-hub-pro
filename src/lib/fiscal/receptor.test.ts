@@ -232,9 +232,9 @@ describe("receptor fiscal confirmado", () => {
     ["una fecha de calendario imposible", { verificadoArcaAt: "2026-02-30T12:00:00.000Z" }],
     ["una fecha sin offset ISO válido", { verificadoArcaAt: "2026-08-22T12:00:00.000" }],
   ])("rechaza un receptor ARCA con %s", (_caso, cambios) => {
-    expect(() =>
-      validarReceptorFiscalConfirmado({ ...receptorRi, ...cambios }, 1_000),
-    ).toThrow(/ARCA|CUIT|DocTipo/i);
+    expect(() => validarReceptorFiscalConfirmado({ ...receptorRi, ...cambios }, 1_000)).toThrow(
+      /ARCA|CUIT|DocTipo/i,
+    );
   });
 
   it("impide que un origen distinto de ARCA declare una verificación ARCA", () => {

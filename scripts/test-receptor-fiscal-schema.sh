@@ -24,8 +24,12 @@ check "ventas tiene los doce campos fiscales nuevos" "12" \
 
 check "profiles.puede_facturar nace false" "false" \
   "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='puede_facturar'")"
+check "profiles.puede_emitir_nc_periodo nace false" "false" \
+  "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='puede_emitir_nc_periodo'")"
 check "schema post-corte nace en mantenimiento y legacy retirado" "false|false" \
   "$(q "select facturacion_receptor_v2_enabled::text||'|'||facturacion_legacy_writer_enabled::text from public.settings where id=true")"
+check "NC por período nace deshabilitada" "false" \
+  "$(q "select nota_credito_periodo_enabled::text from public.settings where id=true")"
 check "legacy no puede reactivarse y su default es false" "false|1" \
   "$(q "select column_default||'|'||(select count(*) from pg_constraint where conrelid='public.settings'::regclass and conname='ck_settings_legacy_writer_retirado')::text from information_schema.columns where table_schema='public' and table_name='settings' and column_name='facturacion_legacy_writer_enabled'")"
 check "firma antigua de presupuesto fue retirada" "0" \

@@ -178,6 +178,29 @@ describe("nota de crédito fiscal por período: fechas, importes y liquidación"
     ).toEqual({ netoCentavos: 11248, ivaCentavos: 2231, totalCentavos: 13479 });
   });
 
+  it("rechaza directamente líneas no finitas, no positivas o con IVA no permitido", () => {
+    for (const linea of [
+      { cantidad: 0, precioUnitarioSinIva: 100, ivaPorcentaje: 21 },
+      { cantidad: -1, precioUnitarioSinIva: 100, ivaPorcentaje: 21 },
+      { cantidad: 1, precioUnitarioSinIva: 0, ivaPorcentaje: 21 },
+      { cantidad: 1, precioUnitarioSinIva: -100, ivaPorcentaje: 21 },
+      { cantidad: Number.NaN, precioUnitarioSinIva: 100, ivaPorcentaje: 21 },
+      { cantidad: 1, precioUnitarioSinIva: Number.POSITIVE_INFINITY, ivaPorcentaje: 21 },
+      { cantidad: 1, precioUnitarioSinIva: 100, ivaPorcentaje: Number.NaN },
+      { cantidad: 1, precioUnitarioSinIva: 100, ivaPorcentaje: 13 },
+    ]) {
+      expect(() => calcularTotalesNotaCreditoPeriodo([linea])).toThrow(/línea|IVA|centavos/i);
+    }
+  });
+
+  it("rechaza una línea cuyo resultado excede los centavos seguros", () => {
+    expect(() =>
+      calcularTotalesNotaCreditoPeriodo([
+        { cantidad: Number.MAX_SAFE_INTEGER, precioUnitarioSinIva: 2, ivaPorcentaje: 21 },
+      ]),
+    ).toThrow(/centavos/i);
+  });
+
   it("exige reintegro completo al centavo y sin cuenta corriente", () => {
     expect(() =>
       validarLiquidacionNotaCreditoPeriodo({
@@ -292,5 +315,11 @@ describe("nota de crédito fiscal por período: asociación y letra", () => {
     ] as const) {
       expect(determinarLetraNcPeriodo("MONOTRIBUTO", receptor)).toBe("C");
     }
+    expect(() => determinarLetraNcPeriodo("MONOTRIBUTO", "DESCONOCIDO" as never)).toThrow(
+      /receptor|soportada/i,
+    );
+    expect(() => determinarLetraNcPeriodo("MONOTRIBUTO", undefined as never)).toThrow(
+      /receptor|soportada/i,
+    );
   });
 });

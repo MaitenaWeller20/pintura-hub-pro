@@ -189,6 +189,43 @@ export function validarPeriodoAsociado(input: {
 
 const redondear2 = (importe: number): number => Math.round((importe + Number.EPSILON) * 100) / 100;
 
+function centavosSeguros(importe: number, concepto: string, admiteCero = false): number {
+  const centavos = Math.round(importe * 100);
+  if (
+    !Number.isFinite(importe) ||
+    !Number.isSafeInteger(centavos) ||
+    centavos < 0 ||
+    (!admiteCero && centavos === 0)
+  ) {
+    throw new Error(`El ${concepto} debe producir centavos seguros y positivos.`);
+  }
+  return centavos;
+}
+
+function sumarCentavosSeguros(actual: number, siguiente: number, concepto: string): number {
+  const total = actual + siguiente;
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new Error(`El total de ${concepto} excede los centavos seguros.`);
+  }
+  return total;
+}
+
+function validarLineaCalculableNcPeriodo(linea: LineaCalculableNcPeriodo): void {
+  if (
+    !Number.isFinite(linea.cantidad) ||
+    !Number.isFinite(linea.precioUnitarioSinIva) ||
+    !Number.isFinite(linea.ivaPorcentaje)
+  ) {
+    throw new Error("La línea de la nota de crédito debe tener importes finitos.");
+  }
+  if (linea.cantidad <= 0 || linea.precioUnitarioSinIva <= 0) {
+    throw new Error("La línea de la nota de crédito debe tener cantidad y precio positivos.");
+  }
+  if (!(ALICUOTAS_SOPORTADAS as readonly number[]).includes(linea.ivaPorcentaje)) {
+    throw new Error("La línea de la nota de crédito tiene un IVA no permitido.");
+  }
+}
+
 /**
  * Los montos se calculan del catálogo/override resuelto en servidor. Se
  * devuelven como magnitudes positivas enteras: la persistencia aplica una única
@@ -202,12 +239,25 @@ export function calcularTotalesNotaCreditoPeriodo(
   let totalCentavos = 0;
 
   for (const linea of lineas) {
+    validarLineaCalculableNcPeriodo(linea);
     const netoLinea = redondear2(linea.cantidad * linea.precioUnitarioSinIva);
     const ivaLinea = redondear2((netoLinea * linea.ivaPorcentaje) / 100);
     const totalLinea = redondear2(netoLinea + ivaLinea);
-    netoCentavos += Math.round(netoLinea * 100);
-    ivaCentavos += Math.round(ivaLinea * 100);
-    totalCentavos += Math.round(totalLinea * 100);
+    netoCentavos = sumarCentavosSeguros(
+      netoCentavos,
+      centavosSeguros(netoLinea, "neto de la línea"),
+      "neto",
+    );
+    ivaCentavos = sumarCentavosSeguros(
+      ivaCentavos,
+      centavosSeguros(ivaLinea, "IVA de la línea", true),
+      "IVA",
+    );
+    totalCentavos = sumarCentavosSeguros(
+      totalCentavos,
+      centavosSeguros(totalLinea, "total de la línea"),
+      "total",
+    );
   }
 
   return { netoCentavos, ivaCentavos, totalCentavos };
@@ -294,6 +344,14 @@ export function validarAsociacionFiscal(
 }
 
 export function determinarLetraNcPeriodo(emisor: CondicionIva, receptor: CondicionIva): Letra {
+  if (
+    receptor !== "RESPONSABLE_INSCRIPTO" &&
+    receptor !== "MONOTRIBUTO" &&
+    receptor !== "EXENTO" &&
+    receptor !== "CONSUMIDOR_FINAL"
+  ) {
+    throw new Error("La condición de IVA del receptor no está soportada para una NC por período.");
+  }
   if (emisor === "MONOTRIBUTO") return "C";
   if (emisor === "RESPONSABLE_INSCRIPTO") {
     if (receptor === "RESPONSABLE_INSCRIPTO" || receptor === "MONOTRIBUTO") return "A";

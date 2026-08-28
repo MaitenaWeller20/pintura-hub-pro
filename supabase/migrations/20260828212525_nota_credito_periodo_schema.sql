@@ -302,16 +302,18 @@ BEGIN
   IF TG_OP='UPDATE' THEN
     IF OLD.nc_periodo_modalidad IS NOT NULL
        OR NEW.nc_periodo_modalidad IS NOT NULL
+       OR OLD.afip_estado='APROBADO'
        OR OLD.nc_efectos_aplicados_at IS NOT NULL THEN
-      RAISE EXCEPTION 'La nota de crédito por período es inmutable fuera de la transición fiscal'
+      RAISE EXCEPTION 'La nota de crédito por período o venta aprobada es inmutable fuera de la transición fiscal'
         USING ERRCODE='42501';
     END IF;
     RETURN NEW;
   END IF;
 
   IF OLD.nc_periodo_modalidad IS NOT NULL
+     OR OLD.afip_estado='APROBADO'
      OR OLD.nc_efectos_aplicados_at IS NOT NULL THEN
-    RAISE EXCEPTION 'La nota de crédito por período no se elimina directamente'
+    RAISE EXCEPTION 'La nota de crédito por período o venta aprobada no se elimina directamente'
       USING ERRCODE='42501';
   END IF;
   RETURN OLD;
@@ -361,10 +363,11 @@ BEGIN
      WHERE v.id=ANY(v_venta_ids)
        AND (
          v.nc_periodo_modalidad IS NOT NULL
+         OR v.afip_estado='APROBADO'
          OR v.nc_efectos_aplicados_at IS NOT NULL
        )
   ) THEN
-    RAISE EXCEPTION 'Los ítems y pagos de una nota de crédito por período son inmutables fuera de funciones del sistema'
+    RAISE EXCEPTION 'Los ítems y pagos de una nota de crédito por período o venta aprobada son inmutables fuera de funciones del sistema'
       USING ERRCODE='42501';
   END IF;
 
@@ -385,3 +388,9 @@ CREATE TRIGGER trg_guard_venta_items_nc_periodo
 CREATE TRIGGER trg_guard_venta_pagos_nc_periodo
   BEFORE INSERT OR UPDATE OR DELETE ON public.venta_pagos
   FOR EACH ROW EXECUTE FUNCTION public.guard_venta_hijos_nc_periodo();
+
+-- El backfill es una operación de mantenimiento service_role-only que también
+-- normaliza evidencia de filas cuyo OLD ya está APROBADO. Ejecutarlo con el
+-- dueño de tabla conserva ese flujo sin convertir service_role directo en un
+-- escritor post-CAE.
+ALTER FUNCTION public.backfill_cola_fiscal(boolean) SECURITY DEFINER;

@@ -268,17 +268,42 @@ INSERT INTO public.ventas(
   'APROBADO','CAE-NC-PERIODO',921004,'30714199664',
   'DEVOLUCION_PRODUCTOS','2026-05-01','2026-05-31','Devolución aprobada','REINTEGRO',repeat('4',64)
 );
+-- Venta fiscal aprobada sin marcador de período: el estado fiscal por sí solo
+-- debe volver inmutables al padre y a sus hijos para todo no-owner.
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,estado,
+  afip_estado,cae,afip_numero,afip_emisor_cuit
+) VALUES (
+  'd2100000-0000-0000-0000-000000000005',
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b2100000-0000-0000-0000-000000000001','a2100000-0000-0000-0000-000000000002',
+  'NC-PERIODO-APROBADA-SIN-MARCADOR','VENTA','ACTIVA',
+  'APROBADO','CAE-APROBADA-SIN-MARCADOR',921005,'30714199664'
+);
+-- Caso separado para demostrar que un flujo legítimo aún puede llegar a
+-- APROBADO: OLD no está aprobado y el guard no debe mirar NEW.afip_estado.
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,estado,
+  afip_estado
+) VALUES (
+  'd2100000-0000-0000-0000-000000000006',
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b2100000-0000-0000-0000-000000000001','a2100000-0000-0000-0000-000000000002',
+  'NC-PERIODO-TRANSICION-A-APROBADA','VENTA','ACTIVA','PENDIENTE'
+);
 
 INSERT INTO public.venta_items(
   id,venta_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,
   iva_porcentaje,subtotal_sin_iva,iva_monto,subtotal_con_iva
 ) VALUES
   ('e2100000-0000-0000-0000-000000000001','d2100000-0000-0000-0000-000000000002','PER-1','Item período',-1,100,21,-100,-21,-121),
-  ('e2100000-0000-0000-0000-000000000002','d2100000-0000-0000-0000-000000000004','APR-1','Item aprobado',-1,100,21,-100,-21,-121);
+  ('e2100000-0000-0000-0000-000000000002','d2100000-0000-0000-0000-000000000004','APR-1','Item aprobado',-1,100,21,-100,-21,-121),
+  ('e2100000-0000-0000-0000-000000000003','d2100000-0000-0000-0000-000000000005','APR-2','Item aprobado sin marcador',1,100,21,100,21,121);
 INSERT INTO public.venta_pagos(id,venta_id,forma_pago,monto)
 VALUES
   ('f2100000-0000-0000-0000-000000000001','d2100000-0000-0000-0000-000000000002','EFECTIVO',-121),
-  ('f2100000-0000-0000-0000-000000000002','d2100000-0000-0000-0000-000000000004','EFECTIVO',-121);
+  ('f2100000-0000-0000-0000-000000000002','d2100000-0000-0000-0000-000000000004','EFECTIVO',-121),
+  ('f2100000-0000-0000-0000-000000000003','d2100000-0000-0000-0000-000000000005','EFECTIVO',121);
 INSERT INTO public.nota_credito_periodo_reintegros(venta_id,forma_pago,monto,orden)
 VALUES ('d2100000-0000-0000-0000-000000000002','EFECTIVO',121,0);
 
@@ -404,6 +429,85 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+SELECT set_config('request.jwt.claims','{}',true);
+
+-- `service_role` no es dueño de las tablas: una fila cuyo OLD ya está
+-- APROBADO y todos sus hijos quedan protegidos aun sin marcador de período.
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims','{"role":"service_role"}',true);
+DO $$
+BEGIN
+  BEGIN
+    UPDATE public.ventas SET observaciones='mutación post-CAE'
+     WHERE id='d2100000-0000-0000-0000-000000000005';
+    RAISE EXCEPTION 'service_role actualizó una venta ya aprobada' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.ventas
+     WHERE id='d2100000-0000-0000-0000-000000000005';
+    RAISE EXCEPTION 'service_role eliminó una venta ya aprobada' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO public.venta_items(
+      venta_id,codigo,descripcion,cantidad,precio_unitario_sin_iva,
+      iva_porcentaje,subtotal_sin_iva,iva_monto,subtotal_con_iva
+    ) VALUES (
+      'd2100000-0000-0000-0000-000000000005','APR-DIRECTO','Directo',1,10,21,10,2.1,12.1
+    );
+    RAISE EXCEPTION 'service_role insertó un item post-CAE' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE public.venta_items SET descripcion='mutado post-CAE'
+     WHERE id='e2100000-0000-0000-0000-000000000003';
+    RAISE EXCEPTION 'service_role actualizó un item post-CAE' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.venta_items
+     WHERE id='e2100000-0000-0000-0000-000000000003';
+    RAISE EXCEPTION 'service_role eliminó un item post-CAE' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO public.venta_pagos(venta_id,forma_pago,monto)
+    VALUES ('d2100000-0000-0000-0000-000000000005','EFECTIVO',1);
+    RAISE EXCEPTION 'service_role insertó un pago post-CAE' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE public.venta_pagos SET monto=1
+     WHERE id='f2100000-0000-0000-0000-000000000003';
+    RAISE EXCEPTION 'service_role actualizó un pago post-CAE' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM public.venta_pagos
+     WHERE id='f2100000-0000-0000-0000-000000000003';
+    RAISE EXCEPTION 'service_role eliminó un pago post-CAE' USING ERRCODE='ZX001';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- La transición hacia APROBADO sigue disponible porque OLD no estaba aprobado.
+UPDATE public.ventas
+   SET afip_estado='APROBADO',
+       cae='CAE-TRANSICION-VALIDA',
+       afip_numero=921006,
+       afip_emisor_cuit='30714199664'
+ WHERE id='d2100000-0000-0000-0000-000000000006';
+DO $$
+BEGIN
+  IF (SELECT afip_estado FROM public.ventas
+       WHERE id='d2100000-0000-0000-0000-000000000006') <> 'APROBADO' THEN
+    RAISE EXCEPTION 'la transición legítima hacia APROBADO fue bloqueada';
+  END IF;
+END $$;
 RESET ROLE;
 SELECT set_config('request.jwt.claims','{}',true);
 

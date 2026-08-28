@@ -88,7 +88,7 @@ check "service_role tiene sólo lectura/alta/actualización de intentos" "true|t
 
 check "puede_facturar tiene una única firma invoker" "1|true|false" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='_uid uuid')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='puede_facturar'")"
-check "backfill tiene una única firma invoker" "1|true|false" \
+check "backfill privilegiado tiene una única firma definer" "1|true|true" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_aplicar boolean')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='backfill_cola_fiscal'")"
 check "desactivar favorito tiene una única firma definer" "1|true|true" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_receptor_id uuid')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='desactivar_receptor_fiscal'")"
@@ -102,8 +102,8 @@ check "PUBLIC no ejecuta rutinas fiscales o privilegiadas nuevas" "0" \
   "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','desactivar_receptor_fiscal','guardar_receptor_fiscal_desde_venta','administrar_puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
 check "authenticated y service_role ejecutan puede_facturar" "true|true" \
   "$(q "select has_function_privilege('authenticated','public.puede_facturar(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.puede_facturar(uuid)','execute')::text")"
-check "el navegador no ejecuta backfill" "false|false" \
-  "$(q "select has_function_privilege('anon','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.backfill_cola_fiscal(boolean)','execute')::text")"
+check "sólo service_role ejecuta backfill" "false|false|true" \
+  "$(q "select has_function_privilege('anon','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('service_role','public.backfill_cola_fiscal(boolean)','execute')::text")"
 check "el navegador no ejecuta directamente el guard de perfiles" "false|false" \
   "$(q "select has_function_privilege('anon','public.guard_profiles_columnas()','execute')::text||'|'||has_function_privilege('authenticated','public.guard_profiles_columnas()','execute')::text")"
 check "sólo authenticated ejecuta la desactivación controlada" "false|true|false" \

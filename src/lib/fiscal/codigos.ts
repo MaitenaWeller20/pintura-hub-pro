@@ -56,8 +56,16 @@ export const esComprobanteFiscal = (tipo: string): boolean => TIPOS_FISCALES.has
  * obtener un CAE. Antes estas notas mostraban el botón de emitir y fallaban
  * siempre, quedando como pendientes irresolubles.
  */
-export function esNotaInterna(tipo: string, afipCbteAsocId: string | null | undefined): boolean {
-  return (tipo === "NOTA_CREDITO" || tipo === "NOTA_DEBITO") && !afipCbteAsocId;
+export function esNotaInterna(
+  tipo: string,
+  afipCbteAsocId: string | null | undefined,
+  periodoDesde?: string | null,
+  periodoHasta?: string | null,
+): boolean {
+  const tienePeriodoCompleto = Boolean(periodoDesde && periodoHasta);
+  return (
+    (tipo === "NOTA_CREDITO" || tipo === "NOTA_DEBITO") && !afipCbteAsocId && !tienePeriodoCompleto
+  );
 }
 
 /** El cliente de quimex mapea su tipo impositivo al del emisor/receptor de AFIP. */
@@ -159,6 +167,18 @@ export function cbteTipoAfip(tipo: string, letra: Letra): number {
     throw new Error(`Tipo de comprobante sin equivalente en AFIP: ${tipo}`);
   }
   return porLetra[letra];
+}
+
+/** Una NC por período sólo usa los tipos estándar de WSFE, nunca FCE. */
+export function cbteTipoAfipNcPeriodo(letra: Letra): number {
+  if (letra !== "A" && letra !== "B" && letra !== "C") {
+    throw new Error("La NC por período sólo admite los CbteTipo ARCA 3, 8 o 13.");
+  }
+  const cbteTipo = cbteTipoAfip("NOTA_CREDITO", letra);
+  if (![3, 8, 13].includes(cbteTipo)) {
+    throw new Error("La NC por período sólo admite los CbteTipo ARCA 3, 8 o 13.");
+  }
+  return cbteTipo;
 }
 
 /**

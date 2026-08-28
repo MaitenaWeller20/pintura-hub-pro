@@ -2,7 +2,7 @@
 
 **Fecha:** 28/08/2026
 
-**Estado:** diseño aprobado en conversación; pendiente de revisión del documento
+**Estado:** diseño aprobado por el usuario
 
 **Clasificación:** cambio arquitectónico, porque atraviesa UI, autorización, modelo fiscal,
 persistencia comercial, stock, caja, cuenta corriente y recuperación ante respuestas inciertas.

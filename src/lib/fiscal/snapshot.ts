@@ -311,13 +311,15 @@ export type SnapshotFiscalV2Input = Omit<SnapshotFiscalV2, "hash" | "version">;
 type SnapshotFiscalV2Body = Omit<SnapshotFiscalV2, "hash">;
 
 export type PeriodoAsocSnapshotFiscal = { desde: string; hasta: string };
+export type VentaSnapshotFiscalV3 = Omit<SnapshotFiscalV2["venta"], "condicionVenta">;
 
 export type SnapshotFiscalV3 = Omit<
   SnapshotFiscalV2,
-  "version" | "hash" | "origen" | "comprobanteOriginalId" | "cbtesAsoc"
+  "version" | "hash" | "venta" | "origen" | "comprobanteOriginalId" | "cbtesAsoc"
 > & {
   version: 3;
   hash: string;
+  venta: VentaSnapshotFiscalV3;
   origen: "PERIODO_ASOCIADO";
   comprobanteOriginalId: null;
   cbtesAsoc: [];
@@ -330,8 +332,12 @@ export type SnapshotFiscalV3 = Omit<
 
 export type SnapshotFiscalV3Input = Omit<
   SnapshotFiscalV3,
-  "hash" | "version" | "origen" | "comprobanteOriginalId" | "cbtesAsoc"
->;
+  "hash" | "version" | "venta" | "origen" | "comprobanteOriginalId" | "cbtesAsoc"
+> & {
+  venta: VentaSnapshotFiscalV3 & {
+    condicionVenta?: SnapshotFiscalV2["venta"]["condicionVenta"];
+  };
+};
 type SnapshotFiscalV3Body = Omit<SnapshotFiscalV3, "hash">;
 export type SnapshotFiscalPersistido = SnapshotFiscalV2 | SnapshotFiscalV3;
 
@@ -1278,6 +1284,20 @@ const CLAVES_CUERPO_V3 = [
   "notaCredito",
 ] as const;
 
+function esEspacioMotivoFiscal(value: string): boolean {
+  const codePoint = value.codePointAt(0)!;
+  return (codePoint >= 0x09 && codePoint <= 0x0d) || codePoint === 0x20;
+}
+
+function longitudMotivoFiscal(value: string): number {
+  const codePoints = [...value];
+  let desde = 0;
+  let hasta = codePoints.length;
+  while (desde < hasta && esEspacioMotivoFiscal(codePoints[desde])) desde += 1;
+  while (hasta > desde && esEspacioMotivoFiscal(codePoints[hasta - 1])) hasta -= 1;
+  return hasta - desde;
+}
+
 function validarCuerpoV3(
   value: Record<string, unknown>,
   exigirOrdenCanonico: boolean,
@@ -1310,11 +1330,13 @@ function validarCuerpoV3(
     throw new Error("notaCredito.modalidad es desconocida.");
   }
   const motivo = texto(notaCredito.motivo, "notaCredito.motivo")!;
-  if (motivo.trim().length < 5) {
-    throw new Error("notaCredito.motivo debe tener al menos 5 caracteres útiles.");
+  const longitudMotivo = longitudMotivoFiscal(motivo);
+  if (longitudMotivo < 5 || longitudMotivo > 500) {
+    throw new Error("notaCredito.motivo debe tener entre 5 y 500 code points útiles.");
   }
 
   const venta = objeto(value.venta, "venta");
+  clavesExactas(venta, ["id", "numeroComercial", "tipoComprobante", "fechaComercial"], "venta v3");
   if (venta.tipoComprobante !== "NOTA_CREDITO") {
     throw new Error("El snapshot v3 por período exige tipoComprobante NOTA_CREDITO.");
   }
@@ -1374,6 +1396,7 @@ function validarCuerpoV3(
   const cuerpoV2: Record<string, unknown> = {
     ...value,
     version: 2,
+    venta: { ...venta, condicionVenta: "CONTADO" },
     emisor: value.letra === "C" ? { ...emisor, condicionIva: "RESPONSABLE_INSCRIPTO" } : emisor,
     identidad: identidadValidacion,
     letra: letraValidacion,
@@ -1407,7 +1430,12 @@ function validarCuerpoV3(
 function ordenarCuerpoV3(body: SnapshotFiscalV3Body): SnapshotFiscalV3Body {
   return {
     version: 3,
-    venta: body.venta,
+    venta: {
+      id: body.venta.id,
+      numeroComercial: body.venta.numeroComercial,
+      tipoComprobante: body.venta.tipoComprobante,
+      fechaComercial: body.venta.fechaComercial,
+    },
     items: body.items,
     emisor: body.emisor,
     sucursal: body.sucursal,
@@ -1449,9 +1477,30 @@ export function crearSnapshotFiscalV3(input: SnapshotFiscalV3Input): SnapshotFis
     clonarCanonico(input, new WeakSet(), null, true),
     "SnapshotFiscalV3Input",
   );
+  const ventaInput = objeto(normalized.venta, "venta v3 input");
+  const incluyeCondicionVenta = Object.prototype.hasOwnProperty.call(ventaInput, "condicionVenta");
+  clavesExactas(
+    ventaInput,
+    [
+      "id",
+      "numeroComercial",
+      "tipoComprobante",
+      "fechaComercial",
+      ...(incluyeCondicionVenta ? (["condicionVenta"] as const) : []),
+    ],
+    "venta v3 input",
+  );
+  if (
+    incluyeCondicionVenta &&
+    !["CONTADO", "CTA_CTE"].includes(String(ventaInput.condicionVenta))
+  ) {
+    throw new Error("venta.condicionVenta de entrada es desconocida.");
+  }
+  const { condicionVenta: _condicionVentaComercial, ...ventaFiscal } = ventaInput;
   const body = validarCuerpoV3(
     {
       ...normalized,
+      venta: ventaFiscal,
       version: 3,
       origen: "PERIODO_ASOCIADO",
       comprobanteOriginalId: null,

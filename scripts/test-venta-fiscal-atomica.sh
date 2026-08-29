@@ -4,7 +4,11 @@ cd "$(dirname "$0")/.."
 
 PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
 DB="${DB:-supabase_db_${PROJECT_ID}}"
-PSQL=(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1)
+PARITY_INPUT="$(jq -c '.input' test/fixtures/fiscal-snapshot-parity-v2.json)"
+PSQL=(
+  docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1
+  -v "parity_input=$PARITY_INPUT"
+)
 
 "${PSQL[@]}" <<'SQL'
 BEGIN;
@@ -517,23 +521,54 @@ UPDATE public.ventas v
        afip_error='rechazo T4',afip_error_clase='ARCA',afip_error_codigo='T4'
   FROM t_collection_sales s
  WHERE s.state='ERROR_CORREGIBLE' AND v.id=s.venta_id;
+
+-- Los estados obligatorios usan evidencia v2 canónica: la frontera persistida
+-- rechaza hashes declarativos y snapshots reducidos aun para el owner.
+CREATE TEMP TABLE t_collection_fiscal_evidence(
+  state text PRIMARY KEY,
+  punto_venta integer NOT NULL,
+  numero integer NOT NULL,
+  snapshot jsonb NOT NULL
+);
+WITH evidence(state,punto_venta,numero) AS (
+  VALUES ('RECONCILIAR',995,995001),('APROBADO',996,996001)
+), bodies AS (
+  SELECT
+    e.*,
+    (:'parity_input'::jsonb - 'hash') || jsonb_build_object(
+      'identidad',
+      (:'parity_input'::jsonb->'identidad') || jsonb_build_object(
+        'puntoVenta',e.punto_venta,
+        'numero',e.numero
+      )
+    ) AS body
+  FROM evidence e
+)
+INSERT INTO t_collection_fiscal_evidence(state,punto_venta,numero,snapshot)
+SELECT
+  state,punto_venta,numero,
+  body || jsonb_build_object('hash',public.fiscal_snapshot_hash(body))
+FROM bodies;
+
 UPDATE public.ventas v
    SET afip_estado='RECONCILIAR',afip_version=2,
-       afip_emisor_cuit='30714199664',afip_punto_venta=995,afip_cbte_tipo=6,
-       afip_numero=995001,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
-       afip_fecha_comprobante='2026-08-22',afip_imp_total=1210,
-       afip_snapshot='{"version":2,"caso":"reconciliar"}',
-       afip_snapshot_hash=repeat('b',64)
+       afip_emisor_cuit='30714199664',afip_punto_venta=e.punto_venta,afip_cbte_tipo=6,
+       afip_numero=e.numero,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
+       afip_fecha_comprobante='2026-08-22',afip_imp_total=1380,
+       afip_snapshot=e.snapshot,
+       afip_snapshot_hash=e.snapshot->>'hash'
   FROM t_collection_sales s
+  JOIN t_collection_fiscal_evidence e ON e.state=s.state
  WHERE s.state='RECONCILIAR' AND v.id=s.venta_id;
 UPDATE public.ventas v
    SET afip_estado='APROBADO',afip_version=2,
-       afip_emisor_cuit='30714199664',afip_punto_venta=996,afip_cbte_tipo=6,
-       afip_numero=996001,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
-       afip_fecha_comprobante='2026-08-22',afip_imp_total=1210,
-       afip_snapshot='{"version":2,"caso":"aprobado"}',
-       afip_snapshot_hash=repeat('c',64),cae='CAE-T4-COBRO',cae_vencimiento='2026-09-01'
+       afip_emisor_cuit='30714199664',afip_punto_venta=e.punto_venta,afip_cbte_tipo=6,
+       afip_numero=e.numero,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
+       afip_fecha_comprobante='2026-08-22',afip_imp_total=1380,
+       afip_snapshot=e.snapshot,
+       afip_snapshot_hash=e.snapshot->>'hash',cae='CAE-T4-COBRO',cae_vencimiento='2026-09-01'
   FROM t_collection_sales s
+  JOIN t_collection_fiscal_evidence e ON e.state=s.state
  WHERE s.state='APROBADO' AND v.id=s.venta_id;
 
 -- Los replays de estados con evidencia tampoco pueden inicializarlos de nuevo.

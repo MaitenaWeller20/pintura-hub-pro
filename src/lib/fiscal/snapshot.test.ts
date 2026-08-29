@@ -409,8 +409,8 @@ function inputV2ConReceptorRi() {
   return input;
 }
 
-function inputV2SinTributos() {
-  const input = inputV2() as any;
+function inputV2SinTributos(base: ReturnType<typeof inputV2> = inputV2()) {
+  const input = structuredClone(base) as any;
   input.items = input.items.map((item: any) => ({
     ...item,
     productoId: item.productoId ?? "71000000-0000-4000-8000-000000000102",
@@ -435,6 +435,51 @@ function inputV3() {
   input.notaCredito = {
     modalidad: "DEVOLUCION_PRODUCTOS",
     motivo: "Devolución de productos del período",
+  };
+  return input;
+}
+
+function inputV3A() {
+  const input = structuredClone(
+    crearSnapshotFiscalV2(inputV2SinTributos(inputV2ConReceptorRi())),
+  ) as ReturnType<typeof inputV3>;
+  delete input.version;
+  delete input.hash;
+  delete input.origen;
+  delete input.comprobanteOriginalId;
+  delete input.cbtesAsoc;
+  input.venta.tipoComprobante = "NOTA_CREDITO";
+  input.identidad.cbteTipo = 3;
+  input.periodoAsoc = { desde: "2026-08-01", hasta: "2026-08-20" };
+  input.notaCredito = {
+    modalidad: "DEVOLUCION_PRODUCTOS",
+    motivo: "Devolución de productos del período",
+  };
+  return input;
+}
+
+function inputV3C() {
+  const input = inputV3();
+  input.emisor.condicionIva = "MONOTRIBUTO";
+  input.letra = "C";
+  input.identidad.cbteTipo = 13;
+  input.ivaContenido = "0.00";
+  return input;
+}
+
+function inputV3Bonificacion() {
+  const input = inputV3();
+  input.items = [{ ...input.items[0], productoId: null }];
+  input.importeNeto = "1000.00";
+  input.importeExento = "0.00";
+  input.importeNoGravado = "0.00";
+  input.importeIva = "210.00";
+  input.importeTotal = "1210.00";
+  input.alicuotasIva = [{ id: 5, baseImponible: "1000.00", importe: "210.00" }];
+  input.ivaContenido = "210.00";
+  input.notaCredito = {
+    modalidad: "BONIFICACION_AJUSTE",
+    motivo: "Bonificación comercial del período",
   };
   return input;
 }
@@ -487,6 +532,13 @@ describe("snapshot fiscal v3 por período", () => {
     });
     expect(snapshot).not.toHaveProperty("resolucion");
     expect(snapshot.notaCredito).not.toHaveProperty("resolucion");
+    expect(snapshot.venta).not.toHaveProperty("condicionVenta");
+    expect(Object.keys(snapshot.venta)).toEqual([
+      "id",
+      "numeroComercial",
+      "tipoComprobante",
+      "fechaComercial",
+    ]);
     expect(snapshot.importeTotal).toBe(v2.importeTotal);
     expect(Number(snapshot.importeTotal)).toBeGreaterThan(0);
     expect(snapshot.importeNeto).toBe(v2.importeNeto);
@@ -494,6 +546,75 @@ describe("snapshot fiscal v3 por período", () => {
     expect(snapshot.items).toEqual(v2.items);
     expect(snapshot.receptor).toEqual(v2.receptor);
     expect(snapshot.identidad).toEqual({ ...v2.identidad, cbteTipo: 8 });
+    expect(validarSnapshotFiscalV3(snapshot)).toEqual(snapshot);
+  });
+
+  it("excluye la liquidación comercial de los bytes y del hash fiscal", () => {
+    const contado = inputV3();
+    const cuentaCorriente = structuredClone(contado);
+    contado.venta.condicionVenta = "CONTADO";
+    cuentaCorriente.venta.condicionVenta = "CTA_CTE";
+
+    const snapshotContado = crearSnapshotFiscalV3(contado);
+    const snapshotCuentaCorriente = crearSnapshotFiscalV3(cuentaCorriente);
+
+    expect(snapshotContado).toEqual(snapshotCuentaCorriente);
+    expect(snapshotContado.hash).toBe(snapshotCuentaCorriente.hash);
+    expect(JSON.stringify(snapshotContado)).toBe(JSON.stringify(snapshotCuentaCorriente));
+  });
+
+  it("rechaza condicionVenta si reaparece en un snapshot v3 persistido", () => {
+    const snapshot = crearSnapshotFiscalV3(inputV3());
+    const { hash: _hash, ...body } = structuredClone(snapshot);
+    const bodyConCondicion = {
+      ...body,
+      venta: { ...body.venta, condicionVenta: "CONTADO" },
+    };
+    const adulterado = {
+      ...bodyConCondicion,
+      hash: calcularHashSnapshotFiscal(bodyConCondicion),
+    };
+
+    expect(() => validarSnapshotFiscalV3(adulterado)).toThrow(/venta.*clave|clave.*venta/i);
+  });
+
+  it.each([
+    ["tab/newline corto", "\tabc\n", false],
+    ["emoji de cuatro code points", "😀abc", false],
+    ["límite inferior ASCII", "abcde", true],
+    ["límite inferior Unicode", "😀abcd", true],
+    ["límite superior", "a".repeat(500), true],
+    ["sobre el límite superior", "a".repeat(501), false],
+  ])("aplica longitud 5..500 por code points al motivo: %s", (_caso, motivo, valido) => {
+    const input = inputV3();
+    input.notaCredito.motivo = motivo;
+    const crear = () => crearSnapshotFiscalV3(input);
+
+    if (valido) expect(crear).not.toThrow();
+    else expect(crear).toThrow(/motivo/i);
+  });
+
+  it.each([
+    ["A", inputV3A],
+    ["B", inputV3],
+    ["C", inputV3C],
+  ] as const)("crea una NC %s sin metadata comercial", (letra, crearInput) => {
+    const snapshot = crearSnapshotFiscalV3(crearInput());
+
+    expect(snapshot.letra).toBe(letra);
+    expect(snapshot.identidad.cbteTipo).toBe(letra === "A" ? 3 : letra === "B" ? 8 : 13);
+    expect(snapshot.venta).not.toHaveProperty("condicionVenta");
+    expect(validarSnapshotFiscalV3(snapshot)).toEqual(snapshot);
+  });
+
+  it.each([
+    ["DEVOLUCION_PRODUCTOS", inputV3],
+    ["BONIFICACION_AJUSTE", inputV3Bonificacion],
+  ] as const)("crea la modalidad %s con sus líneas canónicas", (modalidad, crearInput) => {
+    const snapshot = crearSnapshotFiscalV3(crearInput());
+
+    expect(snapshot.notaCredito.modalidad).toBe(modalidad);
+    expect(snapshot.venta).not.toHaveProperty("condicionVenta");
     expect(validarSnapshotFiscalV3(snapshot)).toEqual(snapshot);
   });
 

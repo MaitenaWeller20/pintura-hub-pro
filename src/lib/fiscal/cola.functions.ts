@@ -212,9 +212,24 @@ const favoritosSchema = z.array(favoritoSchema);
 const listarFavoritosInputSchema = z.object({ sucursal_id: z.string().uuid().optional() }).strict();
 const guardarFavoritoInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
 const desactivarFavoritoInputSchema = z.object({ receptor_id: z.string().uuid() }).strict();
+const detalleNcPeriodoInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
+
+const detalleNcPeriodoSchema = z
+  .object({
+    neto: z.string(),
+    iva: z.string(),
+    total: z.string(),
+    concepto: z.string().nullable(),
+    alicuotas: z.array(
+      z.object({ base: z.string(), porcentaje: z.string(), iva: z.string() }).strict(),
+    ),
+    reintegros: z.array(z.object({ formaPago: z.string(), monto: z.string() }).strict()),
+  })
+  .strict();
 
 export type ColaFiscalFila = z.infer<typeof filaColaSchema>;
 export type ReceptorFiscalFavorito = z.infer<typeof favoritoSchema>;
+export type DetalleNcPeriodoAutoritativo = z.infer<typeof detalleNcPeriodoSchema>;
 
 type ContextoAutorizado = ContextoColaFiscal;
 
@@ -423,6 +438,79 @@ export const listarReceptoresFiscales = createServerFn({ method: "GET" })
       data,
     ),
   );
+
+/** Lectura acotada de la intención persistida; nunca recompone el editor del navegador. */
+export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(detalleNcPeriodoInputSchema, value, "CONSULTA"),
+  )
+  .handler(async ({ data, context }) => {
+    await autorizarContextoColaFiscal({
+      userId: context.userId,
+      lecturas: lecturasContexto(context.supabase),
+    });
+    const consultaReintegros = (
+      context.supabase as unknown as {
+        from(table: string): {
+          select(columns: string): {
+            eq(
+              column: string,
+              value: string,
+            ): {
+              order(column: string): Promise<{
+                data: { forma_pago: string; monto: string | number }[] | null;
+                error: unknown;
+              }>;
+            };
+          };
+        };
+      }
+    )
+      .from("nota_credito_periodo_reintegros")
+      .select("forma_pago,monto")
+      .eq("venta_id", data.venta_id)
+      .order("orden");
+    const [
+      { data: venta, error: ventaError },
+      { data: items, error: itemsError },
+      { data: reintegros, error: reintegrosError },
+    ] = await Promise.all([
+      context.supabase
+        .from("ventas")
+        .select("subtotal_sin_iva,iva_total,total,nc_periodo_modalidad,nc_resolucion")
+        .eq("id", data.venta_id)
+        .maybeSingle(),
+      context.supabase
+        .from("venta_items")
+        .select("descripcion,subtotal_sin_iva,iva_porcentaje,iva_monto")
+        .eq("venta_id", data.venta_id)
+        .order("id"),
+      consultaReintegros,
+    ]);
+    if (ventaError || itemsError || reintegrosError || !venta || !venta.nc_periodo_modalidad) {
+      throw new Error("No se pudo leer la intención fiscal por período.");
+    }
+    const detalle = {
+      neto: String(Math.abs(Number(venta.subtotal_sin_iva))),
+      iva: String(Math.abs(Number(venta.iva_total))),
+      total: String(Math.abs(Number(venta.total))),
+      concepto:
+        venta.nc_periodo_modalidad === "BONIFICACION_AJUSTE"
+          ? (items?.[0]?.descripcion ?? null)
+          : null,
+      alicuotas: (items ?? []).map((item) => ({
+        base: String(Math.abs(Number(item.subtotal_sin_iva))),
+        porcentaje: String(item.iva_porcentaje),
+        iva: String(Math.abs(Number(item.iva_monto))),
+      })),
+      reintegros: (reintegros ?? []).map((reintegro) => ({
+        formaPago: reintegro.forma_pago,
+        monto: String(Math.abs(Number(reintegro.monto))),
+      })),
+    };
+    return detalleNcPeriodoSchema.parse(detalle);
+  });
 
 export const guardarReceptorFiscal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

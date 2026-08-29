@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NotaCreditoPeriodoInput } from "@/lib/fiscal/nota-credito-periodo";
 import { EditorNotaCreditoPeriodo } from "./editor-nota-credito-periodo";
@@ -16,13 +16,15 @@ const BASE_PROPS = {
 afterEach(cleanup);
 
 describe("EditorNotaCreditoPeriodo", () => {
-  it("inicia el período vacío y no permite crear sin motivo", () => {
+  it("inicia el período vacío y no permite crear sin motivo", async () => {
     render(createElement(EditorNotaCreditoPeriodo, BASE_PROPS));
 
     expect((screen.getByLabelText("Desde") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Hasta") as HTMLInputElement).value).toBe("");
     fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
-    expect(screen.getByText("Indicá el motivo de la nota de crédito.")).not.toBeNull();
+    expect(screen.getByText("Indicá la fecha inicial del período.")).not.toBeNull();
+    expect(screen.getByLabelText("Desde").getAttribute("aria-invalid")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Desde")));
   });
 
   it("al cambiar a ajuste muestra concepto y oculta el selector de productos", () => {
@@ -76,5 +78,63 @@ describe("EditorNotaCreditoPeriodo", () => {
 
     expect(onCrear).toHaveBeenCalledOnce();
     expect(onCrear.mock.calls[0][0].idempotency_key).toBeTruthy();
+  });
+
+  it("reintenta exactamente el intento congelado después de un error ambiguo", async () => {
+    const onCrear = vi
+      .fn<(input: NotaCreditoPeriodoInput) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("La respuesta pudo perderse"))
+      .mockResolvedValueOnce(undefined);
+    render(createElement(EditorNotaCreditoPeriodo, { ...BASE_PROPS, onCrear }));
+
+    fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+    fireEvent.click(screen.getByLabelText("Acreditar saldo a favor"));
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-01" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-31" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Bonificación julio" } });
+    fireEvent.change(screen.getByLabelText("Concepto del ajuste"), {
+      target: { value: "Bonificación julio" },
+    });
+    fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    await screen.findByText("La respuesta pudo perderse");
+
+    const intentoOriginal = onCrear.mock.calls[0]?.[0];
+    expect((screen.getByLabelText("Motivo") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Editar y crear un nuevo intento" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await waitFor(() => expect(onCrear).toHaveBeenCalledTimes(2));
+    expect(onCrear.mock.calls[1]?.[0]).toEqual(intentoOriginal);
+  });
+
+  it("descarta explícitamente el intento fallido antes de crear otro payload", async () => {
+    const onCrear = vi
+      .fn<(input: NotaCreditoPeriodoInput) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("La respuesta pudo perderse"))
+      .mockResolvedValueOnce(undefined);
+    render(createElement(EditorNotaCreditoPeriodo, { ...BASE_PROPS, onCrear }));
+
+    fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+    fireEvent.click(screen.getByLabelText("Acreditar saldo a favor"));
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-01" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-31" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Bonificación julio" } });
+    fireEvent.change(screen.getByLabelText("Concepto del ajuste"), {
+      target: { value: "Bonificación julio" },
+    });
+    fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    await screen.findByText("La respuesta pudo perderse");
+    const intentoAnterior = onCrear.mock.calls[0]?.[0];
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar y crear un nuevo intento" }));
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Bonificación agosto" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    await waitFor(() => expect(onCrear).toHaveBeenCalledTimes(2));
+
+    expect(onCrear.mock.calls[1]?.[0]).toMatchObject({ motivo: "Bonificación agosto" });
+    expect(onCrear.mock.calls[1]?.[0].idempotency_key).not.toBe(intentoAnterior?.idempotency_key);
   });
 });

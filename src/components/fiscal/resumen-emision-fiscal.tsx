@@ -67,6 +67,14 @@ export function ResumenEmisionFiscal({
     modalidad: ModalidadNcPeriodo;
     motivo: string;
     resolucion: ResolucionNcPeriodo;
+    detalleAutoritativo?: {
+      neto: string;
+      iva: string;
+      total: string;
+      concepto: string | null;
+      alicuotas: readonly { base: string; porcentaje: string; iva: string }[];
+      reintegros: readonly { formaPago: string; monto: string }[];
+    } | null;
   } | null;
 }) {
   const validez = etiquetaValidez(preview);
@@ -154,6 +162,62 @@ export function ResumenEmisionFiscal({
                 <dd className="font-medium">{preview.letra}</dd>
               </div>
             </dl>
+            {asociacionPeriodo.detalleAutoritativo ? (
+              <div className="mt-3 rounded-md border border-primary/20 bg-background/60 p-2 text-xs">
+                <dl className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <dt className="text-muted-foreground">Neto autoritativo</dt>
+                    <dd className="font-mono font-medium">
+                      {fmtMoney(asociacionPeriodo.detalleAutoritativo.neto)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">IVA autoritativo</dt>
+                    <dd className="font-mono font-medium">
+                      {fmtMoney(asociacionPeriodo.detalleAutoritativo.iva)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Total autoritativo</dt>
+                    <dd className="font-mono font-semibold">
+                      {fmtMoney(asociacionPeriodo.detalleAutoritativo.total)}
+                    </dd>
+                  </div>
+                </dl>
+                {asociacionPeriodo.detalleAutoritativo.concepto ? (
+                  <p className="mt-2 text-muted-foreground">
+                    Ajuste: {asociacionPeriodo.detalleAutoritativo.concepto}
+                  </p>
+                ) : null}
+                {asociacionPeriodo.detalleAutoritativo.alicuotas.map((alicuota) => (
+                  <p
+                    key={`${alicuota.base}-${alicuota.porcentaje}`}
+                    className="mt-1 text-muted-foreground"
+                  >
+                    Base {fmtMoney(alicuota.base)} · IVA {alicuota.porcentaje}%{" "}
+                    {fmtMoney(alicuota.iva)}
+                  </p>
+                ))}
+                {asociacionPeriodo.resolucion === "REINTEGRO" ? (
+                  <div className="mt-2">
+                    <p className="font-medium">Liquidación planificada</p>
+                    {asociacionPeriodo.detalleAutoritativo.reintegros.map((reintegro) => (
+                      <p
+                        key={`${reintegro.formaPago}-${reintegro.monto}`}
+                        className="text-muted-foreground"
+                      >
+                        {reintegro.formaPago} · {fmtMoney(reintegro.monto)}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-muted-foreground">
+                    Saldo a favor planificado ·{" "}
+                    {fmtMoney(asociacionPeriodo.detalleAutoritativo.total)}
+                  </p>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

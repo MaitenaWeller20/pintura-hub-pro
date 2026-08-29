@@ -36,6 +36,7 @@ const dobles = vi.hoisted(() => {
   return {
     router,
     listarCola: vi.fn(),
+    leerDetalleNcPeriodo: vi.fn(),
     listarFavoritos: vi.fn(),
     previsualizar: vi.fn(),
     emitir: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("@tanstack/react-start", () => ({ useServerFn: (serverFn: unknown) => se
 
 vi.mock("@/lib/fiscal/cola.functions", () => ({
   listarColaFiscal: dobles.listarCola,
+  leerDetalleNcPeriodoFiscal: dobles.leerDetalleNcPeriodo,
   listarReceptoresFiscales: dobles.listarFavoritos,
 }));
 
@@ -278,6 +280,14 @@ beforeEach(() => {
   let filasServidor = [filaPendiente];
   dobles.listarCola.mockReset().mockImplementation(async () => respuestaCola(filasServidor));
   dobles.listarFavoritos.mockReset().mockResolvedValue([]);
+  dobles.leerDetalleNcPeriodo.mockReset().mockResolvedValue({
+    neto: "100.00",
+    iva: "21.00",
+    total: "121.00",
+    concepto: "Bonificación comercial",
+    alicuotas: [{ base: "100.00", porcentaje: "21.00", iva: "21.00" }],
+    reintegros: [],
+  });
   dobles.previsualizar.mockReset().mockResolvedValue(preview);
   dobles.emitir.mockReset().mockImplementation(async () => {
     filasServidor = [filaMovida];
@@ -363,6 +373,8 @@ describe("ciclo montado del diálogo en la ruta de cola", () => {
 
     expect(await screen.findByTestId("dialogo-emision-fiscal")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Revisar datos fiscales" }));
+    expect(await screen.findByText("Neto autoritativo")).toBeTruthy();
+    expect(screen.getByText("Saldo a favor planificado", { exact: false })).toBeTruthy();
     fireEvent.click(
       await screen.findByLabelText(
         "Confirmo que el período corresponde exactamente a las operaciones ajustadas.",

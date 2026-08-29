@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,8 @@ type ProductoDisponible = {
 
 type ItemEditor = ProductoDisponible & { cantidad: number };
 type PagoEditor = { id: string; formaPago: FormaPagoReintegro; monto: number | null };
+type IntentoNcPeriodo = { payload: NotaCreditoPeriodoInput };
+type CampoErrorNcPeriodo = "desde" | "hasta" | "motivo" | "items" | "reintegros";
 
 const FORMAS_REINTEGRO: readonly FormaPagoReintegro[] = [
   "EFECTIVO",
@@ -74,7 +76,7 @@ export function EditorNotaCreditoPeriodo({
   onCrear(input: NotaCreditoPeriodoInput): Promise<void>;
   onCancelar?(): void;
 }) {
-  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(() => crypto.randomUUID());
   const [modalidad, setModalidad] = useState<ModalidadNcPeriodo>("DEVOLUCION_PRODUCTOS");
   const [resolucion, setResolucion] = useState<ResolucionNcPeriodo>("REINTEGRO");
   const [desde, setDesde] = useState("");
@@ -87,8 +89,14 @@ export function EditorNotaCreditoPeriodo({
   const [ivaConcepto, setIvaConcepto] = useState(21);
   const [pagos, setPagos] = useState<PagoEditor[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [erroresCampo, setErroresCampo] = useState<Partial<Record<CampoErrorNcPeriodo, string>>>(
+    {},
+  );
   const [creando, setCreando] = useState(false);
+  const [intentoPendiente, setIntentoPendiente] = useState<IntentoNcPeriodo | null>(null);
+  const creandoRef = useRef(false);
   const visibles = camposVisiblesNcPeriodo(modalidad);
+  const controlesBloqueados = disabled || creando || intentoPendiente !== null;
 
   const lineas =
     modalidad === "DEVOLUCION_PRODUCTOS"
@@ -131,16 +139,18 @@ export function EditorNotaCreditoPeriodo({
     setConcepto("");
     setImporteConcepto(null);
     setError(null);
+    setErroresCampo({});
   };
 
   const cambiarResolucion = (siguiente: ResolucionNcPeriodo) => {
     setResolucion(siguiente);
     if (siguiente === "SALDO_FAVOR") setPagos([]);
     setError(null);
+    setErroresCampo({});
   };
 
   const restablecer = () => {
-    setIdempotencyKey(crypto.randomUUID());
+    setIdempotencyKey(null);
     setDesde("");
     setHasta("");
     setMotivo("");
@@ -149,16 +159,51 @@ export function EditorNotaCreditoPeriodo({
     setImporteConcepto(null);
     setPagos([]);
     setError(null);
+    setErroresCampo({});
+    setIntentoPendiente(null);
   };
 
-  const crear = async () => {
-    if (creando || disabled) return;
+  const enviarIntento = async (intento: IntentoNcPeriodo) => {
+    if (creandoRef.current) return;
+    creandoRef.current = true;
+    setCreando(true);
+    setError(null);
+    try {
+      await onCrear(intento.payload);
+      restablecer();
+    } catch (cause) {
+      setError(mensajeError(cause));
+    } finally {
+      creandoRef.current = false;
+      setCreando(false);
+    }
+  };
+
+  const crear = () => {
+    if (creandoRef.current || disabled || intentoPendiente) return;
+    const marcarErrorCampo = (campo: CampoErrorNcPeriodo, mensaje: string) => {
+      setErroresCampo({ [campo]: mensaje });
+      queueMicrotask(() => document.getElementById(`nc-periodo-${campo}`)?.focus());
+    };
+    if (!desde) {
+      marcarErrorCampo("desde", "Indicá la fecha inicial del período.");
+      return;
+    }
+    if (!hasta) {
+      marcarErrorCampo("hasta", "Indicá la fecha final del período.");
+      return;
+    }
     if (!motivo.trim()) {
-      setError("Indicá el motivo de la nota de crédito.");
+      marcarErrorCampo("motivo", "Indicá el motivo de la nota de crédito.");
       return;
     }
     if (!totales) {
-      setError("Cargá un importe positivo para la nota de crédito.");
+      marcarErrorCampo(
+        "items",
+        modalidad === "DEVOLUCION_PRODUCTOS"
+          ? "Agregá al menos un producto con cantidad positiva."
+          : "Cargá un importe positivo para el ajuste.",
+      );
       return;
     }
     try {
@@ -168,10 +213,12 @@ export function EditorNotaCreditoPeriodo({
         pagos: pagosCentavos,
         clienteId,
       });
+      const key = idempotencyKey ?? crypto.randomUUID();
+      if (idempotencyKey === null) setIdempotencyKey(key);
       const input =
         modalidad === "DEVOLUCION_PRODUCTOS"
           ? {
-              idempotency_key: idempotencyKey,
+              idempotency_key: key,
               sucursal_id: sucursalId,
               cliente_id: clienteId,
               periodo_desde: desde,
@@ -191,7 +238,7 @@ export function EditorNotaCreditoPeriodo({
               })),
             }
           : {
-              idempotency_key: idempotencyKey,
+              idempotency_key: key,
               sucursal_id: sucursalId,
               cliente_id: clienteId,
               periodo_desde: desde,
@@ -213,16 +260,19 @@ export function EditorNotaCreditoPeriodo({
                 },
               ] as const,
             };
-      const valido = notaCreditoPeriodoInputSchema.parse(input);
-      setCreando(true);
-      setError(null);
-      await onCrear(valido);
-      restablecer();
+      const intento = { payload: notaCreditoPeriodoInputSchema.parse(input) };
+      setIntentoPendiente(intento);
+      void enviarIntento(intento);
     } catch (cause) {
-      setError(mensajeError(cause));
-    } finally {
-      setCreando(false);
+      marcarErrorCampo(resolucion === "REINTEGRO" ? "reintegros" : "items", mensajeError(cause));
     }
+  };
+
+  const descartarIntento = () => {
+    if (creandoRef.current) return;
+    setIntentoPendiente(null);
+    setIdempotencyKey(null);
+    setError(null);
   };
 
   return (
@@ -243,10 +293,19 @@ export function EditorNotaCreditoPeriodo({
             id="nc-periodo-desde"
             type="date"
             value={desde}
-            disabled={disabled || creando}
-            aria-describedby={error ? "nc-periodo-error" : undefined}
-            onChange={(event) => setDesde(event.target.value)}
+            disabled={controlesBloqueados}
+            aria-invalid={erroresCampo.desde ? true : undefined}
+            aria-describedby={erroresCampo.desde ? "nc-periodo-desde-error" : undefined}
+            onChange={(event) => {
+              setDesde(event.target.value);
+              setErroresCampo((actual) => ({ ...actual, desde: undefined }));
+            }}
           />
+          {erroresCampo.desde ? (
+            <p id="nc-periodo-desde-error" role="alert" className="mt-1 text-xs text-destructive">
+              {erroresCampo.desde}
+            </p>
+          ) : null}
         </div>
         <div>
           <Label htmlFor="nc-periodo-hasta">Hasta</Label>
@@ -254,10 +313,19 @@ export function EditorNotaCreditoPeriodo({
             id="nc-periodo-hasta"
             type="date"
             value={hasta}
-            disabled={disabled || creando}
-            aria-describedby={error ? "nc-periodo-error" : undefined}
-            onChange={(event) => setHasta(event.target.value)}
+            disabled={controlesBloqueados}
+            aria-invalid={erroresCampo.hasta ? true : undefined}
+            aria-describedby={erroresCampo.hasta ? "nc-periodo-hasta-error" : undefined}
+            onChange={(event) => {
+              setHasta(event.target.value);
+              setErroresCampo((actual) => ({ ...actual, hasta: undefined }));
+            }}
           />
+          {erroresCampo.hasta ? (
+            <p id="nc-periodo-hasta-error" role="alert" className="mt-1 text-xs text-destructive">
+              {erroresCampo.hasta}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -266,13 +334,22 @@ export function EditorNotaCreditoPeriodo({
         <Textarea
           id="nc-periodo-motivo"
           value={motivo}
-          disabled={disabled || creando}
-          onChange={(event) => setMotivo(event.target.value)}
-          aria-describedby={error ? "nc-periodo-error" : undefined}
+          disabled={controlesBloqueados}
+          aria-invalid={erroresCampo.motivo ? true : undefined}
+          aria-describedby={erroresCampo.motivo ? "nc-periodo-motivo-error" : undefined}
+          onChange={(event) => {
+            setMotivo(event.target.value);
+            setErroresCampo((actual) => ({ ...actual, motivo: undefined }));
+          }}
         />
+        {erroresCampo.motivo ? (
+          <p id="nc-periodo-motivo-error" role="alert" className="mt-1 text-xs text-destructive">
+            {erroresCampo.motivo}
+          </p>
+        ) : null}
       </div>
 
-      <fieldset disabled={disabled || creando} className="space-y-2">
+      <fieldset disabled={controlesBloqueados} className="space-y-2">
         <legend className="text-sm font-semibold">Modalidad</legend>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
@@ -297,10 +374,20 @@ export function EditorNotaCreditoPeriodo({
       </fieldset>
 
       {visibles.productos ? (
-        <div className="space-y-2 rounded-lg border border-border p-3">
+        <div
+          id="nc-periodo-items"
+          className="space-y-2 rounded-lg border border-border p-3"
+          aria-invalid={erroresCampo.items ? true : undefined}
+          aria-describedby={erroresCampo.items ? "nc-periodo-items-error" : undefined}
+          tabIndex={-1}
+        >
           <Label htmlFor="nc-producto">Producto a devolver</Label>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Select value={productoAAgregar} onValueChange={setProductoAAgregar}>
+            <Select
+              value={productoAAgregar}
+              disabled={controlesBloqueados}
+              onValueChange={setProductoAAgregar}
+            >
               <SelectTrigger id="nc-producto">
                 <SelectValue placeholder="Seleccionar producto…" />
               </SelectTrigger>
@@ -315,7 +402,7 @@ export function EditorNotaCreditoPeriodo({
             <Button
               type="button"
               variant="outline"
-              disabled={!productoAAgregar}
+              disabled={controlesBloqueados || !productoAAgregar}
               onClick={() => {
                 const producto = productos.find((item) => item.id === productoAAgregar);
                 if (!producto) return;
@@ -336,6 +423,7 @@ export function EditorNotaCreditoPeriodo({
                 <NumberInput
                   id={`nc-cantidad-${index}`}
                   value={item.cantidad}
+                  disabled={controlesBloqueados}
                   onValueChange={(cantidad) =>
                     setItems((actual) =>
                       actual.map((linea, lineaIndex) =>
@@ -350,6 +438,7 @@ export function EditorNotaCreditoPeriodo({
                 size="icon"
                 variant="ghost"
                 aria-label={`Quitar ${item.descripcion}`}
+                disabled={controlesBloqueados}
                 onClick={() =>
                   setItems((actual) => actual.filter((_, lineaIndex) => lineaIndex !== index))
                 }
@@ -358,24 +447,46 @@ export function EditorNotaCreditoPeriodo({
               </Button>
             </div>
           ))}
+          {erroresCampo.items ? (
+            <p id="nc-periodo-items-error" role="alert" className="text-xs text-destructive">
+              {erroresCampo.items}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
       {visibles.concepto ? (
-        <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-3">
+        <div
+          id="nc-periodo-items"
+          className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-3"
+          aria-invalid={erroresCampo.items ? true : undefined}
+          aria-describedby={erroresCampo.items ? "nc-periodo-items-error" : undefined}
+          tabIndex={-1}
+        >
           <div className="sm:col-span-3">
             <Label htmlFor="nc-concepto">Concepto del ajuste</Label>
             <Input
               id="nc-concepto"
               value={concepto}
+              disabled={controlesBloqueados}
               onChange={(event) => setConcepto(event.target.value)}
             />
           </div>
+          {erroresCampo.items ? (
+            <p
+              id="nc-periodo-items-error"
+              role="alert"
+              className="text-xs text-destructive sm:col-span-3"
+            >
+              {erroresCampo.items}
+            </p>
+          ) : null}
           <div>
             <Label htmlFor="nc-importe">Importe neto</Label>
             <NumberInput
               id="nc-importe"
               value={importeConcepto}
+              disabled={controlesBloqueados}
               onValueChange={setImporteConcepto}
             />
           </div>
@@ -383,6 +494,7 @@ export function EditorNotaCreditoPeriodo({
             <Label htmlFor="nc-iva">IVA</Label>
             <Select
               value={String(ivaConcepto)}
+              disabled={controlesBloqueados}
               onValueChange={(value) => setIvaConcepto(Number(value))}
             >
               <SelectTrigger id="nc-iva">
@@ -400,7 +512,7 @@ export function EditorNotaCreditoPeriodo({
         </div>
       ) : null}
 
-      <fieldset disabled={disabled || creando} className="space-y-2">
+      <fieldset disabled={controlesBloqueados} className="space-y-2">
         <legend className="text-sm font-semibold">Resolución</legend>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
@@ -425,13 +537,20 @@ export function EditorNotaCreditoPeriodo({
       </fieldset>
 
       {resolucion === "REINTEGRO" ? (
-        <div className="space-y-2 rounded-lg border border-border p-3">
+        <div
+          id="nc-periodo-reintegros"
+          className="space-y-2 rounded-lg border border-border p-3"
+          aria-invalid={erroresCampo.reintegros ? true : undefined}
+          aria-describedby={erroresCampo.reintegros ? "nc-periodo-reintegros-error" : undefined}
+          tabIndex={-1}
+        >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Reintegro exacto</h3>
             <Button
               type="button"
               size="sm"
               variant="outline"
+              disabled={controlesBloqueados}
               onClick={() =>
                 setPagos((actual) => [
                   ...actual,
@@ -450,6 +569,7 @@ export function EditorNotaCreditoPeriodo({
             <div key={pago.id} className="grid gap-2 sm:grid-cols-[1fr_10rem_auto]">
               <Select
                 value={pago.formaPago}
+                disabled={controlesBloqueados}
                 onValueChange={(formaPago) =>
                   setPagos((actual) =>
                     actual.map((item) =>
@@ -474,6 +594,7 @@ export function EditorNotaCreditoPeriodo({
               <NumberInput
                 aria-label={`Monto de reintegro ${index + 1}`}
                 value={pago.monto}
+                disabled={controlesBloqueados}
                 onValueChange={(monto) =>
                   setPagos((actual) =>
                     actual.map((item) => (item.id === pago.id ? { ...item, monto } : item)),
@@ -485,12 +606,18 @@ export function EditorNotaCreditoPeriodo({
                 size="icon"
                 variant="ghost"
                 aria-label="Quitar reintegro"
+                disabled={controlesBloqueados}
                 onClick={() => setPagos((actual) => actual.filter((item) => item.id !== pago.id))}
               >
                 <Trash2 className="text-destructive" />
               </Button>
             </div>
           ))}
+          {erroresCampo.reintegros ? (
+            <p id="nc-periodo-reintegros-error" role="alert" className="text-xs text-destructive">
+              {erroresCampo.reintegros}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -536,7 +663,7 @@ export function EditorNotaCreditoPeriodo({
           <Button
             type="button"
             variant="outline"
-            disabled={creando}
+            disabled={creando || intentoPendiente !== null}
             onClick={() => {
               restablecer();
               onCancelar();
@@ -545,13 +672,29 @@ export function EditorNotaCreditoPeriodo({
             Cancelar
           </Button>
         ) : null}
-        <Button
-          type="button"
-          disabled={disabled || creando || !sucursalId || !clienteId}
-          onClick={() => void crear()}
-        >
-          {creando ? "Creando…" : "Crear nota pendiente"}
-        </Button>
+        {intentoPendiente ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={creando}
+              onClick={() => void enviarIntento(intentoPendiente)}
+            >
+              Reintentar
+            </Button>
+            <Button type="button" variant="ghost" disabled={creando} onClick={descartarIntento}>
+              Editar y crear un nuevo intento
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="button"
+            disabled={disabled || creando || !sucursalId || !clienteId}
+            onClick={crear}
+          >
+            {creando ? "Creando…" : "Crear nota pendiente"}
+          </Button>
+        )}
       </div>
     </section>
   );

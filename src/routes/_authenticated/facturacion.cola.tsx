@@ -31,7 +31,9 @@ import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
 import { supabase } from "@/integrations/supabase/client";
 import {
   listarColaFiscal,
+  leerDetalleNcPeriodoFiscal,
   listarReceptoresFiscales,
+  type DetalleNcPeriodoAutoritativo,
   type ColaFiscalFila,
 } from "@/lib/fiscal/cola.functions";
 import {
@@ -119,6 +121,7 @@ function receptorHeredado(row: ColaFiscalFila): ReceptorHeredadoVista | null {
 function contextoDialogo(
   row: ColaFiscalFila,
   tipoCliente: string | null | undefined,
+  detalleAutoritativo?: DetalleNcPeriodoAutoritativo | null,
 ): ContextoDialogoEmision {
   if (!row.sucursal_id) throw new Error("La venta no tiene una sucursal fiscal asociada.");
   return {
@@ -158,6 +161,7 @@ function contextoDialogo(
             modalidad: row.nc_periodo_modalidad,
             motivo: row.motivo_nota_credito,
             resolucion: row.nc_resolucion,
+            detalleAutoritativo,
           }
         : null,
   };
@@ -270,6 +274,7 @@ function ColaFiscalPage() {
   const queryClient = useQueryClient();
   const esAdmin = accesoFiscal.isAdmin;
   const listarCola = useServerFn(listarColaFiscal);
+  const leerDetalleNcPeriodo = useServerFn(leerDetalleNcPeriodoFiscal);
   const listarFavoritos = useServerFn(listarReceptoresFiscales);
   const previsualizar = useServerFn(previsualizarEmisionFiscal);
   const emitir = useServerFn(emitirComprobante);
@@ -376,6 +381,11 @@ function ColaFiscalPage() {
         .maybeSingle();
       return error ? null : (data?.tipo ?? null);
     },
+  });
+  const detalleNcPeriodo = useQuery({
+    queryKey: ["detalle-nc-periodo", seleccionada?.venta_id ?? null],
+    enabled: seleccionada !== null && esNotaCreditoPorPeriodo(seleccionada),
+    queryFn: () => leerDetalleNcPeriodo({ data: { venta_id: seleccionada!.venta_id } }),
   });
   const detalleVenta = useQuery({
     queryKey: ["venta-detalle-cola", detalleSeleccionado?.ventaId ?? null],
@@ -688,7 +698,11 @@ function ColaFiscalPage() {
       {seleccionada && accionesHabilitadas ? (
         <DialogoEmisionFiscal
           open
-          contexto={contextoDialogo(seleccionada, tipoClienteSeleccionado.data)}
+          contexto={contextoDialogo(
+            seleccionada,
+            tipoClienteSeleccionado.data,
+            detalleNcPeriodo.data,
+          )}
           favoritos={favoritos.data ?? []}
           puedeConfirmarVentaAntigua={esAdmin}
           returnFocusRef={returnFocusRef}

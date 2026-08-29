@@ -105,4 +105,40 @@ describe("resumen de confirmación fiscal", () => {
     expect(html).toContain("101,00");
     expect(html).not.toContain("El servidor lo confirmará al emitir");
   });
+
+  it.each([
+    ["A", "DEVOLUCION_PRODUCTOS", "REINTEGRO", "Piso devuelto", "Efectivo", "121,00"],
+    ["B", "BONIFICACION_AJUSTE", "SALDO_FAVOR", "Bonificación julio", "Saldo a favor", "121,00"],
+    ["C", "BONIFICACION_AJUSTE", "REINTEGRO", "Ajuste de obra", "Transferencia", "121,00"],
+  ] as const)(
+    "muestra neto, IVA y liquidación persistida para NC período %s",
+    (letra, modalidad, resolucion, concepto, medio, importe) => {
+      const html = renderToStaticMarkup(
+        createElement(ResumenEmisionFiscal, {
+          preview: preview({ letra }),
+          comprador: "COMPRADOR",
+          asociacionPeriodo: {
+            desde: "2026-07-01",
+            hasta: "2026-07-31",
+            modalidad,
+            motivo: concepto,
+            resolucion,
+            detalleAutoritativo: {
+              neto: "100.00",
+              iva: "21.00",
+              total: "121.00",
+              concepto: modalidad === "BONIFICACION_AJUSTE" ? concepto : null,
+              alicuotas: [{ base: "100.00", porcentaje: "21.00", iva: "21.00" }],
+              reintegros: resolucion === "REINTEGRO" ? [{ formaPago: medio, monto: "121.00" }] : [],
+            },
+          },
+        }),
+      );
+      expect(html).toContain("Neto autoritativo");
+      expect(html).toContain("IVA autoritativo");
+      expect(html).toContain(importe);
+      expect(html).toContain(medio);
+      expect(html).toContain("Letra resuelta");
+    },
+  );
 });

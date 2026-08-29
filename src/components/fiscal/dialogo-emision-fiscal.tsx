@@ -82,6 +82,14 @@ export type ContextoDialogoEmision = {
     modalidad: ModalidadNcPeriodo;
     motivo: string;
     resolucion: ResolucionNcPeriodo;
+    detalleAutoritativo?: {
+      neto: string;
+      iva: string;
+      total: string;
+      concepto: string | null;
+      alicuotas: readonly { base: string; porcentaje: string; iva: string }[];
+      reintegros: readonly { formaPago: string; monto: string }[];
+    } | null;
   } | null;
 };
 

@@ -141,3 +141,37 @@
 ### Commit Fix round 3
 
 - `1e20541 fix(ui): bloquear emisión NC hasta detalle autoritativo`
+
+## Fix round 4
+
+### Cambios aplicados
+
+- El editor construye y valida primero el input estructural completo con `safeParse`. Sólo si esa estructura es válida verifica la liquidación; así un reintegro incompleto ya no oculta un motivo corto, un período invertido ni un concepto vacío. Los errores estructurales conservan su mensaje allowlisted y foco, y cualquier fallo de liquidación se asocia al bloque de reintegros.
+- Se agregó cobertura montada del componente productivo real de `ventas.nueva` obtenido desde `Route.options.component`. La ruta se prueba con su editor y componentes reales; los dobles quedan limitados al router, usuario/datos, Supabase, React Query y funciones de servidor.
+- La cobertura de ruta prueba la matriz flag/capacidad, reversa vinculada heredada frente a asociación por período, exclusividad de `crearVenta`/`crearNotaCreditoPeriodoFiscal`, bloqueo global en `ENVIANDO` y `AMBIGUO`, y descarte explícito con reactivación de controles y nueva idempotency key.
+- El diálogo fiscal ahora falla cerrado para toda NC por período cuyo `detalleAutoritativoPeriodo` esté ausente o en un estado distinto de `LISTO`. La defensa está tanto en los botones como dentro de los handlers de preview y confirmación/emisión.
+
+### TDD (RED → GREEN)
+
+- RED: tres casos combinados con resolución `REINTEGRO` por defecto mostraban el error de liquidación antes que el motivo corto, período invertido o concepto vacío. RED adicional: omitir el detalle autoritativo dejaba habilitada la preview del diálogo. Resultado: 4 fallas focales reproducibles.
+- GREEN: reordenamiento schema→liquidación y fail-closed del diálogo; las mismas 40 pruebas focales de editor/diálogo pasaron.
+- Cobertura montada adicional: 9 pruebas de la ruta productiva real cubren ramas DOM, writers, estados congelados y rotación de key sin mockear el controlador bajo prueba.
+
+### Archivos y commit Fix round 4
+
+- Producción: `src/components/ventas/editor-nota-credito-periodo.tsx`, `src/components/fiscal/dialogo-emision-fiscal.tsx`.
+- Pruebas: `src/components/ventas/editor-nota-credito-periodo.test.ts`, `src/components/fiscal/dialogo-emision-fiscal.test.ts`, `src/routes/_authenticated/ventas.nueva.test.ts`.
+- Commit: `2c94bcbd3e4177a73ec40ac5a60183d6176b893e fix(ui): cerrar validaciones NC por período`.
+
+### Verificaciones Fix round 4
+
+- Focal editor/ruta/diálogo/cola: `npx vitest run src/components/ventas/editor-nota-credito-periodo.test.ts src/routes/_authenticated/ventas.nueva.test.ts src/components/fiscal/dialogo-emision-fiscal.test.ts src/components/fiscal/dialogo-emision-validacion.test.ts src/components/fiscal/cola-fiscal-tabla.test.ts src/routes/_authenticated/facturacion.cola-lifecycle.test.ts src/lib/fiscal/cola.test.ts` → 7 archivos, 111 pruebas pasadas, 8 omitidas.
+- Completa: `npm test` → 76 archivos pasados, 2 omitidos; 1610 pruebas pasadas, 22 omitidas.
+- Tipos: `npm run typecheck` pasó.
+- Calidad: Prettier focal, ESLint focal y `git diff --check` pasaron.
+
+### Revisión React / accesibilidad y límites
+
+- No se agregaron effects, subscriptions ni estado derivado. El guard transitorio del editor continúa impidiendo doble mutación, y la ruta sigue recibiendo un único estado explícito del intento.
+- El primer issue estructural conserva error inline, `aria-invalid`, `aria-describedby`, `role=alert` y foco sobre el control real. Los bloqueos de ruta y diálogo son nativos y los handlers repiten la defensa crítica para no depender sólo del DOM.
+- No se ejecutó ARCA, no se activaron flags de producción y no hubo push, deploy ni reescritura de historia.

@@ -121,3 +121,10 @@ export function validarEnvioNcPeriodo(input: {
 export function esVentaVisibleEnListadoComercial(estado: string): boolean {
   return estado !== "PENDIENTE_FISCAL";
 }
+
+/** Conserva las ventas pendientes fiscales fuera de la consulta, antes del límite comercial. */
+export function excluirPendientesFiscalesDeConsulta<
+  T extends { neq(column: never, value: never): T },
+>(query: T): T {
+  return query.neq("estado" as never, "PENDIENTE_FISCAL" as never);
+}

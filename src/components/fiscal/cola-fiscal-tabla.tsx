@@ -48,6 +48,14 @@ function accionSegura(row: ColaFiscalFila, esAdmin: boolean): string {
   }
 }
 
+function esNotaCreditoPorPeriodo(row: ColaFiscalFila): boolean {
+  return (
+    row.tipo_comprobante === "NOTA_CREDITO" &&
+    row.periodo_asoc_desde !== null &&
+    row.periodo_asoc_hasta !== null
+  );
+}
+
 function FilaSkeleton({ index }: { index: number }) {
   return (
     <TableRow key={index}>
@@ -66,6 +74,7 @@ export function ColaFiscalTabla({
   loading,
   updating,
   accionesHabilitadas,
+  puedeEmitirNcPeriodo,
   accionPendienteId,
   error,
   onRetry,
@@ -76,6 +85,7 @@ export function ColaFiscalTabla({
   loading: boolean;
   updating: boolean;
   accionesHabilitadas: boolean;
+  puedeEmitirNcPeriodo: boolean;
   accionPendienteId?: string | null;
   error?: string | null;
   onRetry(): void;
@@ -147,6 +157,8 @@ export function ColaFiscalTabla({
                 const procesando = accion === "Procesando";
                 const ejecutandoAccion = accionPendienteId === row.venta_id;
                 const accionable = clasificarInteraccionCola(accion) !== null;
+                const requierePermisoPeriodo =
+                  accion === "Facturar" && esNotaCreditoPorPeriodo(row) && !puedeEmitirNcPeriodo;
                 return (
                   <TableRow key={row.venta_id}>
                     <TableCell className="align-top">
@@ -216,7 +228,12 @@ export function ColaFiscalTabla({
                         size="sm"
                         variant={accion === "Facturar" ? "default" : "outline"}
                         className="min-h-11 min-w-11"
-                        disabled={!accionesHabilitadas || !accionable || accionPendienteId != null}
+                        disabled={
+                          !accionesHabilitadas ||
+                          !accionable ||
+                          accionPendienteId != null ||
+                          requierePermisoPeriodo
+                        }
                         onClick={(event) => onAccion(row, accion, event.currentTarget)}
                       >
                         {procesando || ejecutandoAccion ? (
@@ -224,6 +241,11 @@ export function ColaFiscalTabla({
                         ) : null}
                         {ejecutandoAccion ? "Procesando…" : accion}
                       </Button>
+                      {requierePermisoPeriodo ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Requiere la habilitación y capacidad para NC por período.
+                        </p>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 );

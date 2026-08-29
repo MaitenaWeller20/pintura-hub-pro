@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -179,6 +179,14 @@ function accionFila(row: ColaFiscalFila, esAdmin: boolean): string {
   }
 }
 
+function esNotaCreditoPorPeriodo(row: ColaFiscalFila): boolean {
+  return (
+    row.tipo_comprobante === "NOTA_CREDITO" &&
+    row.periodo_asoc_desde !== null &&
+    row.periodo_asoc_hasta !== null
+  );
+}
+
 function resultadoDespuesDeEmitir(value: ResultadoEmisionFiscalUi): ResultadoColaFiscal | null {
   if (value.estado === "APROBADO") return "factura_aprobada";
   if (value.estado === "EN_CURSO") return "venta_creada_factura_pendiente";
@@ -283,6 +291,7 @@ function ColaFiscalPage() {
   } | null>(null);
   const returnFocusRef = useRef<HTMLButtonElement>(null);
   const tabRefs = useRef<Partial<Record<TabColaFiscal, HTMLButtonElement>>>({});
+  const aperturaAutomaticaRef = useRef<string | null>(null);
 
   const inputCola = {
     tab: search.tab,
@@ -314,11 +323,13 @@ function ColaFiscalPage() {
     refetchInterval: (query) => (debeRefrescarCola(query.state.data?.filas ?? []) ? 4_000 : false),
   });
 
-  const filas = cola.data?.filas ?? [];
+  const filas = useMemo(() => cola.data?.filas ?? [], [cola.data?.filas]);
   const accionesHabilitadas = accionesColaHabilitadas({
     isPlaceholderData: cola.isPlaceholderData,
     isFetching: cola.isFetching,
   });
+  const puedeEmitirNcPeriodo =
+    accesoFiscal.notaCreditoPeriodoHabilitada && accesoFiscal.puedeEmitirNcPeriodo;
   const huellaConsulta = huellaConsultaCola(search);
   const cicloSeleccion = resolverCicloSeleccionColaFiscal({
     seleccion,
@@ -334,6 +345,19 @@ function ColaFiscalPage() {
   useEffect(() => {
     if (seleccion !== seleccionVigente) setSeleccion(seleccionVigente);
   }, [seleccion, seleccionVigente]);
+
+  useEffect(() => {
+    if (!search.venta || !accionesHabilitadas) return;
+    const fila = filas.find((row) => row.venta_id === search.venta);
+    if (!fila || clasificarInteraccionCola(accionFila(fila, esAdmin)) !== "EMISION") return;
+    if (esNotaCreditoPorPeriodo(fila) && !puedeEmitirNcPeriodo) return;
+    const apertura = fila.venta_id;
+    if (aperturaAutomaticaRef.current === apertura) return;
+    aperturaAutomaticaRef.current = apertura;
+    setSeleccion((actual) =>
+      actual?.fila.venta_id === fila.venta_id ? actual : { fila, huellaConsulta },
+    );
+  }, [accionesHabilitadas, esAdmin, filas, huellaConsulta, puedeEmitirNcPeriodo, search.venta]);
 
   const favoritos = useQuery({
     queryKey: ["receptores-fiscales", seleccionada?.sucursal_id ?? null],
@@ -583,6 +607,7 @@ function ColaFiscalPage() {
           loading={cola.isLoading}
           updating={cola.isFetching && !cola.isLoading}
           accionesHabilitadas={accionesHabilitadas}
+          puedeEmitirNcPeriodo={puedeEmitirNcPeriodo}
           accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
           error={cola.error ? mensajeErrorFiscal(cola.error, "CONSULTA") : null}
           onRetry={() => void cola.refetch()}
@@ -592,6 +617,7 @@ function ColaFiscalPage() {
             setMensajeAccion(null);
             const interaccion = clasificarInteraccionCola(nombre);
             if (interaccion === "EMISION") {
+              if (esNotaCreditoPorPeriodo(row) && !puedeEmitirNcPeriodo) return;
               returnFocusRef.current = disparador;
               setSeleccion({ fila: row, huellaConsulta });
               return;
@@ -740,6 +766,9 @@ function ColaFiscalPage() {
             const resultadoUrl = resultadoDespuesDeEmitir(resultado);
             const ventaId = seleccionada.venta_id;
             setSeleccion(null);
+            if (resultado.estado === "APROBADO") {
+              setDetalleSeleccionado({ ventaId, permitirDescarga: true });
+            }
             void queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
             if (resultadoUrl) {
               void navigate({

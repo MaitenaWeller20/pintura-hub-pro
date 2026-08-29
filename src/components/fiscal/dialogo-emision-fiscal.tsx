@@ -781,7 +781,7 @@ export function DialogoEmisionFiscal({
                 previsualizando ||
                 emitiendo ||
                 consultaPadronBloquea ||
-                confirmacion.letraSolicitada === null
+                (!esNcPeriodo && confirmacion.letraSolicitada === null)
               }
               onClick={preparar}
             >

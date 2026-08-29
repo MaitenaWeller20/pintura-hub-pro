@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { fmtMoney } from "@/lib/format";
+import { ALICUOTAS_SOPORTADAS } from "@/lib/fiscal/codigos";
 import {
   calcularTotalesNotaCreditoPeriodo,
   notaCreditoPeriodoInputSchema,
@@ -388,9 +389,11 @@ export function EditorNotaCreditoPeriodo({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="21">21%</SelectItem>
-                <SelectItem value="10.5">10,5%</SelectItem>
-                <SelectItem value="0">0%</SelectItem>
+                {ALICUOTAS_SOPORTADAS.map((alicuota) => (
+                  <SelectItem key={alicuota} value={String(alicuota)}>
+                    {String(alicuota).replace(".", ",")}%
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

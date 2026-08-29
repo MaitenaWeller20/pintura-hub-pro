@@ -3,6 +3,7 @@ import {
   camposVisiblesNcPeriodo,
   cambiarModalidadNcPeriodo,
   cambiarResolucionNcPeriodo,
+  excluirPendientesFiscalesDeConsulta,
   esVentaVisibleEnListadoComercial,
   puedeIniciarNcPeriodo,
   resumenEfectosNcPeriodo,
@@ -118,5 +119,26 @@ describe("gating de envío y listado", () => {
   it("oculta pendientes fiscales del listado comercial y conserva activas", () => {
     expect(esVentaVisibleEnListadoComercial("PENDIENTE_FISCAL")).toBe(false);
     expect(esVentaVisibleEnListadoComercial("ACTIVA")).toBe(true);
+  });
+
+  it("excluye pendientes fiscales de la consulta antes de ordenar y limitar", () => {
+    const calls: string[] = [];
+    const query = {
+      neq: (column: never, value: never) => {
+        calls.push(`neq:${column}:${value}`);
+        return query;
+      },
+      order: () => {
+        calls.push("order");
+        return query;
+      },
+      limit: () => {
+        calls.push("limit");
+        return query;
+      },
+    };
+
+    excluirPendientesFiscalesDeConsulta(query).order().limit();
+    expect(calls).toEqual(["neq:estado:PENDIENTE_FISCAL", "order", "limit"]);
   });
 });

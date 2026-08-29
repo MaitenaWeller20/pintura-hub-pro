@@ -65,6 +65,8 @@ vi.mock("@tanstack/react-router", async () => {
           facturacionV2Habilitada: true,
           isAdmin: true,
           puedeFacturar: true,
+          notaCreditoPeriodoHabilitada: true,
+          puedeEmitirNcPeriodo: true,
         },
       }),
     }),
@@ -93,6 +95,11 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 vi.mock("@/components/fiscal/cola-fiscal-filtros", () => ({
   ColaFiscalFiltros: () => createElement("div", { "data-testid": "filtros-cola" }),
+}));
+
+vi.mock("@/components/ventas/dialogo-detalle-venta", () => ({
+  DialogoDetalleVenta: ({ venta }: { venta: unknown }) =>
+    createElement("div", { "data-testid": "detalle-comercial" }, venta ? "cargado" : "abriendo"),
 }));
 
 // Radix sólo transporta el contenido a un portal. La prueba mantiene reales
@@ -171,6 +178,17 @@ const filaMovida: ColaFiscalFila = {
   ...filaPendiente,
   afip_estado: "ERROR_CORREGIBLE",
   tab: "revisar",
+};
+
+const filaPeriodo: ColaFiscalFila = {
+  ...filaPendiente,
+  tipo_comprobante: "NOTA_CREDITO",
+  numero_comprobante: "NC-00001",
+  periodo_asoc_desde: "2026-07-01",
+  periodo_asoc_hasta: "2026-07-31",
+  nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+  motivo_nota_credito: "Bonificación comercial",
+  nc_resolucion: "SALDO_FAVOR",
 };
 
 const receptor = {
@@ -284,8 +302,7 @@ describe("ciclo montado del diálogo en la ruta de cola", () => {
     const PaginaCola = paginaCola();
     render(createElement(QueryClientProvider, { client: queryClient }, createElement(PaginaCola)));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Facturar" }));
-    expect(screen.getByTestId("dialogo-emision-fiscal")).toBeTruthy();
+    expect(await screen.findByTestId("dialogo-emision-fiscal")).toBeTruthy();
 
     const letraB = screen
       .getAllByRole("radio")
@@ -324,5 +341,36 @@ describe("ciclo montado del diálogo en la ruta de cola", () => {
         "true",
       ),
     );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId("dialogo-emision-fiscal")).toBeNull();
+  });
+
+  it("abre la NC por período desde la venta creada y muestra su detalle al aprobar", async () => {
+    let filasServidor = [filaPeriodo];
+    dobles.listarCola.mockImplementation(async () => respuestaCola(filasServidor));
+    dobles.emitir.mockResolvedValue({
+      estado: "APROBADO",
+      cae: "12345678901234",
+      numero: 12,
+      recuperado: false,
+      advertencias: [],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const PaginaCola = paginaCola();
+    render(createElement(QueryClientProvider, { client: queryClient }, createElement(PaginaCola)));
+
+    expect(await screen.findByTestId("dialogo-emision-fiscal")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar datos fiscales" }));
+    fireEvent.click(
+      await screen.findByLabelText(
+        "Confirmo que el período corresponde exactamente a las operaciones ajustadas.",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Emitir comprobante" }));
+
+    expect(await screen.findByTestId("detalle-comercial")).toBeTruthy();
+    expect(dobles.router.navigate).toHaveBeenCalled();
   });
 });

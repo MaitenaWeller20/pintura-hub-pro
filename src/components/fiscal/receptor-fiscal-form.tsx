@@ -43,6 +43,13 @@ const CONDICIONES_POR_LETRA: Record<
   ],
 };
 
+const TODAS_LAS_CONDICIONES: ReadonlyArray<{ value: CondicionIva; label: string }> = [
+  { value: "RESPONSABLE_INSCRIPTO", label: "Responsable inscripto" },
+  { value: "MONOTRIBUTO", label: "Monotributo" },
+  { value: "EXENTO", label: "Exento" },
+  { value: "CONSUMIDOR_FINAL", label: "Consumidor final" },
+];
+
 const ETIQUETA_CONDICION_IVA: Record<CondicionIva, string> = {
   RESPONSABLE_INSCRIPTO: "Responsable inscripto",
   MONOTRIBUTO: "Monotributo",
@@ -50,13 +57,13 @@ const ETIQUETA_CONDICION_IVA: Record<CondicionIva, string> = {
   CONSUMIDOR_FINAL: "Consumidor final",
 };
 
-function crearReceptorManualVacio(letraSolicitada: LetraSolicitada): ReceptorManual {
+function crearReceptorManualVacio(letraSolicitada: LetraSolicitada | null): ReceptorManual {
   return {
     origen: "MANUAL",
-    tipo_documento: letraSolicitada === "A" ? "CUIT" : "SIN_IDENTIFICAR",
+    tipo_documento: letraSolicitada === "B" ? "SIN_IDENTIFICAR" : "CUIT",
     numero_documento: "",
     razon_social: "",
-    condicion_iva: letraSolicitada === "A" ? "RESPONSABLE_INSCRIPTO" : "CONSUMIDOR_FINAL",
+    condicion_iva: letraSolicitada === "B" ? "CONSUMIDOR_FINAL" : "RESPONSABLE_INSCRIPTO",
     domicilio: "",
     guardar_para_proximas: false,
   };
@@ -177,16 +184,17 @@ export function ReceptorFiscalForm({
   }
 
   const elegirManual = () => {
-    if (!letraSolicitada) return;
     onChange(
-      value.origen === "MANUAL"
+      value.origen === "MANUAL" && letraSolicitada
         ? adaptarReceptorFormularioALetra(value, letraSolicitada)
         : crearReceptorManualVacio(letraSolicitada),
     );
   };
-  const condiciones = letraSolicitada ? CONDICIONES_POR_LETRA[letraSolicitada] : [];
+  const condiciones = letraSolicitada
+    ? CONDICIONES_POR_LETRA[letraSolicitada]
+    : TODAS_LAS_CONDICIONES;
   const requiereDocumento =
-    letraSolicitada === "A" || (value.origen === "MANUAL" && value.condicion_iva === "EXENTO");
+    letraSolicitada !== "B" || (value.origen === "MANUAL" && value.condicion_iva === "EXENTO");
   const receptorVerificado =
     estadoConsultaPadron.estado === "VERIFICADO" &&
     estadoConsultaPadron.receptor.cuit === claveConsultaPadron?.cuit
@@ -214,7 +222,9 @@ export function ReceptorFiscalForm({
           <span>
             <strong className="block">Cliente comercial</strong>
             <span className="block text-xs text-muted-foreground">
-              Sólo para factura B a Consumidor Final sin identificación fiscal.
+              {letraSolicitada === null
+                ? "La letra se determinará con sus datos fiscales confirmados."
+                : "Sólo para factura B a Consumidor Final sin identificación fiscal."}
             </span>
           </span>
         </label>
@@ -242,6 +252,7 @@ export function ReceptorFiscalForm({
             type="radio"
             className="mt-1"
             name="origen-receptor"
+            aria-label="Otro receptor"
             checked={value.origen === "MANUAL"}
             onChange={elegirManual}
           />
@@ -393,7 +404,7 @@ export function ReceptorFiscalForm({
           ) : null}
           <div>
             <Label htmlFor="receptor-numero-documento">
-              {letraSolicitada === "A"
+              {letraSolicitada === "A" || letraSolicitada === null
                 ? "CUIT"
                 : `Número de documento${requiereDocumento ? "" : " (opcional)"}`}
             </Label>
@@ -415,9 +426,11 @@ export function ReceptorFiscalForm({
             <p id="ayuda-documento-fiscal" className="mt-1 text-xs text-muted-foreground">
               {letraSolicitada === "A"
                 ? "La factura A requiere el CUIT del receptor."
-                : requiereDocumento
-                  ? "Los receptores Exentos deben identificarse con un documento válido."
-                  : "Podés emitir sin identificación o elegir el tipo explícitamente."}
+                : letraSolicitada === null
+                  ? "Para la letra automática, ingresá el CUIT y la condición fiscal del receptor."
+                  : requiereDocumento
+                    ? "Los receptores Exentos deben identificarse con un documento válido."
+                    : "Podés emitir sin identificación o elegir el tipo explícitamente."}
             </p>
             {errores.numero_documento ? (
               <p
@@ -466,6 +479,7 @@ export function ReceptorFiscalForm({
                 id="receptor-condicion-iva"
                 className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={value.condicion_iva}
+                required
                 aria-invalid={errores.condicion_iva ? true : undefined}
                 aria-describedby={
                   errores.condicion_iva ? "error-receptor-condicion-iva" : undefined

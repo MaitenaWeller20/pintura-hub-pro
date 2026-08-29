@@ -61,7 +61,10 @@ import {
   type IntentoAnulacion,
 } from "@/lib/anulacion-venta-ui";
 import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
-import { esVentaVisibleEnListadoComercial } from "@/lib/nota-credito-periodo-ui";
+import {
+  esVentaVisibleEnListadoComercial,
+  excluirPendientesFiscalesDeConsulta,
+} from "@/lib/nota-credito-periodo-ui";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -151,14 +154,14 @@ function VentasList() {
     queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
     enabled: !!cu,
     queryFn: async () => {
-      let q = supabase
-        .from("ventas")
-        .select(
+      let q = excluirPendientesFiscalesDeConsulta(
+        supabase.from("ventas").select(
           `
         ${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
         pagos:venta_pagos(forma_pago,monto)
       `,
-        )
+        ),
+      )
         .order("fecha", { ascending: false })
         .limit(200);
       if (sucFilter) q = q.eq("sucursal_id", sucFilter);

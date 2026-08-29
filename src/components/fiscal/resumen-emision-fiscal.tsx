@@ -140,6 +140,20 @@ export function ResumenEmisionFiscal({
               {asociacionPeriodo.motivo} ·{" "}
               {asociacionPeriodo.resolucion === "REINTEGRO" ? "Reintegro exacto" : "Saldo a favor"}
             </p>
+            <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-3">
+              <div>
+                <dt className="text-muted-foreground">Importe fiscal</dt>
+                <dd className="font-mono font-semibold tabular-nums">{fmtMoney(preview.total)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Receptor resuelto</dt>
+                <dd className="font-medium">{preview.receptor.razonSocial}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Letra resuelta</dt>
+                <dd className="font-medium">{preview.letra}</dd>
+              </div>
+            </dl>
           </div>
         ) : null}
 

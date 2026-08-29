@@ -157,3 +157,136 @@ las carreras no duplican stock, pagos, caja ni cuenta corriente.
   esta tarea.
 - No se llamó ARCA real, no se tocaron server action, UI, PDF, certificados,
   deploy, push ni producción.
+
+## Fix round 1 — plan inmutable y evidencia CAE vinculante
+
+Fecha: 2026-08-29
+
+HEAD de partida del fix: `a1ef351391d3b66aef704f4dc634d0d469f57534`.
+
+Commit funcional del fix: `9b3871a` —
+`fix(fiscal): inmovilizar plan y evidencia CAE`.
+
+### Resultado del fix
+
+Se cerraron los dos hallazgos de revisión:
+
+1. El plan de reintegros ya no admite DML desde `service_role` ni desde roles
+   API. Un trigger `SECURITY INVOKER` toma el mismo advisory lock que el
+   materializador y sólo acepta al owner real de la tabla. La creación sigue
+   ocurriendo dentro de la RPC owner.
+2. `APROBAR` y `RECUPERAR_CAE` comparten
+   `validar_evidencia_cae_fiscal`. Antes de escribir exigen CAE de exactamente
+   14 dígitos, fecha canónica y válida, timestamp UTC canónico y finito cuando
+   corresponde, resultado externo aprobatorio y coincidencia exacta entre la
+   evidencia persistida y los parámetros.
+
+`materializar_intencion_nc_periodo` bloquea la venta y el plan, ordena y
+materializa una sola vez el vector con sus UUID planificados y reconstruye el
+payload canónico completo de Tarea 4: actor, sucursal, cliente, modalidad,
+período, motivo, resolución, ítems y reintegros con las mismas escalas y orden.
+El SHA-256 se compara bajo lock con `ventas.nc_periodo_payload_hash`. El helper
+post-CAE usa exclusivamente ese vector para validar caja e insertar
+`venta_pagos`; no vuelve a leer la tabla del plan.
+
+El runtime TypeScript persiste CAE, vencimiento y el mismo `emitido_at` dentro
+de `RESPUESTA_RECIBIDA`, y la recuperación incluye el CAE consultado y su
+vencimiento en la evidencia exacta. No se inventa ningún CAE durante la
+recuperación.
+
+### TDD real: RED y GREEN
+
+RED se capturó antes de la implementación:
+
+- `/tmp/task8-fix1-red-sql.log`: `SET ROLE service_role` logró insertar una
+  fila del plan; el contrato falló con `operación fue aceptada`.
+- `/tmp/task8-fix1-red-ts.log`: dos pruebas fallaron porque los resúmenes de
+  aprobación y recuperación no incluían CAE/vencimiento/timestamp vinculantes.
+
+GREEN después de la migración nueva
+`20260829213501_cerrar_plan_y_evidencia_cae_nc_periodo.sql`:
+
+- los ataques `INSERT`, `UPDATE` y `DELETE` como `service_role` fallan;
+- una mutación owner que conserva el total pero cambia medio/monto produce
+  mismatch del hash y rollback de CAE, stock, pagos, caja, cuenta corriente y
+  marcador;
+- CAE corto, no numérico, fecha no canónica/inexistente, timestamp inválido,
+  parámetros distintos de la evidencia y respuesta `R` confirmada fallan sin
+  cambio parcial;
+- aprobación y recuperación válidas siguen aplicando exactamente una vez el
+  mismo helper y el mismo vector comercial.
+
+### Matriz de ataque, replay y concurrencia
+
+| Escenario | Resultado | Efectos comerciales |
+| --- | --- | --- |
+| DML directo de `service_role` sobre el plan | `permission denied` por ACL; guard owner-only como segunda barrera | Ninguno |
+| Mutación owner del vector antes de `APROBAR` | Hash canónico distinto; transacción abortada | CAE, stock, pagos, caja, CC y marcador intactos |
+| Dos `RECUPERAR_CAE` concurrentes | Un solo ganador por locks/CAS | Un movimiento de stock, un pago con UUID planificado y un marcador |
+| Mutación `service_role` concurrente con ambas recuperaciones | Rechazada mientras compiten las tres conexiones reales | El pago conserva medio, monto y UUID originales |
+| Replay de `APROBAR` o `RECUPERAR_CAE` | Rechazado por versión/token/estado ya consumido | Sin duplicados |
+| Evidencia `R`, ausente, divergente o CAE/fecha/timestamp inválidos | Rechazo previo a escritura | Sin CAE ni efectos |
+| Evidencia `A` exacta | Persiste CAE y llama al helper en la misma transacción | Matriz original de devolución/ajuste/reintegro/saldo conservada |
+
+### Archivos del fix
+
+- `supabase/migrations/20260829213501_cerrar_plan_y_evidencia_cae_nc_periodo.sql`
+  — creada con `supabase migration new cerrar_plan_y_evidencia_cae_nc_periodo`;
+  ACL/guard del plan, materialización canónica, helper post-CAE sin segunda
+  lectura, validador compartido de evidencia y wrapper del lifecycle.
+- `src/lib/fiscal/emision.ts` y `src/lib/fiscal/emision.test.ts` — evidencia
+  completa y timestamp único para respuesta/aprobación; CAE consultado en
+  recuperación.
+- `scripts/test-nota-credito-periodo-fiscal.sh` — ataques, rollback, CAE
+  negativo y carrera real de tres conexiones.
+- `scripts/test-fiscal-concurrencia.sh`,
+  `scripts/test-venta-fiscal-atomica.sh` y
+  `scripts/test-conflictos-emision-rest.sh` — fixtures aprobatorios vinculados
+  al CAE real y preservación de lifecycle/locks/CAS/REST.
+- `scripts/test-nota-credito-periodo-schema.sh` — contrato actualizado a
+  `service_role` de sólo lectura sobre el plan.
+
+No se modificó ninguna migración histórica.
+
+### Verificación del fix
+
+- `supabase db reset --local`: OK desde cero con la migración nueva.
+- `bash scripts/test-nota-credito-periodo-fiscal.sh`: OK; 84 aserciones SQL y
+  dos verificaciones de shell/concurrencia reales.
+- `bash scripts/test-fiscal-concurrencia.sh`: 180 OK, 0 fallas.
+- `bash scripts/test-venta-fiscal-atomica.sh`: contrato completo y tres
+  carreras de shell en verde.
+- `bash scripts/test-conflictos-emision-rest.sh`: 42 verificaciones REST y de
+  locks reales en verde; cero requests ARCA.
+- `bash scripts/test-anulacion-fiscal-vinculada.sh`: OK.
+- `bash scripts/test-anulacion-interna-idempotente.sh`: OK.
+- `bash scripts/test-liberar-claim-fiscal.sh`: 9 OK, 0 fallas.
+- `bash scripts/test-nota-credito-periodo-schema.sh`: OK.
+- `bash scripts/test-snapshot-fiscal-v3.sh`: OK.
+- `npm test`: 73 archivos pasados, 2 omitidos; 1539 pruebas pasadas y 22
+  omitidas.
+- `npm run typecheck`: OK.
+- `npx eslint src/lib/fiscal/emision.ts src/lib/fiscal/emision.test.ts`: OK.
+- `bash -n` en todos los scripts modificados: OK.
+- `git diff --check`: OK.
+
+### Basales y riesgos del fix
+
+- `supabase db lint --local --level warning` finaliza e informa únicamente el
+  error histórico de `public.cambiar_precios_masivo` por la relación temporal
+  `_objetivo`; no marca funciones del fix.
+- `scripts/test-nota-credito-sin-factura.sh` conserva 20 fallas en cascada: su
+  primer caso intenta crear una NC por el writer genérico retirado y recibe la
+  barrera histórica `La nota de crédito v2 se crea exclusivamente mediante
+  anular_venta`. Es un contrato obsoleto previo a esta tarea; no se relajó el
+  writer fence para falsearlo.
+- El guard permite DML únicamente al owner PostgreSQL para que las RPC puedan
+  crear la intención. Una corrupción privilegiada sigue siendo detectable por
+  el hash antes de efectos, como prueba el fixture owner; proteger a un
+  superusuario de sí mismo queda fuera del modelo de privilegios PostgreSQL.
+- El wrapper de transición conserva el core previo sin reescribir sus ramas:
+  sólo intercepta respuesta/aprobación/recuperación para vincular evidencia.
+  Sus locks mantienen el orden original→NC→intento y el core conserva leases,
+  CAS, FCE, secuencias y writer fences.
+- No se llamó ARCA real ni se tocaron server action, UI, PDF, certificados,
+  deploy, push o producción.

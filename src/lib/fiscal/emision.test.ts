@@ -543,17 +543,20 @@ describe("ejecutarEmisionFiscal", () => {
     const preparar = deps.prepararEmision;
     deps.prepararEmision = async (input) => ({ ...(await preparar(input)), cbteTipo: 203 });
 
-    await ejecutarEmisionFiscal(
-      {
-        ventaId: "71000000-0000-4000-8000-000000000001",
-        receptor: MANUAL_A,
-        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
-        confirmaVentaAntigua: false,
-        huellaConfirmacion: huellaPara(doble, MANUAL_A),
-      },
-      deps,
-    );
+    await expect(
+      ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: MANUAL_A,
+          letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/CbteTipo.*3.*8.*13/i);
 
+    expect(doble.calls).toEqual([]);
     expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
     expect(doble.payloadsCae).toHaveLength(0);
   });

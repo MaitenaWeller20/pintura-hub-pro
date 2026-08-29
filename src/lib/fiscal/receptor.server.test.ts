@@ -472,6 +472,125 @@ describe("resolución server de receptor fiscal", () => {
     },
   );
 
+  it.each(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"] as const)(
+    "falla cerrado el cálculo automático declarado como %s cuando ARCA no confirma la condición",
+    async (condicionIva) => {
+      await expect(
+        resolverReceptorFiscal({
+          selector: {
+            origen: "MANUAL",
+            tipo_documento: "CUIT",
+            numero_documento: "30-71419966-4",
+            razon_social: "Nombre inventado",
+            condicion_iva: condicionIva,
+            domicilio: null,
+            guardar_para_proximas: false,
+            confirma_datos_manuales: true,
+          },
+          venta: {
+            ...venta,
+            tipoComprobante: "NOTA_CREDITO",
+            asociacion: {
+              tipo: "PERIODO",
+              desde: "2026-07-01",
+              hasta: "2026-07-31",
+              modalidad: "BONIFICACION_AJUSTE",
+              motivo: "Ajuste comercial del período",
+              resolucion: "SALDO_FAVOR",
+            },
+          },
+          importeTotal: 100,
+          letraSolicitada: null,
+          cargarFavorito: vi.fn(),
+          cargarOriginal: vi.fn(),
+          consultarPadron: async () => receptorPadron({ condicionIvaConfirmada: null }),
+        }),
+      ).rejects.toMatchObject({ codigoFiscalUsuario: "CONDICION_FISCAL_INCOMPATIBLE" });
+    },
+  );
+
+  it.each(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"] as const)(
+    "falla cerrado el cálculo automático declarado como %s sin adaptador de padrón",
+    async (condicionIva) => {
+      await expect(
+        resolverReceptorFiscal({
+          selector: {
+            origen: "MANUAL",
+            tipo_documento: "CUIT",
+            numero_documento: "30-71419966-4",
+            razon_social: "Nombre inventado",
+            condicion_iva: condicionIva,
+            domicilio: null,
+            guardar_para_proximas: false,
+            confirma_datos_manuales: true,
+          },
+          venta: {
+            ...venta,
+            tipoComprobante: "NOTA_CREDITO",
+            asociacion: {
+              tipo: "PERIODO",
+              desde: "2026-07-01",
+              hasta: "2026-07-31",
+              modalidad: "BONIFICACION_AJUSTE",
+              motivo: "Ajuste comercial del período",
+              resolucion: "SALDO_FAVOR",
+            },
+          },
+          importeTotal: 100,
+          letraSolicitada: null,
+          cargarFavorito: vi.fn(),
+          cargarOriginal: vi.fn(),
+        }),
+      ).rejects.toMatchObject({ codigoFiscalUsuario: "CONDICION_FISCAL_INCOMPATIBLE" });
+    },
+  );
+
+  it.each([
+    ["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO", "RESPONSABLE_INSCRIPTO"],
+    ["MONOTRIBUTO", "RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"],
+    [null, "CONSUMIDOR_FINAL", "CONSUMIDOR_FINAL"],
+    [null, "EXENTO", "EXENTO"],
+  ] as const)(
+    "el cálculo automático resuelve padrón %s y declaración %s como %s",
+    async (condicionIvaConfirmada, condicionDeclarada, condicionEsperada) => {
+      const receptor = await resolverReceptorFiscal({
+        selector: {
+          origen: "MANUAL",
+          tipo_documento: "CUIT",
+          numero_documento: "30-71419966-4",
+          razon_social: "Nombre inventado",
+          condicion_iva: condicionDeclarada,
+          domicilio: null,
+          guardar_para_proximas: false,
+          confirma_datos_manuales: true,
+        },
+        venta: {
+          ...venta,
+          tipoComprobante: "NOTA_CREDITO",
+          asociacion: {
+            tipo: "PERIODO",
+            desde: "2026-07-01",
+            hasta: "2026-07-31",
+            modalidad: "BONIFICACION_AJUSTE",
+            motivo: "Ajuste comercial del período",
+            resolucion: "SALDO_FAVOR",
+          },
+        },
+        importeTotal: 100,
+        letraSolicitada: null,
+        cargarFavorito: vi.fn(),
+        cargarOriginal: vi.fn(),
+        consultarPadron: async () => receptorPadron({ condicionIvaConfirmada }),
+      });
+
+      expect(receptor).toMatchObject({
+        condicionIva: condicionEsperada,
+        razonSocial: "IDENTIDAD OFICIAL S.A.",
+        origen: "ARCA",
+      });
+    },
+  );
+
   it("devuelve el receptor congelado del comprobante original sin consultar ARCA", async () => {
     const consultarPadron = vi.fn(async () => receptorPadron());
     const receptor = await resolverReceptorFiscal({

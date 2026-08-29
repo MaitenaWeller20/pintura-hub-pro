@@ -82,6 +82,19 @@ function cuitCanonico(valor: string | null): string | null {
   return valor!.replace(/\D/g, "");
 }
 
+function admiteFallbackNoInscripto(condicion: CondicionIva | null): boolean {
+  return condicion === "EXENTO" || condicion === "CONSUMIDOR_FINAL";
+}
+
+function exigirCondicionAutomaticaConfirmada(
+  condicion: CondicionIva,
+  letraSolicitada: "A" | "B" | "C" | null,
+): void {
+  if (letraSolicitada === null && !admiteFallbackNoInscripto(condicion)) {
+    throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
+  }
+}
+
 function receptorDesdePadron(input: {
   padron: ReceptorPadronArca;
   condicionDeclarada: CondicionIva | null;
@@ -90,14 +103,11 @@ function receptorDesdePadron(input: {
   importeTotal: number;
 }): ReceptorFiscalConfirmado {
   const confirmada = input.padron.condicionIvaConfirmada;
+  const declaradaAdmitidaSinConfirmacion = admiteFallbackNoInscripto(input.condicionDeclarada);
   if (
-    (input.letraSolicitada === "A" && confirmada === null) ||
+    (confirmada === null && (input.letraSolicitada === "A" || !declaradaAdmitidaSinConfirmacion)) ||
     (input.letraSolicitada === "B" &&
-      (confirmada === "RESPONSABLE_INSCRIPTO" ||
-        confirmada === "MONOTRIBUTO" ||
-        (confirmada === null &&
-          input.condicionDeclarada !== "EXENTO" &&
-          input.condicionDeclarada !== "CONSUMIDOR_FINAL")))
+      (confirmada === "RESPONSABLE_INSCRIPTO" || confirmada === "MONOTRIBUTO"))
   ) {
     throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
   }
@@ -230,6 +240,7 @@ export async function resolverReceptorFiscal(input: {
         importeTotal: input.importeTotal,
       });
     }
+    exigirCondicionAutomaticaConfirmada(receptor.condicionIva, input.letraSolicitada);
     return { ...receptor };
   }
   const favorito = await input.cargarFavorito(input.selector.receptor_fiscal_id);
@@ -247,5 +258,7 @@ export async function resolverReceptorFiscal(input: {
       importeTotal: input.importeTotal,
     });
   }
-  return { ...receptorFavorito(favorito, input.importeTotal) };
+  const receptor = receptorFavorito(favorito, input.importeTotal);
+  exigirCondicionAutomaticaConfirmada(receptor.condicionIva, input.letraSolicitada);
+  return { ...receptor };
 }

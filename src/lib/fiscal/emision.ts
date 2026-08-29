@@ -738,6 +738,23 @@ export async function ejecutarEmisionFiscal(
     throw new Error("Una nota fiscal requiere exactamente una asociación.");
   }
 
+  // La condición IVA que determina A/B/C debe validarse antes de adquirir el
+  // claim. La preparación se repite bajo claim más abajo: ésa sigue siendo la
+  // lectura canónica que se congela y reserva.
+  if (asociacion.tipo === "PERIODO") {
+    const validacionPreclaim = await deps.prepararEmision({
+      ventaId: input.ventaId,
+      receptor: input.receptor,
+      seleccionLetra,
+    });
+    if (!mismaAsociacionFiscal(asociacion, validacionPreclaim.asociacion)) {
+      throw new Error("La asociación fiscal cambió durante la validación previa al claim.");
+    }
+    if (![3, 8, 13].includes(validacionPreclaim.cbteTipo)) {
+      throw new Error("La NC por período sólo admite CbteTipo estándar 3, 8 o 13.");
+    }
+  }
+
   const claimToken = deps.generarClaimToken();
   let estado: EstadoTransicionFiscal;
   try {

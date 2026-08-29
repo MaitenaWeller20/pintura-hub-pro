@@ -389,8 +389,41 @@ function receptorPadron(cambios: Partial<ReceptorPadronArca> = {}): ReceptorPadr
   };
 }
 
-function adminVentaConPadron(validacionActiva = true) {
+function preparacionNcPeriodo(condicionEmisor: "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO") {
   const base = preparacion();
+  return {
+    ...base,
+    lectura: {
+      ...base.lectura,
+      venta: {
+        ...base.lectura.venta,
+        numeroComercial: "NC-P-SERVER-REAL",
+        tipoComprobante: "NOTA_CREDITO",
+        periodoAsocDesde: "2026-08-01",
+        periodoAsocHasta: "2026-08-15",
+        ncPeriodoModalidad: "BONIFICACION_AJUSTE",
+        motivoNotaCredito: "Bonificación server-real del período",
+        ncResolucion: "SALDO_FAVOR",
+        ncPeriodoPayloadHash: "c".repeat(64),
+      },
+    },
+    contexto: {
+      ...base.contexto,
+      emisor: { ...base.contexto.emisor, condicion_iva: condicionEmisor },
+      emisorImpreso: { ...base.contexto.emisorImpreso, condicion_iva: condicionEmisor },
+    },
+    asociacion: {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Bonificación server-real del período",
+      resolucion: "SALDO_FAVOR",
+    },
+  } as const;
+}
+
+function adminVentaConPadron(validacionActiva = true, base = preparacion()) {
   const emisorId = base.contexto.sucursal.emisor_id;
   return {
     async rpc(nombre: string) {
@@ -608,6 +641,265 @@ describe("padrón autoritativo en preview y preparación final", () => {
     expect(consultarPadron).toHaveBeenCalledOnce();
     expect(resultado.receptor.razonSocial).toBe("RAZON SOCIAL AUTORITATIVA S.A.");
   });
+});
+
+describe("pipeline server-real de NC por período", () => {
+  const ventaId = preparacion().lectura.venta.id;
+
+  it.each([
+    [
+      "A por RI confirmada",
+      "RESPONSABLE_INSCRIPTO",
+      "MONOTRIBUTO",
+      "RESPONSABLE_INSCRIPTO",
+      "A",
+      3,
+      1,
+    ],
+    ["B por CF no inscripto", "RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL", null, "B", 8, 5],
+    ["B por EXENTO no inscripto", "RESPONSABLE_INSCRIPTO", "EXENTO", null, "B", 8, 4],
+    [
+      "C por emisor monotributista",
+      "MONOTRIBUTO",
+      "RESPONSABLE_INSCRIPTO",
+      "MONOTRIBUTO",
+      "C",
+      13,
+      6,
+    ],
+  ] as const)(
+    "%s resuelve receptor, letra, snapshot v3 y payload con dependencias reales",
+    async (
+      _caso,
+      condicionEmisor,
+      condicionDeclarada,
+      condicionConfirmada,
+      letraEsperada,
+      cbteTipoEsperado,
+      condicionIdEsperada,
+    ) => {
+      const base = preparacionNcPeriodo(condicionEmisor);
+      const admin = adminVentaConPadron(true, base as never);
+      const selector = {
+        origen: "MANUAL" as const,
+        tipo_documento: "CUIT" as const,
+        numero_documento: "30-71419966-4",
+        razon_social: "Texto manual no autoritativo",
+        condicion_iva: condicionDeclarada,
+        domicilio: null,
+        guardar_para_proximas: false,
+        confirma_datos_manuales: true as const,
+      };
+      const reales = crearDependenciasEmisionFiscalServer({
+        admin: admin as never,
+        usuario: { from: () => Promise.reject(new Error("Consulta inesperada.")) } as never,
+        ventaIdAutorizada: ventaId,
+        validarModalidadFacturaA: false,
+        consultarPadron: async ({ cuit }: { cuit: string }) =>
+          receptorPadron({ cuit, condicionIvaConfirmada: condicionConfirmada }),
+      } as never);
+      const preflight = await reales.prepararEmision({
+        ventaId,
+        receptor: selector,
+        seleccionLetra: { origen: "AUTOMATICA_NC_PERIODO" },
+      });
+
+      let estado: Awaited<ReturnType<DependenciasEmisionFiscal["transicionar"]>> = {
+        venta_id: ventaId,
+        afip_estado: "SIN_FACTURAR",
+        afip_fase: null,
+        afip_claim_token: null,
+        afip_numero: null,
+        afip_version: 0,
+      };
+      const observado: {
+        reserva?: ReservaFiscalPersistida;
+        payloadArca?: Record<string, unknown>;
+      } = {};
+      const deps: DependenciasEmisionFiscal = {
+        ...reales,
+        generarClaimToken: () => "81000000-0000-4000-8000-000000000001",
+        ahoraIso: () => "2026-08-29T15:00:00.000Z",
+        consultarSecuencia: async () => ({
+          ultimoRemoto: 0,
+          ultimaFechaRemota: null,
+          ultimoLocal: 0,
+        }),
+        async transicionar({ accion, claimToken, payload }) {
+          const siguienteVersion = estado.afip_version + 1;
+          if (accion === "RECLAMAR") {
+            estado = {
+              ...estado,
+              afip_estado: "EMITIENDO",
+              afip_fase: "PREFLIGHT",
+              afip_claim_token: claimToken,
+              afip_version: siguienteVersion,
+            };
+          } else if (accion === "RESERVAR") {
+            const snapshot = validarSnapshotFiscalPersistido(payload.snapshot);
+            const numero = payload.numero_propuesto as number;
+            estado = {
+              ...estado,
+              afip_estado: "EMITIENDO",
+              afip_fase: "RESERVADO",
+              afip_claim_token: claimToken,
+              afip_numero: numero,
+              afip_version: siguienteVersion,
+            };
+            observado.reserva = {
+              ventaId,
+              claimToken: claimToken!,
+              afipVersion: siguienteVersion,
+              numero,
+              snapshot,
+              payloadHash: snapshot.hash,
+              emisorCuit: snapshot.identidad.emisorCuit,
+              puntoVenta: snapshot.identidad.puntoVenta,
+              cbteTipo: snapshot.identidad.cbteTipo,
+              modo: snapshot.identidad.modo,
+            };
+          } else if (accion === "REQUEST_INICIADO" || accion === "RESPUESTA_RECIBIDA") {
+            estado = {
+              ...estado,
+              afip_estado: "EMITIENDO",
+              afip_fase: accion,
+              afip_version: siguienteVersion,
+            };
+          } else if (accion === "APROBAR") {
+            estado = {
+              ...estado,
+              afip_estado: "APROBADO",
+              afip_fase: "PERSISTIDO",
+              afip_version: siguienteVersion,
+            };
+          } else {
+            throw new Error(`Transición inesperada: ${accion}.`);
+          }
+          return estado;
+        },
+        cargarEstadoPersistido: async () => estado,
+        cargarReservaPersistida: async () => {
+          if (!observado.reserva) throw new Error("La reserva mockeada todavía no existe.");
+          return observado.reserva;
+        },
+        async solicitarCae(_reserva, payload) {
+          observado.payloadArca = payload as Record<string, unknown>;
+          return {
+            resultado: "APROBADA",
+            cae: "75123456789012",
+            vencimiento: "2026-09-08",
+          };
+        },
+      };
+
+      const resultado = await ejecutarEmisionFiscal(
+        {
+          ventaId,
+          receptor: selector,
+          letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: preflight.huellaConfirmacion,
+        },
+        deps,
+      );
+      const { reserva, payloadArca } = observado;
+      if (!reserva || !payloadArca) throw new Error("El pipeline no alcanzó snapshot y adaptador.");
+
+      expect(resultado).toMatchObject({ estado: "APROBADO", numero: 1 });
+      expect(reserva.snapshot).toMatchObject({
+        version: 3,
+        letra: letraEsperada,
+        receptor: {
+          condicionIva: condicionConfirmada ?? condicionDeclarada,
+          condicionIvaReceptorId: condicionIdEsperada,
+          razonSocial: "RAZON SOCIAL AUTORITATIVA S.A.",
+        },
+        identidad: { cbteTipo: cbteTipoEsperado, numero: 1 },
+      });
+      expect(payloadArca).toMatchObject({
+        CbteTipo: cbteTipoEsperado,
+        CondicionIVAReceptorId: condicionIdEsperada,
+        ImpTotal: 0.18,
+        ImpNeto: letraEsperada === "C" ? 0.18 : 0.15,
+        ImpIVA: letraEsperada === "C" ? 0 : 0.03,
+      });
+      if (letraEsperada === "C") expect(payloadArca).not.toHaveProperty("Iva");
+      else expect(payloadArca).toHaveProperty("Iva");
+    },
+  );
+
+  it.each(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"] as const)(
+    "rechaza %s declarada sin confirmación antes de transición o request",
+    async (condicionDeclarada) => {
+      const base = preparacionNcPeriodo("RESPONSABLE_INSCRIPTO");
+      const reales = crearDependenciasEmisionFiscalServer({
+        admin: adminVentaConPadron(true, base as never) as never,
+        usuario: { from: () => Promise.reject(new Error("Consulta inesperada.")) } as never,
+        ventaIdAutorizada: ventaId,
+        validarModalidadFacturaA: false,
+        consultarPadron: async ({ cuit }: { cuit: string }) =>
+          receptorPadron({ cuit, condicionIvaConfirmada: null }),
+      } as never);
+      let transiciones = 0;
+      let requests = 0;
+      let estado: Awaited<ReturnType<DependenciasEmisionFiscal["transicionar"]>> = {
+        venta_id: ventaId,
+        afip_estado: "SIN_FACTURAR",
+        afip_fase: null,
+        afip_claim_token: null,
+        afip_numero: null,
+        afip_version: 0,
+      };
+      const deps: DependenciasEmisionFiscal = {
+        ...reales,
+        generarClaimToken: () => "81000000-0000-4000-8000-000000000001",
+        async transicionar({ accion, claimToken }) {
+          transiciones += 1;
+          estado = {
+            ...estado,
+            afip_estado: accion === "ERROR_CORREGIBLE" ? "ERROR_CORREGIBLE" : "EMITIENDO",
+            afip_fase: accion === "RECLAMAR" ? "PREFLIGHT" : null,
+            afip_claim_token: accion === "RECLAMAR" ? claimToken : null,
+            afip_version: estado.afip_version + 1,
+          };
+          return estado;
+        },
+        cargarEstadoPersistido: async () => estado,
+        async consultarSecuencia() {
+          requests += 1;
+          throw new Error("La condición inválida alcanzó la secuencia ARCA.");
+        },
+        async solicitarCae() {
+          requests += 1;
+          throw new Error("La condición inválida alcanzó el request ARCA.");
+        },
+      };
+
+      await expect(
+        ejecutarEmisionFiscal(
+          {
+            ventaId,
+            receptor: {
+              origen: "MANUAL",
+              tipo_documento: "CUIT",
+              numero_documento: "30-71419966-4",
+              razon_social: "Texto manual no autoritativo",
+              condicion_iva: condicionDeclarada,
+              domicilio: null,
+              guardar_para_proximas: false,
+              confirma_datos_manuales: true,
+            },
+            letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+            confirmaVentaAntigua: false,
+            huellaConfirmacion: "no-debe-evaluarse",
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({ codigoFiscalUsuario: "CONDICION_FISCAL_INCOMPATIBLE" });
+      expect(transiciones).toBe(0);
+      expect(requests).toBe(0);
+    },
+  );
 });
 
 describe("Snapshot desde lectura PostgreSQL exacta", () => {

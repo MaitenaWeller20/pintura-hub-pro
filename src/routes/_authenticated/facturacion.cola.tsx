@@ -387,6 +387,14 @@ function ColaFiscalPage() {
     enabled: seleccionada !== null && esNotaCreditoPorPeriodo(seleccionada),
     queryFn: () => leerDetalleNcPeriodo({ data: { venta_id: seleccionada!.venta_id } }),
   });
+  const estadoDetalleNcPeriodo =
+    seleccionada && esNotaCreditoPorPeriodo(seleccionada)
+      ? detalleNcPeriodo.isSuccess
+        ? { estado: "LISTO" as const }
+        : detalleNcPeriodo.isError
+          ? { estado: "ERROR" as const, reintentar: () => void detalleNcPeriodo.refetch() }
+          : { estado: "CARGANDO" as const }
+      : undefined;
   const detalleVenta = useQuery({
     queryKey: ["venta-detalle-cola", detalleSeleccionado?.ventaId ?? null],
     enabled: detalleSeleccionado !== null,
@@ -704,6 +712,7 @@ function ColaFiscalPage() {
             detalleNcPeriodo.data,
           )}
           favoritos={favoritos.data ?? []}
+          detalleAutoritativoPeriodo={estadoDetalleNcPeriodo}
           puedeConfirmarVentaAntigua={esAdmin}
           returnFocusRef={returnFocusRef}
           onOpenChange={(open) => {

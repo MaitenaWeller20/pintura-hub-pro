@@ -35,7 +35,17 @@ type ProductoDisponible = {
 type ItemEditor = ProductoDisponible & { cantidad: number };
 type PagoEditor = { id: string; formaPago: FormaPagoReintegro; monto: number | null };
 type IntentoNcPeriodo = { payload: NotaCreditoPeriodoInput };
-type CampoErrorNcPeriodo = "desde" | "hasta" | "motivo" | "items" | "reintegros";
+type CampoErrorNcPeriodo =
+  | "desde"
+  | "hasta"
+  | "motivo"
+  | "modalidad"
+  | "resolucion"
+  | "items"
+  | "concepto"
+  | "importe"
+  | "reintegros";
+export type EstadoIntentoNcPeriodo = "IDLE" | "ENVIANDO" | "AMBIGUO";
 
 const FORMAS_REINTEGRO: readonly FormaPagoReintegro[] = [
   "EFECTIVO",
@@ -59,6 +69,33 @@ function mensajeError(cause: unknown): string {
   return cause instanceof Error ? cause.message : "Revisá los datos de la nota de crédito.";
 }
 
+const MENSAJES_CAMPO: Record<CampoErrorNcPeriodo, string> = {
+  desde: "Indicá una fecha inicial válida.",
+  hasta: "Indicá una fecha final válida y posterior o igual a la inicial.",
+  motivo: "El motivo debe tener al menos 5 caracteres.",
+  modalidad: "Elegí cómo se compone la nota de crédito.",
+  resolucion: "Elegí qué ocurre con el importe acreditado.",
+  items: "Agregá al menos un producto con cantidad positiva.",
+  concepto: "Indicá el concepto del ajuste.",
+  importe: "Indicá un importe neto positivo.",
+  reintegros: "El reintegro debe distribuir el total exacto entre sus medios de pago.",
+};
+
+function campoDeIssue(path: PropertyKey[], modalidad: ModalidadNcPeriodo): CampoErrorNcPeriodo {
+  const [raiz, indice, propiedad] = path;
+  if (raiz === "periodo_desde") return "desde";
+  if (raiz === "periodo_hasta") return "hasta";
+  if (raiz === "motivo") return "motivo";
+  if (raiz === "modalidad") return "modalidad";
+  if (raiz === "resolucion") return "resolucion";
+  if (raiz === "pagos") return "reintegros";
+  if (raiz === "items" && modalidad === "BONIFICACION_AJUSTE") {
+    if (indice === 0 && propiedad === "descripcion") return "concepto";
+    if (indice === 0 && propiedad === "precio_unitario_sin_iva") return "importe";
+  }
+  return "items";
+}
+
 export function EditorNotaCreditoPeriodo({
   sucursalId,
   clienteId,
@@ -67,6 +104,7 @@ export function EditorNotaCreditoPeriodo({
   disabled = false,
   onCrear,
   onCancelar,
+  onEstadoIntento,
 }: {
   sucursalId: string;
   clienteId: string;
@@ -75,6 +113,7 @@ export function EditorNotaCreditoPeriodo({
   disabled?: boolean;
   onCrear(input: NotaCreditoPeriodoInput): Promise<void>;
   onCancelar?(): void;
+  onEstadoIntento?(estado: EstadoIntentoNcPeriodo): void;
 }) {
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(() => crypto.randomUUID());
   const [modalidad, setModalidad] = useState<ModalidadNcPeriodo>("DEVOLUCION_PRODUCTOS");
@@ -167,12 +206,15 @@ export function EditorNotaCreditoPeriodo({
     if (creandoRef.current) return;
     creandoRef.current = true;
     setCreando(true);
+    onEstadoIntento?.("ENVIANDO");
     setError(null);
     try {
       await onCrear(intento.payload);
       restablecer();
+      onEstadoIntento?.("IDLE");
     } catch (cause) {
       setError(mensajeError(cause));
+      onEstadoIntento?.("AMBIGUO");
     } finally {
       creandoRef.current = false;
       setCreando(false);
@@ -199,7 +241,7 @@ export function EditorNotaCreditoPeriodo({
     }
     if (!totales) {
       marcarErrorCampo(
-        "items",
+        modalidad === "DEVOLUCION_PRODUCTOS" ? "items" : "importe",
         modalidad === "DEVOLUCION_PRODUCTOS"
           ? "Agregá al menos un producto con cantidad positiva."
           : "Cargá un importe positivo para el ajuste.",
@@ -260,11 +302,18 @@ export function EditorNotaCreditoPeriodo({
                 },
               ] as const,
             };
-      const intento = { payload: notaCreditoPeriodoInputSchema.parse(input) };
+      const validacion = notaCreditoPeriodoInputSchema.safeParse(input);
+      if (!validacion.success) {
+        const campo = campoDeIssue(validacion.error.issues[0]?.path ?? [], modalidad);
+        marcarErrorCampo(campo, MENSAJES_CAMPO[campo]);
+        return;
+      }
+      const intento = { payload: validacion.data };
       setIntentoPendiente(intento);
       void enviarIntento(intento);
-    } catch (cause) {
-      marcarErrorCampo(resolucion === "REINTEGRO" ? "reintegros" : "items", mensajeError(cause));
+    } catch {
+      const campo = resolucion === "REINTEGRO" ? "reintegros" : "items";
+      marcarErrorCampo(campo, MENSAJES_CAMPO[campo]);
     }
   };
 
@@ -273,6 +322,7 @@ export function EditorNotaCreditoPeriodo({
     setIntentoPendiente(null);
     setIdempotencyKey(null);
     setError(null);
+    onEstadoIntento?.("IDLE");
   };
 
   return (
@@ -349,7 +399,14 @@ export function EditorNotaCreditoPeriodo({
         ) : null}
       </div>
 
-      <fieldset disabled={controlesBloqueados} className="space-y-2">
+      <fieldset
+        id="nc-periodo-modalidad"
+        disabled={controlesBloqueados}
+        className="space-y-2"
+        aria-invalid={erroresCampo.modalidad ? true : undefined}
+        aria-describedby={erroresCampo.modalidad ? "nc-periodo-modalidad-error" : undefined}
+        tabIndex={-1}
+      >
         <legend className="text-sm font-semibold">Modalidad</legend>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
@@ -371,6 +428,11 @@ export function EditorNotaCreditoPeriodo({
             Bonificación o ajuste
           </label>
         </div>
+        {erroresCampo.modalidad ? (
+          <p id="nc-periodo-modalidad-error" role="alert" className="text-xs text-destructive">
+            {erroresCampo.modalidad}
+          </p>
+        ) : null}
       </fieldset>
 
       {visibles.productos ? (
@@ -457,38 +519,55 @@ export function EditorNotaCreditoPeriodo({
 
       {visibles.concepto ? (
         <div
-          id="nc-periodo-items"
+          id="nc-periodo-ajuste"
           className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-3"
-          aria-invalid={erroresCampo.items ? true : undefined}
-          aria-describedby={erroresCampo.items ? "nc-periodo-items-error" : undefined}
           tabIndex={-1}
         >
           <div className="sm:col-span-3">
-            <Label htmlFor="nc-concepto">Concepto del ajuste</Label>
+            <Label htmlFor="nc-periodo-concepto">Concepto del ajuste</Label>
             <Input
-              id="nc-concepto"
+              id="nc-periodo-concepto"
               value={concepto}
               disabled={controlesBloqueados}
-              onChange={(event) => setConcepto(event.target.value)}
+              aria-invalid={erroresCampo.concepto ? true : undefined}
+              aria-describedby={erroresCampo.concepto ? "nc-periodo-concepto-error" : undefined}
+              onChange={(event) => {
+                setConcepto(event.target.value);
+                setErroresCampo((actual) => ({ ...actual, concepto: undefined }));
+              }}
             />
+            {erroresCampo.concepto ? (
+              <p
+                id="nc-periodo-concepto-error"
+                role="alert"
+                className="mt-1 text-xs text-destructive"
+              >
+                {erroresCampo.concepto}
+              </p>
+            ) : null}
           </div>
-          {erroresCampo.items ? (
-            <p
-              id="nc-periodo-items-error"
-              role="alert"
-              className="text-xs text-destructive sm:col-span-3"
-            >
-              {erroresCampo.items}
-            </p>
-          ) : null}
           <div>
-            <Label htmlFor="nc-importe">Importe neto</Label>
+            <Label htmlFor="nc-periodo-importe">Importe neto</Label>
             <NumberInput
-              id="nc-importe"
+              id="nc-periodo-importe"
               value={importeConcepto}
               disabled={controlesBloqueados}
-              onValueChange={setImporteConcepto}
+              aria-invalid={erroresCampo.importe ? true : undefined}
+              aria-describedby={erroresCampo.importe ? "nc-periodo-importe-error" : undefined}
+              onValueChange={(importe) => {
+                setImporteConcepto(importe);
+                setErroresCampo((actual) => ({ ...actual, importe: undefined }));
+              }}
             />
+            {erroresCampo.importe ? (
+              <p
+                id="nc-periodo-importe-error"
+                role="alert"
+                className="mt-1 text-xs text-destructive"
+              >
+                {erroresCampo.importe}
+              </p>
+            ) : null}
           </div>
           <div>
             <Label htmlFor="nc-iva">IVA</Label>
@@ -512,7 +591,14 @@ export function EditorNotaCreditoPeriodo({
         </div>
       ) : null}
 
-      <fieldset disabled={controlesBloqueados} className="space-y-2">
+      <fieldset
+        id="nc-periodo-resolucion"
+        disabled={controlesBloqueados}
+        className="space-y-2"
+        aria-invalid={erroresCampo.resolucion ? true : undefined}
+        aria-describedby={erroresCampo.resolucion ? "nc-periodo-resolucion-error" : undefined}
+        tabIndex={-1}
+      >
         <legend className="text-sm font-semibold">Resolución</legend>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
@@ -534,6 +620,11 @@ export function EditorNotaCreditoPeriodo({
             Acreditar saldo a favor
           </label>
         </div>
+        {erroresCampo.resolucion ? (
+          <p id="nc-periodo-resolucion-error" role="alert" className="text-xs text-destructive">
+            {erroresCampo.resolucion}
+          </p>
+        ) : null}
       </fieldset>
 
       {resolucion === "REINTEGRO" ? (

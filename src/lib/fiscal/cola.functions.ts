@@ -221,9 +221,25 @@ const detalleNcPeriodoSchema = z
     total: z.string(),
     concepto: z.string().nullable(),
     alicuotas: z.array(
-      z.object({ base: z.string(), porcentaje: z.string(), iva: z.string() }).strict(),
+      z
+        .object({
+          id: z.string().uuid(),
+          base: z.string(),
+          porcentaje: z.string(),
+          iva: z.string(),
+        })
+        .strict(),
     ),
-    reintegros: z.array(z.object({ formaPago: z.string(), monto: z.string() }).strict()),
+    reintegros: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          orden: z.number().int().nonnegative(),
+          formaPago: z.string(),
+          monto: z.string(),
+        })
+        .strict(),
+    ),
   })
   .strict();
 
@@ -459,7 +475,9 @@ export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
               value: string,
             ): {
               order(column: string): Promise<{
-                data: { forma_pago: string; monto: string | number }[] | null;
+                data:
+                  | { id: string; orden: number; forma_pago: string; monto: string | number }[]
+                  | null;
                 error: unknown;
               }>;
             };
@@ -468,7 +486,7 @@ export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
       }
     )
       .from("nota_credito_periodo_reintegros")
-      .select("forma_pago,monto")
+      .select("id,orden,forma_pago,monto")
       .eq("venta_id", data.venta_id)
       .order("orden");
     const [
@@ -483,7 +501,7 @@ export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
         .maybeSingle(),
       context.supabase
         .from("venta_items")
-        .select("descripcion,subtotal_sin_iva,iva_porcentaje,iva_monto")
+        .select("id,descripcion,subtotal_sin_iva,iva_porcentaje,iva_monto")
         .eq("venta_id", data.venta_id)
         .order("id"),
       consultaReintegros,
@@ -500,11 +518,14 @@ export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
           ? (items?.[0]?.descripcion ?? null)
           : null,
       alicuotas: (items ?? []).map((item) => ({
+        id: item.id,
         base: String(Math.abs(Number(item.subtotal_sin_iva))),
         porcentaje: String(item.iva_porcentaje),
         iva: String(Math.abs(Number(item.iva_monto))),
       })),
       reintegros: (reintegros ?? []).map((reintegro) => ({
+        id: reintegro.id,
+        orden: reintegro.orden,
         formaPago: reintegro.forma_pago,
         monto: String(Math.abs(Number(reintegro.monto))),
       })),

@@ -128,8 +128,25 @@ describe("resumen de confirmación fiscal", () => {
               iva: "21.00",
               total: "121.00",
               concepto: modalidad === "BONIFICACION_AJUSTE" ? concepto : null,
-              alicuotas: [{ base: "100.00", porcentaje: "21.00", iva: "21.00" }],
-              reintegros: resolucion === "REINTEGRO" ? [{ formaPago: medio, monto: "121.00" }] : [],
+              alicuotas: [
+                {
+                  id: "00000000-0000-4000-8000-000000000001",
+                  base: "100.00",
+                  porcentaje: "21.00",
+                  iva: "21.00",
+                },
+              ],
+              reintegros:
+                resolucion === "REINTEGRO"
+                  ? [
+                      {
+                        id: "00000000-0000-4000-8000-000000000002",
+                        orden: 0,
+                        formaPago: medio === "Efectivo" ? "EFECTIVO" : "TRANSFERENCIA",
+                        monto: "121.00",
+                      },
+                    ]
+                  : [],
             },
           },
         }),

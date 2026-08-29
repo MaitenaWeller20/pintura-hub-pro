@@ -372,6 +372,12 @@ describe("ciclo montado del diálogo en la ruta de cola", () => {
     render(createElement(QueryClientProvider, { client: queryClient }, createElement(PaginaCola)));
 
     expect(await screen.findByTestId("dialogo-emision-fiscal")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Revisar datos fiscales" }));
     expect(await screen.findByText("Neto autoritativo")).toBeTruthy();
     expect(screen.getByText("Saldo a favor planificado", { exact: false })).toBeTruthy();
@@ -384,5 +390,58 @@ describe("ciclo montado del diálogo en la ruta de cola", () => {
 
     expect(await screen.findByTestId("detalle-comercial")).toBeTruthy();
     expect(dobles.router.navigate).toHaveBeenCalled();
+  });
+
+  it("bloquea la preview por período mientras carga el detalle autoritativo", async () => {
+    dobles.listarCola.mockImplementation(async () => respuestaCola([filaPeriodo]));
+    dobles.leerDetalleNcPeriodo.mockImplementation(() => new Promise(() => undefined));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const PaginaCola = paginaCola();
+    render(createElement(QueryClientProvider, { client: queryClient }, createElement(PaginaCola)));
+
+    expect(await screen.findByText("Cargando importes y liquidación autoritativos…")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("no permite continuar si falla el detalle y permite reintentarlo", async () => {
+    dobles.listarCola.mockImplementation(async () => respuestaCola([filaPeriodo]));
+    dobles.leerDetalleNcPeriodo
+      .mockRejectedValueOnce(new Error("fallo de lectura"))
+      .mockResolvedValueOnce({
+        neto: "100.00",
+        iva: "21.00",
+        total: "121.00",
+        concepto: "Bonificación comercial",
+        alicuotas: [{ base: "100.00", porcentaje: "21.00", iva: "21.00" }],
+        reintegros: [],
+      });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const PaginaCola = paginaCola();
+    render(createElement(QueryClientProvider, { client: queryClient }, createElement(PaginaCola)));
+
+    expect(
+      await screen.findByText(
+        "No se pudo cargar el detalle fiscal autoritativo. No se puede continuar.",
+      ),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar detalle" }));
+    await waitFor(() => expect(dobles.leerDetalleNcPeriodo).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
   });
 });

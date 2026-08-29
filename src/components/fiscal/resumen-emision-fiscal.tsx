@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowDown, ReceiptText } from "lucide-react";
 import { StatusPill } from "@/components/app/status-pill";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, formaPagoLabel } from "@/lib/format";
 import { letraDeCbteTipo, tituloDeCbteTipo } from "@/lib/fiscal/codigos";
 import type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
 import type { ModalidadNcPeriodo, ResolucionNcPeriodo } from "@/lib/fiscal/nota-credito-periodo";
@@ -72,8 +72,8 @@ export function ResumenEmisionFiscal({
       iva: string;
       total: string;
       concepto: string | null;
-      alicuotas: readonly { base: string; porcentaje: string; iva: string }[];
-      reintegros: readonly { formaPago: string; monto: string }[];
+      alicuotas: readonly { id: string; base: string; porcentaje: string; iva: string }[];
+      reintegros: readonly { id: string; orden: number; formaPago: string; monto: string }[];
     } | null;
   } | null;
 }) {
@@ -190,10 +190,7 @@ export function ResumenEmisionFiscal({
                   </p>
                 ) : null}
                 {asociacionPeriodo.detalleAutoritativo.alicuotas.map((alicuota) => (
-                  <p
-                    key={`${alicuota.base}-${alicuota.porcentaje}`}
-                    className="mt-1 text-muted-foreground"
-                  >
+                  <p key={alicuota.id} className="mt-1 text-muted-foreground">
                     Base {fmtMoney(alicuota.base)} · IVA {alicuota.porcentaje}%{" "}
                     {fmtMoney(alicuota.iva)}
                   </p>
@@ -202,11 +199,9 @@ export function ResumenEmisionFiscal({
                   <div className="mt-2">
                     <p className="font-medium">Liquidación planificada</p>
                     {asociacionPeriodo.detalleAutoritativo.reintegros.map((reintegro) => (
-                      <p
-                        key={`${reintegro.formaPago}-${reintegro.monto}`}
-                        className="text-muted-foreground"
-                      >
-                        {reintegro.formaPago} · {fmtMoney(reintegro.monto)}
+                      <p key={reintegro.id} className="text-muted-foreground">
+                        {formaPagoLabel[reintegro.formaPago] ?? reintegro.formaPago} ·{" "}
+                        {fmtMoney(reintegro.monto)}
                       </p>
                     ))}
                   </div>

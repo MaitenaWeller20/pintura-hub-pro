@@ -56,6 +56,76 @@ describe("EditorNotaCreditoPeriodo", () => {
     ]);
   });
 
+  it.each(["a", "ab", "abc", "abcd"])(
+    "muestra un error humano para motivo de %s caracteres",
+    (motivo) => {
+      render(createElement(EditorNotaCreditoPeriodo, BASE_PROPS));
+
+      fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+      fireEvent.click(screen.getByLabelText("Acreditar saldo a favor"));
+      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-01" } });
+      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-31" } });
+      fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: motivo } });
+      fireEvent.change(screen.getByLabelText("Concepto del ajuste"), {
+        target: { value: "Ajuste" },
+      });
+      fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+      fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+
+      expect(screen.getByText("El motivo debe tener al menos 5 caracteres.")).toBeTruthy();
+      expect(screen.getByLabelText("Motivo").getAttribute("aria-invalid")).toBe("true");
+    },
+  );
+
+  it("ubica cada error de período y ajuste junto al control correspondiente", async () => {
+    render(createElement(EditorNotaCreditoPeriodo, BASE_PROPS));
+
+    fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+    fireEvent.click(screen.getByLabelText("Acreditar saldo a favor"));
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-31" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-01" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Bonificación julio" } });
+    fireEvent.change(screen.getByLabelText("Concepto del ajuste"), { target: { value: "Ajuste" } });
+    fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+
+    expect(
+      screen.getByText("Indicá una fecha final válida y posterior o igual a la inicial."),
+    ).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Hasta")));
+
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-31" } });
+    fireEvent.change(screen.getByLabelText("Concepto del ajuste"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    expect(screen.getByText("Indicá el concepto del ajuste.")).toBeTruthy();
+    expect(screen.getByLabelText("Concepto del ajuste").getAttribute("aria-invalid")).toBe("true");
+
+    fireEvent.change(screen.getByLabelText("Concepto del ajuste"), { target: { value: "Ajuste" } });
+    fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    expect(screen.getByText("Cargá un importe positivo para el ajuste.")).toBeTruthy();
+    expect(screen.getByLabelText("Importe neto").getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("asocia el error de reintegros al bloque de medios", () => {
+    render(createElement(EditorNotaCreditoPeriodo, BASE_PROPS));
+
+    fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-01" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-31" } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Bonificación julio" } });
+    fireEvent.change(screen.getByLabelText("Concepto del ajuste"), { target: { value: "Ajuste" } });
+    fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+
+    expect(
+      screen.getByText("El reintegro debe distribuir el total exacto entre sus medios de pago."),
+    ).toBeTruthy();
+    expect(document.getElementById("nc-periodo-reintegros")?.getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+  });
+
   it("conserva una sola creación y la misma request id ante doble click", () => {
     const onCrear = vi.fn<(input: NotaCreditoPeriodoInput) => Promise<void>>(
       () => new Promise<void>(() => undefined),

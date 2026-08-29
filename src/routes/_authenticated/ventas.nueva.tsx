@@ -100,6 +100,9 @@ function NuevaVenta() {
   const [clienteQuery, setClienteQuery] = useState("");
   const [tipoComp, setTipoComp] = useState<string>("FACTURA_B");
   const [caminoNotaCredito, setCaminoNotaCredito] = useState<CaminoNotaCredito>("REVERSAR_FACTURA");
+  const [estadoIntentoNcPeriodo, setEstadoIntentoNcPeriodo] = useState<
+    "IDLE" | "ENVIANDO" | "AMBIGUO"
+  >("IDLE");
   const [condVenta, setCondVenta] = useState<"CONTADO" | "CTA_CTE">("CONTADO");
   const [percepciones, setPercepciones] = useState<number | null>(0);
   const [observaciones, setObservaciones] = useState("");
@@ -124,7 +127,6 @@ function NuevaVenta() {
   const esFacInterna = tipoComp === "FAC_INTERNA_CTA_CTE";
   const esCtaCte = (TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE") && !esFacInterna;
   const esRemitoObra = tipoComp === "REMITO_OBRA";
-
   // R2.b: condición de IVA del emisor. Si es Monotributo, la única factura que
   // puede emitir es la C (la matriz A/B requiere emisor Responsable Inscripto).
   const { data: condicionEmisor } = useQuery({
@@ -368,6 +370,7 @@ function NuevaVenta() {
   });
   const esNcPeriodo =
     esNotaCreditoV2 && caminoNotaCredito === "ASOCIAR_PERIODO" && puedeCrearNcPeriodo;
+  const bloqueoGlobalNcPeriodo = estadoIntentoNcPeriodo !== "IDLE";
   const esNcCreditoReversaV2 = esNotaCreditoV2 && !esNcPeriodo;
   const esFiscal = [
     "VENTA",
@@ -774,7 +777,12 @@ function NuevaVenta() {
         title="Nuevo comprobante"
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => navigate({ to: "/ventas" })}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={bloqueoGlobalNcPeriodo}
+              onClick={() => navigate({ to: "/ventas" })}
+            >
               <ArrowLeft className="h-4 w-4 mr-1" /> Volver
             </Button>
             {!esNcPeriodo
@@ -784,7 +792,7 @@ function NuevaVenta() {
                       key={accion.id}
                       ref={botonFacturarRef}
                       onClick={() => setDialogoFiscalAbierto(true)}
-                      disabled={!canSave || guardar.isPending}
+                      disabled={!canSave || guardar.isPending || bloqueoGlobalNcPeriodo}
                       data-testid="registrar-y-facturar"
                     >
                       <ReceiptText className="mr-1 h-4 w-4" /> {accion.etiqueta}
@@ -794,7 +802,7 @@ function NuevaVenta() {
                       key={accion.id}
                       variant={accion.id === "REGISTRAR_SIN_FACTURAR" ? "outline" : "default"}
                       onClick={() => guardar.mutate(accion.id)}
-                      disabled={!canSave || guardar.isPending}
+                      disabled={!canSave || guardar.isPending || bloqueoGlobalNcPeriodo}
                       data-testid={
                         accion.id === "REGISTRAR_SIN_FACTURAR"
                           ? "registrar-sin-facturar"
@@ -822,7 +830,11 @@ function NuevaVenta() {
             <div>
               <Label>Sucursal *</Label>
               {cu?.isAdmin ? (
-                <Select value={sucursalId} onValueChange={setSucursalId}>
+                <Select
+                  value={sucursalId}
+                  disabled={bloqueoGlobalNcPeriodo}
+                  onValueChange={setSucursalId}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccionar…" />
                   </SelectTrigger>
@@ -840,7 +852,11 @@ function NuevaVenta() {
             </div>
             <div>
               <Label htmlFor="tipo-comprobante">Tipo comprobante *</Label>
-              <Select value={tipoComp} onValueChange={(v) => setTipoComp(v)}>
+              <Select
+                value={tipoComp}
+                disabled={bloqueoGlobalNcPeriodo}
+                onValueChange={(v) => setTipoComp(v)}
+              >
                 <SelectTrigger id="tipo-comprobante">
                   <SelectValue />
                 </SelectTrigger>
@@ -877,7 +893,9 @@ function NuevaVenta() {
               <Select
                 value={esFacInterna ? "CONTADO" : esCtaCte ? "CTA_CTE" : condVenta}
                 onValueChange={(v) => setCondVenta(v as any)}
-                disabled={esCtaCte || esFacInterna || esNcCreditoReversaV2}
+                disabled={
+                  esCtaCte || esFacInterna || esNcCreditoReversaV2 || bloqueoGlobalNcPeriodo
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -912,7 +930,11 @@ function NuevaVenta() {
               </Label>
               <Popover open={showCli} onOpenChange={setShowCli}>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start truncate">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start truncate"
+                    disabled={bloqueoGlobalNcPeriodo}
+                  >
                     {clienteSel ? clienteSel.razon_social : "Buscar cliente…"}
                   </Button>
                 </PopoverTrigger>
@@ -920,6 +942,7 @@ function NuevaVenta() {
                   <Input
                     placeholder="Nombre o CUIT…"
                     value={clienteQuery}
+                    disabled={bloqueoGlobalNcPeriodo}
                     onChange={(e) => setClienteQuery(e.target.value)}
                     autoFocus
                   />
@@ -927,6 +950,7 @@ function NuevaVenta() {
                     {clientes.map((c: any) => (
                       <button
                         key={c.id}
+                        disabled={bloqueoGlobalNcPeriodo}
                         className="w-full text-left p-2 hover:bg-accent rounded text-sm"
                         onClick={() => {
                           setClienteId(c.id);
@@ -956,6 +980,7 @@ function NuevaVenta() {
                 <Input
                   placeholder="Nombre / dirección de la obra"
                   value={nombreObra}
+                  disabled={bloqueoGlobalNcPeriodo}
                   onChange={(e) => setNombreObra(e.target.value)}
                 />
               </div>
@@ -969,6 +994,7 @@ function NuevaVenta() {
                       type="radio"
                       name="camino-nota-credito"
                       checked={caminoNotaCredito === "REVERSAR_FACTURA"}
+                      disabled={bloqueoGlobalNcPeriodo}
                       onChange={() => setCaminoNotaCredito("REVERSAR_FACTURA")}
                     />
                     Revertir una factura específica
@@ -978,6 +1004,7 @@ function NuevaVenta() {
                       type="radio"
                       name="camino-nota-credito"
                       checked={caminoNotaCredito === "ASOCIAR_PERIODO"}
+                      disabled={bloqueoGlobalNcPeriodo}
                       onChange={() => {
                         setCbteAsocId("");
                         setCaminoNotaCredito("ASOCIAR_PERIODO");
@@ -997,7 +1024,7 @@ function NuevaVenta() {
                 <Select
                   value={cbteAsocId || (esNotaCredito && !esNcCreditoReversaV2 ? SIN_FACTURA : "")}
                   onValueChange={(v) => seleccionarFacturaRectifica(v === SIN_FACTURA ? "" : v)}
-                  disabled={!clienteId}
+                  disabled={!clienteId || bloqueoGlobalNcPeriodo}
                 >
                   <SelectTrigger id="comprobante-original">
                     <SelectValue
@@ -1113,7 +1140,8 @@ function NuevaVenta() {
           clienteId={clienteId}
           clienteComercial={clienteSel?.razon_social ?? "Cliente seleccionado"}
           productos={productosNcPeriodo}
-          disabled={!effSucursal || !clienteId}
+          disabled={!effSucursal || !clienteId || bloqueoGlobalNcPeriodo}
+          onEstadoIntento={setEstadoIntentoNcPeriodo}
           onCrear={async (input) => {
             const creada = await crearNotaPeriodo({ data: input });
             toast.success(`Nota de crédito ${creada.numero} creada para revisión fiscal.`);

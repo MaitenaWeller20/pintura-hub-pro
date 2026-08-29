@@ -87,11 +87,16 @@ export type ContextoDialogoEmision = {
       iva: string;
       total: string;
       concepto: string | null;
-      alicuotas: readonly { base: string; porcentaje: string; iva: string }[];
-      reintegros: readonly { formaPago: string; monto: string }[];
+      alicuotas: readonly { id: string; base: string; porcentaje: string; iva: string }[];
+      reintegros: readonly { id: string; orden: number; formaPago: string; monto: string }[];
     } | null;
   } | null;
 };
+
+export type EstadoDetalleAutoritativoPeriodo =
+  | { estado: "CARGANDO" }
+  | { estado: "ERROR"; reintentar(): void }
+  | { estado: "LISTO" };
 
 function SincronizarPadronReceptor({
   clave,
@@ -196,6 +201,7 @@ export function DialogoEmisionFiscal({
   onPrevisualizarPeriodo,
   onConfirmar,
   onConfirmarPeriodo,
+  detalleAutoritativoPeriodo,
   onCompletada,
 }: {
   open: boolean;
@@ -221,11 +227,16 @@ export function DialogoEmisionFiscal({
     confirmaVentaAntigua: boolean;
     huellaConfirmacion: string;
   }): Promise<unknown>;
+  detalleAutoritativoPeriodo?: EstadoDetalleAutoritativoPeriodo;
   onCompletada?(result: ResultadoEmisionFiscalUi): void;
 }) {
   const esNota =
     contexto.tipoComprobante === "NOTA_CREDITO" || contexto.tipoComprobante === "NOTA_DEBITO";
   const esNcPeriodo = contexto.tipoComprobante === "NOTA_CREDITO" && !!contexto.asociacionPeriodo;
+  const detallePeriodoBloquea =
+    esNcPeriodo &&
+    detalleAutoritativoPeriodo !== undefined &&
+    detalleAutoritativoPeriodo.estado !== "LISTO";
   const consultarCuit =
     onConsultarCuit ??
     (async (input: { sucursalId: string; cuit: string }) => {
@@ -503,7 +514,7 @@ export function DialogoEmisionFiscal({
     (receptor.origen !== "MANUAL" ||
       confirmacion.confirmaDatosManuales ||
       consultaPadronVerificada) &&
-    (!esNcPeriodo || confirmaPeriodo);
+    (!esNcPeriodo || (confirmaPeriodo && !detallePeriodoBloquea));
   const consultaPadronBloquea =
     !esNota && bloqueaAccionesPorConsultaPadron(claveConsultaPadron, estadoPadronEfectivo);
 
@@ -626,6 +637,29 @@ export function DialogoEmisionFiscal({
               <p className="mt-3 text-xs text-muted-foreground">
                 La letra se determina automáticamente según emisor y receptor; no se puede editar.
               </p>
+              {detalleAutoritativoPeriodo?.estado === "CARGANDO" ? (
+                <p role="status" className="mt-3 text-sm text-muted-foreground">
+                  Cargando importes y liquidación autoritativos…
+                </p>
+              ) : null}
+              {detalleAutoritativoPeriodo?.estado === "ERROR" ? (
+                <div
+                  role="alert"
+                  className="mt-3 flex flex-wrap items-center gap-2 text-sm text-destructive"
+                >
+                  <span>
+                    No se pudo cargar el detalle fiscal autoritativo. No se puede continuar.
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={detalleAutoritativoPeriodo.reintentar}
+                  >
+                    Reintentar detalle
+                  </Button>
+                </div>
+              ) : null}
             </section>
           ) : null}
 
@@ -718,7 +752,7 @@ export function DialogoEmisionFiscal({
                 type="checkbox"
                 className="mt-1"
                 checked={confirmaVentaAntigua}
-                disabled={emitiendo}
+                disabled={emitiendo || detallePeriodoBloquea}
                 onChange={(event) => setConfirmaVentaAntigua(event.target.checked)}
               />
               <span>Confirmo emitir esta venta demorada con la fecha fiscal informada.</span>
@@ -771,7 +805,7 @@ export function DialogoEmisionFiscal({
             <Button
               type="button"
               className="min-h-11 w-full sm:w-auto"
-              disabled={!puedeEmitir || consultaPadronBloquea || emitiendo}
+              disabled={!puedeEmitir || consultaPadronBloquea || emitiendo || detallePeriodoBloquea}
               onClick={confirmar}
             >
               {emitiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck />}
@@ -789,6 +823,7 @@ export function DialogoEmisionFiscal({
                 previsualizando ||
                 emitiendo ||
                 consultaPadronBloquea ||
+                detallePeriodoBloquea ||
                 (!esNcPeriodo && confirmacion.letraSolicitada === null)
               }
               onClick={preparar}

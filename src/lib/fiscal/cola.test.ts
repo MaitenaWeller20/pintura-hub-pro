@@ -51,6 +51,13 @@ const safeRow = {
   afip_numero: null,
   cae: null,
   cae_vencimiento: null,
+  periodo_asoc_desde: null,
+  periodo_asoc_hasta: null,
+  nc_periodo_modalidad: null,
+  motivo_nota_credito: null,
+  nc_resolucion: null,
+  nc_periodo_payload_hash: null,
+  nc_efectos_aplicados_at: null,
   tab: "pendientes",
 };
 
@@ -313,6 +320,47 @@ describe("contrato de consulta de la cola fiscal", () => {
 
     await expect(
       servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).rejects.toThrow(/proyecci.n segura/i);
+  });
+
+  it("expone la intención de período sin filtrar los reintegros planificados", async () => {
+    const filaPeriodo = {
+      ...safeRow,
+      tipo_comprobante: "NOTA_CREDITO",
+      periodo_asoc_desde: "2026-07-01",
+      periodo_asoc_hasta: "2026-07-31",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "Ajuste comercial del período",
+      nc_resolucion: "SALDO_FAVOR",
+      nc_periodo_payload_hash: "a".repeat(64),
+    };
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([filaPeriodo]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+
+    await expect(
+      servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).resolves.toMatchObject({ filas: [filaPeriodo] });
+
+    const filtrandoReintegros = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([{ ...filaPeriodo, reintegrosIntencion: [] }]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+    await expect(
+      filtrandoReintegros.listarColaFiscal(UUID.user, {
+        tab: "pendientes",
+        page: 1,
+        pageSize: 20,
+      }),
     ).rejects.toThrow(/proyecci.n segura/i);
   });
 

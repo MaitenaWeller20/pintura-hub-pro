@@ -105,7 +105,14 @@ export async function emitirComprobanteLegacy({
         "Sólo se facturan Factura A/B/C y notas de crédito/débito.",
     );
   }
-  if (esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)) {
+  if (
+    esNotaInterna(
+      venta.tipo_comprobante,
+      venta.afip_cbte_asoc_id,
+      venta.periodo_asoc_desde,
+      venta.periodo_asoc_hasta,
+    )
+  ) {
     throw new Error(
       "Esta nota revierte un comprobante que nunca se declaró a AFIP, así que no hay nada que rectificar: " +
         "no corresponde emitirla. Sirve sólo como documento interno (ya devolvió el stock y la plata).",

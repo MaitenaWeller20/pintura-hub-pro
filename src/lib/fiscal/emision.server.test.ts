@@ -19,7 +19,7 @@ import {
   type DependenciasEmisionFiscal,
   type ReservaFiscalPersistida,
 } from "./emision";
-import { validarSnapshotFiscalV2 } from "./snapshot";
+import { validarSnapshotFiscalPersistido, validarSnapshotFiscalV2 } from "./snapshot";
 import { codigoErrorFiscalUsuario } from "./error-usuario";
 import type { ReceptorPadronArca } from "./padron-arca-shared";
 
@@ -272,6 +272,7 @@ function preparacion(percepciones = "0.00") {
         id: "71000000-0000-4000-8000-000000000001",
         sucursalId: "71000000-0000-4000-8000-000000000301",
         clienteId: null,
+        cliente: null,
         fechaComercial: "2026-08-22T15:00:00.000Z",
         numeroComercial: "V-1",
         tipoComprobante: "VENTA",
@@ -288,6 +289,7 @@ function preparacion(percepciones = "0.00") {
         afipClaimToken: null,
         afipNumero: null,
         afipVersion: 0,
+        afipIntentos: 0,
         afipEmisorCuit: null,
         afipPuntoVenta: null,
         afipCbteTipo: null,
@@ -299,6 +301,15 @@ function preparacion(percepciones = "0.00") {
         afipSnapshot: null,
         afipSnapshotHash: null,
         afipCbteAsocId: null,
+        periodoAsocDesde: null,
+        periodoAsocHasta: null,
+        ncPeriodoModalidad: null,
+        motivoNotaCredito: null,
+        ncResolucion: null,
+        ncPeriodoPayloadHash: null,
+        ncEfectosAplicadosAt: null,
+        idempotencyKey: null,
+        idempotencyPayloadHash: null,
         cae: null,
         caeVencimiento: null,
       },
@@ -317,6 +328,7 @@ function preparacion(percepciones = "0.00") {
           subtotalTotal: "0.18",
         },
       ],
+      reintegrosIntencion: [],
     },
     contexto: {
       emisor: {
@@ -360,6 +372,7 @@ function preparacion(percepciones = "0.00") {
     },
     letra: "B",
     original: null,
+    asociacion: { tipo: "NINGUNA" },
   } as const;
 }
 
@@ -491,7 +504,7 @@ describe("padrón autoritativo en preview y preparación final", () => {
     const preparacionFinal = await deps.prepararEmision({
       ventaId: preparacion().lectura.venta.id,
       receptor: selectorForjado,
-      letraSolicitada: "A",
+      seleccionLetra: { origen: "EXPLICITA", letra: "A" },
     });
 
     expect(consultarPadron).toHaveBeenCalledTimes(2);
@@ -598,6 +611,33 @@ describe("padrón autoritativo en preview y preparación final", () => {
 });
 
 describe("Snapshot desde lectura PostgreSQL exacta", () => {
+  it("rechaza una NC con ambas asociaciones desde la lectura exacta", async () => {
+    const base = preparacion();
+    const venta = {
+      ...base.lectura.venta,
+      tipoComprobante: "NOTA_CREDITO",
+      afipCbteAsocId: "71000000-0000-4000-8000-000000000099",
+      periodoAsocDesde: "2026-07-01",
+      periodoAsocHasta: "2026-07-31",
+      ncPeriodoModalidad: "BONIFICACION_AJUSTE" as const,
+      motivoNotaCredito: "Ajuste comercial del período",
+      ncResolucion: "SALDO_FAVOR" as const,
+      ncPeriodoPayloadHash: "a".repeat(64),
+    };
+    const deps = crearDependenciasEmisionFiscalServer({
+      admin: {
+        async rpc() {
+          return { data: { ...base.lectura, venta }, error: null };
+        },
+      } as never,
+      usuario: {} as never,
+      ventaIdAutorizada: venta.id,
+    });
+    await expect(
+      deps.autorizarEmision({ ventaId: venta.id, confirmaVentaAntigua: false }),
+    ).rejects.toThrow(/asociación|asociaciones/i);
+  });
+
   it("conserva el redondeo fixed-point 0.02 × 7.25 = 0.15 sin iva.ts", () => {
     const snapshot = construirSnapshotFiscalDesdeLectura({
       preparacion: preparacion() as never,
@@ -626,6 +666,54 @@ describe("Snapshot desde lectura PostgreSQL exacta", () => {
     ]);
     expect(snapshot.importeTributos).toBe("0.02");
     expect(snapshot.otrosImpuestosNacionalesIndirectos).toBe("0.00");
+  });
+
+  it("construye v3 exclusivamente desde la asociación por período preparada", () => {
+    const base = preparacion();
+    const snapshot = construirSnapshotFiscalDesdeLectura({
+      preparacion: {
+        ...base,
+        lectura: {
+          ...base.lectura,
+          venta: {
+            ...base.lectura.venta,
+            tipoComprobante: "NOTA_CREDITO",
+            numeroComercial: "NC-P-1",
+            periodoAsocDesde: "2026-07-01",
+            periodoAsocHasta: "2026-07-31",
+            ncPeriodoModalidad: "BONIFICACION_AJUSTE",
+            motivoNotaCredito: "Bonificación comercial de julio",
+            ncResolucion: "SALDO_FAVOR",
+            ncPeriodoPayloadHash: "b".repeat(64),
+          },
+        },
+        asociacion: {
+          tipo: "PERIODO",
+          desde: "2026-07-01",
+          hasta: "2026-07-31",
+          modalidad: "BONIFICACION_AJUSTE",
+          motivo: "Bonificación comercial de julio",
+          resolucion: "SALDO_FAVOR",
+        },
+      } as never,
+      numero: 9,
+      fechaComprobante: "2026-08-22",
+    });
+
+    expect(snapshot).toMatchObject({
+      version: 3,
+      origen: "PERIODO_ASOCIADO",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+      periodoAsoc: { desde: "2026-07-01", hasta: "2026-07-31" },
+      notaCredito: {
+        modalidad: "BONIFICACION_AJUSTE",
+        motivo: "Bonificación comercial de julio",
+      },
+      letra: "B",
+      identidad: { cbteTipo: 8, numero: 9 },
+    });
+    expect(validarSnapshotFiscalPersistido(snapshot)).toEqual(snapshot);
   });
 });
 
@@ -780,7 +868,7 @@ describe("preview autoritativa de una nota de crédito", () => {
     const preparacionRuntime = await dependencias.prepararEmision({
       ventaId: notaId,
       receptor: { origen: "COMPROBANTE_ORIGINAL" },
-      letraSolicitada: "A",
+      seleccionLetra: { origen: "EXPLICITA", letra: "A" },
     });
     expect(preparacionRuntime.confirmacionAutoritativa).toMatchObject({
       emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
@@ -1397,6 +1485,7 @@ describe("handshake post-creación del borrador", () => {
         simulado: false,
         validez: confirmacion.afipValidez,
         fechaComprobante: confirmacion.fechaFiscal,
+        asociacion: { tipo: "NINGUNA" as const },
         confirmacionAutoritativa: confirmacion,
         huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacion),
         reconfirmacion: {
@@ -1424,9 +1513,13 @@ describe("handshake post-creación del borrador", () => {
     const deps = {
       generarClaimToken: () => claimToken,
       ahoraIso: () => "2026-08-24T15:00:00.000Z",
-      autorizarEmision: async () => ({ tipoComprobante: "VENTA" as const, afipVersion: 0 }),
-      prepararEmision: async (input: { letraSolicitada?: "A" | "B" }) =>
-        preparar(input.letraSolicitada ?? "A"),
+      autorizarEmision: async () => ({
+        tipoComprobante: "VENTA" as const,
+        afipVersion: 0,
+        asociacion: { tipo: "NINGUNA" as const },
+      }),
+      prepararEmision: async (input: { seleccionLetra: { letra?: "A" | "B" } }) =>
+        preparar(input.seleccionLetra.letra ?? "A"),
       consultarSecuencia: async () => {
         consultoSecuencia = true;
         throw new Error("Una huella vieja avanzó más allá de PREFLIGHT.");

@@ -1,6 +1,7 @@
 import { CONDICION_IVA_CLIENTE, cuitValido, type CondicionIva } from "./codigos";
 import { crearErrorFiscalUsuario } from "./error-usuario";
 import type { ReceptorPadronArca } from "./padron-arca-shared";
+import type { AsociacionPreparadaFiscal } from "./emision";
 import {
   confirmarReceptorManual,
   validarReceptorFiscalConfirmado,
@@ -22,6 +23,7 @@ export type VentaParaReceptor = {
   } | null;
   tipoComprobante: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO";
   comprobanteOriginalId: string | null;
+  asociacion?: AsociacionPreparadaFiscal;
 };
 
 export type FavoritoFiscalRow = {
@@ -83,7 +85,7 @@ function cuitCanonico(valor: string | null): string | null {
 function receptorDesdePadron(input: {
   padron: ReceptorPadronArca;
   condicionDeclarada: CondicionIva | null;
-  letraSolicitada: "A" | "B";
+  letraSolicitada: "A" | "B" | "C" | null;
   origenId: string | null;
   importeTotal: number;
 }): ReceptorFiscalConfirmado {
@@ -99,7 +101,13 @@ function receptorDesdePadron(input: {
   ) {
     throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
   }
-  const condicion = confirmada ?? (input.letraSolicitada === "B" ? input.condicionDeclarada : null);
+  const condicion =
+    confirmada ??
+    (input.letraSolicitada === "B" ||
+    input.letraSolicitada === "C" ||
+    input.letraSolicitada === null
+      ? input.condicionDeclarada
+      : null);
   if (
     condicion !== "RESPONSABLE_INSCRIPTO" &&
     condicion !== "MONOTRIBUTO" &&
@@ -162,7 +170,7 @@ export async function resolverReceptorFiscal(input: {
   selector: SelectorReceptorFiscal;
   venta: VentaParaReceptor;
   importeTotal: number;
-  letraSolicitada: "A" | "B";
+  letraSolicitada: "A" | "B" | "C" | null;
   cargarFavorito(id: string): Promise<FavoritoFiscalRow | null>;
   cargarOriginal(id: string): Promise<OriginalFiscalRow | null>;
   consultarPadron?: (cuit: string) => Promise<ReceptorPadronArca>;
@@ -170,7 +178,12 @@ export async function resolverReceptorFiscal(input: {
   if (input.venta.tipoComprobante === "NOTA_DEBITO") {
     throw new Error("Las notas de débito nuevas no están habilitadas en el motor fiscal v2.");
   }
-  if (input.venta.tipoComprobante === "NOTA_CREDITO") {
+  const asociacion =
+    input.venta.asociacion ??
+    (input.venta.comprobanteOriginalId
+      ? ({ tipo: "COMPROBANTE" } as const)
+      : ({ tipo: "NINGUNA" } as const));
+  if (input.venta.tipoComprobante === "NOTA_CREDITO" && asociacion.tipo === "COMPROBANTE") {
     if (input.selector.origen !== "COMPROBANTE_ORIGINAL") {
       throw new Error("La nota de crédito exige exactamente el selector COMPROBANTE_ORIGINAL.");
     }
@@ -180,6 +193,16 @@ export async function resolverReceptorFiscal(input: {
       await input.cargarOriginal(input.venta.comprobanteOriginalId),
     );
     return snapshot.receptor;
+  }
+  if (input.venta.tipoComprobante === "NOTA_CREDITO" && asociacion.tipo === "NINGUNA") {
+    throw new Error("Una nota fiscal requiere exactamente una asociación.");
+  }
+  if (
+    input.venta.tipoComprobante === "NOTA_CREDITO" &&
+    asociacion.tipo === "PERIODO" &&
+    input.selector.origen === "COMPROBANTE_ORIGINAL"
+  ) {
+    throw new Error("Una nota por período no admite COMPROBANTE_ORIGINAL.");
   }
   if (input.selector.origen === "COMPROBANTE_ORIGINAL") {
     throw new Error("COMPROBANTE_ORIGINAL sólo es válido para una nota de crédito.");

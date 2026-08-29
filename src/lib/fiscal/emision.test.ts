@@ -3,6 +3,7 @@ import {
   ejecutarConciliacionFiscal,
   ejecutarEmisionFiscal,
   type AccionTransicionFiscal,
+  type AsociacionPreparadaFiscal,
   type DependenciasEmisionFiscal,
   type EstadoTransicionFiscal,
   type PreparacionEmisionFiscal,
@@ -132,6 +133,7 @@ class FiscalDouble {
   numero: number | null = null;
   persistedSnapshot: SnapshotFiscalV2 | null = null;
   tipo: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO" = "VENTA";
+  asociacionOverride: AsociacionPreparadaFiscal | null = null;
   simulado = false;
   ultimoLocal = 0;
   ultimoRemoto = 0;
@@ -175,6 +177,15 @@ class FiscalDouble {
     };
   }
 
+  asociacion(): AsociacionPreparadaFiscal {
+    return (
+      this.asociacionOverride ??
+      (this.tipo === "NOTA_CREDITO"
+        ? { tipo: "COMPROBANTE", original: snapshot(40) }
+        : { tipo: "NINGUNA" })
+    );
+  }
+
   confirmarTransicion(
     accion: AccionTransicionFiscal,
     estado: string,
@@ -211,7 +222,11 @@ class FiscalDouble {
       generarClaimToken: () =>
         `81000000-0000-4000-8000-${String(this.nextClaim++).padStart(12, "0")}`,
       ahoraIso: () => "2026-08-22T15:00:00.000Z",
-      autorizarEmision: async () => ({ tipoComprobante: this.tipo, afipVersion: this.version }),
+      autorizarEmision: async () => ({
+        tipoComprobante: this.tipo,
+        afipVersion: this.version,
+        asociacion: this.asociacion(),
+      }),
       autorizarConciliacion: async () => undefined,
       prepararEmision: async ({ receptor }) => {
         this.receptoresPreparados.push(structuredClone(receptor));
@@ -226,6 +241,7 @@ class FiscalDouble {
           simulado: this.simulado,
           validez: this.simulado ? "SIMULADA" : "PRODUCCION",
           fechaComprobante: "2026-08-22",
+          asociacion: this.asociacion(),
           confirmacionAutoritativa,
           huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
           reconfirmacion: {
@@ -387,6 +403,83 @@ function acciones(doble: FiscalDouble): string[] {
 }
 
 describe("ejecutarEmisionFiscal", () => {
+  it("rechaza una NC sin asociación antes de reclamar", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = { tipo: "NINGUNA" };
+
+    await expect(
+      ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: ORIGINAL,
+          letraSolicitada: "A",
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, ORIGINAL),
+        },
+        doble.deps(),
+      ),
+    ).rejects.toThrow(/exactamente una asociación/i);
+    expect(doble.calls).toEqual([]);
+  });
+
+  it("rechaza letra explícita para una NC por período antes de reclamar", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-07-01",
+      hasta: "2026-07-31",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Ajuste comercial del período",
+      resolucion: "SALDO_FAVOR",
+    };
+
+    await expect(
+      ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: MANUAL_A,
+          letraSolicitada: "A",
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
+        },
+        doble.deps(),
+      ),
+    ).rejects.toThrow(/automáticamente/i);
+    expect(doble.calls).toEqual([]);
+  });
+
+  it("corta un CbteTipo no estándar de período antes de REQUEST_INICIADO", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-07-01",
+      hasta: "2026-07-31",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Ajuste comercial del período",
+      resolucion: "SALDO_FAVOR",
+    };
+    const deps = doble.deps();
+    const preparar = deps.prepararEmision;
+    deps.prepararEmision = async (input) => ({ ...(await preparar(input)), cbteTipo: 203 });
+
+    await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
+      },
+      deps,
+    );
+
+    expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
+    expect(doble.payloadsCae).toHaveLength(0);
+  });
+
   it("al reconfirmar una nota explica que la letra viene del comprobante original", async () => {
     const doble = new FiscalDouble();
     doble.tipo = "NOTA_CREDITO";

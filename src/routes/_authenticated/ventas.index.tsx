@@ -103,7 +103,12 @@ function sePuedeAnular(v: any, generadasPorAnulacion: Set<string>): boolean {
   return (
     v.tipo_comprobante === "NOTA_CREDITO" &&
     !v.cae &&
-    esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+    esNotaInterna(
+      v.tipo_comprobante,
+      v.afip_cbte_asoc_id,
+      v.periodo_asoc_desde,
+      v.periodo_asoc_hasta,
+    ) &&
     !generadasPorAnulacion.has(v.id)
   );
 }
@@ -175,7 +180,16 @@ function VentasList() {
   const idsNotasInternas = useMemo(
     () =>
       ventas
-        .filter((v: any) => v.tipo_comprobante === "NOTA_CREDITO" && !v.cae && !v.afip_cbte_asoc_id)
+        .filter(
+          (v: any) =>
+            !v.cae &&
+            esNotaInterna(
+              v.tipo_comprobante,
+              v.afip_cbte_asoc_id,
+              v.periodo_asoc_desde,
+              v.periodo_asoc_hasta,
+            ),
+        )
         .map((v: any) => v.id as string),
     [ventas],
   );
@@ -456,7 +470,12 @@ function VentasList() {
                 ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO"].includes(
                   v.tipo_comprobante,
                 ) &&
-                !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+                !esNotaInterna(
+                  v.tipo_comprobante,
+                  v.afip_cbte_asoc_id,
+                  v.periodo_asoc_desde,
+                  v.periodo_asoc_hasta,
+                ) &&
                 !v.cae && (
                   <Button
                     size="sm"
@@ -478,7 +497,12 @@ function VentasList() {
               cu?.facturacionV2Habilitada &&
               cu?.puedeFacturar &&
               ["VENTA", "NOTA_CREDITO"].includes(v.tipo_comprobante) &&
-              !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+              !esNotaInterna(
+                v.tipo_comprobante,
+                v.afip_cbte_asoc_id,
+                v.periodo_asoc_desde,
+                v.periodo_asoc_hasta,
+              ) &&
               !v.cae ? (
                 <Button
                   size="sm"
@@ -580,7 +604,12 @@ function VentasList() {
 function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
   if (
     !esComprobanteFiscal(venta.tipo_comprobante) ||
-    esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)
+    esNotaInterna(
+      venta.tipo_comprobante,
+      venta.afip_cbte_asoc_id,
+      venta.periodo_asoc_desde,
+      venta.periodo_asoc_hasta,
+    )
   ) {
     return (
       <span title="Documento interno: no se declara a AFIP">

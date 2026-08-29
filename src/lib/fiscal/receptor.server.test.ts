@@ -41,6 +41,72 @@ const snapshotOriginal = validarSnapshotFiscalV2(
 );
 
 describe("resolución server de receptor fiscal", () => {
+  it("una NC por período acepta receptor manual y lo confirma contra el padrón", async () => {
+    const consultarPadron = vi.fn(async () => receptorPadron());
+
+    const receptor = await resolverReceptorFiscal({
+      selector: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30-71419966-4",
+        razon_social: "Texto manual que no es autoridad",
+        condicion_iva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "Domicilio manual que no es autoridad",
+        guardar_para_proximas: false,
+        confirma_datos_manuales: true,
+      },
+      venta: {
+        ...venta,
+        tipoComprobante: "NOTA_CREDITO",
+        asociacion: {
+          tipo: "PERIODO",
+          desde: "2026-07-01",
+          hasta: "2026-07-31",
+          modalidad: "BONIFICACION_AJUSTE",
+          motivo: "Ajuste comercial del período",
+          resolucion: "SALDO_FAVOR",
+        },
+      } as never,
+      importeTotal: 100,
+      letraSolicitada: null,
+      cargarFavorito: vi.fn(),
+      cargarOriginal: vi.fn(),
+      consultarPadron,
+    });
+
+    expect(receptor).toMatchObject({
+      razonSocial: "IDENTIDAD OFICIAL S.A.",
+      domicilio: "Domicilio ARCA",
+      condicionIva: "RESPONSABLE_INSCRIPTO",
+      origen: "ARCA",
+    });
+    expect(consultarPadron).toHaveBeenCalledOnce();
+  });
+
+  it("una NC por período rechaza COMPROBANTE_ORIGINAL", async () => {
+    await expect(
+      resolverReceptorFiscal({
+        selector: { origen: "COMPROBANTE_ORIGINAL" },
+        venta: {
+          ...venta,
+          tipoComprobante: "NOTA_CREDITO",
+          asociacion: {
+            tipo: "PERIODO",
+            desde: "2026-07-01",
+            hasta: "2026-07-31",
+            modalidad: "BONIFICACION_AJUSTE",
+            motivo: "Ajuste comercial del período",
+            resolucion: "SALDO_FAVOR",
+          },
+        } as never,
+        importeTotal: 100,
+        letraSolicitada: "B",
+        cargarFavorito: vi.fn(),
+        cargarOriginal: vi.fn(),
+      }),
+    ).rejects.toThrow(/período.*COMPROBANTE_ORIGINAL|COMPROBANTE_ORIGINAL.*período/i);
+  });
+
   it("sólo permite cliente comercial como CF anónimo seguro", async () => {
     const receptor = await resolverReceptorFiscal({
       selector: { origen: "CLIENTE_COMERCIAL" },

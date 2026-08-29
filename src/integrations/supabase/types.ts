@@ -2928,10 +2928,17 @@ export type Database = {
           idempotency_key: string | null
           idempotency_payload_hash: string | null
           iva_total: number
+          motivo_nota_credito: string | null
           nombre_obra: string | null
+          nc_efectos_aplicados_at: string | null
+          nc_periodo_modalidad: string | null
+          nc_periodo_payload_hash: string | null
+          nc_resolucion: string | null
           numero_comprobante: string
           observaciones: string | null
           percepciones: number
+          periodo_asoc_desde: string | null
+          periodo_asoc_hasta: string | null
           subtotal_sin_iva: number
           sucursal_id: string
           tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
@@ -2982,10 +2989,17 @@ export type Database = {
           idempotency_key?: string | null
           idempotency_payload_hash?: string | null
           iva_total?: number
+          motivo_nota_credito?: string | null
           nombre_obra?: string | null
+          nc_efectos_aplicados_at?: string | null
+          nc_periodo_modalidad?: string | null
+          nc_periodo_payload_hash?: string | null
+          nc_resolucion?: string | null
           numero_comprobante: string
           observaciones?: string | null
           percepciones?: number
+          periodo_asoc_desde?: string | null
+          periodo_asoc_hasta?: string | null
           subtotal_sin_iva?: number
           sucursal_id: string
           tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
@@ -3036,10 +3050,17 @@ export type Database = {
           idempotency_key?: string | null
           idempotency_payload_hash?: string | null
           iva_total?: number
+          motivo_nota_credito?: string | null
           nombre_obra?: string | null
+          nc_efectos_aplicados_at?: string | null
+          nc_periodo_modalidad?: string | null
+          nc_periodo_payload_hash?: string | null
+          nc_resolucion?: string | null
           numero_comprobante?: string
           observaciones?: string | null
           percepciones?: number
+          periodo_asoc_desde?: string | null
+          periodo_asoc_hasta?: string | null
           subtotal_sin_iva?: number
           sucursal_id?: string
           tipo_comprobante?: Database["public"]["Enums"]["tipo_comprobante"]

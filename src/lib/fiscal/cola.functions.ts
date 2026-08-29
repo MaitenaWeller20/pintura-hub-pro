@@ -150,6 +150,13 @@ const filaColaSchema = z
     afip_numero: z.number().int().nullable(),
     cae: z.string().nullable(),
     cae_vencimiento: fechaSchema.nullable(),
+    periodo_asoc_desde: fechaSchema.nullable(),
+    periodo_asoc_hasta: fechaSchema.nullable(),
+    nc_periodo_modalidad: z.enum(["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"]).nullable(),
+    motivo_nota_credito: z.string().nullable(),
+    nc_resolucion: z.enum(["REINTEGRO", "SALDO_FAVOR"]).nullable(),
+    nc_periodo_payload_hash: z.string().nullable(),
+    nc_efectos_aplicados_at: z.string().datetime({ offset: true }).nullable(),
     tab: tabSchema,
   })
   .strict();

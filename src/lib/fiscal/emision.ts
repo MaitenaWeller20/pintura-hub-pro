@@ -1,6 +1,7 @@
 import type { SelectorReceptorFiscal } from "./receptor";
 import type { LetraFacturaSolicitada } from "./codigos";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import type { SnapshotFiscalPersistido, SnapshotFiscalV2 } from "./snapshot";
+import type { ModalidadNcPeriodo, ResolucionNcPeriodo } from "./nota-credito-periodo";
 import {
   copiarConfirmacionFiscal,
   crearHuellaConfirmacionFiscal,
@@ -35,6 +36,22 @@ export type EstadoTransicionFiscal = {
   afip_version: number;
 };
 
+export type AsociacionPreparadaFiscal =
+  | { tipo: "NINGUNA" }
+  | { tipo: "COMPROBANTE"; original: SnapshotFiscalV2 }
+  | {
+      tipo: "PERIODO";
+      desde: string;
+      hasta: string;
+      modalidad: ModalidadNcPeriodo;
+      motivo: string;
+      resolucion: ResolucionNcPeriodo;
+    };
+
+export type SeleccionLetraFiscal =
+  | { origen: "EXPLICITA"; letra: "A" | "B" }
+  | { origen: "AUTOMATICA_NC_PERIODO" };
+
 export type PreparacionEmisionFiscal = {
   ventaId: string;
   tipoComprobante: "VENTA" | "NOTA_CREDITO";
@@ -45,6 +62,7 @@ export type PreparacionEmisionFiscal = {
   simulado: boolean;
   validez: "PRODUCCION" | "HOMOLOGACION" | "SIMULADA";
   fechaComprobante: string;
+  asociacion: AsociacionPreparadaFiscal;
   confirmacionAutoritativa: ConfirmacionFiscalPostBorrador;
   huellaConfirmacion: string;
   reconfirmacion: {
@@ -104,7 +122,7 @@ export type ReservaFiscalPersistida = {
   claimToken: string;
   afipVersion: number;
   numero: number;
-  snapshot: SnapshotFiscalV2;
+  snapshot: SnapshotFiscalPersistido;
   payloadHash: string;
   emisorCuit: string;
   puntoVenta: number;
@@ -160,12 +178,13 @@ export type DependenciasEmisionFiscal = {
   autorizarEmision(input: { ventaId: string; confirmaVentaAntigua: boolean }): Promise<{
     tipoComprobante: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO";
     afipVersion: number;
+    asociacion: AsociacionPreparadaFiscal;
   }>;
   autorizarConciliacion(input: { ventaId: string }): Promise<void>;
   prepararEmision(input: {
     ventaId: string;
     receptor: SelectorReceptorFiscal;
-    letraSolicitada: LetraFacturaSolicitada;
+    seleccionLetra: SeleccionLetraFiscal;
   }): Promise<PreparacionEmisionFiscal>;
   consultarSecuencia(input: PreparacionEmisionFiscal): Promise<{
     ultimoRemoto: number;
@@ -177,7 +196,7 @@ export type DependenciasEmisionFiscal = {
     preparacion: PreparacionEmisionFiscal;
     numero: number;
     receptor: SelectorReceptorFiscal;
-  }): Promise<SnapshotFiscalV2>;
+  }): Promise<SnapshotFiscalPersistido>;
   transicionar(input: {
     ventaId: string;
     accion: AccionTransicionFiscal;
@@ -194,14 +213,14 @@ export type DependenciasEmisionFiscal = {
     afipNumero: number | null;
     tieneIdentidadReservada: boolean;
   }>;
-  crearPayloadCae(snapshot: SnapshotFiscalV2): unknown;
+  crearPayloadCae(snapshot: SnapshotFiscalPersistido): unknown;
   solicitarCae(reserva: ReservaFiscalPersistida, payload: unknown): Promise<SolicitudCaeFiscal>;
   esConflictoClaim(error: unknown): boolean;
   esConflictoSecuencia(error: unknown): boolean;
   consultarComprobanteCompleto(reserva: ReservaFiscalPersistida): Promise<unknown | null>;
   consultarUltimoAutorizado(reserva: ReservaFiscalPersistida): Promise<number>;
   decidirConciliacion(input: {
-    snapshot: SnapshotFiscalV2;
+    snapshot: SnapshotFiscalPersistido;
     remoto: unknown | null;
     ultimoRemoto: number;
     numeroReservado: number;
@@ -216,7 +235,7 @@ export type DependenciasEmisionFiscal = {
 type InputEmision = {
   ventaId: string;
   receptor: SelectorReceptorFiscal;
-  letraSolicitada: LetraFacturaSolicitada;
+  letraSolicitada: LetraFacturaSolicitada | SeleccionLetraFiscal;
   confirmaVentaAntigua: boolean;
   huellaConfirmacion: string;
 };
@@ -418,6 +437,26 @@ function huellaCanonicaPreparacion(preparacion: PreparacionEmisionFiscal): strin
     throw new Error("La preparación fiscal devolvió una huella autoritativa inconsistente.");
   }
   return huella;
+}
+
+function mismaAsociacionFiscal(
+  esperada: AsociacionPreparadaFiscal,
+  preparada: AsociacionPreparadaFiscal,
+): boolean {
+  if (esperada.tipo !== preparada.tipo) return false;
+  if (esperada.tipo === "NINGUNA") return true;
+  if (esperada.tipo === "COMPROBANTE" && preparada.tipo === "COMPROBANTE") {
+    return esperada.original.hash === preparada.original.hash;
+  }
+  return (
+    esperada.tipo === "PERIODO" &&
+    preparada.tipo === "PERIODO" &&
+    esperada.desde === preparada.desde &&
+    esperada.hasta === preparada.hasta &&
+    esperada.modalidad === preparada.modalidad &&
+    esperada.motivo === preparada.motivo &&
+    esperada.resolucion === preparada.resolucion
+  );
 }
 
 async function marcarReconciliacion(
@@ -673,17 +712,30 @@ export async function ejecutarEmisionFiscal(
   if (autorizacion.tipoComprobante === "NOTA_DEBITO") {
     throw new Error("La nota de débito nueva queda fuera de alcance fiscal.");
   }
-  if (
-    autorizacion.tipoComprobante === "NOTA_CREDITO" &&
-    input.receptor.origen !== "COMPROBANTE_ORIGINAL"
-  ) {
-    throw new Error("La nota de crédito debe usar el receptor del comprobante original.");
-  }
-  if (
-    autorizacion.tipoComprobante === "VENTA" &&
-    input.receptor.origen === "COMPROBANTE_ORIGINAL"
-  ) {
-    throw new Error("Una venta ordinaria no admite receptor de comprobante original.");
+  const seleccionLetra: SeleccionLetraFiscal =
+    typeof input.letraSolicitada === "string"
+      ? { origen: "EXPLICITA", letra: input.letraSolicitada }
+      : input.letraSolicitada;
+  const asociacion = autorizacion.asociacion;
+  if (autorizacion.tipoComprobante === "VENTA") {
+    if (asociacion.tipo !== "NINGUNA")
+      throw new Error("Una venta ordinaria no admite asociación fiscal.");
+    if (input.receptor.origen === "COMPROBANTE_ORIGINAL")
+      throw new Error("Una venta ordinaria no admite receptor de comprobante original.");
+    if (seleccionLetra.origen !== "EXPLICITA")
+      throw new Error("Una venta ordinaria exige letra A o B explícita.");
+  } else if (asociacion.tipo === "COMPROBANTE") {
+    if (input.receptor.origen !== "COMPROBANTE_ORIGINAL")
+      throw new Error("La nota vinculada debe usar el receptor del comprobante original.");
+    if (seleccionLetra.origen !== "EXPLICITA")
+      throw new Error("La nota vinculada conserva la selección explícita del flujo v2.");
+  } else if (asociacion.tipo === "PERIODO") {
+    if (input.receptor.origen === "COMPROBANTE_ORIGINAL")
+      throw new Error("Una nota por período no admite COMPROBANTE_ORIGINAL.");
+    if (seleccionLetra.origen !== "AUTOMATICA_NC_PERIODO")
+      throw new Error("La letra de una nota por período se determina automáticamente.");
+  } else {
+    throw new Error("Una nota fiscal requiere exactamente una asociación.");
   }
 
   const claimToken = deps.generarClaimToken();
@@ -721,8 +773,14 @@ export async function ejecutarEmisionFiscal(
     preparacion = await deps.prepararEmision({
       ventaId: input.ventaId,
       receptor: input.receptor,
-      letraSolicitada: input.letraSolicitada,
+      seleccionLetra,
     });
+    if (!mismaAsociacionFiscal(asociacion, preparacion.asociacion)) {
+      throw new Error("La asociación fiscal cambió durante el preflight.");
+    }
+    if (asociacion.tipo === "PERIODO" && ![3, 8, 13].includes(preparacion.cbteTipo)) {
+      throw new Error("La NC por período sólo admite CbteTipo estándar 3, 8 o 13.");
+    }
     const huellaAutoritativa = huellaCanonicaPreparacion(preparacion);
     if (input.huellaConfirmacion !== huellaAutoritativa) {
       return liberarPreflightParaReconfirmar(
@@ -815,8 +873,14 @@ export async function ejecutarEmisionFiscal(
         preparacion = await deps.prepararEmision({
           ventaId: input.ventaId,
           receptor: input.receptor,
-          letraSolicitada: input.letraSolicitada,
+          seleccionLetra,
         });
+        if (!mismaAsociacionFiscal(asociacion, preparacion.asociacion)) {
+          throw new Error("La asociación fiscal cambió durante el preflight.");
+        }
+        if (asociacion.tipo === "PERIODO" && ![3, 8, 13].includes(preparacion.cbteTipo)) {
+          throw new Error("La NC por período sólo admite CbteTipo estándar 3, 8 o 13.");
+        }
         if (input.huellaConfirmacion !== huellaCanonicaPreparacion(preparacion)) {
           return liberarPreflightParaReconfirmar(
             input.ventaId,

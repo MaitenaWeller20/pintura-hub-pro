@@ -36,6 +36,13 @@ const FILA: ColaFiscalFila = {
   afip_numero: null,
   cae: null,
   cae_vencimiento: null,
+  periodo_asoc_desde: null,
+  periodo_asoc_hasta: null,
+  nc_periodo_modalidad: null,
+  motivo_nota_credito: null,
+  nc_resolucion: null,
+  nc_periodo_payload_hash: null,
+  nc_efectos_aplicados_at: null,
   tab: "pendientes",
 };
 

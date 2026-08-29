@@ -12,6 +12,7 @@ import {
 } from "./arca";
 import {
   cbteTipoAfip,
+  cbteTipoAfipNcPeriodo,
   condicionIvaReceptorId,
   ivaIdAfip,
   letraDeCbteTipo,
@@ -36,6 +37,7 @@ import {
 } from "./emision";
 import { diasDesdeHoyAr, fechaFiscalHoyAr, validarCorrelatividadFechaFiscal } from "./fecha";
 import { decidirConciliacion } from "./reconciliacion";
+import { determinarLetraNcPeriodo } from "./nota-credito-periodo";
 import {
   resolverReceptorFiscal,
   type FavoritoFiscalRow,
@@ -45,15 +47,21 @@ import type { ReceptorFiscalConfirmado, SelectorReceptorFiscal } from "./recepto
 import { consultarPadronArcaDesdeContexto } from "./padron-arca.server";
 import type { ReceptorPadronArca } from "./padron-arca-shared";
 import {
+  crearSnapshotFiscalV3,
   crearSnapshotFiscalV2,
+  validarSnapshotFiscalPersistido,
   validarSnapshotFiscalV2,
+  type SnapshotFiscalPersistido,
   type SnapshotFiscalV2,
   type SnapshotFiscalV2Input,
+  type SnapshotFiscalV3Input,
 } from "./snapshot";
 
 const DECIMAL_DOS = /^(0|[1-9][0-9]{0,12})\.[0-9]{2}$/;
+const FECHA_FISCAL = /^\d{4}-\d{2}-\d{2}$/;
 const uuid = z.string().uuid();
 const decimal = z.string().regex(DECIMAL_DOS);
+const fechaFiscal = z.string().regex(FECHA_FISCAL);
 
 const itemExactoSchema = z
   .object({
@@ -71,11 +79,39 @@ const itemExactoSchema = z
   })
   .strict();
 
+const clienteExactoSchema = z
+  .object({
+    id: uuid,
+    razonSocial: z.string().min(1),
+    cuitDni: z.string().nullable(),
+    tipo: z.string().min(1),
+    direccion: z.string().nullable(),
+  })
+  .strict();
+
+const reintegroIntencionExactoSchema = z
+  .object({
+    id: uuid,
+    formaPago: z.enum([
+      "EFECTIVO",
+      "TRANSFERENCIA",
+      "TARJETA_DEBITO",
+      "TARJETA_CREDITO",
+      "MERCADO_PAGO",
+      "CHEQUE",
+    ]),
+    monto: decimal,
+    detalle: z.record(z.string(), z.unknown()),
+    orden: z.number().int().nonnegative(),
+  })
+  .strict();
+
 const ventaExactaSchema = z
   .object({
     id: uuid,
     sucursalId: uuid,
     clienteId: uuid.nullable(),
+    cliente: clienteExactoSchema.nullable(),
     fechaComercial: z.string().datetime(),
     numeroComercial: z.string().min(1),
     tipoComprobante: z.string().min(1),
@@ -92,6 +128,7 @@ const ventaExactaSchema = z
     afipClaimToken: uuid.nullable(),
     afipNumero: z.number().int().nullable(),
     afipVersion: z.number().int().nonnegative(),
+    afipIntentos: z.number().int().nonnegative(),
     afipEmisorCuit: z.string().nullable(),
     afipPuntoVenta: z.number().int().nullable(),
     afipCbteTipo: z.number().int().nullable(),
@@ -103,13 +140,26 @@ const ventaExactaSchema = z
     afipSnapshot: z.unknown().nullable(),
     afipSnapshotHash: z.string().nullable(),
     afipCbteAsocId: uuid.nullable(),
+    periodoAsocDesde: fechaFiscal.nullable(),
+    periodoAsocHasta: fechaFiscal.nullable(),
+    ncPeriodoModalidad: z.enum(["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"]).nullable(),
+    motivoNotaCredito: z.string().nullable(),
+    ncResolucion: z.enum(["REINTEGRO", "SALDO_FAVOR"]).nullable(),
+    ncPeriodoPayloadHash: z.string().nullable(),
+    ncEfectosAplicadosAt: z.string().datetime({ offset: true }).nullable(),
+    idempotencyKey: uuid.nullable(),
+    idempotencyPayloadHash: z.string().nullable(),
     cae: z.string().nullable(),
     caeVencimiento: z.string().nullable(),
   })
   .strict();
 
 const lecturaExactaSchema = z
-  .object({ venta: ventaExactaSchema, items: z.array(itemExactoSchema).min(1) })
+  .object({
+    venta: ventaExactaSchema,
+    items: z.array(itemExactoSchema).min(1),
+    reintegrosIntencion: z.array(reintegroIntencionExactoSchema),
+  })
   .strict();
 
 export type LecturaVentaFiscalExacta = z.infer<typeof lecturaExactaSchema>;
@@ -159,6 +209,7 @@ type PreparacionInterna = {
   receptor: ReceptorFiscalConfirmado;
   letra: Letra;
   original: SnapshotFiscalV2 | null;
+  asociacion: import("./emision").AsociacionPreparadaFiscal;
 };
 
 export type ItemBorradorFiscal = {
@@ -227,14 +278,14 @@ export type LecturasContextoArcaCongelado = {
 
 /**
  * Después de RESERVAR, la sucursal y su PV vivos dejan de ser autoridad. La
- * credencial se busca por el emisor copiado al Snapshot v2 y se combina sólo
+ * credencial se busca por el emisor copiado al Snapshot persistido y se combina sólo
  * con PV/tipo/número/modo de la identidad persistida.
  */
 export async function cargarContextoArcaCongelado(
   reserva: ReservaFiscalPersistida,
   lecturas: LecturasContextoArcaCongelado,
 ) {
-  const snapshot = validarSnapshotFiscalV2(reserva.snapshot);
+  const snapshot = validarSnapshotFiscalPersistido(reserva.snapshot);
   if (
     snapshot.venta.id !== reserva.ventaId ||
     snapshot.hash !== reserva.payloadHash ||
@@ -558,13 +609,13 @@ export function construirSnapshotFiscalDesdeLectura(input: {
   preparacion: PreparacionInterna;
   numero: number;
   fechaComprobante: string;
-}): SnapshotFiscalV2 {
+}): SnapshotFiscalPersistido {
   const { preparacion, numero, fechaComprobante } = input;
   const { lectura, contexto, receptor, letra, original } = preparacion;
   const tipo = tipoV2(lectura.venta.tipoComprobante);
   if (tipo === "NOTA_DEBITO") throw new Error("La nota de débito nueva queda fuera de alcance.");
 
-  if (tipo === "NOTA_CREDITO") {
+  if (tipo === "NOTA_CREDITO" && preparacion.asociacion.tipo === "COMPROBANTE") {
     if (!original || !lectura.venta.afipCbteAsocId) {
       throw new Error("La nota de crédito exige el Snapshot v2 original.");
     }
@@ -592,31 +643,85 @@ export function construirSnapshotFiscalDesdeLectura(input: {
     } as SnapshotFiscalV2Input);
   }
 
+  const emisor = {
+    id: contexto.sucursal.emisor_id,
+    razonSocial: contexto.emisorImpreso.razon_social,
+    nombreFantasia: contexto.emisorImpreso.nombre_fantasia,
+    cuit: contexto.emisorImpreso.cuit,
+    domicilioFiscal: contexto.emisorImpreso.domicilio_fiscal ?? "",
+    condicionIva: contexto.emisorImpreso.condicion_iva,
+    ingresosBrutos: contexto.emisorImpreso.ingresos_brutos,
+    inicioActividades: contexto.emisorImpreso.inicio_actividades,
+    telefono: contexto.emisorImpreso.telefono,
+  };
+  const sucursal = {
+    id: contexto.sucursal.id,
+    nombre: contexto.sucursal.nombre,
+    direccion: preparacion.direccionSucursal,
+    telefono: contexto.sucursal.telefono,
+  };
+  const receptorSnapshot = {
+    ...receptor,
+    condicionIvaReceptorId: condicionIvaReceptorId(receptor.condicionIva) as 1 | 4 | 5 | 6,
+  };
+  const items = lectura.items.map((item) => ({ ...item }));
+
+  if (tipo === "NOTA_CREDITO" && preparacion.asociacion.tipo === "PERIODO") {
+    return crearSnapshotFiscalV3({
+      venta: camposVenta(lectura),
+      items,
+      emisor,
+      sucursal,
+      receptor: receptorSnapshot,
+      identidad: {
+        numero,
+        emisorCuit: contexto.emisor.cuit,
+        puntoVenta: contexto.pv.numero,
+        cbteTipo: cbteTipoAfipNcPeriodo(letra),
+        modo: contexto.pv.modo,
+        simulado: MOCK,
+        validez: MOCK ? "SIMULADA" : contexto.pv.modo,
+      },
+      letra,
+      concepto: 1,
+      fechaComprobante,
+      importeNeto: lectura.venta.subtotalSinIva,
+      importeExento: "0.00",
+      importeNoGravado: "0.00",
+      importeIva: lectura.venta.ivaTotal,
+      importeTributos: "0.00",
+      importeTotal: lectura.venta.total,
+      alicuotasIva: alicuotasDesdeItems(lectura.items),
+      tributos: [],
+      moneda: "PES",
+      cotizacion: "1.000000",
+      ivaContenido:
+        letra === "B" && receptor.condicionIva === "CONSUMIDOR_FINAL"
+          ? lectura.venta.ivaTotal
+          : "0.00",
+      otrosImpuestosNacionalesIndirectos: "0.00",
+      periodoAsoc: {
+        desde: preparacion.asociacion.desde,
+        hasta: preparacion.asociacion.hasta,
+      },
+      notaCredito: {
+        modalidad: preparacion.asociacion.modalidad,
+        motivo: preparacion.asociacion.motivo,
+      },
+    } as SnapshotFiscalV3Input);
+  }
+
+  if (tipo === "NOTA_CREDITO") {
+    throw new Error("Una nota fiscal requiere exactamente una asociación preparada.");
+  }
+
   const tributos = tributosDesdeLectura(lectura);
   return crearSnapshotFiscalV2({
     venta: camposVenta(lectura),
-    items: lectura.items.map((item) => ({ ...item })),
-    emisor: {
-      id: contexto.sucursal.emisor_id,
-      razonSocial: contexto.emisorImpreso.razon_social,
-      nombreFantasia: contexto.emisorImpreso.nombre_fantasia,
-      cuit: contexto.emisorImpreso.cuit,
-      domicilioFiscal: contexto.emisorImpreso.domicilio_fiscal ?? "",
-      condicionIva: contexto.emisorImpreso.condicion_iva,
-      ingresosBrutos: contexto.emisorImpreso.ingresos_brutos,
-      inicioActividades: contexto.emisorImpreso.inicio_actividades,
-      telefono: contexto.emisorImpreso.telefono,
-    },
-    sucursal: {
-      id: contexto.sucursal.id,
-      nombre: contexto.sucursal.nombre,
-      direccion: preparacion.direccionSucursal,
-      telefono: contexto.sucursal.telefono,
-    },
-    receptor: {
-      ...receptor,
-      condicionIvaReceptorId: condicionIvaReceptorId(receptor.condicionIva) as 1 | 4 | 5 | 6,
-    },
+    items,
+    emisor,
+    sucursal,
+    receptor: receptorSnapshot,
     identidad: {
       numero,
       emisorCuit: contexto.emisor.cuit,
@@ -794,6 +899,50 @@ export function crearDependenciasEmisionFiscalServer(
     };
   }
 
+  async function prepararAsociacion(
+    lectura: LecturaVentaFiscalExacta,
+  ): Promise<import("./emision").AsociacionPreparadaFiscal> {
+    const venta = lectura.venta;
+    const camposPeriodo = [
+      venta.periodoAsocDesde,
+      venta.periodoAsocHasta,
+      venta.ncPeriodoModalidad,
+      venta.motivoNotaCredito,
+      venta.ncResolucion,
+      venta.ncPeriodoPayloadHash,
+    ];
+    const tieneAlgunCampoPeriodo = camposPeriodo.some((campo) => campo !== null);
+    const tienePeriodoCompleto = camposPeriodo.every((campo) => campo !== null);
+    if (venta.afipCbteAsocId && tieneAlgunCampoPeriodo) {
+      throw new Error("La venta fiscal contiene ambas asociaciones.");
+    }
+    if (venta.afipCbteAsocId) {
+      const originalRow = await cargarOriginal(venta.afipCbteAsocId);
+      if (originalRow.estado !== "APROBADO" || originalRow.fase !== "PERSISTIDO") {
+        throw new Error("El comprobante original debe estar APROBADO/PERSISTIDO.");
+      }
+      return { tipo: "COMPROBANTE", original: validarSnapshotFiscalV2(originalRow.snapshot) };
+    }
+    if (tieneAlgunCampoPeriodo) {
+      if (!tienePeriodoCompleto) throw new Error("La asociación por período está incompleta.");
+      if (venta.tipoComprobante !== "NOTA_CREDITO") {
+        throw new Error("Sólo una nota de crédito puede asociarse por período.");
+      }
+      if (venta.ncEfectosAplicadosAt !== null) {
+        throw new Error("La nota por período ya tiene efectos comerciales aplicados.");
+      }
+      return {
+        tipo: "PERIODO",
+        desde: venta.periodoAsocDesde!,
+        hasta: venta.periodoAsocHasta!,
+        modalidad: venta.ncPeriodoModalidad!,
+        motivo: venta.motivoNotaCredito!,
+        resolucion: venta.ncResolucion!,
+      };
+    }
+    return { tipo: "NINGUNA" };
+  }
+
   async function contextoReserva(reserva: ReservaFiscalPersistida) {
     return cargarContextoArcaCongelado(reserva, {
       async cargarEmisor(id) {
@@ -847,38 +996,51 @@ export function crearDependenciasEmisionFiscalServer(
       return {
         tipoComprobante: tipoV2(lectura.venta.tipoComprobante),
         afipVersion: lectura.venta.afipVersion,
+        asociacion: await prepararAsociacion(lectura),
       };
     },
     async autorizarConciliacion({ ventaId }) {
       if (ventaId !== ventaIdAutorizada)
         throw new Error("Venta fiscal fuera de la autorización previa.");
     },
-    async prepararEmision({ ventaId, receptor: selector, letraSolicitada }) {
+    async prepararEmision({ ventaId, receptor: selector, seleccionLetra }) {
       const { lectura, contexto } = await contextoParaVenta(ventaId);
       if (lectura.venta.cae) throw new Error("La venta ya tiene CAE.");
       const tipo = tipoV2(lectura.venta.tipoComprobante);
       if (tipo === "NOTA_DEBITO")
         throw new Error("Las notas de débito nuevas no están habilitadas.");
+      const asociacion = await prepararAsociacion(lectura);
+      if (tipo === "VENTA" && asociacion.tipo !== "NINGUNA") {
+        throw new Error("Una venta ordinaria no admite asociación fiscal.");
+      }
+      if (tipo === "NOTA_CREDITO" && asociacion.tipo === "NINGUNA") {
+        throw new Error("Una nota fiscal requiere exactamente una asociación.");
+      }
+      if (asociacion.tipo === "PERIODO" && seleccionLetra.origen !== "AUTOMATICA_NC_PERIODO") {
+        throw new Error("La letra de una nota por período se determina automáticamente.");
+      }
+      if (asociacion.tipo !== "PERIODO" && seleccionLetra.origen !== "EXPLICITA") {
+        throw new Error("El flujo v2 exige letra A o B explícita.");
+      }
+      const letraExplicita = seleccionLetra.origen === "EXPLICITA" ? seleccionLetra.letra : null;
       const ventaReceptor: VentaParaReceptor = {
         id: lectura.venta.id,
         sucursalId: lectura.venta.sucursalId,
-        cliente: await cargarCliente(usuario, lectura.venta.clienteId),
+        cliente: lectura.venta.cliente,
         tipoComprobante: tipo,
         comprobanteOriginalId: lectura.venta.afipCbteAsocId,
+        asociacion,
       };
       const receptorConfirmado = await resolverReceptorFiscal({
         selector,
         venta: ventaReceptor,
         importeTotal: Number(lectura.venta.total),
-        letraSolicitada,
+        letraSolicitada: asociacion.tipo === "PERIODO" ? null : letraExplicita!,
         cargarFavorito: (id) => cargarFavorito(usuario, id),
         cargarOriginal,
         consultarPadron: consultaPadronParaContexto(contexto, admin, input.consultarPadron),
       });
-      const original =
-        tipo === "NOTA_CREDITO"
-          ? validarSnapshotFiscalV2((await cargarOriginal(lectura.venta.afipCbteAsocId!)).snapshot)
-          : null;
+      const original = asociacion.tipo === "COMPROBANTE" ? asociacion.original : null;
       if (
         original &&
         (contexto.emisor.cuit !== original.identidad.emisorCuit ||
@@ -886,13 +1048,15 @@ export function crearDependenciasEmisionFiscalServer(
       ) {
         throw new Error("El emisor o ambiente actual no permite operar la identidad del original.");
       }
-      const letra =
-        original?.letra ??
-        validarLetraSolicitada(
-          contexto.emisor.condicion_iva,
-          receptorConfirmado.condicionIva,
-          letraSolicitada,
-        );
+      const letra = original
+        ? original.letra
+        : asociacion.tipo === "PERIODO"
+          ? determinarLetraNcPeriodo(contexto.emisor.condicion_iva, receptorConfirmado.condicionIva)
+          : validarLetraSolicitada(
+              contexto.emisor.condicion_iva,
+              receptorConfirmado.condicionIva,
+              letraExplicita!,
+            );
       if (input.validarModalidadFacturaA !== false) {
         validarModalidadFacturaA(
           letra,
@@ -908,6 +1072,7 @@ export function crearDependenciasEmisionFiscalServer(
         receptor: receptorConfirmado,
         letra,
         original,
+        asociacion,
       };
       preparaciones.set(ventaId, interna);
       const cbteAsoc = original
@@ -924,7 +1089,10 @@ export function crearDependenciasEmisionFiscalServer(
         tipoComprobante: tipo,
         emisorCuit: original?.identidad.emisorCuit ?? contexto.emisor.cuit,
         puntoVenta: original?.identidad.puntoVenta ?? contexto.pv.numero,
-        cbteTipo: cbteTipoAfip(tipo, original?.letra ?? letra),
+        cbteTipo:
+          asociacion.tipo === "PERIODO"
+            ? cbteTipoAfipNcPeriodo(letra)
+            : cbteTipoAfip(tipo, original?.letra ?? letra),
         modo: original?.identidad.modo ?? contexto.pv.modo,
         simulado: original?.identidad.simulado ?? MOCK,
         validez: original?.identidad.validez ?? (MOCK ? "SIMULADA" : contexto.pv.modo),
@@ -963,6 +1131,7 @@ export function crearDependenciasEmisionFiscalServer(
       };
       return {
         ...preparacionBase,
+        asociacion,
         confirmacionAutoritativa,
         huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
       };
@@ -1035,7 +1204,7 @@ export function crearDependenciasEmisionFiscalServer(
     },
     async cargarReservaPersistida(ventaId) {
       const lectura = await leerVentaExacta(admin, ventaId);
-      const snapshot = validarSnapshotFiscalV2(lectura.venta.afipSnapshot);
+      const snapshot = validarSnapshotFiscalPersistido(lectura.venta.afipSnapshot);
       if (
         !lectura.venta.afipClaimToken ||
         lectura.venta.afipNumero == null ||
@@ -1151,7 +1320,11 @@ export function crearDependenciasEmisionFiscalServer(
       const preparado = preparaciones.get(ventaIdAutorizada);
       if (!preparado) throw new Error("No existe receptor confirmado para guardar.");
       const confirmado = preparado.receptor;
-      if (confirmado.origen !== "MANUAL" || receptor.origen !== "MANUAL") {
+      if (
+        receptor.origen !== "MANUAL" ||
+        (confirmado.origen !== "MANUAL" &&
+          !(confirmado.origen === "ARCA" && confirmado.origenId === null))
+      ) {
         throw new Error("Sólo un receptor manual confirmado se guarda como favorito.");
       }
       const creador = (await usuario.auth.getUser()).data.user?.id;
@@ -1241,7 +1414,7 @@ export async function previsualizarVentaFiscalExistente(input: {
   const preparacion = await deps.prepararEmision({
     ventaId: input.ventaId,
     receptor: input.receptor,
-    letraSolicitada: input.letraSolicitada,
+    seleccionLetra: { origen: "EXPLICITA", letra: input.letraSolicitada },
   });
   const lectura = await leerVentaExacta(input.admin, input.ventaId);
   const vista = deps.obtenerVistaPreparacion(input.ventaId);

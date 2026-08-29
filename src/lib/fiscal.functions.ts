@@ -32,6 +32,10 @@ import {
 import { cuitValido } from "./fiscal/codigos";
 import type { ContextoFiscal } from "./fiscal/contexto";
 import { receptorPadronArcaSchema, type ReceptorPadronArca } from "./fiscal/padron-arca-shared";
+import {
+  notaCreditoPeriodoInputSchema,
+  type NotaCreditoPeriodoInput,
+} from "./fiscal/nota-credito-periodo";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -185,15 +189,20 @@ function lecturasPermiso(supabase: SupabaseClient<Database>): LecturasPermisoFis
     async cargarPerfil(userId) {
       const { data, error } = await supabase
         .from("profiles")
-        .select("activo,puede_facturar,sucursal_id")
+        .select("activo,puede_facturar,puede_emitir_nc_periodo,sucursal_id")
         .eq("id", userId)
         .maybeSingle();
       if (error) throw new Error("No se pudo verificar el perfil fiscal.");
-      return data
+      const perfil = data as unknown as {
+        activo: boolean;
+        puede_facturar: boolean;
+        sucursal_id: string | null;
+      } | null;
+      return perfil
         ? {
-            activo: data.activo,
-            puedeFacturar: data.puede_facturar,
-            sucursalId: data.sucursal_id,
+            activo: perfil.activo,
+            puedeFacturar: perfil.puede_facturar,
+            sucursalId: perfil.sucursal_id,
           }
         : null;
     },
@@ -299,6 +308,104 @@ export async function ejecutarFachadaEmisionPostBorrador<T>(
   if (escritor === "MANTENIMIENTO") return mantenimiento();
   return deps.ejecutar();
 }
+
+type ResultadoCreacionNotaCreditoPeriodo = {
+  id: string;
+  numero: string;
+  cta_cte: boolean;
+};
+
+type ArgumentosRpcNotaCreditoPeriodo = {
+  p_sucursal_id: string;
+  p_cliente_id: string;
+  p_modalidad: NotaCreditoPeriodoInput["modalidad"];
+  p_periodo_desde: string;
+  p_periodo_hasta: string;
+  p_motivo: string;
+  p_resolucion: NotaCreditoPeriodoInput["resolucion"];
+  p_items: NotaCreditoPeriodoInput["items"];
+  p_reintegros: NotaCreditoPeriodoInput["pagos"];
+  p_idempotency_key: string;
+};
+
+const resultadoCreacionNotaCreditoPeriodoSchema = z
+  .array(
+    z
+      .object({
+        venta_id: z.string().uuid(),
+        numero: z.string().min(1),
+        es_cta_cte: z.boolean(),
+      })
+      .strict(),
+  )
+  .length(1);
+
+/**
+ * Cerco testeable de la acción: contrato estricto -> flags frescos -> única RPC.
+ * La RPC JWT-bound conserva la autoridad final sobre sesión, perfil, sucursal y
+ * capacidad, incluso si la UI o esta lectura de flags quedan obsoletas.
+ */
+export async function ejecutarCreacionNotaCreditoPeriodoFiscal(
+  rawInput: unknown,
+  deps: {
+    cargarFlags(): Promise<FlagsFacturacion>;
+    crear(args: ArgumentosRpcNotaCreditoPeriodo): Promise<unknown>;
+  },
+): Promise<ResultadoCreacionNotaCreditoPeriodo> {
+  const input = parsearEntradaFiscal(notaCreditoPeriodoInputSchema, rawInput);
+  let flags: FlagsFacturacion;
+  try {
+    flags = await deps.cargarFlags();
+  } catch (error) {
+    if (codigoErrorFiscalUsuario(error)) throw error;
+    throw crearErrorFiscalUsuario("CONFIGURACION_INVALIDA");
+  }
+  if (
+    flags.facturacion_receptor_v2_enabled !== true ||
+    flags.facturacion_legacy_writer_enabled !== false ||
+    flags.nota_credito_periodo_enabled !== true
+  ) {
+    throw crearErrorFiscalUsuario("MANTENIMIENTO");
+  }
+
+  try {
+    const [row] = resultadoCreacionNotaCreditoPeriodoSchema.parse(
+      await deps.crear({
+        p_sucursal_id: input.sucursal_id,
+        p_cliente_id: input.cliente_id,
+        p_modalidad: input.modalidad,
+        p_periodo_desde: input.periodo_desde,
+        p_periodo_hasta: input.periodo_hasta,
+        p_motivo: input.motivo,
+        p_resolucion: input.resolucion,
+        p_items: input.items,
+        p_reintegros: input.pagos,
+        p_idempotency_key: input.idempotency_key,
+      }),
+    );
+    return { id: row.venta_id, numero: row.numero, cta_cte: row.es_cta_cte };
+  } catch (error) {
+    if (codigoErrorFiscalUsuario(error)) throw error;
+    throw crearErrorFiscalUsuario("ERROR_CORREGIBLE");
+  }
+}
+
+export const crearNotaCreditoPeriodoFiscal = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(notaCreditoPeriodoInputSchema, value))
+  .handler(async ({ data, context }) =>
+    ejecutarCreacionNotaCreditoPeriodoFiscal(data, {
+      cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
+      async crear(args) {
+        const { data: result, error } = await context.supabase.rpc(
+          "crear_nota_credito_periodo_fiscal" as never,
+          args as never,
+        );
+        if (error) throw error;
+        return result;
+      },
+    }),
+  );
 
 /** Consulta visual acotada: auth -> permiso user-bound -> service-role -> ARCA. */
 export const consultarCuitPadronArca = createServerFn({ method: "POST" })

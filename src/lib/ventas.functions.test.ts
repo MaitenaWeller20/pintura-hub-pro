@@ -70,6 +70,7 @@ describe("cerco comercial de NC/ND", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
         crearRegular,
         crearNotaCreditoTotal,
@@ -95,6 +96,7 @@ describe("cerco comercial de NC/ND", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
         crearRegular,
         crearNotaCreditoTotal,
@@ -109,6 +111,7 @@ describe("cerco comercial de NC/ND", () => {
     const cargarFlags = vi.fn(async () => ({
       facturacion_receptor_v2_enabled: true,
       facturacion_legacy_writer_enabled: false,
+      nota_credito_periodo_enabled: false,
     }));
     const crearRegular = vi.fn();
     const crearNotaCreditoTotal = vi.fn();
@@ -133,6 +136,7 @@ describe("cerco comercial de NC/ND", () => {
       cargarFlags: async () => ({
         facturacion_receptor_v2_enabled: false,
         facturacion_legacy_writer_enabled: true,
+        nota_credito_periodo_enabled: false,
       }),
       crearRegular,
       crearNotaCreditoTotal,
@@ -144,12 +148,33 @@ describe("cerco comercial de NC/ND", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
         crearRegular,
         crearNotaCreditoTotal,
       }),
     ).rejects.toThrow(/mantenimiento/i);
     expect(crearRegular).toHaveBeenCalledTimes(1);
+    expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
+  });
+
+  it("en v2 una NC sin asociación no cae en la creación interna legacy", async () => {
+    const crearRegular = vi.fn();
+    const crearNotaCreditoTotal = vi.fn();
+    const input = { ...nota("NOTA_CREDITO"), cbte_asoc_id: null };
+
+    await expect(
+      ejecutarCreacionNotaSegunFlags(input, {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: true,
+        }),
+        crearRegular,
+        crearNotaCreditoTotal,
+      }),
+    ).rejects.toThrow(/comprobante original/i);
+    expect(crearRegular).not.toHaveBeenCalled();
     expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
   });
 });
@@ -186,6 +211,7 @@ describe("fence del conversor de presupuesto", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
         convertirNeutral,
         convertirLegacy,
@@ -211,6 +237,7 @@ describe("fence del conversor de presupuesto", () => {
       cargarFlags: async () => ({
         facturacion_receptor_v2_enabled: false,
         facturacion_legacy_writer_enabled: true,
+        nota_credito_periodo_enabled: false,
       }),
       convertirNeutral,
       convertirLegacy,
@@ -228,6 +255,7 @@ describe("fence del conversor de presupuesto", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
         convertirNeutral,
         convertirLegacy,
@@ -246,6 +274,7 @@ describe("fence del conversor de presupuesto", () => {
       cargarFlags: async () => ({
         facturacion_receptor_v2_enabled: true,
         facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: false,
       }),
       convertirNeutral: vi.fn(),
       convertirLegacy: vi.fn(),

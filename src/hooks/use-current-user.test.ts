@@ -24,16 +24,24 @@ describe("estado fiscal del usuario", () => {
     expect(
       resolverEstadoFiscalUsuario({
         isAdmin: role === "admin",
+        esEmpleado: false,
         puedeFacturarPerfil: false,
+        puedeEmitirNcPeriodoPerfil: false,
         settings: [
           {
             id: true,
             facturacion_receptor_v2_enabled: true,
             facturacion_legacy_writer_enabled: false,
+            nota_credito_periodo_enabled: true,
           },
         ],
       }),
-    ).toMatchObject({ puedeFacturar: true, facturacionV2Habilitada: true });
+    ).toMatchObject({
+      puedeFacturar: true,
+      puedeEmitirNcPeriodo: true,
+      facturacionV2Habilitada: true,
+      notaCreditoPeriodoHabilitada: true,
+    });
   });
 
   it.each([
@@ -44,15 +52,22 @@ describe("estado fiscal del usuario", () => {
       roles,
       perfilActivo: true,
       puedeFacturarPerfil: false,
+      puedeEmitirNcPeriodoPerfil: false,
       settings: [
         {
           id: true,
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: true,
         },
       ],
     });
-    expect(acceso).toMatchObject({ role: "admin", isAdmin: true, puedeFacturar: true });
+    expect(acceso).toMatchObject({
+      role: "admin",
+      isAdmin: true,
+      puedeFacturar: true,
+      puedeEmitirNcPeriodo: true,
+    });
     expect(puedeAbrirRuta("/facturacion/configuracion", acceso)).toBe(true);
   });
 
@@ -68,11 +83,13 @@ describe("estado fiscal del usuario", () => {
           roles: [{ role: "admin" }],
           perfilActivo,
           puedeFacturarPerfil: true,
+          puedeEmitirNcPeriodoPerfil: true,
           settings: [
             {
               id: true,
               facturacion_receptor_v2_enabled: true,
               facturacion_legacy_writer_enabled: false,
+              nota_credito_periodo_enabled: true,
             },
           ],
         }),
@@ -80,8 +97,10 @@ describe("estado fiscal del usuario", () => {
         role: null,
         isAdmin: false,
         puedeFacturar: false,
+        puedeEmitirNcPeriodo: false,
         facturacionV2Habilitada: false,
         facturacionLegacyHabilitada: false,
+        notaCreditoPeriodoHabilitada: false,
       });
     }
   });
@@ -90,29 +109,37 @@ describe("estado fiscal del usuario", () => {
     expect(
       resolverEstadoFiscalUsuario({
         isAdmin: false,
+        esEmpleado: true,
         puedeFacturarPerfil: true,
+        puedeEmitirNcPeriodoPerfil: true,
         settings: [
           {
             id: true,
             facturacion_receptor_v2_enabled: true,
             facturacion_legacy_writer_enabled: false,
+            nota_credito_periodo_enabled: true,
           },
         ],
       }),
     ).toEqual({
       puedeFacturar: true,
+      puedeEmitirNcPeriodo: true,
       facturacionV2Habilitada: true,
       facturacionLegacyHabilitada: false,
+      notaCreditoPeriodoHabilitada: true,
     });
     expect(
       resolverEstadoFiscalUsuario({
         isAdmin: true,
+        esEmpleado: false,
         puedeFacturarPerfil: false,
+        puedeEmitirNcPeriodoPerfil: false,
         settings: [
           {
             id: true,
             facturacion_receptor_v2_enabled: false,
             facturacion_legacy_writer_enabled: true,
+            nota_credito_periodo_enabled: false,
           },
         ],
       }).puedeFacturar,
@@ -127,6 +154,7 @@ describe("estado fiscal del usuario", () => {
           id: true,
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: true,
+          nota_credito_periodo_enabled: true,
         },
       ],
       [
@@ -134,6 +162,7 @@ describe("estado fiscal del usuario", () => {
           id: true,
           facturacion_receptor_v2_enabled: "true",
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: true,
         },
       ],
     ];
@@ -141,14 +170,65 @@ describe("estado fiscal del usuario", () => {
       expect(
         resolverEstadoFiscalUsuario({
           isAdmin: false,
+          esEmpleado: true,
           puedeFacturarPerfil: true,
+          puedeEmitirNcPeriodoPerfil: true,
           settings,
         }),
       ).toEqual({
         puedeFacturar: true,
+        puedeEmitirNcPeriodo: true,
         facturacionV2Habilitada: false,
         facturacionLegacyHabilitada: false,
+        notaCreditoPeriodoHabilitada: false,
       });
     }
+  });
+
+  it.each([
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+    [false, false, false],
+  ] as const)(
+    "empleado activo con puede_facturar=%s y permiso período=%s deriva capacidad=%s",
+    (puedeFacturarPerfil, puedeEmitirNcPeriodoPerfil, esperado) => {
+      expect(
+        resolverAccesoFiscalUsuario({
+          roles: [{ role: "empleado" }],
+          perfilActivo: true,
+          puedeFacturarPerfil,
+          puedeEmitirNcPeriodoPerfil,
+          settings: [
+            {
+              id: true,
+              facturacion_receptor_v2_enabled: true,
+              facturacion_legacy_writer_enabled: false,
+              nota_credito_periodo_enabled: true,
+            },
+          ],
+        }).puedeEmitirNcPeriodo,
+      ).toBe(esperado);
+    },
+  );
+
+  it("no concede la capacidad de período a un perfil activo sin rol de empleado", () => {
+    const acceso = resolverAccesoFiscalUsuario({
+      roles: [{ role: "desconocido" }],
+      perfilActivo: true,
+      puedeFacturarPerfil: true,
+      puedeEmitirNcPeriodoPerfil: true,
+      settings: [
+        {
+          id: true,
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: true,
+        },
+      ],
+    });
+
+    expect(acceso.role).toBeNull();
+    expect(acceso.puedeEmitirNcPeriodo).toBe(false);
   });
 });

@@ -43,6 +43,33 @@ export const setPuedeFacturar = createServerFn({ method: "POST" })
     ),
   );
 
+export async function ejecutarAdministrarPuedeEmitirNcPeriodo(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_emitir_nc_periodo", {
+    p_profile_id: input.user_id,
+    p_habilitado: input.value,
+  });
+  if (error) {
+    throw new Error(error.message ?? "No se pudo actualizar la capacidad de NC por período");
+  }
+  return { ok: true };
+}
+
+export const administrarPuedeEmitirNcPeriodo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarAdministrarPuedeEmitirNcPeriodo(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
 export async function ejecutarSetPuedeGestionarCreditoClientes(
   input: { actorId: string; user_id: string; value: boolean },
   supabase: ClienteCapacidadFiscal,

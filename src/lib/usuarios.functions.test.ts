@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as usuariosFunctions from "./usuarios.functions";
 import {
   ejecutarSetPuedeGestionarCreditoClientes,
   ejecutarSetPuedeFacturar,
@@ -13,6 +14,72 @@ const OP_ALTA = "10000000-0000-4000-8000-000000000002";
 const OP_RECONCILIAR = "10000000-0000-4000-8000-000000000003";
 const OP_FAIL_SAFE = "10000000-0000-4000-8000-000000000004";
 const OP_BAJA_POSTERIOR = "10000000-0000-4000-8000-000000000005";
+
+type EjecutarAdministrarNcPeriodo = (
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: {
+    rpc(
+      nombre: string,
+      args: Record<string, unknown>,
+    ): Promise<{ data: unknown; error: { message?: string } | null }>;
+  },
+) => Promise<{ ok: true }>;
+
+function administrarNcPeriodo(): EjecutarAdministrarNcPeriodo {
+  const modulo = usuariosFunctions as unknown as {
+    administrarPuedeEmitirNcPeriodo?: unknown;
+    ejecutarAdministrarPuedeEmitirNcPeriodo?: EjecutarAdministrarNcPeriodo;
+  };
+  expect(modulo.administrarPuedeEmitirNcPeriodo).toBeDefined();
+  expect(modulo.ejecutarAdministrarPuedeEmitirNcPeriodo).toBeDefined();
+  return modulo.ejecutarAdministrarPuedeEmitirNcPeriodo!;
+}
+
+describe("administrarPuedeEmitirNcPeriodo", () => {
+  it("rechaza a un empleado antes de intentar la mutación de capacidad", async () => {
+    const llamadas: string[] = [];
+
+    await expect(
+      administrarNcPeriodo()(
+        { actorId: EMPLEADO, user_id: EMPLEADO, value: true },
+        {
+          async rpc(nombre) {
+            llamadas.push(nombre);
+            return nombre === "is_admin"
+              ? { data: false, error: null }
+              : { data: null, error: null };
+          },
+        },
+      ),
+    ).rejects.toThrow(/solo admin/i);
+    expect(llamadas).toEqual(["is_admin"]);
+  });
+
+  it("revalida al admin y usa sólo la RPC segura con su firma exacta", async () => {
+    const llamadas: Array<{ nombre: string; args: Record<string, unknown> }> = [];
+
+    await expect(
+      administrarNcPeriodo()(
+        { actorId: ADMIN, user_id: EMPLEADO, value: true },
+        {
+          async rpc(nombre, args) {
+            llamadas.push({ nombre, args });
+            return nombre === "is_admin"
+              ? { data: true, error: null }
+              : { data: null, error: null };
+          },
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(llamadas).toEqual([
+      { nombre: "is_admin", args: { _user_id: ADMIN } },
+      {
+        nombre: "administrar_puede_emitir_nc_periodo",
+        args: { p_profile_id: EMPLEADO, p_habilitado: true },
+      },
+    ]);
+  });
+});
 
 describe("setPuedeFacturar", () => {
   it("rechaza a quien no es admin antes de intentar cambiar la capacidad", async () => {

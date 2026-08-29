@@ -317,15 +317,20 @@ function lecturasContexto(supabase: SupabaseClient<Database>): LecturasContextoC
     async cargarPerfil(userId) {
       const { data, error } = await supabase
         .from("profiles")
-        .select("activo,puede_facturar,sucursal_id")
+        .select("activo,puede_facturar,puede_emitir_nc_periodo,sucursal_id")
         .eq("id", userId)
         .maybeSingle();
       if (error) throw new Error("No se pudo verificar el perfil fiscal.");
-      return data
+      const perfil = data as unknown as {
+        activo: boolean;
+        puede_facturar: boolean;
+        sucursal_id: string | null;
+      } | null;
+      return perfil
         ? {
-            activo: data.activo,
-            puedeFacturar: data.puede_facturar,
-            sucursalId: data.sucursal_id,
+            activo: perfil.activo,
+            puedeFacturar: perfil.puede_facturar,
+            sucursalId: perfil.sucursal_id,
           }
         : null;
     },

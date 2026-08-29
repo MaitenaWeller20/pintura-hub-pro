@@ -76,3 +76,34 @@
 ### Commit Fix round 1
 
 - `49225c94efe42e261ac1880bc55f76a1a76e0acb fix(ui): completar flujo NC fiscal por período`
+
+## Fix round 2
+
+### Cambios aplicados
+
+- La cola obtiene una lectura acotada y persistida de la intención NC por período: neto, IVA, total, líneas/alícuotas, concepto de ajuste y reintegros planificados. El bloque autoritativo previo a la emisión los muestra junto a receptor y letra resuelta; para saldo a favor explicita el importe y para reintegro cada medio/importe.
+- El editor congela un snapshot `{ payload }` al primer submit. Un error potencialmente ambiguo conserva controles bloqueados y ofrece `Reintentar` (mismo payload y key) o `Editar y crear un nuevo intento` (descarta el snapshot y difiere la nueva key hasta el próximo submit). Un ref evita doble mutación antes del re-render.
+- Se bloquearon inputs, selects, agregar/quitar productos, pagos y acciones de resolución durante creación o mientras un intento ambiguo sigue vigente.
+- Se agregaron errores inline de fecha, motivo, items/importe y reintegros con `aria-invalid`, `aria-describedby`, `role=alert` y foco en el primer campo inválido. El error RPC se mantiene como alerta global.
+
+### TDD (RED → GREEN)
+
+- RED: el resumen no contenía neto/IVA/liquidación persistida para letras A/B/C ni para ambas resoluciones; las tres variantes fallaron. GREEN: el resumen recibe y presenta únicamente la lectura persistida.
+- RED: tras fallo ambiguo el motivo permanecía editable; la prueba montada detectó la mutabilidad. GREEN: se congeló el intento, se bloquearon controles y el retry hace deep-equal del payload original.
+- GREEN adicional: la prueba montada verifica descarte explícito, payload modificado y nueva idempotency key; el ciclo de cola valida que la lectura autoritativa llega a la confirmación.
+
+### Verificaciones Fix round 2
+
+- Focal: `npx vitest run src/components/ventas/editor-nota-credito-periodo.test.ts src/components/fiscal/resumen-emision-fiscal.test.ts src/routes/_authenticated/facturacion.cola-lifecycle.test.ts src/components/fiscal/dialogo-emision-fiscal.test.ts src/components/fiscal/cola-fiscal-tabla.test.ts` → 42 pasadas.
+- Completa: `npm test` → 75 archivos pasados, 2 omitidos; 1589 pruebas pasadas, 22 omitidas.
+- Tipos, ESLint focal, Prettier focal y `git diff --check` pasaron.
+
+### Revisión React / límites
+
+- El intento es estado explícito y el guard transitorio es un ref; no se agrega estado derivado en effects ni doble fetch en cadena. La lectura de intención está habilitada sólo para la fila NC por período seleccionada y corre en paralelo con los datos independientes ya existentes.
+- No hubo QA autenticado visual/responsive por falta de sesión/datos locales. La cobertura jsdom verifica foco, bloqueos, controles y callbacks reales; se recomienda una pasada manual en staging.
+- Sin cambios a ARCA, flags de producción, PDF, deploy ni push.
+
+### Commit Fix round 2
+
+- `b3666b54734cf3f1ec3685d406f5eed86af39f86 fix(ui): congelar intento y resumir NC período`

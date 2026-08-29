@@ -107,3 +107,37 @@
 ### Commit Fix round 2
 
 - `b3666b54734cf3f1ec3685d406f5eed86af39f86 fix(ui): congelar intento y resumir NC período`
+
+## Fix round 3
+
+### Cambios aplicados
+
+- La cola trata el detalle persistido de una NC por período como requisito de la emisión: mientras carga o si falla, bloquea revisión, confirmación y emisión; el fallo presenta una acción explícita de reintento. La query se identifica por venta seleccionada para no reutilizar una lectura de otra fila.
+- La lectura autoritativa ahora transporta identificadores estables de líneas y el orden/identificador de cada reintegro. El resumen usa esas claves, conserva el orden persistido y muestra las etiquetas humanas de medios de pago.
+- `ventas.nueva` consume el estado explícito del intento (`IDLE`, `ENVIANDO`, `AMBIGUO`) del editor. Durante un intento se bloquean navegación, sucursal, cliente, tipo, condición, camino y writers de la ruta. Sólo el descarte explícito vuelve a `IDLE`.
+- El editor reemplazó el parseo que podía propagar mensajes de Zod por `safeParse`, con un mapa allowlisted para período, motivo, concepto, importe, items y reintegros. Cada error queda junto al control con `aria-invalid`, `aria-describedby`, alerta y foco.
+
+### TDD (RED → GREEN)
+
+- RED: los casos montados de detalle en carga/fallo permitían alcanzar la revisión. GREEN: la ruta de cola bloquea los tres pasos y reintenta la lectura antes de habilitarlos.
+- RED: las validaciones de motivo corto, período invertido, concepto/importe inválido y reintegros no tenían mensajes de campo consistentes. GREEN: pruebas montadas cubren motivo de 1 a 4 caracteres, foco de fecha final, concepto, importe y reintegros.
+- GREEN adicional: las pruebas existentes del editor conservan doble click, payload congelado deep-equal, retry y descarte con nueva key; la prueba de cola verifica éxito, carga y error del detalle autoritativo.
+
+### Verificaciones Fix round 3
+
+- Focal montada: `npx vitest run src/components/ventas/editor-nota-credito-periodo.test.ts src/components/fiscal/resumen-emision-fiscal.test.ts src/routes/_authenticated/facturacion.cola-lifecycle.test.ts` → 22 pasadas.
+- Completa: `npm test` → 75 archivos pasados, 2 omitidos; 1597 pruebas pasadas, 22 omitidas.
+- Tipos: `npm run typecheck` pasó.
+- Formato y diff: Prettier focal y `git diff --check` pasaron.
+- ESLint focal pasó para los componentes/fachadas nuevos. La ruta monolítica `ventas.nueva.tsx` conserva 22 errores `@typescript-eslint/no-explicit-any` preexistentes; esta ronda no añadió `any` ni errores nuevos en ella.
+
+### Revisión React / accesibilidad
+
+- No se agregó estado derivado en effects: el intento se eleva por callback y el snapshot sigue siendo la única fuente para retry. El ref impide una segunda mutación antes de que React pinte el bloqueo.
+- La consulta de detalle usa una query key con la venta seleccionada; al cambiar de fila no habilita la ruta hasta contar con el detalle correspondiente. No se añadieron waterfalls ni fetches de escritura.
+- Los bloqueos son controles nativos, incluida la navegación de la ruta; el foco de los errores se dirige al primer campo real y el resumen de preview permanece de sólo lectura.
+- No hubo QA visual autenticado/responsive por falta de sesión y datos locales; jsdom cubre los estados cargando/error/éxito y los controles. Se recomienda una pasada manual móvil y teclado en staging.
+
+### Commit Fix round 3
+
+- `1e20541 fix(ui): bloquear emisión NC hasta detalle autoritativo`

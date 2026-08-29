@@ -59,6 +59,8 @@ DELETE FROM public.ventas
  WHERE id::text LIKE 'c6400000-0000-0000-0000-%';
 DELETE FROM public.clientes
  WHERE id='b6400000-0000-0000-0000-000000000001';
+DELETE FROM public.user_roles
+ WHERE user_id='a6400000-0000-0000-0000-000000000001';
 DELETE FROM auth.users
  WHERE id='a6400000-0000-0000-0000-000000000001';
 SQL
@@ -105,6 +107,9 @@ INSERT INTO auth.users (
   '00000000-0000-0000-0000-000000000000',
   'authenticated','authenticated','liberar-fiscal@test.local','x',now(),now(),now()
 );
+
+INSERT INTO public.user_roles (user_id,role)
+VALUES ('a6400000-0000-0000-0000-000000000001','admin');
 
 INSERT INTO public.clientes (id,razon_social)
 VALUES ('b6400000-0000-0000-0000-000000000001','FIXTURE LIBERAR CLAIM');

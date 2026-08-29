@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
 DB="${DB:-supabase_db_${PROJECT_ID}}"
 PSQL=(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1)
+AUTH_SQL="SET request.jwt.claims = '{\"sub\":\"a3000000-0000-0000-0000-000000000001\",\"role\":\"authenticated\"}';"
 
 TMP_DIR="$(mktemp -d)"
 ok=0
@@ -12,7 +13,7 @@ failures=0
 failure_index=0
 
 q() { "${PSQL[@]}" -qAtc "$1"; }
-q_sr() { "${PSQL[@]}" -qAtc "SET ROLE service_role; $1"; }
+q_sr() { "${PSQL[@]}" -qAtc "SET ROLE service_role; $AUTH_SQL $1"; }
 
 pass() {
   echo "✓ $1"
@@ -39,7 +40,7 @@ check_sql() {
   failure_index=$((failure_index + 1))
   output="$TMP_DIR/consulta-${failure_index}.out"
   set +e
-  "${PSQL[@]}" -qAtc "SET ROLE service_role; $sql" >"$output" 2>&1
+  "${PSQL[@]}" -qAtc "SET ROLE service_role; $AUTH_SQL $sql" >"$output" 2>&1
   status=$?
   set -e
   if [[ "$status" -ne 0 ]]; then
@@ -56,7 +57,7 @@ expect_fail_like() {
   failure_index=$((failure_index + 1))
   output="$TMP_DIR/fallo-${failure_index}.out"
   set +e
-  "${PSQL[@]}" -qAtc "SET ROLE service_role; $sql" >"$output" 2>&1
+  "${PSQL[@]}" -qAtc "SET ROLE service_role; $AUTH_SQL $sql" >"$output" 2>&1
   status=$?
   set -e
   if [[ "$status" -eq 0 ]]; then
@@ -77,6 +78,8 @@ DELETE FROM public.ventas
  WHERE id::text LIKE 'c3000000-0000-0000-0000-%';
 DELETE FROM public.clientes
  WHERE id='b3000000-0000-0000-0000-000000000001';
+DELETE FROM public.user_roles
+ WHERE user_id='a3000000-0000-0000-0000-000000000001';
 DELETE FROM auth.users
  WHERE id='a3000000-0000-0000-0000-000000000001';
 SQL
@@ -156,6 +159,8 @@ reservar() {
     -v ultimo_remoto="$ultimo_remoto" -v ultimo_local="$ultimo_local" \
     -v snapshot="$snapshot" -v snapshot_hash="$hash" <<'SQL'
 SET ROLE service_role;
+SET request.jwt.claims =
+  '{"sub":"a3000000-0000-0000-0000-000000000001","role":"authenticated"}';
 SELECT concat_ws('|',venta_id,afip_estado,afip_fase,afip_claim_token,afip_numero,afip_version)
   FROM public.transicionar_emision_fiscal(
     :'venta'::uuid,'RESERVAR',:'token'::uuid,
@@ -189,6 +194,9 @@ INSERT INTO auth.users (
 
 INSERT INTO public.clientes (id,razon_social)
 VALUES ('b3000000-0000-0000-0000-000000000001','T3 CLIENTE FISCAL');
+
+INSERT INTO public.user_roles(user_id,role)
+VALUES ('a3000000-0000-0000-0000-000000000001','admin');
 
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,total
@@ -232,6 +240,8 @@ echo
 echo "== Reclamo concurrente =="
 "${PSQL[@]}" >"$TMP_DIR/claim-uno.out" 2>&1 <<'SQL' &
 SET ROLE service_role;
+SET request.jwt.claims =
+  '{"sub":"a3000000-0000-0000-0000-000000000001","role":"authenticated"}';
 SELECT * FROM public.transicionar_emision_fiscal(
   'c3000000-0000-0000-0000-000000000001','RECLAMAR',
   'd3000000-0000-0000-0000-000000000001',
@@ -242,6 +252,8 @@ pid_claim_uno=$!
 
 "${PSQL[@]}" >"$TMP_DIR/claim-dos.out" 2>&1 <<'SQL' &
 SET ROLE service_role;
+SET request.jwt.claims =
+  '{"sub":"a3000000-0000-0000-0000-000000000001","role":"authenticated"}';
 SELECT * FROM public.transicionar_emision_fiscal(
   'c3000000-0000-0000-0000-000000000001','RECLAMAR',
   'd3000000-0000-0000-0000-000000000002',
@@ -277,8 +289,8 @@ check "el reclamo ganador persiste una sola versión y un solo intento" \
 
 echo
 echo "== Firma, hash y privilegios =="
-check "la RPC tiene una sola firma SECURITY INVOKER y search_path fijado" \
-  "1|true|false|true" \
+check "la RPC tiene una sola firma SECURITY DEFINER y search_path fijado" \
+  "1|true|true|true" \
   "$(q "SELECT count(*)||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_venta_id uuid, p_accion text, p_claim_token uuid, p_payload jsonb')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='transicionar_emision_fiscal'")"
 check "sólo service_role puede ejecutar la RPC" \
   "false|false|false|true" \
@@ -1000,6 +1012,8 @@ payload_concurrente="jsonb_build_object(
 for intento in uno dos; do
   "${PSQL[@]}" >"$TMP_DIR/recuperar-${intento}.out" 2>&1 <<SQL &
 SET ROLE service_role;
+SET request.jwt.claims =
+  '{"sub":"a3000000-0000-0000-0000-000000000001","role":"authenticated"}';
 SELECT * FROM public.transicionar_emision_fiscal(
   'c3000000-0000-0000-0000-000000000028','RECUPERAR_CAE',
   'd3000000-0000-0000-0000-000000000028',$payload_concurrente

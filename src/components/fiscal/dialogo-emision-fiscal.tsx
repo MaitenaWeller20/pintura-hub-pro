@@ -20,6 +20,7 @@ import {
 } from "./receptor-fiscal-form";
 import { ResumenEmisionFiscal, type PreviewEmisionFiscal } from "./resumen-emision-fiscal";
 import { textoValidezFiscal } from "@/lib/fiscal/validez-ui";
+import type { ModalidadNcPeriodo, ResolucionNcPeriodo } from "@/lib/fiscal/nota-credito-periodo";
 import {
   adaptarReceptorFormularioALetra,
   cambiarLetraConfirmacion,
@@ -75,6 +76,13 @@ export type ContextoDialogoEmision = {
   };
   tipoComprobante: string;
   receptorHeredado?: ReceptorHeredadoVista | null;
+  asociacionPeriodo?: {
+    desde: string;
+    hasta: string;
+    modalidad: ModalidadNcPeriodo;
+    motivo: string;
+    resolucion: ResolucionNcPeriodo;
+  } | null;
 };
 
 function SincronizarPadronReceptor({
@@ -177,7 +185,9 @@ export function DialogoEmisionFiscal({
   onOpenChange,
   onConsultarCuit,
   onPrevisualizar,
+  onPrevisualizarPeriodo,
   onConfirmar,
+  onConfirmarPeriodo,
   onCompletada,
 }: {
   open: boolean;
@@ -191,9 +201,15 @@ export function DialogoEmisionFiscal({
     receptor: SelectorReceptorFiscal;
     letraSolicitada: LetraSolicitada;
   }): Promise<unknown>;
+  onPrevisualizarPeriodo?(input: { receptor: SelectorReceptorFiscal }): Promise<unknown>;
   onConfirmar(input: {
     receptor: SelectorReceptorFiscal;
     letraSolicitada: LetraSolicitada;
+    confirmaVentaAntigua: boolean;
+    huellaConfirmacion: string;
+  }): Promise<unknown>;
+  onConfirmarPeriodo?(input: {
+    receptor: SelectorReceptorFiscal;
     confirmaVentaAntigua: boolean;
     huellaConfirmacion: string;
   }): Promise<unknown>;
@@ -201,6 +217,7 @@ export function DialogoEmisionFiscal({
 }) {
   const esNota =
     contexto.tipoComprobante === "NOTA_CREDITO" || contexto.tipoComprobante === "NOTA_DEBITO";
+  const esNcPeriodo = contexto.tipoComprobante === "NOTA_CREDITO" && !!contexto.asociacionPeriodo;
   const consultarCuit =
     onConsultarCuit ??
     (async (input: { sucursalId: string; cuit: string }) => {
@@ -209,16 +226,16 @@ export function DialogoEmisionFiscal({
         data: { sucursal_id: input.sucursalId, cuit: input.cuit },
       });
     });
-  const receptorInicial: ReceptorFormulario = esNota
-    ? { origen: "COMPROBANTE_ORIGINAL" }
-    : { origen: "CLIENTE_COMERCIAL" };
-  const letraInicial = esNota ? letraParaNota(contexto.receptorHeredado) : null;
+  const receptorInicial: ReceptorFormulario =
+    esNota && !esNcPeriodo ? { origen: "COMPROBANTE_ORIGINAL" } : { origen: "CLIENTE_COMERCIAL" };
+  const letraInicial = esNota && !esNcPeriodo ? letraParaNota(contexto.receptorHeredado) : null;
   const [receptor, setReceptor] = useState<ReceptorFormulario>(receptorInicial);
   const [confirmacion, setConfirmacion] = useState(() =>
     crearEstadoConfirmacionFiscal(letraInicial),
   );
   const [preview, setPreview] = useState<PreviewEmisionFiscal | null>(null);
   const [confirmaVentaAntigua, setConfirmaVentaAntigua] = useState(false);
+  const [confirmaPeriodo, setConfirmaPeriodo] = useState(false);
   const [previsualizando, setPrevisualizando] = useState(false);
   const [emitiendo, setEmitiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -233,14 +250,15 @@ export function DialogoEmisionFiscal({
   const emitiendoRef = useRef(false);
   const padronControlRef = useRef(crearControlConsultaPadron());
 
-  const claveConsultaPadron = esNota
-    ? null
-    : claveParaConsultaPadron({
-        sucursalId: contexto.sucursal.id,
-        receptor,
-        cliente: contexto.comprador,
-        favoritos,
-      });
+  const claveConsultaPadron =
+    esNota && !esNcPeriodo
+      ? null
+      : claveParaConsultaPadron({
+          sucursalId: contexto.sucursal.id,
+          receptor,
+          cliente: contexto.comprador,
+          favoritos,
+        });
   const cuitActual = claveConsultaPadron?.cuit ?? null;
   const estadoPadronEfectivo = estadoConsultaPadronEfectivo(
     claveConsultaPadron,
@@ -252,6 +270,7 @@ export function DialogoEmisionFiscal({
     setPrevisualizando(false);
     setPreview(null);
     setConfirmaVentaAntigua(false);
+    setConfirmaPeriodo(false);
     setConfirmacion(invalidarHuellaConfirmacion);
   }, []);
 
@@ -321,7 +340,9 @@ export function DialogoEmisionFiscal({
     setErroresReceptor({});
   };
 
-  const validarReceptor = (letraSolicitada: LetraSolicitada): SelectorReceptorFiscal | null => {
+  const validarReceptor = (
+    letraSolicitada: LetraSolicitada | null,
+  ): SelectorReceptorFiscal | null => {
     const resultado = validarSelectorReceptorFiscal({
       value: receptor,
       confirmaDatosManuales: confirmacion.confirmaDatosManuales,
@@ -342,12 +363,14 @@ export function DialogoEmisionFiscal({
   };
 
   const preparar = async () => {
-    const letraSolicitada = confirmacion.letraSolicitada;
+    const letraSolicitada = esNcPeriodo
+      ? ({ origen: "AUTOMATICA_NC_PERIODO" } as const)
+      : confirmacion.letraSolicitada;
     if (!letraSolicitada) {
       setError("Elegí si querés emitir una factura A o una factura B.");
       return;
     }
-    const selector = validarReceptor(letraSolicitada);
+    const selector = validarReceptor(typeof letraSolicitada === "string" ? letraSolicitada : null);
     if (!selector) return;
     const token = iniciarSolicitudPreview(previewControlRef.current);
     if (token === null) return;
@@ -355,8 +378,14 @@ export function DialogoEmisionFiscal({
     setError(null);
     try {
       const resultado = parsePreviewEmisionFiscal(
-        await onPrevisualizar({ receptor: selector, letraSolicitada }),
-        esNota ? undefined : letraSolicitada,
+        await (esNcPeriodo
+          ? onPrevisualizarPeriodo
+            ? onPrevisualizarPeriodo({ receptor: selector })
+            : Promise.reject(new Error("Falta la revisión fiscal de la nota por período."))
+          : typeof letraSolicitada === "string"
+            ? onPrevisualizar({ receptor: selector, letraSolicitada })
+            : Promise.reject(new Error("Falta la letra fiscal."))),
+        esNota || typeof letraSolicitada !== "string" ? undefined : letraSolicitada,
       );
       if (!esSolicitudPreviewActual(previewControlRef.current, token)) return;
       setPreview(resultado);
@@ -379,7 +408,7 @@ export function DialogoEmisionFiscal({
     if (
       !preview ||
       !confirmacion.huellaConfirmacion ||
-      !confirmacion.letraSolicitada ||
+      (!esNcPeriodo && !confirmacion.letraSolicitada) ||
       emitiendoRef.current
     )
       return;
@@ -387,22 +416,37 @@ export function DialogoEmisionFiscal({
     setEmitiendo(true);
     setError(null);
     try {
-      const letraSolicitada = confirmacion.letraSolicitada;
-      const selector = validarReceptor(letraSolicitada);
+      const letraSolicitada = esNcPeriodo
+        ? ({ origen: "AUTOMATICA_NC_PERIODO" } as const)
+        : confirmacion.letraSolicitada;
+      if (!letraSolicitada) return;
+      const selector = validarReceptor(
+        typeof letraSolicitada === "string" ? letraSolicitada : null,
+      );
       if (!selector) return;
-      const respuesta = await onConfirmar({
-        receptor: selector,
-        letraSolicitada,
-        confirmaVentaAntigua,
-        huellaConfirmacion: confirmacion.huellaConfirmacion,
-      });
+      const respuesta = await (esNcPeriodo
+        ? onConfirmarPeriodo
+          ? onConfirmarPeriodo({
+              receptor: selector,
+              confirmaVentaAntigua,
+              huellaConfirmacion: confirmacion.huellaConfirmacion,
+            })
+          : Promise.reject(new Error("Falta la emisión fiscal de la nota por período."))
+        : typeof letraSolicitada === "string"
+          ? onConfirmar({
+              receptor: selector,
+              letraSolicitada,
+              confirmaVentaAntigua,
+              huellaConfirmacion: confirmacion.huellaConfirmacion,
+            })
+          : Promise.reject(new Error("Falta la letra fiscal.")));
       despacharRespuestaConfirmacionFiscal(respuesta, {
         onReconfirmacion(resultado) {
           setPreview(
             reconfirmarPreviewEmisionFiscal(
               preview,
               resultado,
-              esNota ? undefined : letraSolicitada,
+              esNota || typeof letraSolicitada !== "string" ? undefined : letraSolicitada,
             ),
           );
           setConfirmacion((actual) =>
@@ -444,13 +488,14 @@ export function DialogoEmisionFiscal({
     estadoPadronEfectivo.receptor.cuit === cuitActual;
   const puedeEmitir =
     preview !== null &&
-    confirmacion.letraSolicitada !== null &&
+    (esNcPeriodo || confirmacion.letraSolicitada !== null) &&
     confirmacion.huellaConfirmacion !== null &&
     (!preview.advertencia_demora || (puedeConfirmarVentaAntigua && confirmaVentaAntigua)) &&
     !(preview.letra === "A" && !preview.confirmacion_factura_a_permitida) &&
     (receptor.origen !== "MANUAL" ||
       confirmacion.confirmaDatosManuales ||
-      consultaPadronVerificada);
+      consultaPadronVerificada) &&
+    (!esNcPeriodo || confirmaPeriodo);
   const consultaPadronBloquea =
     !esNota && bloqueaAccionesPorConsultaPadron(claveConsultaPadron, estadoPadronEfectivo);
 
@@ -481,7 +526,7 @@ export function DialogoEmisionFiscal({
           }
         }}
       >
-        {open && !esNota ? (
+        {open && (!esNota || esNcPeriodo) ? (
           <SincronizarPadronReceptor
             clave={claveConsultaPadron}
             control={padronControlRef.current}
@@ -533,6 +578,48 @@ export function DialogoEmisionFiscal({
               )}
             </div>
           </section>
+
+          {esNcPeriodo && contexto.asociacionPeriodo ? (
+            <section
+              aria-labelledby="asociacion-periodo-fiscal"
+              className="rounded-xl border border-primary/30 bg-primary/5 p-4"
+            >
+              <h3 id="asociacion-periodo-fiscal" className="text-sm font-semibold">
+                Asociación fiscal por período
+              </h3>
+              <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-muted-foreground">Período</dt>
+                  <dd className="font-medium">
+                    {contexto.asociacionPeriodo.desde} a {contexto.asociacionPeriodo.hasta}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Modalidad</dt>
+                  <dd className="font-medium">
+                    {contexto.asociacionPeriodo.modalidad === "DEVOLUCION_PRODUCTOS"
+                      ? "Devolución de productos"
+                      : "Bonificación o ajuste"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Motivo</dt>
+                  <dd>{contexto.asociacionPeriodo.motivo}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Resolución</dt>
+                  <dd>
+                    {contexto.asociacionPeriodo.resolucion === "REINTEGRO"
+                      ? "Reintegro exacto"
+                      : "Saldo a favor"}
+                  </dd>
+                </div>
+              </dl>
+              <p className="mt-3 text-xs text-muted-foreground">
+                La letra se determina automáticamente según emisor y receptor; no se puede editar.
+              </p>
+            </section>
+          ) : null}
 
           {!esNota ? (
             <fieldset disabled={emitiendo} className="space-y-2">
@@ -607,6 +694,7 @@ export function DialogoEmisionFiscal({
               preview={preview}
               comprador={contexto.comprador.razonSocial}
               requiereSegundaConfirmacion={confirmacion.requiereSegundaConfirmacion}
+              asociacionPeriodo={contexto.asociacionPeriodo}
             />
           ) : (
             <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
@@ -634,6 +722,21 @@ export function DialogoEmisionFiscal({
             >
               Esta venta demorada sólo puede ser confirmada y emitida por un administrador.
             </p>
+          ) : null}
+
+          {esNcPeriodo && preview ? (
+            <label className="flex min-h-11 items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm focus-within:ring-2 focus-within:ring-ring">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={confirmaPeriodo}
+                disabled={emitiendo}
+                onChange={(event) => setConfirmaPeriodo(event.target.checked)}
+              />
+              <span>
+                Confirmo que el período corresponde exactamente a las operaciones ajustadas.
+              </span>
+            </label>
           ) : null}
 
           <div aria-live="polite" aria-atomic="true">

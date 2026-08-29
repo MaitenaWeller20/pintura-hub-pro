@@ -24,6 +24,39 @@ const CLAVE_MANUAL: ClaveConsultaPadron = {
 };
 
 describe("validación del receptor antes de consultar al servidor", () => {
+  it("para una NC por período confirma identidad sin exigir una letra manual", () => {
+    const favoritoRi = {
+      id: "10000000-0000-4000-8000-000000000009",
+      sucursal_id: SUCURSAL_ID,
+      cliente_comercial_id: null,
+      tipo_documento: "CUIT" as const,
+      numero_documento: "30714199664",
+      razon_social: "Receptor RI",
+      condicion_iva: "RESPONSABLE_INSCRIPTO" as const,
+      domicilio: null,
+    };
+    expect(
+      validarSelectorReceptorFiscal({
+        value: { origen: "CLIENTE_COMERCIAL" },
+        confirmaDatosManuales: false,
+        letraSolicitada: null,
+        clienteComercial: {
+          razonSocial: "Cuenta comercial",
+          documento: null,
+          condicionIva: "CONSUMIDOR_FINAL",
+        },
+      }),
+    ).toEqual({ ok: true, selector: { origen: "CLIENTE_COMERCIAL" } });
+    expect(
+      validarSelectorReceptorFiscal({
+        value: { origen: "FAVORITO", receptor_fiscal_id: favoritoRi.id },
+        confirmaDatosManuales: false,
+        letraSolicitada: null,
+        favoritos: [favoritoRi],
+      }),
+    ).toEqual({ ok: true, selector: { origen: "FAVORITO", receptor_fiscal_id: favoritoRi.id } });
+  });
+
   it("bloquea un CUIT activo pendiente o fallido con el mensaje seguro", () => {
     const base = {
       value: { origen: "CLIENTE_COMERCIAL" as const },

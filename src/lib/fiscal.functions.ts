@@ -57,11 +57,15 @@ const receptorSchema = z.discriminatedUnion("origen", [
 
 const legacyInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
 const incidenteInputSchema = legacyInputSchema;
+const seleccionLetraV2Schema = z.union([
+  z.enum(["A", "B"]),
+  z.object({ origen: z.literal("AUTOMATICA_NC_PERIODO") }).strict(),
+]);
 const v2BaseInputSchema = z
   .object({
     venta_id: z.string().uuid(),
     receptor: receptorSchema,
-    letra_solicitada: z.enum(["A", "B"]),
+    letra_solicitada: seleccionLetraV2Schema,
     confirma_venta_antigua: z.boolean(),
   })
   .strict();
@@ -142,7 +146,7 @@ export const previewInputSchema = z.discriminatedUnion("origen", [
       origen: z.literal("VENTA_EXISTENTE"),
       venta_id: z.string().uuid(),
       receptor: receptorSchema,
-      letra_solicitada: z.enum(["A", "B"]),
+      letra_solicitada: seleccionLetraV2Schema,
     })
     .strict(),
   z

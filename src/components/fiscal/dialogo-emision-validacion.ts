@@ -74,7 +74,7 @@ export function validarSelectorReceptorFiscal({
 }: {
   value: ReceptorFormulario;
   confirmaDatosManuales: boolean;
-  letraSolicitada: LetraSolicitada;
+  letraSolicitada: LetraSolicitada | null;
   clienteComercial?: ClienteComercialFiscal;
   favoritos?: ReceptorFiscalFavorito[];
   estadoConsultaPadron?: EstadoConsultaPadronUi;
@@ -118,7 +118,10 @@ export function validarSelectorReceptorFiscal({
       (letraSolicitada === "B"
         ? condicionDeclaradaB({ value, clienteComercial, favoritos })
         : null);
-    if (!condicion || !condicionCompatibleConLetra(condicion, letraSolicitada)) {
+    if (
+      letraSolicitada !== null &&
+      (!condicion || !condicionCompatibleConLetra(condicion, letraSolicitada))
+    ) {
       return error(
         "condicion_iva",
         mensajeCodigoErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE"),
@@ -133,7 +136,7 @@ export function validarSelectorReceptorFiscal({
         tipo_documento: "CUIT",
         numero_documento: cuitActual,
         razon_social: estadoConsultaPadron.receptor.razonSocial,
-        condicion_iva: condicion,
+        condicion_iva: condicion ?? value.condicion_iva,
         domicilio: estadoConsultaPadron.receptor.domicilioFiscal,
         guardar_para_proximas: value.guardar_para_proximas,
         confirma_datos_manuales: true,

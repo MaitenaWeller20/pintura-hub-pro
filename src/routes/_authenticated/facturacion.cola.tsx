@@ -146,6 +146,20 @@ function contextoDialogo(
     },
     tipoComprobante: row.tipo_comprobante,
     receptorHeredado: receptorHeredado(row),
+    asociacionPeriodo:
+      row.periodo_asoc_desde &&
+      row.periodo_asoc_hasta &&
+      row.nc_periodo_modalidad &&
+      row.motivo_nota_credito &&
+      row.nc_resolucion
+        ? {
+            desde: row.periodo_asoc_desde,
+            hasta: row.periodo_asoc_hasta,
+            modalidad: row.nc_periodo_modalidad,
+            motivo: row.motivo_nota_credito,
+            resolucion: row.nc_resolucion,
+          }
+        : null,
   };
 }
 
@@ -668,6 +682,19 @@ function ColaFiscalPage() {
               return parsePreviewEmisionFiscalAutoritativa(respuesta);
             })
           }
+          onPrevisualizarPeriodo={({ receptor }) =>
+            previsualizar({
+              data: {
+                origen: "VENTA_EXISTENTE",
+                venta_id: seleccionada.venta_id,
+                receptor,
+                letra_solicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+              },
+            }).then((respuesta) => {
+              if (esMantenimiento(respuesta)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
+              return parsePreviewEmisionFiscalAutoritativa(respuesta);
+            })
+          }
           onConfirmar={async ({
             receptor,
             letraSolicitada,
@@ -679,6 +706,24 @@ function ColaFiscalPage() {
                 venta_id: seleccionada.venta_id,
                 receptor,
                 letra_solicitada: letraSolicitada,
+                confirma_venta_antigua: confirmaVentaAntigua,
+                huella_confirmacion: huellaConfirmacion,
+              },
+            });
+            if (esMantenimiento(resultado)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
+            const respuesta = parseRespuestaConfirmacionFiscal(resultado);
+            if (respuesta.estado === "ERROR_CORREGIBLE") {
+              setSeleccion(retenerSeleccionColaFiscalHastaCerrar);
+              void queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
+            }
+            return respuesta;
+          }}
+          onConfirmarPeriodo={async ({ receptor, confirmaVentaAntigua, huellaConfirmacion }) => {
+            const resultado = await emitir({
+              data: {
+                venta_id: seleccionada.venta_id,
+                receptor,
+                letra_solicitada: { origen: "AUTOMATICA_NC_PERIODO" },
                 confirma_venta_antigua: confirmaVentaAntigua,
                 huella_confirmacion: huellaConfirmacion,
               },

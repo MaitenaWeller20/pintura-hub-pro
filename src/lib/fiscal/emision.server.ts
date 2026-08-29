@@ -1400,7 +1400,7 @@ export function proyectarReceptorFiscalConfirmado(
 export async function previsualizarVentaFiscalExistente(input: {
   ventaId: string;
   receptor: SelectorReceptorFiscal;
-  letraSolicitada: LetraFacturaSolicitada;
+  letraSolicitada: LetraFacturaSolicitada | { origen: "AUTOMATICA_NC_PERIODO" };
   admin: SupabaseLike;
   usuario: SupabaseLike;
   consultarPadron?: typeof consultarPadronArcaDesdeContexto;
@@ -1415,7 +1415,10 @@ export async function previsualizarVentaFiscalExistente(input: {
   const preparacion = await deps.prepararEmision({
     ventaId: input.ventaId,
     receptor: input.receptor,
-    seleccionLetra: { origen: "EXPLICITA", letra: input.letraSolicitada },
+    seleccionLetra:
+      typeof input.letraSolicitada === "string"
+        ? { origen: "EXPLICITA", letra: input.letraSolicitada }
+        : input.letraSolicitada,
   });
   const lectura = await leerVentaExacta(input.admin, input.ventaId);
   const vista = deps.obtenerVistaPreparacion(input.ventaId);

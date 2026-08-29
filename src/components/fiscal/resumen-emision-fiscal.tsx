@@ -3,6 +3,7 @@ import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
 import { letraDeCbteTipo, tituloDeCbteTipo } from "@/lib/fiscal/codigos";
 import type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
+import type { ModalidadNcPeriodo, ResolucionNcPeriodo } from "@/lib/fiscal/nota-credito-periodo";
 
 export type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
 
@@ -55,10 +56,18 @@ export function ResumenEmisionFiscal({
   preview,
   comprador,
   requiereSegundaConfirmacion = false,
+  asociacionPeriodo,
 }: {
   preview: PreviewEmisionFiscal;
   comprador: string;
   requiereSegundaConfirmacion?: boolean;
+  asociacionPeriodo?: {
+    desde: string;
+    hasta: string;
+    modalidad: ModalidadNcPeriodo;
+    motivo: string;
+    resolucion: ResolucionNcPeriodo;
+  } | null;
 }) {
   const validez = etiquetaValidez(preview);
   return (
@@ -111,6 +120,25 @@ export function ResumenEmisionFiscal({
               PV {String(preview.cbte_asoc.punto_venta).padStart(5, "0")} · N°{" "}
               {String(preview.cbte_asoc.numero).padStart(8, "0")} ·{" "}
               {fechaArgentina(preview.cbte_asoc.fecha)}
+            </p>
+          </div>
+        ) : null}
+
+        {asociacionPeriodo ? (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Asociación fiscal por período
+            </p>
+            <p className="mt-1 font-medium">
+              {fechaArgentina(asociacionPeriodo.desde)} a {fechaArgentina(asociacionPeriodo.hasta)}{" "}
+              ·{" "}
+              {asociacionPeriodo.modalidad === "DEVOLUCION_PRODUCTOS"
+                ? "Devolución de productos"
+                : "Bonificación o ajuste"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {asociacionPeriodo.motivo} ·{" "}
+              {asociacionPeriodo.resolucion === "REINTEGRO" ? "Reintegro exacto" : "Saldo a favor"}
             </p>
           </div>
         ) : null}

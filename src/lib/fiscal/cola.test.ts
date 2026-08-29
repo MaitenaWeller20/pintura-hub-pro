@@ -213,6 +213,32 @@ describe("rollout autoritativo de la cola fiscal", () => {
 });
 
 describe("contrato de consulta de la cola fiscal", () => {
+  it("conserva una NC por período pendiente en la cola por afip_estado", async () => {
+    const filaPendientePeriodo = {
+      ...safeRow,
+      tipo_comprobante: "NOTA_CREDITO",
+      afip_estado: "SIN_FACTURAR",
+      periodo_asoc_desde: "2026-07-01",
+      periodo_asoc_hasta: "2026-07-31",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "Bonificación comercial del período",
+      nc_resolucion: "SALDO_FAVOR",
+      nc_periodo_payload_hash: "b".repeat(64),
+    };
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([filaPendientePeriodo]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+
+    await expect(
+      servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).resolves.toMatchObject({ filas: [filaPendientePeriodo] });
+  });
+
   it.each([
     [{ tab: "pendientes", page: 1, pageSize: 101 }, /100/],
     [{ tab: "desconocida", page: 1, pageSize: 20 }, /tab/i],

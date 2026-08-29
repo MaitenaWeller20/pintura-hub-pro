@@ -61,6 +61,7 @@ import {
   type IntentoAnulacion,
 } from "@/lib/anulacion-venta-ui";
 import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
+import { esVentaVisibleEnListadoComercial } from "@/lib/nota-credito-periodo-ui";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -166,7 +167,13 @@ function VentasList() {
     },
   });
 
-  const filtered = useMemo(() => ventas.filter((v) => ventaCoincideBusqueda(v, q)), [ventas, q]);
+  const filtered = useMemo(
+    () =>
+      ventas.filter(
+        (v) => esVentaVisibleEnListadoComercial(v.estado) && ventaCoincideBusqueda(v, q),
+      ),
+    [ventas, q],
+  );
 
   /**
    * Cuáles de las notas internas en pantalla las generó una ANULACIÓN.

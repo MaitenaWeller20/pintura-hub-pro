@@ -67,3 +67,60 @@ El primer focal quedó RED con 5 fallas esperadas: el receptor todavía exigía 
 - La integración opt-in histórica de `cola.test.ts` no puede completar su setup porque intenta escribir con el writer fiscal legacy ya retirado (`El escritor fiscal legacy está retirado...`). La prueba unitaria segura de cola y la integración del emisor sí pasan; el fallo antecede y no pertenece al alcance de esta tarea.
 - Aplicar efectos comerciales post-CAE corresponde a Tarea 8. Server action/UI, errores finales y PDF quedan fuera de esta entrega según el brief.
 - No se usó ARCA real, certificados, deploy, push ni producción.
+
+## Fix round 1
+
+Fecha: 2026-08-29
+
+Commit de implementación: `7c3330f` — `fix(fiscal): cerrar ACL de cola y proyección C`
+
+### Scope ruling
+
+Por decisión explícita del controller no se recreó `transicionar_emision_fiscal` ni se implementó el lifecycle SQL `RESERVAR/APROBAR/RECUPERAR_CAE`. Esa RPC, su despacho de `snapshot_version` v2/v3 y los efectos atómicos post-CAE pertenecen a Tarea 8. Esta corrección conserva las interfaces del motor para esa integración y prueba hasta la frontera pre-transición/request con dobles; no simula un lifecycle SQL inexistente.
+
+### Correcciones
+
+- `cola_fiscal_lectura` ahora es una frontera `SECURITY DEFINER` mínima, con owner `postgres`, `search_path=''` y `EXECUTE` sólo para `authenticated`. La función conserva sus verificaciones internas de `auth.uid()`, perfil activo, `puede_facturar`, asignación y sucursal; `validar_snapshot_fiscal_persistido` sigue sin ser ejecutable por roles API.
+- Se agregó integración PostgreSQL real como rol `authenticated`: un usuario autorizado lee filas v2/v3, mientras usuarios sin capacidad o sin sucursal reciben `42501`. La respuesta no expone la intención de reintegro.
+- `proyectarSnapshotParaArca` es la única proyección compartida por payload y reconciliación. Para tipos C declara `ImpNeto=ImpTotal`, IVA/importes no discriminados en cero y colecciones `Iva`/tributos vacías; A/B preservan exactamente el desglose del snapshot.
+- Se agregaron happy paths A/B/C del motor hasta `REQUEST_INICIADO`, con reserva exacta del snapshot v3 y request mockeado. Se mantienen los rechazos de asociación, FCE, comprobantes internos y ausencia de fallback.
+- Los fixtures v3 de adaptador/reconciliación ahora salen de `crearSnapshotFiscalV3`, sin doble cast. Se actualizó el comentario obsoleto “Writer v2”. El contrato receptor también reemplazó snapshots sintéticos inválidos por el fixture v2 canónico para ejecutarse con los guards actuales activos.
+
+Archivos principales del fix:
+
+- `supabase/migrations/20260829171535_corregir_acl_cola_fiscal_v2_v3.sql`
+- `src/lib/fiscal/cola-acl.integration.test.ts`
+- `src/lib/fiscal/proyeccion-arca.ts`
+- `src/lib/fiscal/snapshot-v3.test-fixture.ts`
+- `src/lib/fiscal/arca.ts`, `src/lib/fiscal/reconciliacion.ts`
+- `src/lib/fiscal/arca.test.ts`, `src/lib/fiscal/reconciliacion.test.ts`, `src/lib/fiscal/emision.test.ts`
+- `scripts/test-receptor-fiscal-schema.sh`
+
+### TDD RED/GREEN
+
+- RED C: los nuevos casos de payload y consulta C fallaron con neto `1000`, IVA `210`, no gravado/exento comerciales y `alicuotasIva.length`; era la divergencia denunciada.
+- GREEN C: el mismo focal quedó en 100 pruebas pasadas usando la proyección común; A/B conservaron sus importes y alícuota.
+- RED ACL real: el usuario autorizado recibió `42501 permission denied for table ventas` al invocar la cola invoker. El catálogo confirmó `prosecdef=false`; los usuarios sin capacidad/sucursal ya quedaban bloqueados.
+- GREEN ACL real: 2/2 pruebas pasaron después de la migración; autorizado obtiene v2/v3 y ambos negativos siguen en `42501`. El contrato de catálogo verifica definer/owner/search path/grants y que el dispatcher permanece owner-only.
+
+### Verificación final
+
+- `npx supabase db reset`: OK; aplicó todas las migraciones hasta `20260829171535_corregir_acl_cola_fiscal_v2_v3.sql`.
+- `npx supabase db diff --local --schema public`: OK, `No schema changes found`.
+- `bash scripts/test-receptor-fiscal-schema.sh`: OK completo, incluida ACL/catalog y fixtures canónicos.
+- `bash scripts/test-snapshot-fiscal-v3.sh`: OK.
+- `bash scripts/test-nota-credito-periodo-schema.sh`: OK.
+- `bash scripts/test-nota-credito-periodo-fiscal.sh`: OK.
+- Focal emisor/receptor/adaptador/reconciliación/cola: 6 archivos, 252 pruebas pasadas y 8 omitidas.
+- Integración ACL autenticada local v2/v3: 1 archivo, 2 pruebas pasadas.
+- `npm test`: 73 archivos pasados, 2 omitidos; 1525 pruebas pasadas y 22 omitidas.
+- `npm run typecheck`: OK.
+- Prettier y ESLint sobre todos los TS modificados: OK.
+- `git diff --check`: OK.
+
+### Basales y riesgos
+
+- `npm run lint` global continúa rojo por 4262 errores y 9 warnings preexistentes fuera de este diff; el lint focal de todos los archivos TypeScript tocados queda verde.
+- `supabase db lint --local --level warning` conserva el error basal de `public.cambiar_precios_masivo` por la relación temporal `_objetivo`; no involucra este cambio. `supabase db advisors --local` conserva advisors históricos de RLS/vistas/funciones; la nueva frontera sí fija owner/search path/grants y tiene cobertura catalogada.
+- La integración histórica `emision.integration.test.ts` requiere `transicionar_emision_fiscal`; se deja para Tarea 8 por el scope ruling. El request no alcanza red externa: ARCA está mockeada/bloqueada en las pruebas.
+- No se aplicaron efectos de caja, stock, pagos o cuenta corriente. No se usaron ARCA real, certificados, deploy, push ni producción.

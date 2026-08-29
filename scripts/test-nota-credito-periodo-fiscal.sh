@@ -356,10 +356,20 @@ SELECT * FROM public.crear_nota_credito_periodo_fiscal(
   '[{"forma_pago":"TRANSFERENCIA","monto_centavos":21780}]',
   'e2400000-0000-4000-8000-000000000020'
 );
+CREATE TEMP TABLE t_replay_escala AS
+SELECT * FROM public.crear_nota_credito_periodo_fiscal(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+  '2026-07-01','2026-07-31','Devolución con override','REINTEGRO',
+  '[{"producto_id":"c2400000-0000-4000-8000-000000000001","cantidad":2.0,"precio_unitario_sin_iva":90.0,"iva_porcentaje":21.0}]',
+  '[{"forma_pago":"TRANSFERENCIA","monto_centavos":21780.0}]',
+  'e2400000-0000-4000-8000-000000000020'
+);
 SELECT pg_temp.assert_true(
   (SELECT p.venta_id=r.venta_id AND p.numero=r.numero FROM t_producto p CROSS JOIN t_replay r)
+  AND (SELECT p.venta_id=r.venta_id FROM t_producto p CROSS JOIN t_replay_escala r)
   AND (SELECT count(*)=1 FROM public.ventas WHERE idempotency_key='e2400000-0000-4000-8000-000000000020'),
-  'el payload canónico idéntico devuelve la misma venta'
+  'el payload canónico idéntico devuelve la misma venta aunque cambie la escala numérica'
 );
 SELECT pg_temp.assert_raises(format($sql$
   SELECT * FROM public.crear_nota_credito_periodo_fiscal(
@@ -419,11 +429,83 @@ SELECT * FROM public.crear_nota_credito_periodo_fiscal(
 );
 SELECT pg_temp.assert_true((SELECT count(*)=1 FROM t_ruta_c),'la semántica fiscal C también se acepta');
 
+-- Ni service_role puede fabricar por DML una reserva fiscal incompleta. El
+-- owner, que es el writer de las RPC, queda además sujeto al CHECK durable.
+SET LOCAL ROLE service_role;
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO public.ventas(
+      sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+      condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
+      estado_pago,estado,afip_estado
+    ) VALUES (
+      (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+      'b2400000-0000-4000-8000-000000000001',
+      'a2400000-0000-4000-8000-000000000001',
+      'NC-PER-INCOMPLETA-SERVICE','NOTA_CREDITO','CONTADO',
+      -100,-21,0,-121,0,'PENDIENTE','PENDIENTE_FISCAL','SIN_FACTURAR'
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE '✓ service_role no puede insertar una reserva fiscal incompleta';
+    RETURN;
+  END;
+  RAISE EXCEPTION 'FALLO: service_role insertó una reserva fiscal incompleta';
+END;
+$$;
+
+-- La guarda nueva debe ser específica: una venta común legítima sigue siendo
+-- escribible por service_role.
+INSERT INTO public.ventas(
+  sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+  condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
+  estado_pago,estado,afip_estado
+) VALUES (
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b2400000-0000-4000-8000-000000000001',
+  'a2400000-0000-4000-8000-000000000001',
+  'VENTA-SERVICE-LEGITIMA','VENTA','CONTADO',100,21,0,121,121,
+  'PAGADO','ACTIVA','SIN_FACTURAR'
+);
+RESET ROLE;
+SELECT pg_temp.assert_true(
+  EXISTS (
+    SELECT 1 FROM public.ventas
+     WHERE numero_comprobante='VENTA-SERVICE-LEGITIMA'
+       AND estado='ACTIVA' AND nc_periodo_modalidad IS NULL
+  ),
+  'la guarda conserva otros estados y flujos legítimos'
+);
+
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO public.ventas(
+      sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+      condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
+      estado_pago,estado,afip_estado
+    ) VALUES (
+      (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+      'b2400000-0000-4000-8000-000000000001',
+      'a2400000-0000-4000-8000-000000000001',
+      'NC-PER-INCOMPLETA-OWNER','NOTA_CREDITO','CONTADO',
+      -100,-21,0,-121,0,'PENDIENTE','PENDIENTE_FISCAL','SIN_FACTURAR'
+    );
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE '✓ el CHECK durable rechaza una reserva fiscal incompleta aun para el owner';
+    RETURN;
+  END;
+  RAISE EXCEPTION 'FALLO: el owner insertó una reserva fiscal incompleta';
+END;
+$$;
+
 SELECT pg_temp.assert_true(
   NOT has_function_privilege('anon','public.crear_nota_credito_periodo_fiscal(uuid,uuid,public.modalidad_nc_periodo,date,date,text,public.resolucion_nc_periodo,jsonb,jsonb,uuid)','execute')
   AND has_function_privilege('authenticated','public.crear_nota_credito_periodo_fiscal(uuid,uuid,public.modalidad_nc_periodo,date,date,text,public.resolucion_nc_periodo,jsonb,jsonb,uuid)','execute')
-  AND has_function_privilege('service_role','public.crear_nota_credito_periodo_fiscal(uuid,uuid,public.modalidad_nc_periodo,date,date,text,public.resolucion_nc_periodo,jsonb,jsonb,uuid)','execute'),
-  'la RPC sólo se expone a authenticated y service_role'
+  AND has_function_privilege('service_role','public.crear_nota_credito_periodo_fiscal(uuid,uuid,public.modalidad_nc_periodo,date,date,text,public.resolucion_nc_periodo,jsonb,jsonb,uuid)','execute')
+  AND NOT has_function_privilege('authenticated','public._crear_nota_credito_periodo_fiscal_core_20260828(uuid,uuid,public.modalidad_nc_periodo,date,date,text,public.resolucion_nc_periodo,jsonb,jsonb,uuid)','execute')
+  AND NOT has_function_privilege('service_role','public._crear_nota_credito_periodo_fiscal_core_20260828(uuid,uuid,public.modalidad_nc_periodo,date,date,text,public.resolucion_nc_periodo,jsonb,jsonb,uuid)','execute'),
+  'la RPC sólo expone el wrapper y mantiene el core reservado al owner'
 );
 SELECT pg_temp.assert_true((
   SELECT p.prosecdef AND p.proowner='postgres'::regrole
@@ -437,6 +519,8 @@ SQL
 
 # La carrera necesita dos transacciones reales. El fixture se elimina incluso si
 # una aserción falla, para que el contrato sea repetible sin otro reset.
+out1=""
+out2=""
 cleanup() {
   "${PSQL[@]}" >/dev/null <<'SQL' || true
 DELETE FROM public.ventas WHERE idempotency_key='e2400000-0000-4000-8000-000000000099';
@@ -450,6 +534,12 @@ UPDATE public.settings
        nota_credito_periodo_enabled=false
  WHERE id=true;
 SQL
+  if [[ -n "$out1" ]]; then
+    rm -f -- "$out1"
+  fi
+  if [[ -n "$out2" ]]; then
+    rm -f -- "$out2"
+  fi
 }
 trap cleanup EXIT
 
@@ -490,5 +580,6 @@ if [[ "$count" != "1" ]]; then
 fi
 echo "✓ llamadas concurrentes idénticas crean una sola venta"
 
-# La reversión puntual y la NC interna conservan sus contratos completos en la
-# suite fiscal existente; se ejecuta como regresión obligatoria tras este script.
+# La reversión total fiscal vinculada vive en
+# test-anulacion-fiscal-vinculada.sh para no depender del orden de la suite
+# legacy. La NC interna conserva además su contrato en su script específico.

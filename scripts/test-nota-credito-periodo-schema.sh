@@ -236,6 +236,7 @@ INSERT INTO public.ventas(
 
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,estado,
+  condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,afip_estado,
   nc_periodo_modalidad,periodo_asoc_desde,periodo_asoc_hasta,
   motivo_nota_credito,nc_resolucion,nc_periodo_payload_hash
 ) VALUES (
@@ -243,12 +244,14 @@ INSERT INTO public.ventas(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2100000-0000-0000-0000-000000000001','a2100000-0000-0000-0000-000000000002',
   'NC-PERIODO-PENDIENTE','NOTA_CREDITO','PENDIENTE_FISCAL',
+  'CONTADO',-100,-21,0,-121,0,'SIN_FACTURAR',
   'DEVOLUCION_PRODUCTOS','2026-07-01','2026-07-31','Devolución del período','REINTEGRO',repeat('2',64)
 ), (
   'd2100000-0000-0000-0000-000000000003',
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2100000-0000-0000-0000-000000000001','a2100000-0000-0000-0000-000000000002',
   'NC-PERIODO-EFECTOS','NOTA_CREDITO','ACTIVA',
+  'CTA_CTE',0,0,0,0,0,'NO_APLICA',
   'BONIFICACION_AJUSTE','2026-06-01','2026-06-30','Bonificación del período','SALDO_FAVOR',repeat('3',64)
 );
 UPDATE public.ventas

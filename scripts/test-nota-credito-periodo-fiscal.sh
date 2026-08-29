@@ -184,6 +184,95 @@ SELECT pg_temp.assert_raises($sql$
   )
 $sql$,'permiso','facturar sin capacidad específica no alcanza');
 
+-- El wrapper público no debe recorrer/copiar inputs que el core rechazará.
+-- Los JSON se construyen antes de acotar el statement_timeout para medir sólo
+-- la llamada real. Un caller sin capacidad debe alcanzar rápido el rechazo de
+-- autorización aun cuando mande cualquiera de los dos arrays sobredimensionado.
+CREATE TEMP TABLE t_inputs_sobredimensionados AS
+SELECT
+  (
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'producto_id','c2400000-0000-4000-8000-000000000001',
+      'cantidad',1,'precio_unitario_sin_iva',100,'iva_porcentaje',21
+    ) ORDER BY g.n)
+    FROM pg_catalog.generate_series(1,10000) AS g(n)
+  ) AS items,
+  (
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'forma_pago','EFECTIVO','monto_centavos',12100
+    ) ORDER BY g.n)
+    FROM pg_catalog.generate_series(1,10000) AS g(n)
+  ) AS reintegros;
+
+CREATE OR REPLACE FUNCTION pg_temp.invocar_input_sobredimensionado(p_caso text)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  v_items jsonb;
+  v_reintegros jsonb;
+BEGIN
+  SELECT
+    CASE WHEN p_caso='items' THEN t.items ELSE pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object(
+        'producto_id','c2400000-0000-4000-8000-000000000001',
+        'cantidad',1,'precio_unitario_sin_iva',100,'iva_porcentaje',21
+      )
+    ) END,
+    CASE WHEN p_caso='reintegros' THEN t.reintegros ELSE '[]'::jsonb END
+    INTO v_items,v_reintegros
+    FROM t_inputs_sobredimensionados AS t;
+
+  PERFORM * FROM public.crear_nota_credito_periodo_fiscal(
+    (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+    'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+    '2026-07-01','2026-07-31','Input sobredimensionado','SALDO_FAVOR',
+    v_items,v_reintegros,
+    CASE p_caso
+      WHEN 'items' THEN 'e2400000-0000-4000-8000-000000000024'::uuid
+      ELSE 'e2400000-0000-4000-8000-000000000025'::uuid
+    END
+  );
+END;
+$$;
+
+SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000003');
+SET LOCAL statement_timeout='250ms';
+SELECT pg_temp.assert_raises(
+  'SELECT pg_temp.invocar_input_sobredimensionado(''items'')',
+  'permiso','los ítems sobredimensionados alcanzan rápido la autorización'
+);
+SELECT pg_temp.assert_raises(
+  'SELECT pg_temp.invocar_input_sobredimensionado(''reintegros'')',
+  'permiso','los reintegros sobredimensionados alcanzan rápido la autorización'
+);
+SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000001');
+SELECT pg_temp.assert_raises(
+  'SELECT pg_temp.invocar_input_sobredimensionado(''items'')',
+  'hasta 500','el core rechaza rápido más de 500 ítems para un caller autorizado'
+);
+SELECT pg_temp.assert_raises(
+  'SELECT pg_temp.invocar_input_sobredimensionado(''reintegros'')',
+  'hasta 20','el core rechaza rápido más de 20 reintegros para un caller autorizado'
+);
+SET LOCAL statement_timeout=0;
+
+SELECT pg_temp.assert_raises(format($sql$
+  SELECT * FROM public.crear_nota_credito_periodo_fiscal(
+    %L,'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+    '2026-07-01','2026-07-31','Items no array','SALDO_FAVOR',
+    '{}'::jsonb,'[]'::jsonb,'e2400000-0000-4000-8000-000000000026')
+$sql$,(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1)),
+  'arreglo no vacío','un tipo no-array llega a la validación estable del core'
+);
+SELECT pg_temp.assert_raises(format($sql$
+  SELECT * FROM public.crear_nota_credito_periodo_fiscal(
+    %L,'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+    '2026-07-01','2026-07-31','Reintegros nulos','SALDO_FAVOR',
+    '[{"producto_id":"c2400000-0000-4000-8000-000000000001","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":21}]'::jsonb,
+    NULL,'e2400000-0000-4000-8000-000000000027')
+$sql$,(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1)),
+  'arreglo de hasta 20','NULL llega a la validación estable de reintegros del core'
+);
+
 -- Validaciones autoritativas de cliente, período, motivo y JSON estricto.
 SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000001');
 SELECT pg_temp.assert_raises(format($sql$

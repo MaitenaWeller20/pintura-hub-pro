@@ -318,7 +318,7 @@ check "el validador v2 conserva una sola firma invoker y search_path fijado" \
   "$(q "SELECT count(*)||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_snapshot jsonb')::text||'|'||bool_or(p.prosecdef)::text||'|'||bool_and(array_to_string(p.proconfig,',') LIKE 'search_path=%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='validar_snapshot_fiscal_v2'")"
 check "RESERVAR aplica explícitamente el helper CUIT estricto" \
   "true" \
-  "$(q "SELECT (pg_get_functiondef('public.transicionar_emision_fiscal(uuid,text,uuid,jsonb)'::regprocedure) LIKE '%NOT public.cuit_fiscal_snapshot_valido(p_payload->>''emisor_cuit'')%')::text")"
+  "$(q "SELECT (pg_get_functiondef('public._transicionar_emision_fiscal_core_task8_fix1(uuid,text,uuid,jsonb)'::regprocedure) LIKE '%NOT public.cuit_fiscal_snapshot_valido(p_payload->>''emisor_cuit'')%')::text")"
 check "fixture canónico PostgreSQL/Task 7 tiene SHA-256 determinista" \
   "$PARITY_HASH" \
   "$(q "SELECT public.fiscal_snapshot_hash('$PARITY_INPUT'::jsonb)")"
@@ -729,7 +729,7 @@ expect_resumen_invalido() {
   expect_fail_like "$name" "respuesta_resumen.*(esquema|enmascarado|permitid|tipo|tama.o)" \
     "BEGIN; SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000009',jsonb_build_object('expected_version',3,'respuesta_resumen',$resumen_sql)); ROLLBACK;"
 }
-resumen_aprobado="jsonb_build_object('tipo','EMISION','resultado','A','fuente','FECAESolicitar','rechazo_confirmado',false,'observaciones',jsonb_build_array())"
+resumen_aprobado="jsonb_build_object('tipo','EMISION','resultado','A','fuente','FECAESolicitar','rechazo_confirmado',false,'observaciones',jsonb_build_array(),'cae','74123456789001','cae_vencimiento','2026-09-01','emitido_at','2026-08-22T15:00:00Z')"
 expect_resumen_invalido "el resumen no puede sobrescribir lease_segundos" "$resumen_aprobado||jsonb_build_object('lease_segundos',999999)"
 expect_resumen_invalido "el resumen rechaza claves desconocidas" "$resumen_aprobado||jsonb_build_object('detalle_inocente','x')"
 expect_resumen_invalido "el resumen rechaza XML/raw bajo una clave permitida" "$resumen_aprobado||jsonb_build_object('mensaje','<soap>Authorization secret</soap>')"
@@ -740,9 +740,9 @@ expect_resumen_invalido "el resumen exige observaciones array" "$resumen_aprobad
 expect_resumen_invalido "el resumen limita cantidad de observaciones" "$resumen_aprobado||jsonb_build_object('observaciones',(SELECT jsonb_agg(n::text) FROM generate_series(1,11) n))"
 expect_resumen_invalido "el resumen limita cada observación" "$resumen_aprobado||jsonb_build_object('observaciones',jsonb_build_array(pg_catalog.repeat('x',257)))"
 q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','RESPUESTA_RECIBIDA','d3000000-0000-0000-0000-000000000009',jsonb_build_object('expected_version',3,'respuesta_resumen',$resumen_aprobado));" >/dev/null
-q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','APROBAR','d3000000-0000-0000-0000-000000000009','{\"expected_version\":4,\"cae\":\"CAE-T3-0001\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:00:00Z\"}'::jsonb);" >/dev/null
+q_sr "SELECT * FROM public.transicionar_emision_fiscal('c3000000-0000-0000-0000-000000000009','APROBAR','d3000000-0000-0000-0000-000000000009','{\"expected_version\":4,\"cae\":\"74123456789001\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:00:00Z\"}'::jsonb);" >/dev/null
 check "RESPUESTA_RECIBIDA y APROBAR persisten resultado y CAE" \
-  "APROBADO|PERSISTIDO|CAE-T3-0001|5|PERSISTIDO|APROBADO" \
+  "APROBADO|PERSISTIDO|74123456789001|5|PERSISTIDO|APROBADO" \
   "$(q "SELECT v.afip_estado||'|'||v.afip_fase||'|'||v.cae||'|'||v.afip_version||'|'||i.fase||'|'||i.resultado FROM public.ventas v JOIN public.emision_fiscal_intentos i ON i.venta_id=v.id WHERE v.id='c3000000-0000-0000-0000-000000000009'")"
 check "la evidencia externa no sobrescribe el control interno del lease" "300|EMISION|A" \
   "$(q "SELECT (respuesta_resumen#>>'{control,lease_segundos}')||'|'||(respuesta_resumen#>>'{evidencia_externa,respuesta_emision,tipo}')||'|'||(respuesta_resumen#>>'{evidencia_externa,respuesta_emision,resultado}') FROM public.emision_fiscal_intentos WHERE venta_id='c3000000-0000-0000-0000-000000000009'")"
@@ -887,7 +887,9 @@ q_sr "SELECT * FROM public.transicionar_emision_fiscal(
 resumen_recuperacion='{"tipo":"CONSULTA_ARCA","resultado":"COINCIDE","fuente":"FECompConsultar","coincidencia_completa":true,"observaciones":[]}'
 payload_recuperacion="jsonb_build_object(
   'expected_version',4,'cae','74123456789012','cae_vencimiento',NULL,
-  'payload_hash','$hash_recuperacion','respuesta_resumen','$resumen_recuperacion'::jsonb
+  'payload_hash','$hash_recuperacion','respuesta_resumen',
+  '$resumen_recuperacion'::jsonb||jsonb_build_object(
+    'cae','74123456789012','cae_vencimiento',NULL)
 )"
 
 expect_fail_like "RECUPERAR_CAE conserva APROBAR cerrado desde RECONCILIAR" \
@@ -1007,7 +1009,9 @@ done
 
 payload_concurrente="jsonb_build_object(
   'expected_version',4,'cae','74123456789028','cae_vencimiento','2026-09-01',
-  'payload_hash','$hash_concurrente','respuesta_resumen','$resumen_recuperacion'::jsonb
+  'payload_hash','$hash_concurrente','respuesta_resumen',
+  '$resumen_recuperacion'::jsonb||jsonb_build_object(
+    'cae','74123456789028','cae_vencimiento','2026-09-01')
 )"
 for intento in uno dos; do
   "${PSQL[@]}" >"$TMP_DIR/recuperar-${intento}.out" 2>&1 <<SQL &

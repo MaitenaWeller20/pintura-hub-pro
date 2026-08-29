@@ -36,7 +36,7 @@ check "reintegros tiene RLS y una sola policy SELECT" "true|1|0" \
   "$(q "select c.relrowsecurity::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='nota_credito_periodo_reintegros' and cmd='SELECT')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='nota_credito_periodo_reintegros' and cmd<>'SELECT')::text from pg_class c where c.oid='public.nota_credito_periodo_reintegros'::regclass")"
 check "authenticated sólo lee intenciones de reintegro" "true|false|false|false" \
   "$(q "select has_table_privilege('authenticated','public.nota_credito_periodo_reintegros','select')::text||'|'||has_table_privilege('authenticated','public.nota_credito_periodo_reintegros','insert')::text||'|'||has_table_privilege('authenticated','public.nota_credito_periodo_reintegros','update')::text||'|'||has_table_privilege('authenticated','public.nota_credito_periodo_reintegros','delete')::text")"
-check "service_role administra intenciones de reintegro" "true|true|true|true" \
+check "service_role sólo lee intenciones de reintegro" "true|false|false|false" \
   "$(q "select has_table_privilege('service_role','public.nota_credito_periodo_reintegros','select')::text||'|'||has_table_privilege('service_role','public.nota_credito_periodo_reintegros','insert')::text||'|'||has_table_privilege('service_role','public.nota_credito_periodo_reintegros','update')::text||'|'||has_table_privilege('service_role','public.nota_credito_periodo_reintegros','delete')::text")"
 
 check "capacidad efectiva tiene una única firma invoker estable" "1|true|false|s|search_path=\"\"" \

@@ -641,6 +641,7 @@ async function procesarRequestCae(
   if (respuesta.vencimiento === null) {
     return marcarReconciliacion(reserva, estadoRequest.afip_version, deps, "VENCIMIENTO_AUSENTE");
   }
+  const emitidoAt = deps.ahoraIso();
 
   let estadoRespuesta: EstadoTransicionFiscal;
   try {
@@ -655,6 +656,9 @@ async function procesarRequestCae(
           resultado: "A",
           fuente: "FECAESolicitar",
           rechazo_confirmado: false,
+          cae: respuesta.cae,
+          cae_vencimiento: respuesta.vencimiento,
+          emitido_at: emitidoAt,
           observaciones: [],
         },
       },
@@ -680,7 +684,7 @@ async function procesarRequestCae(
           expected_version: estadoRespuesta.afip_version,
           cae: respuesta.cae,
           cae_vencimiento: respuesta.vencimiento,
-          emitido_at: deps.ahoraIso(),
+          emitido_at: emitidoAt,
         },
       });
     } catch {
@@ -1013,7 +1017,11 @@ export async function ejecutarConciliacionFiscal(
           cae: decision.cae,
           cae_vencimiento: decision.vencimiento,
           payload_hash: reserva.payloadHash,
-          respuesta_resumen: RESUMEN_COINCIDENCIA,
+          respuesta_resumen: {
+            ...RESUMEN_COINCIDENCIA,
+            cae: decision.cae,
+            cae_vencimiento: decision.vencimiento,
+          },
         },
       });
     } catch (error) {

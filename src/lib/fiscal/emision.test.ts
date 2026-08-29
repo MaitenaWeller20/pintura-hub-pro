@@ -669,6 +669,21 @@ describe("ejecutarEmisionFiscal", () => {
     ]);
     expect(doble.calls.map((call) => call.payload.expected_version)).toEqual([0, 1, 2, 3, 4]);
     expect(doble.payloadsCae).toHaveLength(1);
+    expect(doble.calls[3].payload.respuesta_resumen).toEqual({
+      tipo: "EMISION",
+      resultado: "A",
+      fuente: "FECAESolicitar",
+      rechazo_confirmado: false,
+      cae: "74123456789012",
+      cae_vencimiento: "2026-09-01",
+      emitido_at: "2026-08-22T15:00:00.000Z",
+      observaciones: [],
+    });
+    expect(doble.calls[4].payload).toMatchObject({
+      cae: "74123456789012",
+      cae_vencimiento: "2026-09-01",
+      emitido_at: "2026-08-22T15:00:00.000Z",
+    });
   });
 
   it("un timeout de preflight libera como error corregible sin pedir CAE", async () => {
@@ -1235,6 +1250,8 @@ describe("ejecutarConciliacionFiscal", () => {
           resultado: "COINCIDE",
           fuente: "FECompConsultar",
           coincidencia_completa: true,
+          cae: "74123456789077",
+          cae_vencimiento: null,
           observaciones: [],
         },
       },

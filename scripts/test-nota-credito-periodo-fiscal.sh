@@ -435,6 +435,44 @@ SELECT pg_temp.assert_true((
     FROM public.nota_credito_periodo_reintegros
    WHERE venta_id=(SELECT venta_id FROM t_producto)
 ),'el reintegro queda como intención positiva exacta');
+
+-- El plan es una intención owner-only. service_role puede leerlo para el
+-- worker, pero no puede cambiar medio, monto, orden, UUID ni cantidad de filas.
+GRANT SELECT ON t_producto TO service_role;
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_raises(format($sql$
+  INSERT INTO public.nota_credito_periodo_reintegros(
+    venta_id,forma_pago,monto,detalle,orden
+  ) VALUES (%L,'CHEQUE',1,'{}',1)
+$sql$,(SELECT venta_id FROM t_producto)),'permission denied',
+  'service_role no inserta filas en el plan de reintegro');
+SELECT pg_temp.assert_raises(format($sql$
+  UPDATE public.nota_credito_periodo_reintegros SET monto=monto+1
+   WHERE venta_id=%L
+$sql$,(SELECT venta_id FROM t_producto)),'permission denied',
+  'service_role no modifica monto, medio, orden ni UUID del plan');
+SELECT pg_temp.assert_raises(format($sql$
+  DELETE FROM public.nota_credito_periodo_reintegros WHERE venta_id=%L
+$sql$,(SELECT venta_id FROM t_producto)),'permission denied',
+  'service_role no elimina filas del plan de reintegro');
+RESET ROLE;
+SELECT pg_temp.assert_true(
+  has_table_privilege('authenticated','public.nota_credito_periodo_reintegros','SELECT')
+  AND has_table_privilege('service_role','public.nota_credito_periodo_reintegros','SELECT')
+  AND NOT has_table_privilege('anon','public.nota_credito_periodo_reintegros','SELECT')
+  AND NOT has_table_privilege('authenticated','public.nota_credito_periodo_reintegros','INSERT,UPDATE,DELETE')
+  AND NOT has_table_privilege('service_role','public.nota_credito_periodo_reintegros','INSERT,UPDATE,DELETE'),
+  'el plan conserva sólo SELECT autorizado y revoca DML a roles API'
+);
+SELECT pg_temp.assert_true((
+  SELECT count(*)=1 AND bool_and(NOT p.prosecdef)
+     AND bool_and(p.proowner='postgres'::regrole)
+     AND bool_and(p.proconfig=ARRAY['search_path=""']::text[])
+    FROM pg_trigger t
+    JOIN pg_proc p ON p.oid=t.tgfoid
+   WHERE t.tgrelid='public.nota_credito_periodo_reintegros'::regclass
+     AND NOT t.tgisinternal AND t.tgenabled='O'
+),'el plan tiene un guard durable owner-only');
 SELECT pg_temp.assert_true((
   SELECT b.cajas=(SELECT count(*) FROM public.caja_sesiones WHERE estado='ABIERTA')
      AND b.caja_movs=(SELECT count(*) FROM public.caja_movimientos)
@@ -647,7 +685,8 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION pg_temp.responder_aprobado(
-  p_venta_id uuid,p_token uuid,p_expected integer
+  p_venta_id uuid,p_token uuid,p_expected integer,
+  p_cae text,p_cae_vencimiento text,p_emitido_at text
 ) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM * FROM public.transicionar_emision_fiscal(
@@ -656,7 +695,9 @@ BEGIN
       'expected_version',p_expected,
       'respuesta_resumen',pg_catalog.jsonb_build_object(
         'tipo','EMISION','resultado','A','fuente','FECAESolicitar',
-        'rechazo_confirmado',false,'observaciones','[]'::jsonb
+        'rechazo_confirmado',false,'observaciones','[]'::jsonb,
+        'cae',p_cae,'cae_vencimiento',p_cae_vencimiento,
+        'emitido_at',p_emitido_at
       )
     )
   );
@@ -739,8 +780,51 @@ SELECT pg_temp.assert_true((
 -- cerrar la aprobación. El CAE y los efectos pertenecen a una transacción.
 UPDATE public.settings SET nota_credito_periodo_enabled=false WHERE id=true;
 SELECT pg_temp.responder_aprobado(
-  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042',3
+  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042',3,
+  '74123456789041','2026-09-30','2026-08-29T15:00:00Z'
 );
+CREATE TEMP TABLE t_antes_cae_invalido AS
+SELECT
+  (SELECT cantidad FROM public.stock_sucursal
+    WHERE producto_id='c2400000-0000-4000-8000-000000000001'
+      AND sucursal_id=v.sucursal_id) AS stock,
+  (SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id) AS stock_movs,
+  (SELECT count(*) FROM public.venta_pagos WHERE venta_id=v.id) AS pagos,
+  (SELECT count(*) FROM public.cuenta_corriente_movimientos WHERE venta_id=v.id) AS cc
+FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_producto);
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"123","cae_vencimiento":"2026-09-30","emitido_at":"2026-08-29T15:00:00Z"}'')',
+  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042'
+),'CAE','APROBAR rechaza CAE con longitud distinta de 14');
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"ABCDEFGHIJKLMN","cae_vencimiento":"2026-09-30","emitido_at":"2026-08-29T15:00:00Z"}'')',
+  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042'
+),'CAE','APROBAR rechaza CAE no numérico');
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"74123456789041","cae_vencimiento":"2026-9-30","emitido_at":"2026-08-29T15:00:00Z"}'')',
+  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042'
+),'fecha','APROBAR rechaza vencimiento no canónico');
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"74123456789041","cae_vencimiento":"2026-09-30","emitido_at":"infinity"}'')',
+  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042'
+),'timestamp','APROBAR rechaza timestamp infinito o no canónico');
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"74123456789049","cae_vencimiento":"2026-09-30","emitido_at":"2026-08-29T15:00:00Z"}'')',
+  (SELECT venta_id FROM t_producto),'f2400000-0000-4000-8000-000000000042'
+),'evidencia','APROBAR no acepta un CAE distinto de la evidencia persistida');
+SELECT pg_temp.assert_true((
+  SELECT v.afip_estado='EMITIENDO' AND v.afip_fase='RESPUESTA_RECIBIDA'
+     AND v.estado='PENDIENTE_FISCAL' AND v.cae IS NULL
+     AND v.nc_efectos_aplicados_at IS NULL
+     AND b.stock=(SELECT cantidad FROM public.stock_sucursal
+                   WHERE producto_id='c2400000-0000-4000-8000-000000000001'
+                     AND sucursal_id=v.sucursal_id)
+     AND b.stock_movs=(SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id)
+     AND b.pagos=(SELECT count(*) FROM public.venta_pagos WHERE venta_id=v.id)
+     AND b.cc=(SELECT count(*) FROM public.cuenta_corriente_movimientos WHERE venta_id=v.id)
+    FROM public.ventas v CROSS JOIN t_antes_cae_invalido b
+   WHERE v.id=(SELECT venta_id FROM t_producto)
+),'CAE/evidencia inválidos no aplican ni persisten cambios parciales');
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_producto),'APROBAR',
   'f2400000-0000-4000-8000-000000000042',
@@ -809,7 +893,8 @@ SELECT * FROM public.transicionar_emision_fiscal(
   '{"expected_version":2}'::jsonb
 );
 SELECT pg_temp.responder_aprobado(
-  (SELECT venta_id FROM t_ajuste),'f2400000-0000-4000-8000-000000000043',3
+  (SELECT venta_id FROM t_ajuste),'f2400000-0000-4000-8000-000000000043',3,
+  '74123456789042','2026-09-30','2026-08-29T15:01:00Z'
 );
 CREATE TEMP TABLE t_ajuste_stock_before AS
 SELECT (SELECT sum(cantidad) FROM public.stock_sucursal) stock,
@@ -857,6 +942,26 @@ SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_rechazo),'RESPUESTA_RECIBIDA','f2400000-0000-4000-8000-000000000044',
   '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"R","fuente":"FECAESolicitar","rechazo_confirmado":true,"observaciones":[]}}'::jsonb
 );
+CREATE TEMP TABLE t_rechazo_before AS
+SELECT
+  (SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id) AS stock_movs,
+  (SELECT count(*) FROM public.venta_pagos WHERE venta_id=v.id) AS pagos,
+  (SELECT count(*) FROM public.cuenta_corriente_movimientos WHERE venta_id=v.id) AS cc
+FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_rechazo);
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"74123456789098","cae_vencimiento":"2026-09-30","emitido_at":"2026-08-29T15:04:00Z"}'')',
+  (SELECT venta_id FROM t_rechazo),'f2400000-0000-4000-8000-000000000044'
+),'evidencia','APROBAR rechaza una respuesta ARCA R confirmada');
+SELECT pg_temp.assert_true((
+  SELECT v.afip_estado='EMITIENDO' AND v.afip_fase='RESPUESTA_RECIBIDA'
+     AND v.estado='PENDIENTE_FISCAL' AND v.cae IS NULL
+     AND v.nc_efectos_aplicados_at IS NULL
+     AND b.stock_movs=(SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id)
+     AND b.pagos=(SELECT count(*) FROM public.venta_pagos WHERE venta_id=v.id)
+     AND b.cc=(SELECT count(*) FROM public.cuenta_corriente_movimientos WHERE venta_id=v.id)
+    FROM public.ventas v CROSS JOIN t_rechazo_before b
+   WHERE v.id=(SELECT venta_id FROM t_rechazo)
+),'un rechazo no cambia CAE, marcador ni vector comercial');
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_rechazo),'ERROR_CORREGIBLE','f2400000-0000-4000-8000-000000000044',
   '{"expected_version":4,"error_clase":"RECHAZO","error_codigo":"100","error_fase":"RESPUESTA_RECIBIDA","mensaje_mascarado":"rechazo confirmado","liberar_identidad":true}'::jsonb
@@ -869,6 +974,64 @@ SELECT pg_temp.assert_true((
      AND NOT EXISTS (SELECT 1 FROM public.cuenta_corriente_movimientos m WHERE m.venta_id=v.id)
     FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_rechazo)
 ),'rechazo y error corregible no aplican efectos');
+
+-- Una inconsistencia privilegiada de fixture conserva el total pero altera el
+-- vector canónico. El hash original debe detectarla antes de stock/caja/CAE.
+CREATE TEMP TABLE t_hash_mismatch AS
+SELECT * FROM public.crear_nota_credito_periodo_fiscal(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+  '2026-07-01','2026-07-31','Vector de reintegro inmutable','REINTEGRO',
+  '[{"producto_id":"c2400000-0000-4000-8000-000000000003","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":10.5}]',
+  '[{"forma_pago":"TRANSFERENCIA","monto_centavos":5000},{"forma_pago":"CHEQUE","monto_centavos":6050}]',
+  'e2400000-0000-4000-8000-000000000077'
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_hash_mismatch),'RECLAMAR','f2400000-0000-4000-8000-000000000050',
+  '{"expected_version":0,"lease_segundos":300}'::jsonb
+);
+SELECT pg_temp.reservar_nc_periodo(
+  (SELECT venta_id FROM t_hash_mismatch),'f2400000-0000-4000-8000-000000000050',949
+);
+SELECT * FROM public.transicionar_emision_fiscal(
+  (SELECT venta_id FROM t_hash_mismatch),'REQUEST_INICIADO','f2400000-0000-4000-8000-000000000050',
+  '{"expected_version":2}'::jsonb
+);
+SELECT pg_temp.responder_aprobado(
+  (SELECT venta_id FROM t_hash_mismatch),'f2400000-0000-4000-8000-000000000050',3,
+  '74123456789046','2026-09-30','2026-08-29T15:05:00Z'
+);
+UPDATE public.nota_credito_periodo_reintegros
+   SET monto=CASE forma_pago WHEN 'TRANSFERENCIA' THEN 50.01 ELSE 60.49 END
+ WHERE venta_id=(SELECT venta_id FROM t_hash_mismatch);
+CREATE TEMP TABLE t_hash_mismatch_before AS
+SELECT
+  (SELECT cantidad FROM public.stock_sucursal
+    WHERE producto_id='c2400000-0000-4000-8000-000000000003'
+      AND sucursal_id=v.sucursal_id) AS stock,
+  (SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id) AS stock_movs,
+  (SELECT count(*) FROM public.venta_pagos WHERE venta_id=v.id) AS pagos,
+  (SELECT count(*) FROM public.caja_movimientos) AS caja,
+  (SELECT count(*) FROM public.cuenta_corriente_movimientos WHERE venta_id=v.id) AS cc
+FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_hash_mismatch);
+SELECT pg_temp.assert_raises(format(
+  'SELECT * FROM public.transicionar_emision_fiscal(%L,''APROBAR'',%L,''{"expected_version":4,"cae":"74123456789046","cae_vencimiento":"2026-09-30","emitido_at":"2026-08-29T15:05:00Z"}'')',
+  (SELECT venta_id FROM t_hash_mismatch),'f2400000-0000-4000-8000-000000000050'
+),'huella','una mutación owner del vector es detectada por el hash canónico');
+SELECT pg_temp.assert_true((
+  SELECT v.afip_estado='EMITIENDO' AND v.afip_fase='RESPUESTA_RECIBIDA'
+     AND v.estado='PENDIENTE_FISCAL' AND v.cae IS NULL
+     AND v.nc_efectos_aplicados_at IS NULL
+     AND b.stock=(SELECT cantidad FROM public.stock_sucursal
+                   WHERE producto_id='c2400000-0000-4000-8000-000000000003'
+                     AND sucursal_id=v.sucursal_id)
+     AND b.stock_movs=(SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id)
+     AND b.pagos=(SELECT count(*) FROM public.venta_pagos WHERE venta_id=v.id)
+     AND b.caja=(SELECT count(*) FROM public.caja_movimientos)
+     AND b.cc=(SELECT count(*) FROM public.cuenta_corriente_movimientos WHERE venta_id=v.id)
+    FROM public.ventas v CROSS JOIN t_hash_mismatch_before b
+   WHERE v.id=(SELECT venta_id FROM t_hash_mismatch)
+),'hash inconsistente revierte CAE, stock, pagos, caja, cuenta corriente y marcador');
 
 -- RECUPERAR_CAE comparte exactamente el helper de APROBAR. El flag apagado no
 -- bloquea conciliación/recuperación una vez que REQUEST_INICIADO quedó durable.
@@ -915,7 +1078,8 @@ SELECT * FROM public.transicionar_emision_fiscal(
     'payload_hash',(SELECT afip_snapshot_hash FROM public.ventas WHERE id=(SELECT venta_id FROM t_recuperar)),
     'respuesta_resumen',pg_catalog.jsonb_build_object(
       'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
-      'coincidencia_completa',true,'observaciones','[]'::jsonb
+      'coincidencia_completa',true,'observaciones','[]'::jsonb,
+      'cae','74123456789043','cae_vencimiento',NULL
     )
   )
 );
@@ -938,7 +1102,8 @@ SELECT pg_temp.assert_raises(format($sql$
       'payload_hash',(SELECT afip_snapshot_hash FROM public.ventas WHERE id=%L),
       'respuesta_resumen',jsonb_build_object(
         'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
-        'coincidencia_completa',true,'observaciones','[]'::jsonb)))
+        'coincidencia_completa',true,'observaciones','[]'::jsonb,
+        'cae','74123456789043','cae_vencimiento',NULL)))
 $sql$,(SELECT venta_id FROM t_recuperar),'f2400000-0000-4000-8000-000000000045',(SELECT venta_id FROM t_recuperar)),
   'token','replay de RECUPERAR_CAE no duplica efectos'
 );
@@ -962,7 +1127,10 @@ SELECT * FROM public.crear_nota_credito_periodo_fiscal(
 SELECT * FROM public.transicionar_emision_fiscal((SELECT venta_id FROM t_efectivo),'RECLAMAR','f2400000-0000-4000-8000-000000000047','{"expected_version":0,"lease_segundos":300}');
 SELECT pg_temp.reservar_nc_periodo((SELECT venta_id FROM t_efectivo),'f2400000-0000-4000-8000-000000000047',945);
 SELECT * FROM public.transicionar_emision_fiscal((SELECT venta_id FROM t_efectivo),'REQUEST_INICIADO','f2400000-0000-4000-8000-000000000047','{"expected_version":2}');
-SELECT pg_temp.responder_aprobado((SELECT venta_id FROM t_efectivo),'f2400000-0000-4000-8000-000000000047',3);
+SELECT pg_temp.responder_aprobado(
+  (SELECT venta_id FROM t_efectivo),'f2400000-0000-4000-8000-000000000047',3,
+  '74123456789044','2026-09-30','2026-08-29T15:02:00Z'
+);
 CREATE TEMP TABLE t_caja_before AS
 SELECT (public.caja_esperado(id)#>>'{EFECTIVO,neto}')::numeric neto,
        (SELECT count(*) FROM public.caja_movimientos) movimientos FROM t_caja;
@@ -997,7 +1165,10 @@ SELECT * FROM public.crear_nota_credito_periodo_fiscal(
 SELECT * FROM public.transicionar_emision_fiscal((SELECT venta_id FROM t_sin_efectivo),'RECLAMAR','f2400000-0000-4000-8000-000000000048','{"expected_version":0,"lease_segundos":300}');
 SELECT pg_temp.reservar_nc_periodo((SELECT venta_id FROM t_sin_efectivo),'f2400000-0000-4000-8000-000000000048',946);
 SELECT * FROM public.transicionar_emision_fiscal((SELECT venta_id FROM t_sin_efectivo),'REQUEST_INICIADO','f2400000-0000-4000-8000-000000000048','{"expected_version":2}');
-SELECT pg_temp.responder_aprobado((SELECT venta_id FROM t_sin_efectivo),'f2400000-0000-4000-8000-000000000048',3);
+SELECT pg_temp.responder_aprobado(
+  (SELECT venta_id FROM t_sin_efectivo),'f2400000-0000-4000-8000-000000000048',3,
+  '74123456789045','2026-09-30','2026-08-29T15:03:00Z'
+);
 CREATE TEMP TABLE t_fallo_before AS
 SELECT (SELECT cantidad FROM public.stock_sucursal WHERE producto_id='c2400000-0000-4000-8000-000000000001' AND sucursal_id=v.sucursal_id) stock,
        (SELECT count(*) FROM public.stock_movimientos WHERE referencia_id=v.id) stock_movs,
@@ -1191,6 +1362,7 @@ out1=""
 out2=""
 effects_out1=""
 effects_out2=""
+mutation_out=""
 cleanup() {
   "${PSQL[@]}" >/dev/null <<'SQL' || true
 DELETE FROM public.stock_movimientos
@@ -1200,6 +1372,13 @@ DELETE FROM public.stock_movimientos
        WHERE idempotency_key='e2400000-0000-4000-8000-000000000099'
     );
 DELETE FROM public.ventas WHERE idempotency_key='e2400000-0000-4000-8000-000000000099';
+DELETE FROM public.caja_movimientos
+ WHERE caja_sesion_id IN (
+   SELECT id FROM public.caja_sesiones
+    WHERE abierta_por='a2400000-0000-4000-8000-000000000099'
+ );
+DELETE FROM public.caja_sesiones
+ WHERE abierta_por='a2400000-0000-4000-8000-000000000099';
 DELETE FROM public.stock_sucursal WHERE producto_id='c2400000-0000-4000-8000-000000000099';
 DELETE FROM public.productos WHERE id='c2400000-0000-4000-8000-000000000099';
 DELETE FROM public.clientes WHERE id='b2400000-0000-4000-8000-000000000099';
@@ -1221,6 +1400,9 @@ SQL
   fi
   if [[ -n "$effects_out2" ]]; then
     rm -f -- "$effects_out2"
+  fi
+  if [[ -n "$mutation_out" ]]; then
+    rm -f -- "$mutation_out"
   fi
 }
 trap cleanup EXIT
@@ -1248,7 +1430,7 @@ UPDATE public.emisores AS e
    AND s.id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1);
 SQL
 
-race_sql="SELECT set_config('request.jwt.claims','{\"sub\":\"a2400000-0000-4000-8000-000000000099\",\"role\":\"authenticated\"}',false); SELECT venta_id FROM public.crear_nota_credito_periodo_fiscal((SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2400000-0000-4000-8000-000000000099','DEVOLUCION_PRODUCTOS','2026-07-01','2026-07-31','Carrera idempotente','SALDO_FAVOR','[{\"producto_id\":\"c2400000-0000-4000-8000-000000000099\",\"cantidad\":1,\"precio_unitario_sin_iva\":100,\"iva_porcentaje\":21}]','[]','e2400000-0000-4000-8000-000000000099');"
+race_sql="SELECT set_config('request.jwt.claims','{\"sub\":\"a2400000-0000-4000-8000-000000000099\",\"role\":\"authenticated\"}',false); SELECT venta_id FROM public.crear_nota_credito_periodo_fiscal((SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'b2400000-0000-4000-8000-000000000099','DEVOLUCION_PRODUCTOS','2026-07-01','2026-07-31','Carrera idempotente','REINTEGRO','[{\"producto_id\":\"c2400000-0000-4000-8000-000000000099\",\"cantidad\":1,\"precio_unitario_sin_iva\":100,\"iva_porcentaje\":21}]','[{\"forma_pago\":\"TRANSFERENCIA\",\"monto_centavos\":12100}]','e2400000-0000-4000-8000-000000000099');"
 out1="$(mktemp)"
 out2="$(mktemp)"
 "${PSQL[@]}" -tAqc "$race_sql" >"$out1" &
@@ -1371,6 +1553,7 @@ SQL
 
 effects_out1="$(mktemp)"
 effects_out2="$(mktemp)"
+mutation_out="$(mktemp)"
 set +e
 "${PSQL[@]}" -qAt -v venta="$id1" -v hash="$race_hash" >"$effects_out1" 2>&1 <<'SQL' &
 SET ROLE service_role;
@@ -1381,7 +1564,8 @@ SELECT * FROM public.transicionar_emision_fiscal(
     'expected_version',4,'cae','74123456789099','cae_vencimiento',NULL,
     'payload_hash',:'hash','respuesta_resumen',jsonb_build_object(
       'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
-      'coincidencia_completa',true,'observaciones','[]'::jsonb)));
+      'coincidencia_completa',true,'observaciones','[]'::jsonb,
+      'cae','74123456789099','cae_vencimiento',NULL)));
 SQL
 effects_pid1=$!
 "${PSQL[@]}" -qAt -v venta="$id1" -v hash="$race_hash" >"$effects_out2" 2>&1 <<'SQL' &
@@ -1393,18 +1577,33 @@ SELECT * FROM public.transicionar_emision_fiscal(
     'expected_version',4,'cae','74123456789099','cae_vencimiento',NULL,
     'payload_hash',:'hash','respuesta_resumen',jsonb_build_object(
       'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
-      'coincidencia_completa',true,'observaciones','[]'::jsonb)));
+      'coincidencia_completa',true,'observaciones','[]'::jsonb,
+      'cae','74123456789099','cae_vencimiento',NULL)));
 SQL
 effects_pid2=$!
+"${PSQL[@]}" -qAt -v venta="$id1" >"$mutation_out" 2>&1 <<'SQL' &
+SET ROLE service_role;
+UPDATE public.nota_credito_periodo_reintegros
+   SET monto=monto+1
+ WHERE venta_id=:'venta';
+SQL
+mutation_pid=$!
 wait "$effects_pid1"
 effects_status1=$?
 wait "$effects_pid2"
 effects_status2=$?
+wait "$mutation_pid"
+mutation_status=$?
 set -e
 if ! { [[ "$effects_status1" -eq 0 && "$effects_status2" -ne 0 ]] || [[ "$effects_status1" -ne 0 && "$effects_status2" -eq 0 ]]; }; then
   sed -n '1,30p' "$effects_out1" >&2
   sed -n '1,30p' "$effects_out2" >&2
   echo "✗ la carrera RECUPERAR_CAE no produjo exactamente un ganador" >&2
+  exit 1
+fi
+if [[ "$mutation_status" -eq 0 ]] || ! rg -qi 'permission denied|Permiso insuficiente' "$mutation_out"; then
+  sed -n '1,30p' "$mutation_out" >&2
+  echo "✗ service_role mutó el plan durante la carrera post-CAE" >&2
   exit 1
 fi
 
@@ -1413,14 +1612,19 @@ effects_state="$(${PSQL[@]} -qAtc "
          (SELECT count(*) FROM public.stock_movimientos m WHERE m.referencia_id=v.id)||'|'||
          (SELECT count(*) FROM public.cuenta_corriente_movimientos c WHERE c.venta_id=v.id)||'|'||
          (SELECT count(*) FROM public.venta_pagos p WHERE p.venta_id=v.id)||'|'||
+         (SELECT count(*) FROM public.venta_pagos p
+            JOIN public.nota_credito_periodo_reintegros r
+              ON r.id=p.cobro_idempotency_key
+           WHERE p.venta_id=v.id AND p.forma_pago=r.forma_pago
+             AND p.monto=-r.monto AND r.monto=121.00)||'|'||
          (SELECT count(*) FROM public.emision_fiscal_intentos i
            WHERE i.venta_id=v.id AND i.resultado='RECUPERADO_CAE')
     FROM public.ventas v WHERE v.id='$id1'")"
-if [[ "$effects_state" != "APROBADO|PERSISTIDO|true|1|1|0|1" ]]; then
+if [[ "$effects_state" != "APROBADO|PERSISTIDO|true|1|0|1|1|1" ]]; then
   echo "✗ la carrera post-CAE duplicó o perdió efectos: $effects_state" >&2
   exit 1
 fi
-echo "✓ dos RECUPERAR_CAE concurrentes persisten un CAE y un solo vector de efectos"
+echo "✓ dos RECUPERAR_CAE y una mutación concurrentes conservan un solo vector inmutable"
 
 # La reversión total fiscal vinculada vive en
 # test-anulacion-fiscal-vinculada.sh para no depender del orden de la suite

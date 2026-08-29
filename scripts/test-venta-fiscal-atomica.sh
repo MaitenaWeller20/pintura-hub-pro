@@ -1626,7 +1626,7 @@ SELECT pg_temp.task9_hasta_request(venta_id,pv,token) FROM t_task9_paths;
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_task9_paths WHERE kind='APROBAR'),'RESPUESTA_RECIBIDA',
   (SELECT token FROM t_task9_paths WHERE kind='APROBAR'),
-  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[]}}'::jsonb
+  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[],"cae":"74123456789011","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T18:00:00.000Z"}}'::jsonb
 );
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_task9_paths WHERE kind='APROBAR'),'APROBAR',
@@ -1648,7 +1648,8 @@ SELECT * FROM public.transicionar_emision_fiscal(
                      WHERE id=(SELECT venta_id FROM t_task9_paths WHERE kind='RECUPERAR')),
     'respuesta_resumen',jsonb_build_object(
       'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
-      'coincidencia_completa',true,'observaciones','[]'::jsonb
+      'coincidencia_completa',true,'observaciones','[]'::jsonb,
+      'cae','74123456789012','cae_vencimiento',NULL
     )
   )
 );

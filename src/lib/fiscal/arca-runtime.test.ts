@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { encryptString } from "./crypto";
+import type { SnapshotFiscalPersistido } from "./snapshot";
 
 const resultGetFixture = {
   PtoVta: 5,
@@ -377,15 +378,9 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
       DocNro: 30714199664,
       CbteFch: "20260822",
     };
-    const solicitar = async () => {
+    const solicitar = async (payload: Record<string, unknown> = payloadExacto) => {
       const { solicitarCaeConPayload } = await import("./arca");
-      return solicitarCaeConPayload(
-        emisor(),
-        { numero: 5, modo: "PRODUCCION" },
-        payloadExacto,
-        42,
-        {},
-      );
+      return solicitarCaeConPayload(emisor(), { numero: 5, modo: "PRODUCCION" }, payload, 42, {});
     };
 
     it("aprueba sólo A coherente, un detalle exacto, CAE canónico y fecha calendario", async () => {
@@ -396,6 +391,55 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
         vencimiento: new Date("2026-09-01T12:00:00.000Z"),
         modo: "PRODUCCION",
       });
+    });
+
+    it("preserva PeriodoAsoc anidado al cruzar el límite real del SDK", async () => {
+      sdk.createVoucher.mockResolvedValue(respuestaA());
+      const payloadPeriodo = {
+        ...payloadExacto,
+        PeriodoAsoc: { FchDesde: "20260801", FchHasta: "20260815" },
+      };
+
+      await solicitar(payloadPeriodo);
+
+      expect(sdk.createVoucher).toHaveBeenCalledTimes(1);
+      expect(sdk.createVoucher.mock.calls[0]?.[0]).toEqual(payloadPeriodo);
+      const argumentoSdk = sdk.createVoucher.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(argumentoSdk.PeriodoAsoc).toEqual({
+        FchDesde: "20260801",
+        FchHasta: "20260815",
+      });
+    });
+
+    it("un snapshot v3 inválido falla antes de invocar el SDK", async () => {
+      const { crearPayloadCaeDesdeSnapshot } = await import("./arca");
+      const emitir = async () => {
+        const payload = crearPayloadCaeDesdeSnapshot({ version: 3 } as SnapshotFiscalPersistido);
+        return solicitar(payload);
+      };
+
+      await expect(emitir()).rejects.toThrow(/snapshot|clave|faltante/i);
+      expect(sdk.createVoucher).not.toHaveBeenCalled();
+    });
+
+    it("clasifica un timeout posterior al envío como incierto y no reintenta", async () => {
+      vi.useFakeTimers();
+      try {
+        sdk.createVoucher.mockReturnValue(new Promise(() => undefined));
+        const solicitud = solicitar({
+          ...payloadExacto,
+          PeriodoAsoc: { FchDesde: "20260801", FchHasta: "20260815" },
+        });
+        const capturada = solicitud.catch((error) => error);
+
+        await vi.advanceTimersByTimeAsync(25_000);
+
+        const { esErrorTransitorio } = await import("./arca");
+        expect(esErrorTransitorio(await capturada)).toBe(true);
+        expect(sdk.createVoucher).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it.each([

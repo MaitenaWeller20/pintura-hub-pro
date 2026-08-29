@@ -3,7 +3,7 @@ import { fmtFechaAfip, parseFechaAfip } from "./fecha";
 import { TIPOS_C, CONCEPTO_PRODUCTOS } from "./codigos";
 import { SupabaseTicketStorage } from "./ticket-storage";
 import type { AlicuotaAfip } from "./iva";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import { validarSnapshotFiscalV3, type SnapshotFiscalPersistido } from "./snapshot";
 import {
   entornoHabilitaMockFiscal,
   entornoMockFiscalDelProceso,
@@ -158,6 +158,7 @@ export type ComprobanteArcaConsultado = {
   tributosTotal: string;
   moneda: string;
   cotizacion: string;
+  periodoAsoc: { desde: string; hasta: string } | null;
   alicuotas: Array<{ id: number; base: string; importe: string }>;
   tributos: Array<{
     id: number;
@@ -471,49 +472,58 @@ function clasificarSolicitudCae(
 }
 
 /** Construye el detalle FECAEDetRequest exclusivamente desde el snapshot fiscal congelado. */
-export function crearPayloadCaeDesdeSnapshot(snapshot: SnapshotFiscalV2): Record<string, unknown> {
+export function crearPayloadCaeDesdeSnapshot(
+  snapshot: SnapshotFiscalPersistido,
+): Record<string, unknown> {
+  const snapshotValidado = snapshot.version === 3 ? validarSnapshotFiscalV3(snapshot) : snapshot;
   const payload: Record<string, unknown> = {
     CantReg: 1,
-    PtoVta: snapshot.identidad.puntoVenta,
-    CbteTipo: snapshot.identidad.cbteTipo,
-    Concepto: snapshot.concepto,
-    DocTipo: snapshot.receptor.docTipoArca,
-    DocNro: Number(snapshot.receptor.docNroArca),
-    CbteDesde: snapshot.identidad.numero,
-    CbteHasta: snapshot.identidad.numero,
-    CbteFch: snapshot.fechaComprobante.replaceAll("-", ""),
-    ImpTotal: Number(snapshot.importeTotal),
-    ImpTotConc: Number(snapshot.importeNoGravado),
-    ImpNeto: Number(snapshot.importeNeto),
-    ImpOpEx: Number(snapshot.importeExento),
-    ImpIVA: Number(snapshot.importeIva),
-    ImpTrib: Number(snapshot.importeTributos),
-    MonId: snapshot.moneda,
-    MonCotiz: Number(snapshot.cotizacion),
-    CondicionIVAReceptorId: snapshot.receptor.condicionIvaReceptorId,
+    PtoVta: snapshotValidado.identidad.puntoVenta,
+    CbteTipo: snapshotValidado.identidad.cbteTipo,
+    Concepto: snapshotValidado.concepto,
+    DocTipo: snapshotValidado.receptor.docTipoArca,
+    DocNro: Number(snapshotValidado.receptor.docNroArca),
+    CbteDesde: snapshotValidado.identidad.numero,
+    CbteHasta: snapshotValidado.identidad.numero,
+    CbteFch: snapshotValidado.fechaComprobante.replaceAll("-", ""),
+    ImpTotal: Number(snapshotValidado.importeTotal),
+    ImpTotConc: Number(snapshotValidado.importeNoGravado),
+    ImpNeto: Number(snapshotValidado.importeNeto),
+    ImpOpEx: Number(snapshotValidado.importeExento),
+    ImpIVA: Number(snapshotValidado.importeIva),
+    ImpTrib: Number(snapshotValidado.importeTributos),
+    MonId: snapshotValidado.moneda,
+    MonCotiz: Number(snapshotValidado.cotizacion),
+    CondicionIVAReceptorId: snapshotValidado.receptor.condicionIvaReceptorId,
   };
-  if (snapshot.alicuotasIva.length > 0)
-    payload.Iva = snapshot.alicuotasIva.map((row) => ({
+  if (snapshotValidado.alicuotasIva.length > 0)
+    payload.Iva = snapshotValidado.alicuotasIva.map((row) => ({
       Id: row.id,
       BaseImp: Number(row.baseImponible),
       Importe: Number(row.importe),
     }));
-  if (snapshot.tributos.length > 0)
-    payload.Tributos = snapshot.tributos.map((row) => ({
+  if (snapshotValidado.tributos.length > 0)
+    payload.Tributos = snapshotValidado.tributos.map((row) => ({
       Id: row.id,
       Desc: row.descripcion,
       BaseImp: Number(row.baseImponible),
       Alic: Number(row.alicuota),
       Importe: Number(row.importe),
     }));
-  if (snapshot.cbtesAsoc.length > 0)
-    payload.CbtesAsoc = snapshot.cbtesAsoc.map((row) => ({
+  if (snapshotValidado.version === 3) {
+    payload.PeriodoAsoc = {
+      FchDesde: snapshotValidado.periodoAsoc.desde.replaceAll("-", ""),
+      FchHasta: snapshotValidado.periodoAsoc.hasta.replaceAll("-", ""),
+    };
+  } else if (snapshotValidado.cbtesAsoc.length > 0) {
+    payload.CbtesAsoc = snapshotValidado.cbtesAsoc.map((row) => ({
       Tipo: row.tipo,
       PtoVta: row.puntoVenta,
       Nro: row.numero,
       Cuit: row.cuit,
       CbteFch: row.fecha.replaceAll("-", ""),
     }));
+  }
   return payload;
 }
 
@@ -561,6 +571,18 @@ export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaCo
       fecha: fechaArca(row.CbteFch, "CbtesAsoc.CbteAsoc.CbteFch", true),
     };
   });
+  const periodoAsoc = tieneDatoPropio(result, "PeriodoAsoc")
+    ? (() => {
+        const periodo = registro(result.PeriodoAsoc, "PeriodoAsoc");
+        return {
+          desde: fechaArca(periodo.FchDesde, "PeriodoAsoc.FchDesde")!,
+          hasta: fechaArca(periodo.FchHasta, "PeriodoAsoc.FchHasta")!,
+        };
+      })()
+    : null;
+  if (periodoAsoc !== null && asociados.length > 0) {
+    throw new Error("ARCA devolvió PeriodoAsoc y CbtesAsoc simultáneamente.");
+  }
   alicuotas.sort(
     (a, b) => a.id - b.id || a.base.localeCompare(b.base) || a.importe.localeCompare(b.importe),
   );
@@ -599,6 +621,7 @@ export function normalizarComprobanteArca(resultGet: unknown): ComprobanteArcaCo
     tributosTotal: decimalArca(result.ImpTrib, "ImpTrib", 2),
     moneda: textoArca(result.MonId, "MonId"),
     cotizacion: decimalArca(result.MonCotiz, "MonCotiz", 6),
+    periodoAsoc,
     alicuotas,
     tributos,
     asociados,

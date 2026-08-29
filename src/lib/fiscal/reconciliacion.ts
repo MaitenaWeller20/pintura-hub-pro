@@ -1,5 +1,5 @@
 import type { ComprobanteArcaConsultado } from "./arca";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import type { SnapshotFiscalPersistido, SnapshotFiscalV2 } from "./snapshot";
 
 export type DecisionConciliacion =
   | { accion: "RECUPERAR_CAE"; cae: string; vencimiento: string | null }
@@ -94,7 +94,7 @@ const compararAsociadoRemoto = (
 
 /** Devuelve únicamente rutas de campos; nunca incluye valores fiscales. */
 export function compararSnapshotConArca(
-  snapshot: SnapshotFiscalV2,
+  snapshot: SnapshotFiscalPersistido,
   remoto: ComprobanteArcaConsultado,
 ): string[] {
   const diferencias: string[] = [];
@@ -158,26 +158,45 @@ export function compararSnapshotConArca(
       ["importe", (row) => row.importe, (row) => row.importe],
     ],
   );
-  compararColeccion(
-    diferencias,
-    "cbtesAsoc",
-    snapshot.cbtesAsoc,
-    remoto.asociados,
-    compararAsociadoLocal,
-    compararAsociadoRemoto,
-    [
-      ["tipo", (row) => row.tipo, (row) => row.tipo],
-      ["puntoVenta", (row) => row.puntoVenta, (row) => row.puntoVenta],
-      ["numero", (row) => row.numero, (row) => row.numero],
-      ["cuit", (row) => row.cuit, (row) => row.cuit],
-      ["fecha", (row) => row.fecha, (row) => row.fecha],
-    ],
-  );
+  if (snapshot.version === 3) {
+    agregarSiDifiere(
+      diferencias,
+      "periodoAsoc.desde",
+      snapshot.periodoAsoc.desde,
+      remoto.periodoAsoc?.desde ?? null,
+    );
+    agregarSiDifiere(
+      diferencias,
+      "periodoAsoc.hasta",
+      snapshot.periodoAsoc.hasta,
+      remoto.periodoAsoc?.hasta ?? null,
+    );
+    if (remoto.asociados.length !== 0) diferencias.push("cbtesAsoc.length");
+  } else {
+    compararColeccion(
+      diferencias,
+      "cbtesAsoc",
+      snapshot.cbtesAsoc,
+      remoto.asociados,
+      compararAsociadoLocal,
+      compararAsociadoRemoto,
+      [
+        ["tipo", (row) => row.tipo, (row) => row.tipo],
+        ["puntoVenta", (row) => row.puntoVenta, (row) => row.puntoVenta],
+        ["numero", (row) => row.numero, (row) => row.numero],
+        ["cuit", (row) => row.cuit, (row) => row.cuit],
+        ["fecha", (row) => row.fecha, (row) => row.fecha],
+      ],
+    );
+    if (remoto.periodoAsoc !== null) {
+      diferencias.push("periodoAsoc.desde", "periodoAsoc.hasta");
+    }
+  }
   return diferencias;
 }
 
 export function decidirConciliacion(input: {
-  snapshot: SnapshotFiscalV2;
+  snapshot: SnapshotFiscalPersistido;
   remoto: ComprobanteArcaConsultado | null;
   ultimoRemoto: number;
   numeroReservado: number;

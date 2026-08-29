@@ -1,5 +1,12 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import {
+  crearSnapshotFiscalV3,
+  type SnapshotFiscalPersistido,
+  type SnapshotFiscalV2,
+  type SnapshotFiscalV3,
+  type SnapshotFiscalV3Input,
+} from "./snapshot";
 import { conTimeoutArca, crearPayloadCaeDesdeSnapshot, normalizarComprobanteArca } from "./arca";
 
 export const snapshotFiscalFixture = {
@@ -110,6 +117,40 @@ export const resultGetFixture = {
   },
 };
 
+function crearSnapshotFiscalV3Fixture(): SnapshotFiscalV3 {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL("../../../test/fixtures/fiscal-snapshot-parity-v2.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { input: Record<string, unknown> };
+  const input = structuredClone(fixture.input);
+  delete input.version;
+  delete input.hash;
+  delete input.origen;
+  delete input.comprobanteOriginalId;
+  delete input.cbtesAsoc;
+  const venta = input.venta as Record<string, unknown>;
+  const items = input.items as Array<Record<string, unknown>>;
+  const identidad = input.identidad as Record<string, unknown>;
+  venta.tipoComprobante = "NOTA_CREDITO";
+  input.items = items.map((item) => ({
+    ...item,
+    productoId: item.productoId ?? "71000000-0000-4000-8000-000000000199",
+  }));
+  identidad.cbteTipo = 8;
+  input.importeTributos = "0.00";
+  input.importeTotal = "1360.00";
+  input.tributos = [];
+  input.otrosImpuestosNacionalesIndirectos = "0.00";
+  input.periodoAsoc = { desde: "2026-08-01", hasta: "2026-08-15" };
+  input.notaCredito = {
+    modalidad: "DEVOLUCION_PRODUCTOS",
+    motivo: "Devolución de productos del período",
+  };
+  return crearSnapshotFiscalV3(input as SnapshotFiscalV3Input);
+}
+
 describe("adaptador fiscal ARCA", () => {
   it("expone el timeout compartido sin alterar una respuesta del SDK que llega a tiempo", async () => {
     await expect(conTimeoutArca(Promise.resolve("respuesta SDK"), "prueba")).resolves.toBe(
@@ -118,7 +159,9 @@ describe("adaptador fiscal ARCA", () => {
   });
 
   it("crea el payload de emisión solamente desde el snapshot v2 completo", () => {
-    expect(crearPayloadCaeDesdeSnapshot(snapshotFiscalFixture)).toEqual({
+    const detalle = crearPayloadCaeDesdeSnapshot(snapshotFiscalFixture);
+
+    expect(detalle).toEqual({
       CantReg: 1,
       PtoVta: 5,
       CbteTipo: 3,
@@ -141,6 +184,40 @@ describe("adaptador fiscal ARCA", () => {
       Tributos: [{ Id: 99, Desc: "Percepción", BaseImp: 100, Alic: 3, Importe: 3 }],
       CbtesAsoc: [{ Tipo: 1, PtoVta: 5, Nro: 40, Cuit: "30714199664", CbteFch: "20260820" }],
     });
+    expect(detalle).not.toHaveProperty("PeriodoAsoc");
+  });
+
+  it("emite PeriodoAsoc exacto para v3 y nunca CbtesAsoc", () => {
+    const detalle = crearPayloadCaeDesdeSnapshot(crearSnapshotFiscalV3Fixture());
+
+    expect(detalle.PeriodoAsoc).toEqual({
+      FchDesde: "20260801",
+      FchHasta: "20260815",
+    });
+    expect(detalle).not.toHaveProperty("CbtesAsoc");
+  });
+
+  it("una factura v2 ordinaria no emite ninguna asociación", () => {
+    const factura = {
+      ...snapshotFiscalFixture,
+      venta: { ...snapshotFiscalFixture.venta, tipoComprobante: "VENTA" },
+      origen: "VENTA",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+    } as SnapshotFiscalV2;
+    const detalle = crearPayloadCaeDesdeSnapshot(factura);
+
+    expect(detalle).not.toHaveProperty("CbtesAsoc");
+    expect(detalle).not.toHaveProperty("PeriodoAsoc");
+  });
+
+  it("rechaza un snapshot v3 persistido adulterado antes de construir el request", () => {
+    const adulterado = structuredClone(crearSnapshotFiscalV3Fixture());
+    adulterado.periodoAsoc.hasta = "2026-02-30";
+
+    expect(() => crearPayloadCaeDesdeSnapshot(adulterado as SnapshotFiscalPersistido)).toThrow(
+      /per[ií]odo|fecha|hash/i,
+    );
   });
 
   it("normaliza colecciones SOAP singleton y array de forma idéntica", () => {
@@ -172,6 +249,7 @@ describe("adaptador fiscal ARCA", () => {
       tributosTotal: "3.00",
       moneda: "PES",
       cotizacion: "1.000000",
+      periodoAsoc: null,
       alicuotas: [{ id: 5, base: "100.00", importe: "21.00" }],
       tributos: [
         {
@@ -184,6 +262,39 @@ describe("adaptador fiscal ARCA", () => {
       ],
       asociados: [{ tipo: 1, puntoVenta: 5, numero: 40, cuit: "30714199664", fecha: "2026-08-20" }],
     });
+  });
+
+  it("normaliza PeriodoAsoc de ResultGet a fechas ISO", () => {
+    const { CbtesAsoc: _cbtesAsoc, ...sinComprobantesAsociados } = resultGetFixture;
+
+    expect(
+      normalizarComprobanteArca({
+        ...sinComprobantesAsociados,
+        PeriodoAsoc: { FchDesde: "20260801", FchHasta: "20260815" },
+      }).periodoAsoc,
+    ).toEqual({ desde: "2026-08-01", hasta: "2026-08-15" });
+  });
+
+  it.each([
+    ["fecha inicial ausente", { FchHasta: "20260815" }],
+    ["fecha final ausente", { FchDesde: "20260801" }],
+    ["fecha inicial inválida", { FchDesde: "20260230", FchHasta: "20260815" }],
+    ["fecha final inválida", { FchDesde: "20260801", FchHasta: "00000101" }],
+  ])("rechaza PeriodoAsoc con %s", (_caso, PeriodoAsoc) => {
+    const { CbtesAsoc: _cbtesAsoc, ...sinComprobantesAsociados } = resultGetFixture;
+
+    expect(() => normalizarComprobanteArca({ ...sinComprobantesAsociados, PeriodoAsoc })).toThrow(
+      /PeriodoAsoc|FchDesde|FchHasta/i,
+    );
+  });
+
+  it("rechaza una respuesta remota que contiene ambas asociaciones", () => {
+    expect(() =>
+      normalizarComprobanteArca({
+        ...resultGetFixture,
+        PeriodoAsoc: { FchDesde: "20260801", FchHasta: "20260815" },
+      }),
+    ).toThrow(/PeriodoAsoc|CbtesAsoc|asociaciones/i);
   });
 
   it.each([

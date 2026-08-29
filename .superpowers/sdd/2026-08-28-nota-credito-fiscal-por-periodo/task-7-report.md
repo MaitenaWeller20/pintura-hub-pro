@@ -124,3 +124,52 @@ Archivos principales del fix:
 - `supabase db lint --local --level warning` conserva el error basal de `public.cambiar_precios_masivo` por la relación temporal `_objetivo`; no involucra este cambio. `supabase db advisors --local` conserva advisors históricos de RLS/vistas/funciones; la nueva frontera sí fija owner/search path/grants y tiene cobertura catalogada.
 - La integración histórica `emision.integration.test.ts` requiere `transicionar_emision_fiscal`; se deja para Tarea 8 por el scope ruling. El request no alcanza red externa: ARCA está mockeada/bloqueada en las pruebas.
 - No se aplicaron efectos de caja, stock, pagos o cuenta corriente. No se usaron ARCA real, certificados, deploy, push ni producción.
+
+## Fix round 2
+
+Fecha: 2026-08-29
+
+Commit de implementación: `67255b4` — `fix(fiscal): cerrar condición automática sin padrón`
+
+### Resultado y scope
+
+- La selección automática de NC por período ya no deriva A/C desde RI o MONOTRIBUTO meramente declarados. Si padrón devuelve `condicionIvaConfirmada=null`, o no hay adaptador de padrón, el único fallback compatible es `CONSUMIDOR_FINAL | EXENTO`.
+- Una condición confirmada por padrón siempre prevalece sobre el texto manual/favorito: RI y MONOTRIBUTO no pueden ser sobrescritos por la declaración del operador.
+- La validación server-real de una NC por período ocurre antes de adquirir el claim. Para los casos válidos, la preparación se repite después del claim y esa segunda lectura sigue siendo la canónica usada para construir/reservar el snapshot v3; no se debilitó el lock ni se congelaron datos del precheck.
+- No se implementó ni recreó el lifecycle SQL de `transicionar_emision_fiscal`: continúa asignado a Tarea 8. La nueva integración reemplaza únicamente esa transición y ARCA con dobles, sin efectos post-CAE ni red externa.
+
+### Cobertura server-real
+
+La batería de `emision.server.test.ts` usa `crearDependenciasEmisionFiscalServer`, `resolverReceptorFiscal`, `determinarLetraNcPeriodo`, `construirSnapshotFiscalDesdeLectura`/factory v3 y `crearPayloadCaeDesdeSnapshot` reales. Cubre:
+
+- RI confirmada aunque el texto declare MONOTRIBUTO → A, CbteTipo 3, condición ARCA 1.
+- CF sin inscripción confirmable → B, CbteTipo 8, condición ARCA 5.
+- EXENTO sin inscripción confirmable → B, CbteTipo 8, condición ARCA 4.
+- MONOTRIBUTO confirmado aunque el texto declare RI, con emisor monotributista → C, CbteTipo 13, condición ARCA 6 y payload sin colección `Iva`.
+- RI/MONOTRIBUTO declarados sin confirmación → rechazo con cero transiciones y cero llamadas ARCA.
+
+### TDD RED/GREEN
+
+- RED receptor/padrón nulo: 2 casos automáticos resolvían indebidamente a RI/MONOTRIBUTO en vez de rechazar.
+- GREEN: ambos rechazan con `CONDICION_FISCAL_INCOMPATIBLE`; la matriz RI/MONOTRIBUTO confirmados y CF/EXENTO de fallback permanece válida.
+- RED sin adaptador: 2 casos automáticos conservaban el receptor manual RI/MONOTRIBUTO sin evidencia.
+- GREEN: el guard común limita ese fallback a CF/EXENTO para MANUAL/FAVORITO, sin alterar el flujo v2 de letra explícita.
+- RED motor: el caso server-real inválido adquiría claim y resolvía `ERROR_CORREGIBLE`; la prueba observó que no rechazaba antes de transición.
+- GREEN motor: el mismo caso rechaza antes de claim/request con 0 transiciones y 0 requests; la preparación canónica bajo claim se mantiene para los válidos.
+
+### Verificación
+
+- Focal receptor/emisor/server/adaptador/reconciliación/período: 6 archivos pasados, 247 pruebas pasadas; la integración ACL opt-in quedó omitida en ese comando.
+- Batería server-real nueva: 6 pruebas pasadas (A/B/C más rechazos preclaim).
+- Integración ACL autenticada local v2/v3: 2/2 pasadas, sin regresión del fix round 1.
+- `npm test`: 73 archivos pasados, 2 omitidos; 1539 pruebas pasadas y 22 omitidas.
+- `npm run typecheck`: OK.
+- Prettier y ESLint sobre todos los archivos modificados: OK.
+- `git diff --check`: OK.
+- Se revisó el changelog oficial de Supabase; los avisos vigentes de Node/TypeScript no cambian el contrato RPC usado aquí. No hubo cambios SQL ni migraciones en este round.
+
+### Riesgos/basales
+
+- La integración histórica que exige la RPC real `transicionar_emision_fiscal` sigue fuera por el scope ruling de Tarea 8. La cobertura nueva valida el pipeline server-real hasta snapshot/adaptador y usa un lifecycle doble explícito.
+- Se conservan los basales globales de lint/db lint/advisors ya documentados en Fix round 1; ningún archivo nuevo queda con errores focales.
+- No se usaron ARCA real, certificados, deploy, push ni producción.

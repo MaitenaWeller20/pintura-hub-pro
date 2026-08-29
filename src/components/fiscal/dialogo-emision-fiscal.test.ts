@@ -231,7 +231,12 @@ describe("estado seguro del diálogo fiscal", () => {
     };
     render(
       createElement(DialogoEmisionFiscal, {
-        ...propsDialogo({ contexto, onPrevisualizarPeriodo, onConfirmarPeriodo }),
+        ...propsDialogo({
+          contexto,
+          onPrevisualizarPeriodo,
+          onConfirmarPeriodo,
+          detalleAutoritativoPeriodo: { estado: "LISTO" },
+        }),
       }),
     );
 
@@ -248,6 +253,28 @@ describe("estado seguro del diálogo fiscal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Emitir comprobante" }));
     await vi.waitFor(() => expect(onConfirmarPeriodo).toHaveBeenCalledOnce());
     expect(onPrevisualizarPeriodo).toHaveBeenCalledOnce();
+  });
+
+  it("bloquea la preview de una NC por período si se omite el detalle autoritativo", () => {
+    const contexto: ContextoDialogoEmision = {
+      ...CONTEXTO_ACTIVO,
+      comprador: { ...CONTEXTO_ACTIVO.comprador, documento: null },
+      tipoComprobante: "NOTA_CREDITO",
+      asociacionPeriodo: {
+        desde: "2026-07-01",
+        hasta: "2026-07-31",
+        modalidad: "BONIFICACION_AJUSTE",
+        motivo: "Bonificación comercial",
+        resolucion: "SALDO_FAVOR",
+      },
+    };
+
+    render(createElement(DialogoEmisionFiscal, propsDialogo({ contexto })));
+
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("una NC por período permite cargar Otro receptor sin elegir letra", () => {
@@ -300,7 +327,12 @@ describe("estado seguro del diálogo fiscal", () => {
     }));
     render(
       createElement(DialogoEmisionFiscal, {
-        ...propsDialogo({ contexto, onConsultarCuit, onPrevisualizarPeriodo }),
+        ...propsDialogo({
+          contexto,
+          onConsultarCuit,
+          onPrevisualizarPeriodo,
+          detalleAutoritativoPeriodo: { estado: "LISTO" },
+        }),
       }),
     );
 
@@ -331,6 +363,7 @@ describe("estado seguro del diálogo fiscal", () => {
       createElement(DialogoEmisionFiscal, {
         ...propsDialogo({
           contexto,
+          detalleAutoritativoPeriodo: { estado: "LISTO" },
           onConsultarCuit: vi.fn(async () => {
             throw new Error("PADRÓN NO DISPONIBLE");
           }),

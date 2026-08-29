@@ -126,6 +126,59 @@ describe("EditorNotaCreditoPeriodo", () => {
     );
   });
 
+  it.each([
+    {
+      caso: "motivo corto",
+      desde: "2026-07-01",
+      hasta: "2026-07-31",
+      motivo: "abc",
+      concepto: "Ajuste comercial",
+      mensaje: "El motivo debe tener al menos 5 caracteres.",
+      foco: "Motivo",
+    },
+    {
+      caso: "período invertido",
+      desde: "2026-07-31",
+      hasta: "2026-07-01",
+      motivo: "Ajuste comercial de julio",
+      concepto: "Ajuste comercial",
+      mensaje: "Indicá una fecha final válida y posterior o igual a la inicial.",
+      foco: "Hasta",
+    },
+    {
+      caso: "concepto vacío",
+      desde: "2026-07-01",
+      hasta: "2026-07-31",
+      motivo: "Ajuste comercial de julio",
+      concepto: "",
+      mensaje: "Indicá el concepto del ajuste.",
+      foco: "Concepto del ajuste",
+    },
+  ])(
+    "prioriza el error estructural de $caso aunque el reintegro por defecto esté incompleto",
+    async ({ desde, hasta, motivo, concepto, mensaje, foco }) => {
+      render(createElement(EditorNotaCreditoPeriodo, BASE_PROPS));
+
+      fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: desde } });
+      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: hasta } });
+      fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: motivo } });
+      fireEvent.change(screen.getByLabelText("Concepto del ajuste"), {
+        target: { value: concepto },
+      });
+      fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+      fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+
+      expect(screen.getByText(mensaje)).toBeTruthy();
+      expect(
+        screen.queryByText(
+          "El reintegro debe distribuir el total exacto entre sus medios de pago.",
+        ),
+      ).toBeNull();
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(foco)));
+    },
+  );
+
   it("conserva una sola creación y la misma request id ante doble click", () => {
     const onCrear = vi.fn<(input: NotaCreditoPeriodoInput) => Promise<void>>(
       () => new Promise<void>(() => undefined),

@@ -248,72 +248,71 @@ export function EditorNotaCreditoPeriodo({
       );
       return;
     }
+    const key = idempotencyKey ?? crypto.randomUUID();
+    const input =
+      modalidad === "DEVOLUCION_PRODUCTOS"
+        ? {
+            idempotency_key: key,
+            sucursal_id: sucursalId,
+            cliente_id: clienteId,
+            periodo_desde: desde,
+            periodo_hasta: hasta,
+            motivo,
+            modalidad,
+            resolucion,
+            pagos: pagosCentavos.map((pago) => ({
+              forma_pago: pago.formaPago,
+              monto_centavos: pago.montoCentavos,
+            })),
+            items: items.map((item) => ({
+              producto_id: item.id,
+              cantidad: item.cantidad,
+              precio_unitario_sin_iva: item.precioSinIva,
+              iva_porcentaje: item.ivaPorcentaje,
+            })),
+          }
+        : {
+            idempotency_key: key,
+            sucursal_id: sucursalId,
+            cliente_id: clienteId,
+            periodo_desde: desde,
+            periodo_hasta: hasta,
+            motivo,
+            modalidad,
+            resolucion,
+            pagos: pagosCentavos.map((pago) => ({
+              forma_pago: pago.formaPago,
+              monto_centavos: pago.montoCentavos,
+            })),
+            items: [
+              {
+                producto_id: null,
+                descripcion: concepto,
+                cantidad: 1,
+                precio_unitario_sin_iva: importeConcepto ?? 0,
+                iva_porcentaje: ivaConcepto,
+              },
+            ] as const,
+          };
+    const validacion = notaCreditoPeriodoInputSchema.safeParse(input);
+    if (!validacion.success) {
+      const campo = campoDeIssue(validacion.error.issues[0]?.path ?? [], modalidad);
+      marcarErrorCampo(campo, MENSAJES_CAMPO[campo]);
+      return;
+    }
     try {
       validarLiquidacionNotaCreditoPeriodo({
-        resolucion,
+        resolucion: validacion.data.resolucion,
         totalCentavos: totales.totalCentavos,
         pagos: pagosCentavos,
-        clienteId,
+        clienteId: validacion.data.cliente_id,
       });
-      const key = idempotencyKey ?? crypto.randomUUID();
       if (idempotencyKey === null) setIdempotencyKey(key);
-      const input =
-        modalidad === "DEVOLUCION_PRODUCTOS"
-          ? {
-              idempotency_key: key,
-              sucursal_id: sucursalId,
-              cliente_id: clienteId,
-              periodo_desde: desde,
-              periodo_hasta: hasta,
-              motivo,
-              modalidad,
-              resolucion,
-              pagos: pagosCentavos.map((pago) => ({
-                forma_pago: pago.formaPago,
-                monto_centavos: pago.montoCentavos,
-              })),
-              items: items.map((item) => ({
-                producto_id: item.id,
-                cantidad: item.cantidad,
-                precio_unitario_sin_iva: item.precioSinIva,
-                iva_porcentaje: item.ivaPorcentaje,
-              })),
-            }
-          : {
-              idempotency_key: key,
-              sucursal_id: sucursalId,
-              cliente_id: clienteId,
-              periodo_desde: desde,
-              periodo_hasta: hasta,
-              motivo,
-              modalidad,
-              resolucion,
-              pagos: pagosCentavos.map((pago) => ({
-                forma_pago: pago.formaPago,
-                monto_centavos: pago.montoCentavos,
-              })),
-              items: [
-                {
-                  producto_id: null,
-                  descripcion: concepto,
-                  cantidad: 1,
-                  precio_unitario_sin_iva: importeConcepto ?? 0,
-                  iva_porcentaje: ivaConcepto,
-                },
-              ] as const,
-            };
-      const validacion = notaCreditoPeriodoInputSchema.safeParse(input);
-      if (!validacion.success) {
-        const campo = campoDeIssue(validacion.error.issues[0]?.path ?? [], modalidad);
-        marcarErrorCampo(campo, MENSAJES_CAMPO[campo]);
-        return;
-      }
       const intento = { payload: validacion.data };
       setIntentoPendiente(intento);
       void enviarIntento(intento);
     } catch {
-      const campo = resolucion === "REINTEGRO" ? "reintegros" : "items";
-      marcarErrorCampo(campo, MENSAJES_CAMPO[campo]);
+      marcarErrorCampo("reintegros", MENSAJES_CAMPO.reintegros);
     }
   };
 

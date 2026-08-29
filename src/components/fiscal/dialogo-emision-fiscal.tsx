@@ -233,10 +233,7 @@ export function DialogoEmisionFiscal({
   const esNota =
     contexto.tipoComprobante === "NOTA_CREDITO" || contexto.tipoComprobante === "NOTA_DEBITO";
   const esNcPeriodo = contexto.tipoComprobante === "NOTA_CREDITO" && !!contexto.asociacionPeriodo;
-  const detallePeriodoBloquea =
-    esNcPeriodo &&
-    detalleAutoritativoPeriodo !== undefined &&
-    detalleAutoritativoPeriodo.estado !== "LISTO";
+  const detallePeriodoBloquea = esNcPeriodo && detalleAutoritativoPeriodo?.estado !== "LISTO";
   const consultarCuit =
     onConsultarCuit ??
     (async (input: { sucursalId: string; cuit: string }) => {
@@ -382,6 +379,7 @@ export function DialogoEmisionFiscal({
   };
 
   const preparar = async () => {
+    if (detallePeriodoBloquea) return;
     const letraSolicitada = esNcPeriodo
       ? ({ origen: "AUTOMATICA_NC_PERIODO" } as const)
       : confirmacion.letraSolicitada;
@@ -425,6 +423,7 @@ export function DialogoEmisionFiscal({
 
   const confirmar = async () => {
     if (
+      detallePeriodoBloquea ||
       !preview ||
       !confirmacion.huellaConfirmacion ||
       (!esNcPeriodo && !confirmacion.letraSolicitada) ||

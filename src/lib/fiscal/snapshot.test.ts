@@ -5,11 +5,14 @@ import {
   calcularHashSnapshotFiscal,
   crearSnapshotFiscal,
   crearSnapshotFiscalV2,
+  crearSnapshotFiscalV3,
   identidadReservaCoincide,
   resolverReceptorFiscalLegacy,
   serializarSnapshotFiscal,
   sha256HexUtf8,
+  validarSnapshotFiscalPersistido,
   validarSnapshotFiscalV2,
+  validarSnapshotFiscalV3,
 } from "./snapshot";
 
 it("congela CUIT e información del emisor correcto", () => {
@@ -343,10 +346,11 @@ const parityFixture = JSON.parse(
 };
 
 function inputV2() {
-  const { hash: _hash, version: _version, ...input } = structuredClone(parityFixture.input) as Record<
-    string,
-    unknown
-  >;
+  const {
+    hash: _hash,
+    version: _version,
+    ...input
+  } = structuredClone(parityFixture.input) as Record<string, unknown>;
   return input;
 }
 
@@ -405,6 +409,152 @@ function inputV2ConReceptorRi() {
   return input;
 }
 
+function inputV2SinTributos() {
+  const input = inputV2() as any;
+  input.items = input.items.map((item: any) => ({
+    ...item,
+    productoId: item.productoId ?? "71000000-0000-4000-8000-000000000102",
+  }));
+  input.importeTributos = "0.00";
+  input.importeTotal = "1360.00";
+  input.tributos = [];
+  input.otrosImpuestosNacionalesIndirectos = "0.00";
+  return input;
+}
+
+function inputV3() {
+  const input = structuredClone(crearSnapshotFiscalV2(inputV2SinTributos())) as any;
+  delete input.version;
+  delete input.hash;
+  delete input.origen;
+  delete input.comprobanteOriginalId;
+  delete input.cbtesAsoc;
+  input.venta.tipoComprobante = "NOTA_CREDITO";
+  input.identidad.cbteTipo = 8;
+  input.periodoAsoc = { desde: "2026-08-01", hasta: "2026-08-20" };
+  input.notaCredito = {
+    modalidad: "DEVOLUCION_PRODUCTOS",
+    motivo: "Devolución de productos del período",
+  };
+  return input;
+}
+
+describe("snapshot fiscal v3 por período", () => {
+  it("congela exactamente el contrato fiscal por período sin resolución comercial", () => {
+    const v2 = crearSnapshotFiscalV2(inputV2SinTributos());
+    const snapshot = crearSnapshotFiscalV3(inputV3());
+
+    expect(Object.keys(snapshot)).toEqual([
+      "version",
+      "hash",
+      "venta",
+      "items",
+      "emisor",
+      "sucursal",
+      "receptor",
+      "identidad",
+      "letra",
+      "concepto",
+      "fechaComprobante",
+      "importeNeto",
+      "importeExento",
+      "importeNoGravado",
+      "importeIva",
+      "importeTributos",
+      "importeTotal",
+      "alicuotasIva",
+      "tributos",
+      "moneda",
+      "cotizacion",
+      "ivaContenido",
+      "otrosImpuestosNacionalesIndirectos",
+      "origen",
+      "comprobanteOriginalId",
+      "cbtesAsoc",
+      "periodoAsoc",
+      "notaCredito",
+    ]);
+    expect(snapshot).toMatchObject({
+      version: 3,
+      origen: "PERIODO_ASOCIADO",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+      periodoAsoc: { desde: "2026-08-01", hasta: "2026-08-20" },
+      notaCredito: {
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Devolución de productos del período",
+      },
+    });
+    expect(snapshot).not.toHaveProperty("resolucion");
+    expect(snapshot.notaCredito).not.toHaveProperty("resolucion");
+    expect(snapshot.importeTotal).toBe(v2.importeTotal);
+    expect(Number(snapshot.importeTotal)).toBeGreaterThan(0);
+    expect(snapshot.importeNeto).toBe(v2.importeNeto);
+    expect(snapshot.importeIva).toBe(v2.importeIva);
+    expect(snapshot.items).toEqual(v2.items);
+    expect(snapshot.receptor).toEqual(v2.receptor);
+    expect(snapshot.identidad).toEqual({ ...v2.identidad, cbteTipo: 8 });
+    expect(validarSnapshotFiscalV3(snapshot)).toEqual(snapshot);
+  });
+
+  it.each([
+    ["fecha inicial inexistente", (value: any) => (value.periodoAsoc.desde = "2026-02-30")],
+    ["fecha final inexistente", (value: any) => (value.periodoAsoc.hasta = "2026-02-30")],
+    ["período invertido", (value: any) => (value.periodoAsoc.desde = "2026-08-21")],
+    ["período posterior a la emisión", (value: any) => (value.periodoAsoc.hasta = "2026-08-23")],
+    ["motivo corto", (value: any) => (value.notaCredito.motivo = " abc ")],
+    ["modalidad desconocida", (value: any) => (value.notaCredito.modalidad = "OTRA")],
+    ["comprobante que no es NC", (value: any) => (value.venta.tipoComprobante = "VENTA")],
+    ["CbteTipo no estándar", (value: any) => (value.identidad.cbteTipo = 7)],
+  ])("rechaza %s", (_caso, mutar) => {
+    const input = inputV3();
+    mutar(input);
+    expect(() => crearSnapshotFiscalV3(input)).toThrow();
+  });
+
+  it("falla cerrado ante claves faltantes/desconocidas, orden no canónico y tampering", () => {
+    const snapshot = crearSnapshotFiscalV3(inputV3()) as any;
+
+    expect(() => validarSnapshotFiscalV3({ ...snapshot, resolucion: "REINTEGRO" })).toThrow(
+      /clave|desconocida|faltante/i,
+    );
+
+    const sinPeriodo = structuredClone(snapshot);
+    delete sinPeriodo.periodoAsoc;
+    expect(() => validarSnapshotFiscalV3(sinPeriodo)).toThrow(/clave|desconocida|faltante/i);
+
+    const desordenado = structuredClone(snapshot);
+    desordenado.items.reverse();
+    expect(() => validarSnapshotFiscalV3(desordenado)).toThrow(/orden canónico/i);
+
+    const adulterado = structuredClone(snapshot);
+    adulterado.notaCredito.motivo = adulterado.notaCredito.motivo.replace("p", "P");
+    expect(() => validarSnapshotFiscalV3(adulterado)).toThrow(/hash/i);
+  });
+
+  it("serializa dos veces el mismo input con exactamente los mismos bytes y hash", () => {
+    const primero = crearSnapshotFiscalV3(inputV3());
+    const segundo = crearSnapshotFiscalV3(inputV3());
+    const { hash: _hashPrimero, ...cuerpoPrimero } = primero;
+    const { hash: _hashSegundo, ...cuerpoSegundo } = segundo;
+
+    expect(serializarSnapshotFiscal(cuerpoPrimero)).toBe(serializarSnapshotFiscal(cuerpoSegundo));
+    expect(JSON.stringify(primero)).toBe(JSON.stringify(segundo));
+    expect(primero.hash).toBe(segundo.hash);
+  });
+
+  it("despacha snapshots persistidos v2/v3 sin ampliar el validador v2", () => {
+    const v2 = crearSnapshotFiscalV2(inputV2() as never);
+    const v3 = crearSnapshotFiscalV3(inputV3());
+
+    expect(validarSnapshotFiscalPersistido(v2)).toEqual(v2);
+    expect(validarSnapshotFiscalPersistido(v3)).toEqual(v3);
+    expect(() => validarSnapshotFiscalV2(v3)).toThrow(/versión 2/i);
+    expect(() => validarSnapshotFiscalPersistido(snapshotFacturaBHistorica)).toThrow(/versión/i);
+    expect(() => validarSnapshotFiscalPersistido({ ...v3, version: 4 })).toThrow(/versión/i);
+  });
+});
+
 describe("snapshot fiscal v2", () => {
   it.each([
     ["", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
@@ -438,7 +588,13 @@ describe("snapshot fiscal v2", () => {
       ...base.alicuotasIva,
     ];
     base.tributos = [
-      { id: 2, descripcion: "Tasa nacional", baseImponible: "100.00", alicuota: "5.00", importe: "5.00" },
+      {
+        id: 2,
+        descripcion: "Tasa nacional",
+        baseImponible: "100.00",
+        alicuota: "5.00",
+        importe: "5.00",
+      },
       ...base.tributos,
     ];
     base.importeNeto = "1100.00";
@@ -884,9 +1040,7 @@ describe("snapshot fiscal v2", () => {
   });
 
   it("nunca ejecuta accessors de índices de arrays", () => {
-    const ejecutar = (
-      operacion: (array: unknown[], input: Record<string, unknown>) => unknown,
-    ) => {
+    const ejecutar = (operacion: (array: unknown[], input: Record<string, unknown>) => unknown) => {
       const input = inputV2() as any;
       const items = structuredClone(input.items) as unknown[];
       const primero = items[0];
@@ -953,6 +1107,6 @@ describe("snapshot fiscal v2", () => {
   });
 
   it("ordena claves por bytes UTF-8 y no por el orden de inserción", () => {
-    expect(serializarSnapshotFiscal({ "á": 1, a: 2 })).toBe('{"a":2,"á":1}');
+    expect(serializarSnapshotFiscal({ á: 1, a: 2 })).toBe('{"a":2,"á":1}');
   });
 });

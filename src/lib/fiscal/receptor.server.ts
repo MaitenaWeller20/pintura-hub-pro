@@ -23,7 +23,7 @@ export type VentaParaReceptor = {
   } | null;
   tipoComprobante: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO";
   comprobanteOriginalId: string | null;
-  asociacion?: AsociacionPreparadaFiscal;
+  asociacion: AsociacionPreparadaFiscal;
 };
 
 export type FavoritoFiscalRow = {
@@ -178,11 +178,7 @@ export async function resolverReceptorFiscal(input: {
   if (input.venta.tipoComprobante === "NOTA_DEBITO") {
     throw new Error("Las notas de débito nuevas no están habilitadas en el motor fiscal v2.");
   }
-  const asociacion =
-    input.venta.asociacion ??
-    (input.venta.comprobanteOriginalId
-      ? ({ tipo: "COMPROBANTE" } as const)
-      : ({ tipo: "NINGUNA" } as const));
+  const asociacion = input.venta.asociacion;
   if (input.venta.tipoComprobante === "NOTA_CREDITO" && asociacion.tipo === "COMPROBANTE") {
     if (input.selector.origen !== "COMPROBANTE_ORIGINAL") {
       throw new Error("La nota de crédito exige exactamente el selector COMPROBANTE_ORIGINAL.");

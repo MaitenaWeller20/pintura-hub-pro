@@ -18,6 +18,7 @@ const venta = {
   },
   tipoComprobante: "VENTA" as const,
   comprobanteOriginalId: null,
+  asociacion: { tipo: "NINGUNA" as const },
 };
 
 const receptorPadron = (cambios: Partial<ReceptorPadronArca> = {}): ReceptorPadronArca => ({
@@ -479,6 +480,7 @@ describe("resolución server de receptor fiscal", () => {
         ...venta,
         tipoComprobante: "NOTA_CREDITO",
         comprobanteOriginalId: "original",
+        asociacion: { tipo: "COMPROBANTE", original: snapshotOriginal },
       },
       importeTotal: 100,
       letraSolicitada: "B",
@@ -561,7 +563,12 @@ describe("resolución server de receptor fiscal", () => {
           guardar_para_proximas: false,
           confirma_datos_manuales: true,
         },
-        venta: { ...venta, tipoComprobante: "NOTA_CREDITO", comprobanteOriginalId: "original" },
+        venta: {
+          ...venta,
+          tipoComprobante: "NOTA_CREDITO",
+          comprobanteOriginalId: "original",
+          asociacion: { tipo: "COMPROBANTE", original: snapshotOriginal },
+        },
         importeTotal: 100,
         letraSolicitada: "B",
         ...deps,

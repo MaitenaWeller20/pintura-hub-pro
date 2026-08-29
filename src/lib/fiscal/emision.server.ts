@@ -470,6 +470,7 @@ export async function construirPreviewBorradorFiscalProvisional(
       cliente,
       tipoComprobante: "VENTA",
       comprobanteOriginalId: null,
+      asociacion: { tipo: "NINGUNA" },
     },
     importeTotal: total,
     letraSolicitada: input.letraSolicitada,

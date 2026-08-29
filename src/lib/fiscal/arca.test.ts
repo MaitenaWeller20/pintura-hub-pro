@@ -1,13 +1,7 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  crearSnapshotFiscalV3,
-  type SnapshotFiscalPersistido,
-  type SnapshotFiscalV2,
-  type SnapshotFiscalV3,
-  type SnapshotFiscalV3Input,
-} from "./snapshot";
+import { type SnapshotFiscalPersistido, type SnapshotFiscalV2 } from "./snapshot";
 import { conTimeoutArca, crearPayloadCaeDesdeSnapshot, normalizarComprobanteArca } from "./arca";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 
 export const snapshotFiscalFixture = {
   version: 2,
@@ -117,40 +111,6 @@ export const resultGetFixture = {
   },
 };
 
-function crearSnapshotFiscalV3Fixture(): SnapshotFiscalV3 {
-  const fixture = JSON.parse(
-    readFileSync(
-      new URL("../../../test/fixtures/fiscal-snapshot-parity-v2.json", import.meta.url),
-      "utf8",
-    ),
-  ) as { input: Record<string, unknown> };
-  const input = structuredClone(fixture.input);
-  delete input.version;
-  delete input.hash;
-  delete input.origen;
-  delete input.comprobanteOriginalId;
-  delete input.cbtesAsoc;
-  const venta = input.venta as Record<string, unknown>;
-  const items = input.items as Array<Record<string, unknown>>;
-  const identidad = input.identidad as Record<string, unknown>;
-  venta.tipoComprobante = "NOTA_CREDITO";
-  input.items = items.map((item) => ({
-    ...item,
-    productoId: item.productoId ?? "71000000-0000-4000-8000-000000000199",
-  }));
-  identidad.cbteTipo = 8;
-  input.importeTributos = "0.00";
-  input.importeTotal = "1360.00";
-  input.tributos = [];
-  input.otrosImpuestosNacionalesIndirectos = "0.00";
-  input.periodoAsoc = { desde: "2026-08-01", hasta: "2026-08-15" };
-  input.notaCredito = {
-    modalidad: "DEVOLUCION_PRODUCTOS",
-    motivo: "Devolución de productos del período",
-  };
-  return crearSnapshotFiscalV3(input as SnapshotFiscalV3Input);
-}
-
 describe("adaptador fiscal ARCA", () => {
   it("expone el timeout compartido sin alterar una respuesta del SDK que llega a tiempo", async () => {
     await expect(conTimeoutArca(Promise.resolve("respuesta SDK"), "prueba")).resolves.toBe(
@@ -195,6 +155,21 @@ describe("adaptador fiscal ARCA", () => {
       FchHasta: "20260815",
     });
     expect(detalle).not.toHaveProperty("CbtesAsoc");
+  });
+
+  it("proyecta una NC C sin discriminar IVA comercial", () => {
+    const detalle = crearPayloadCaeDesdeSnapshot(crearSnapshotFiscalV3Fixture({ letra: "C" }));
+
+    expect(detalle).toMatchObject({
+      CbteTipo: 13,
+      ImpTotal: 1360,
+      ImpTotConc: 0,
+      ImpNeto: 1360,
+      ImpOpEx: 0,
+      ImpIVA: 0,
+      ImpTrib: 0,
+    });
+    expect(detalle).not.toHaveProperty("Iva");
   });
 
   it("una factura v2 ordinaria no emite ninguna asociación", () => {

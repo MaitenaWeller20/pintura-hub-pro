@@ -11,9 +11,11 @@ import {
   type SolicitudCaeFiscal,
 } from "./emision";
 import type { SelectorReceptorFiscal } from "./receptor";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import type { SnapshotFiscalPersistido, SnapshotFiscalV2 } from "./snapshot";
 import { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
 import { crearErrorFiscalUsuario } from "./error-usuario";
+import { crearPayloadCaeDesdeSnapshot } from "./arca";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 
 const MANUAL_A: SelectorReceptorFiscal = {
   origen: "MANUAL",
@@ -131,7 +133,7 @@ class FiscalDouble {
   version = 0;
   claim: string | null = null;
   numero: number | null = null;
-  persistedSnapshot: SnapshotFiscalV2 | null = null;
+  persistedSnapshot: SnapshotFiscalPersistido | null = null;
   tipo: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO" = "VENTA";
   asociacionOverride: AsociacionPreparadaFiscal | null = null;
   simulado = false;
@@ -157,7 +159,7 @@ class FiscalDouble {
   conflictosSecuenciaRestantes = 0;
   reservaAjenaActiva = false;
   commitThenThrowOnce: AccionTransicionFiscal | null = null;
-  preparedSnapshot: SnapshotFiscalV2 | null = null;
+  preparedSnapshot: SnapshotFiscalPersistido | null = null;
   nextClaim = 1;
   estadoActual = "SIN_FACTURAR";
   faseActual: string | null = null;
@@ -212,7 +214,7 @@ class FiscalDouble {
       payloadHash: this.persistedSnapshot.hash,
       emisorCuit: "30714199664",
       puntoVenta: 5,
-      cbteTipo: this.tipo === "NOTA_CREDITO" ? 3 : 1,
+      cbteTipo: this.persistedSnapshot.identidad.cbteTipo,
       modo: "PRODUCCION",
     };
   }
@@ -321,7 +323,7 @@ class FiscalDouble {
             return this.confirmarTransicion(accion, "ERROR_CORREGIBLE", null);
           }
           this.numero = payload.numero_propuesto as number;
-          this.persistedSnapshot = structuredClone(payload.snapshot as SnapshotFiscalV2);
+          this.persistedSnapshot = structuredClone(payload.snapshot as SnapshotFiscalPersistido);
           this.ultimoLocal = Math.max(this.ultimoLocal, this.numero);
           this.version += 1;
           return this.confirmarTransicion(accion, "EMITIENDO", "RESERVADO");
@@ -403,6 +405,82 @@ function acciones(doble: FiscalDouble): string[] {
 }
 
 describe("ejecutarEmisionFiscal", () => {
+  it.each([
+    ["A", 3, MANUAL_A],
+    ["B", 8, MANUAL_B],
+    ["C", 13, MANUAL_B],
+  ] as const)(
+    "reserva snapshot v3 %s y llega a REQUEST_INICIADO usando sólo su payload",
+    async (letra, cbteTipo, receptor) => {
+      const doble = new FiscalDouble();
+      doble.tipo = "NOTA_CREDITO";
+      doble.asociacionOverride = {
+        tipo: "PERIODO",
+        desde: "2026-08-01",
+        hasta: "2026-08-15",
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Devolución de productos del período",
+        resolucion: "REINTEGRO",
+      };
+      const snapshotV3 = crearSnapshotFiscalV3Fixture({ letra });
+      const deps = doble.deps();
+      const prepararBase = deps.prepararEmision;
+      deps.prepararEmision = async (input) => {
+        const preparada = await prepararBase(input);
+        const confirmacion = {
+          ...preparada.confirmacionAutoritativa,
+          letra,
+          cbteTipo,
+          cbteAsoc: null,
+        };
+        return {
+          ...preparada,
+          cbteTipo,
+          confirmacionAutoritativa: confirmacion,
+          huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacion),
+        };
+      };
+      deps.crearSnapshot = async () => snapshotV3;
+      deps.crearPayloadCae = crearPayloadCaeDesdeSnapshot;
+      const preparada = await deps.prepararEmision({
+        ventaId: snapshotV3.venta.id,
+        receptor,
+        seleccionLetra: { origen: "AUTOMATICA_NC_PERIODO" },
+      });
+
+      const resultado = await ejecutarEmisionFiscal(
+        {
+          ventaId: snapshotV3.venta.id,
+          receptor,
+          letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: preparada.huellaConfirmacion,
+        },
+        deps,
+      );
+
+      expect(resultado.estado).toBe("APROBADO");
+      expect(acciones(doble)).toContain("REQUEST_INICIADO");
+      expect(doble.payloadsCae[0]?.reserva.snapshot).toEqual(snapshotV3);
+      expect(doble.payloadsCae[0]?.payload).toMatchObject({ CbteTipo: cbteTipo });
+      if (letra === "C") {
+        expect(doble.payloadsCae[0]?.payload).toMatchObject({
+          ImpTotal: 1360,
+          ImpNeto: 1360,
+          ImpIVA: 0,
+        });
+        expect(doble.payloadsCae[0]?.payload).not.toHaveProperty("Iva");
+      } else {
+        expect(doble.payloadsCae[0]?.payload).toMatchObject({
+          ImpTotal: 1360,
+          ImpNeto: 1000,
+          ImpIVA: 210,
+          Iva: [{ Id: 5, BaseImp: 1000, Importe: 210 }],
+        });
+      }
+    },
+  );
+
   it("rechaza una NC sin asociación antes de reclamar", async () => {
     const doble = new FiscalDouble();
     doble.tipo = "NOTA_CREDITO";

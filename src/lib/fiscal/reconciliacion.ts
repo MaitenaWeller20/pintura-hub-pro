@@ -1,5 +1,6 @@
 import type { ComprobanteArcaConsultado } from "./arca";
 import type { SnapshotFiscalPersistido, SnapshotFiscalV2 } from "./snapshot";
+import { proyectarSnapshotParaArca } from "./proyeccion-arca";
 
 export type DecisionConciliacion =
   | { accion: "RECUPERAR_CAE"; cae: string; vencimiento: string | null }
@@ -98,6 +99,7 @@ export function compararSnapshotConArca(
   remoto: ComprobanteArcaConsultado,
 ): string[] {
   const diferencias: string[] = [];
+  const proyeccion = proyectarSnapshotParaArca(snapshot);
   agregarSiDifiere(
     diferencias,
     "identidad.puntoVenta",
@@ -121,19 +123,24 @@ export function compararSnapshotConArca(
     remoto.condicionIvaReceptorId,
   );
   agregarSiDifiere(diferencias, "fechaComprobante", snapshot.fechaComprobante, remoto.fecha);
-  agregarSiDifiere(diferencias, "importeTotal", snapshot.importeTotal, remoto.total);
-  agregarSiDifiere(diferencias, "importeNeto", snapshot.importeNeto, remoto.neto);
-  agregarSiDifiere(diferencias, "importeExento", snapshot.importeExento, remoto.exento);
-  agregarSiDifiere(diferencias, "importeNoGravado", snapshot.importeNoGravado, remoto.noGravado);
-  agregarSiDifiere(diferencias, "importeIva", snapshot.importeIva, remoto.iva);
-  agregarSiDifiere(diferencias, "importeTributos", snapshot.importeTributos, remoto.tributosTotal);
+  agregarSiDifiere(diferencias, "importeTotal", proyeccion.importeTotal, remoto.total);
+  agregarSiDifiere(diferencias, "importeNeto", proyeccion.importeNeto, remoto.neto);
+  agregarSiDifiere(diferencias, "importeExento", proyeccion.importeExento, remoto.exento);
+  agregarSiDifiere(diferencias, "importeNoGravado", proyeccion.importeNoGravado, remoto.noGravado);
+  agregarSiDifiere(diferencias, "importeIva", proyeccion.importeIva, remoto.iva);
+  agregarSiDifiere(
+    diferencias,
+    "importeTributos",
+    proyeccion.importeTributos,
+    remoto.tributosTotal,
+  );
   agregarSiDifiere(diferencias, "moneda", snapshot.moneda, remoto.moneda);
   agregarSiDifiere(diferencias, "cotizacion", snapshot.cotizacion, remoto.cotizacion);
 
   compararColeccion(
     diferencias,
     "alicuotasIva",
-    snapshot.alicuotasIva,
+    proyeccion.alicuotasIva,
     remoto.alicuotas,
     compararAlicuotaLocal,
     compararAlicuotaRemota,
@@ -146,7 +153,7 @@ export function compararSnapshotConArca(
   compararColeccion(
     diferencias,
     "tributos",
-    snapshot.tributos,
+    proyeccion.tributos,
     remoto.tributos,
     compararTributoLocal,
     compararTributoRemoto,

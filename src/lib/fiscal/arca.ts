@@ -4,6 +4,7 @@ import { TIPOS_C, CONCEPTO_PRODUCTOS } from "./codigos";
 import { SupabaseTicketStorage } from "./ticket-storage";
 import type { AlicuotaAfip } from "./iva";
 import { validarSnapshotFiscalV3, type SnapshotFiscalPersistido } from "./snapshot";
+import { proyectarSnapshotParaArca } from "./proyeccion-arca";
 import {
   entornoHabilitaMockFiscal,
   entornoMockFiscalDelProceso,
@@ -476,6 +477,7 @@ export function crearPayloadCaeDesdeSnapshot(
   snapshot: SnapshotFiscalPersistido,
 ): Record<string, unknown> {
   const snapshotValidado = snapshot.version === 3 ? validarSnapshotFiscalV3(snapshot) : snapshot;
+  const proyeccion = proyectarSnapshotParaArca(snapshotValidado);
   const payload: Record<string, unknown> = {
     CantReg: 1,
     PtoVta: snapshotValidado.identidad.puntoVenta,
@@ -486,24 +488,24 @@ export function crearPayloadCaeDesdeSnapshot(
     CbteDesde: snapshotValidado.identidad.numero,
     CbteHasta: snapshotValidado.identidad.numero,
     CbteFch: snapshotValidado.fechaComprobante.replaceAll("-", ""),
-    ImpTotal: Number(snapshotValidado.importeTotal),
-    ImpTotConc: Number(snapshotValidado.importeNoGravado),
-    ImpNeto: Number(snapshotValidado.importeNeto),
-    ImpOpEx: Number(snapshotValidado.importeExento),
-    ImpIVA: Number(snapshotValidado.importeIva),
-    ImpTrib: Number(snapshotValidado.importeTributos),
+    ImpTotal: Number(proyeccion.importeTotal),
+    ImpTotConc: Number(proyeccion.importeNoGravado),
+    ImpNeto: Number(proyeccion.importeNeto),
+    ImpOpEx: Number(proyeccion.importeExento),
+    ImpIVA: Number(proyeccion.importeIva),
+    ImpTrib: Number(proyeccion.importeTributos),
     MonId: snapshotValidado.moneda,
     MonCotiz: Number(snapshotValidado.cotizacion),
     CondicionIVAReceptorId: snapshotValidado.receptor.condicionIvaReceptorId,
   };
-  if (snapshotValidado.alicuotasIva.length > 0)
-    payload.Iva = snapshotValidado.alicuotasIva.map((row) => ({
+  if (proyeccion.alicuotasIva.length > 0)
+    payload.Iva = proyeccion.alicuotasIva.map((row) => ({
       Id: row.id,
       BaseImp: Number(row.baseImponible),
       Importe: Number(row.importe),
     }));
-  if (snapshotValidado.tributos.length > 0)
-    payload.Tributos = snapshotValidado.tributos.map((row) => ({
+  if (proyeccion.tributos.length > 0)
+    payload.Tributos = proyeccion.tributos.map((row) => ({
       Id: row.id,
       Desc: row.descripcion,
       BaseImp: Number(row.baseImponible),
@@ -871,7 +873,7 @@ export async function solicitarCae(
 }
 
 /**
- * Writer v2: el único detalle enviado es el que Task 8 tradujo desde el
+ * Writer de snapshot persistido: el único detalle enviado es el que el motor tradujo desde el
  * Snapshot persistido. A diferencia del adaptador legacy, no reconstruye
  * importes, tributos ni asociaciones.
  */

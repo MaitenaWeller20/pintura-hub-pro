@@ -1329,7 +1329,10 @@ function validarCuerpoV3(
   if (!["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"].includes(String(notaCredito.modalidad))) {
     throw new Error("notaCredito.modalidad es desconocida.");
   }
-  const motivo = texto(notaCredito.motivo, "notaCredito.motivo")!;
+  if (typeof notaCredito.motivo !== "string") {
+    throw new Error("notaCredito.motivo debe ser texto.");
+  }
+  const motivo = notaCredito.motivo;
   const longitudMotivo = longitudMotivoFiscal(motivo);
   if (longitudMotivo < 5 || longitudMotivo > 500) {
     throw new Error("notaCredito.motivo debe tener entre 5 y 500 code points útiles.");

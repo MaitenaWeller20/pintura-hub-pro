@@ -121,6 +121,10 @@ expect_v3_invalido "rechaza tab/newline corto con whitespace fiscal" '.notaCredi
 expect_v3_invalido "rechaza cuatro code points aunque UTF-16 mida cinco" '.notaCredito.motivo="😀abc"' 'motivo'
 expect_v3_valido "acepta exactamente cinco code points" "$(snapshot_con_motivo 'abcde')"
 expect_v3_valido "acepta cinco code points con emoji" "$(snapshot_con_motivo '😀abcd')"
+NBSP_CINCO=$'\u00a0\u00a0\u00a0\u00a0\u00a0'
+EM_SPACE_CINCO=$'\u2003\u2003\u2003\u2003\u2003'
+expect_v3_valido "acepta cinco NBSP fuera del whitespace fiscal" "$(snapshot_con_motivo "$NBSP_CINCO")"
+expect_v3_valido "acepta cinco EM SPACE fuera del whitespace fiscal" "$(snapshot_con_motivo "$EM_SPACE_CINCO")"
 expect_v3_valido "acepta motivo de 500 code points" "$(snapshot_con_motivo "$(printf 'a%.0s' {1..500})")"
 expect_fail_like "rechaza motivo de 501 code points" "motivo" \
   "SELECT public.validar_snapshot_fiscal_v3('$(snapshot_con_motivo "$(printf 'a%.0s' {1..501})")'::jsonb);"

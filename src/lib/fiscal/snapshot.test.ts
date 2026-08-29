@@ -583,6 +583,8 @@ describe("snapshot fiscal v3 por período", () => {
     ["emoji de cuatro code points", "😀abc", false],
     ["límite inferior ASCII", "abcde", true],
     ["límite inferior Unicode", "😀abcd", true],
+    ["cinco NBSP fuera del whitespace fiscal", "\u00a0".repeat(5), true],
+    ["cinco EM SPACE fuera del whitespace fiscal", "\u2003".repeat(5), true],
     ["límite superior", "a".repeat(500), true],
     ["sobre el límite superior", "a".repeat(501), false],
   ])("aplica longitud 5..500 por code points al motivo: %s", (_caso, motivo, valido) => {

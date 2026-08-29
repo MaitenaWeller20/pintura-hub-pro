@@ -140,3 +140,135 @@ también es basal.
   para Tarea 11; aquí sólo se fijaron códigos transportables y fail-closed.
 - `nota_credito_periodo_enabled` permanece apagado. No hubo deploy, push,
   producción, certificados ni llamadas a ARCA real.
+
+## Fix round 1 — rol durable y errores seguros
+
+Fecha: 2026-08-29
+
+Base de la ronda: `a494eb5643d3626dc30f6e483d98ef412716041b`
+
+Commit funcional: `1d38b5add56f6db8d1091ab6d912054989ea56d1` —
+`fix(fiscal): exigir rol empleado para NC por período`
+
+### Resultado
+
+La capacidad autoritativa ya no se deriva de tres booleanos huérfanos. La
+migración forward-only
+`20260829223057_exigir_rol_empleado_nc_periodo.sql`, creada con
+`supabase migration new`, recrea `puede_emitir_nc_periodo(uuid)` para que:
+
+- un administrador activo conserve la semántica efectiva anterior;
+- un empleado necesite el rol durable `user_roles.role='empleado'`, perfil
+  activo, `puede_facturar=true` y `puede_emitir_nc_periodo=true`;
+- un perfil sin rol o al que se le remueve el rol pierda capacidad de inmediato.
+
+La RPC `administrar_puede_emitir_nc_periodo(uuid,boolean)` sigue autenticando al
+admin activo dentro de PostgreSQL. Para habilitar toma lock del perfil y
+`FOR KEY SHARE` del rol empleado; si el destinatario no tiene ese rol rechaza
+con SQLSTATE estable `PNC01`. Deshabilitar sigue admitido para limpiar un flag
+obsoleto después de retirar el rol. El perfil inexistente usa `PNC02`. Ambas
+funciones preservan owner `postgres`, invoker/definer, `search_path=''`, firma,
+ACL para `authenticated`/`service_role` y revocación a `PUBLIC`/`anon`.
+
+Los fixtures SQL que representan empleados ahora insertan roles `empleado`
+reales. Se agregaron casos explícitos de perfil sin rol, permiso almacenado sin
+rol, remoción posterior y empleado autorizado. El enum durable sólo contiene
+`admin` y `empleado`: el rol `admin` conserva su excepción contractual y la
+ausencia de `empleado` falla cerrada; el rol desconocido continúa cubierto en
+`use-current-user.test.ts`.
+
+La acción administrativa dejó de reenviar `error.message`. Ahora emite
+`ErrorAdministracionUsuario` con discriminante `codigo` y mensajes estables:
+destinatario no empleado, perfil inexistente o fallo genérico. `message`,
+`details`, `hint`, SQLSTATE inesperados, tablas y nombres de funciones no se
+serializan al navegador. La causa original queda retenida sólo en el proceso
+servidor mediante un `WeakMap`, sin ser propiedad del error transportable.
+
+### Archivos de la ronda
+
+- `supabase/migrations/20260829223057_exigir_rol_empleado_nc_periodo.sql`
+- `scripts/test-nota-credito-periodo-schema.sh`
+- `scripts/test-nota-credito-periodo-fiscal.sh`
+- `src/lib/usuarios.functions.ts`
+- `src/lib/usuarios.functions.test.ts`
+- este informe
+
+No se editaron migraciones históricas ni se cambió el writer ordinario, los
+permisos de facturación, la UI, PDF, ARCA o el estado apagado del feature flag.
+
+### TDD RED / GREEN
+
+RED de acción antes del cambio productivo:
+
+```text
+Test Files  1 failed (1)
+Tests       2 failed | 24 passed (26)
+```
+
+Los fallos mostraron literalmente `public.user_roles`, `profiles`, `schema`, el
+nombre de la RPC y SQLSTATE `42P01`. También se agregó el contrato allowlisted
+para `PNC02` antes del GREEN.
+
+RED SQL sobre la base previa a la migración:
+
+```text
+ERROR: un perfil sin rol empleado obtuvo capacidad efectiva
+ERROR: FALLO: los booleanos no habilitan a un perfil sin rol empleado
+       (error recibido: la operación fue aceptada)
+```
+
+GREEN focal final:
+
+```text
+Test Files  6 passed (6)
+Tests       126 passed | 8 skipped (134)
+```
+
+Los contratos SQL demostraron además que el admin activo sigue autorizado, un
+empleado real con ambas capacidades funciona, la asignación a un perfil sin rol
+se rechaza, el empleado no puede autoescalarse, retirar el rol revoca capacidad
+y creación, y el admin puede limpiar el booleano stale.
+
+### Verificaciones de la ronda
+
+- Supabase CLI `2.116.0`; se consultó la ayuda vigente de `migration new` y
+  `db lint` antes de ejecutar los comandos.
+- `npx supabase db reset --local`: OK; aplicó desde cero todas las migraciones,
+  incluida `20260829223057_exigir_rol_empleado_nc_periodo.sql`.
+- `bash scripts/test-nota-credito-periodo-schema.sh`: OK; incluye owner,
+  seguridad, `search_path`, ACL, admin, empleado, ausencia y remoción de rol.
+- `bash scripts/test-nota-credito-periodo-fiscal.sh`: OK; incluye creación
+  rechazada sin rol y después de removerlo, más idempotencia y carreras.
+- Regresiones Tareas 4/8: `test-venta-fiscal-atomica.sh`,
+  `test-fiscal-concurrencia.sh` (180 OK, 0 fallas),
+  `test-conflictos-emision-rest.sh`, `test-anulacion-fiscal-vinculada.sh`,
+  `test-anulacion-interna-idempotente.sh`, `test-liberar-claim-fiscal.sh`
+  (9 OK, 0 fallas) y `test-snapshot-fiscal-v3.sh`: OK.
+- `npm test`: 73 archivos pasados, 2 omitidos; 1563 pruebas pasadas y 22
+  omitidas.
+- `npm run typecheck`: OK.
+- Prettier y ESLint focal sobre `usuarios.functions.ts` y su test: OK.
+- `bash -n` sobre los dos scripts modificados: OK. `shellcheck` no está
+  instalado en este entorno y no se ejecutó.
+- `git diff --check` y `git diff --cached --check`: OK.
+
+`supabase db lint --local --schema public --level warning --fail-on error`
+mantiene un único diagnóstico basal: `42P01 relation "_objetivo" does not
+exist` en `public.cambiar_precios_masivo`, definida en migraciones de julio. No
+reportó un problema en las funciones de esta ronda y no se amplió el alcance
+para corregir esa deuda ajena.
+
+### Decisiones y riesgos de la ronda
+
+- La autorización de creación sigue usando la misma RPC idempotente; al recrear
+  el helper de capacidad, todos sus consumidores revalidan el rol en DB sin una
+  consulta previa susceptible a TOCTOU.
+- La asignación sólo exige rol al habilitar. Exigirlo también al deshabilitar
+  impediría sanear permisos almacenados después de retirar un rol.
+- Los códigos `PNC01`/`PNC02` son contrato servidor-servidor; la UI recibe sólo
+  discriminantes propios y mensajes seguros. El copy final de outage permanece
+  reservado para Tarea 11.
+- El índice UNIQUE existente de `user_roles(user_id,role)` cubre la consulta y
+  el lock exactos; no fue necesario agregar otro índice.
+- El flag `nota_credito_periodo_enabled` continúa apagado. No hubo push, deploy,
+  acceso a producción ni llamadas a ARCA real.

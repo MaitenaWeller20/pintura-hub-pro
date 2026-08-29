@@ -43,6 +43,9 @@ check "capacidad efectiva tiene una única firma invoker estable" "1|true|false|
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='_uid uuid')::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile)||'|'||min(array_to_string(p.proconfig,',')) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='puede_emitir_nc_periodo'")"
 check "administración tiene una única firma definer" "1|true|true" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_profile_id uuid, p_habilitado boolean')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='administrar_puede_emitir_nc_periodo'")"
+check "las RPC preservan owner postgres, modelo de seguridad y search_path vacío" \
+  "administrar_puede_emitir_nc_periodo:postgres:true:search_path=\"\"|puede_emitir_nc_periodo:postgres:false:search_path=\"\"" \
+  "$(q "select string_agg(p.proname||':'||pg_get_userbyid(p.proowner)||':'||p.prosecdef::text||':'||array_to_string(p.proconfig,','),'|' order by p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('puede_emitir_nc_periodo','administrar_puede_emitir_nc_periodo')")"
 check "las dos RPC sólo se exponen a roles internos autenticados" "false|true|true|false|true|true" \
   "$(q "select has_function_privilege('anon','public.puede_emitir_nc_periodo(uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.puede_emitir_nc_periodo(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.puede_emitir_nc_periodo(uuid)','execute')::text||'|'||has_function_privilege('anon','public.administrar_puede_emitir_nc_periodo(uuid,boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.administrar_puede_emitir_nc_periodo(uuid,boolean)','execute')::text||'|'||has_function_privilege('service_role','public.administrar_puede_emitir_nc_periodo(uuid,boolean)','execute')::text")"
 check "los guards de NC no son APIs invocables" "false|false|false|false|false|false" \
@@ -67,7 +70,10 @@ UPDATE public.profiles
   'a2100000-0000-0000-0000-000000000003'
  );
 INSERT INTO public.user_roles(user_id,role)
-VALUES ('a2100000-0000-0000-0000-000000000001','admin');
+VALUES
+  ('a2100000-0000-0000-0000-000000000001','admin'),
+  ('a2100000-0000-0000-0000-000000000002','empleado'),
+  ('a2100000-0000-0000-0000-000000000003','empleado');
 
 INSERT INTO public.clientes(id,razon_social)
 VALUES ('b2100000-0000-0000-0000-000000000001','CLIENTE NC PERIODO');
@@ -543,6 +549,22 @@ SELECT set_config('request.jwt.claims','{}',true);
 
 -- El admin activo es capaz aunque su flag almacenado sea false y administra al
 -- empleado sólo mediante las RPC privilegiadas.
+SELECT set_config('request.jwt.claims','{"sub":"a2100000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+UPDATE public.profiles
+   SET activo=true,puede_facturar=true,puede_emitir_nc_periodo=true
+ WHERE id='a2100000-0000-0000-0000-000000000004';
+SELECT set_config('request.jwt.claims','{}',true);
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"a2100000-0000-0000-0000-000000000004","role":"authenticated"}',true);
+DO $$
+BEGIN
+  IF public.puede_emitir_nc_periodo() THEN
+    RAISE EXCEPTION 'un perfil sin rol empleado obtuvo capacidad efectiva';
+  END IF;
+END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claims','{}',true);
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims','{"sub":"a2100000-0000-0000-0000-000000000001","role":"authenticated"}',true);
 DO $$
@@ -553,6 +575,25 @@ BEGIN
   IF (SELECT puede_emitir_nc_periodo FROM public.profiles
        WHERE id='a2100000-0000-0000-0000-000000000001') THEN
     RAISE EXCEPTION 'la prueba de admin no partió del flag almacenado false';
+  END IF;
+
+  BEGIN
+    PERFORM public.administrar_puede_emitir_nc_periodo(
+      'a2100000-0000-0000-0000-000000000004',true
+    );
+    RAISE EXCEPTION 'el admin asignó la capacidad a un perfil sin rol empleado'
+      USING ERRCODE='ZX001';
+  EXCEPTION WHEN SQLSTATE 'PNC01' THEN NULL;
+  END;
+END $$;
+SELECT public.administrar_puede_emitir_nc_periodo(
+  'a2100000-0000-0000-0000-000000000004',false
+);
+DO $$
+BEGIN
+  IF (SELECT puede_emitir_nc_periodo FROM public.profiles
+       WHERE id='a2100000-0000-0000-0000-000000000004') THEN
+    RAISE EXCEPTION 'el admin no pudo limpiar un permiso stale sin rol empleado';
   END IF;
 END $$;
 SELECT public.administrar_puede_emitir_nc_periodo(
@@ -590,6 +631,22 @@ BEGIN
 END $$;
 RESET ROLE;
 SELECT set_config('request.jwt.claims','{}',true);
+
+DELETE FROM public.user_roles
+ WHERE user_id='a2100000-0000-0000-0000-000000000002'
+   AND role='empleado';
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims','{"sub":"a2100000-0000-0000-0000-000000000002","role":"authenticated"}',true);
+DO $$
+BEGIN
+  IF public.puede_emitir_nc_periodo() THEN
+    RAISE EXCEPTION 'el perfil conservó capacidad después de perder el rol empleado';
+  END IF;
+END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claims','{}',true);
+INSERT INTO public.user_roles(user_id,role)
+VALUES ('a2100000-0000-0000-0000-000000000002','empleado');
 
 SET LOCAL ROLE service_role;
 SELECT set_config('request.jwt.claims','{"sub":"a2100000-0000-0000-0000-000000000001","role":"service_role"}',true);

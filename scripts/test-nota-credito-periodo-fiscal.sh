@@ -54,19 +54,30 @@ INSERT INTO auth.users(
  ('a2400000-0000-4000-8000-000000000003','00000000-0000-0000-0000-000000000000','authenticated','authenticated','nc-periodo-no-factura@test.local','x',now(),now(),now()),
  ('a2400000-0000-4000-8000-000000000004','00000000-0000-0000-0000-000000000000','authenticated','authenticated','nc-periodo-no-nc@test.local','x',now(),now(),now()),
  ('a2400000-0000-4000-8000-000000000005','00000000-0000-0000-0000-000000000000','authenticated','authenticated','nc-periodo-inactivo@test.local','x',now(),now(),now()),
- ('a2400000-0000-4000-8000-000000000006','00000000-0000-0000-0000-000000000000','authenticated','authenticated','nc-periodo-otro-actor@test.local','x',now(),now(),now());
+ ('a2400000-0000-4000-8000-000000000006','00000000-0000-0000-0000-000000000000','authenticated','authenticated','nc-periodo-otro-actor@test.local','x',now(),now(),now()),
+ ('a2400000-0000-4000-8000-000000000007','00000000-0000-0000-0000-000000000000','authenticated','authenticated','nc-periodo-sin-rol@test.local','x',now(),now(),now());
 
 INSERT INTO public.user_roles(user_id,role)
-VALUES ('a2400000-0000-4000-8000-000000000001','admin');
+VALUES
+ ('a2400000-0000-4000-8000-000000000001','admin'),
+ ('a2400000-0000-4000-8000-000000000002','empleado'),
+ ('a2400000-0000-4000-8000-000000000003','empleado'),
+ ('a2400000-0000-4000-8000-000000000004','empleado'),
+ ('a2400000-0000-4000-8000-000000000005','empleado'),
+ ('a2400000-0000-4000-8000-000000000006','empleado');
 SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000001');
 
 UPDATE public.profiles
    SET sucursal_id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
        activo=true,puede_facturar=false,puede_emitir_nc_periodo=false
  WHERE id BETWEEN 'a2400000-0000-4000-8000-000000000001'
-              AND 'a2400000-0000-4000-8000-000000000006';
+              AND 'a2400000-0000-4000-8000-000000000007';
 UPDATE public.profiles SET puede_facturar=true,puede_emitir_nc_periodo=true
- WHERE id IN ('a2400000-0000-4000-8000-000000000002','a2400000-0000-4000-8000-000000000006');
+ WHERE id IN (
+  'a2400000-0000-4000-8000-000000000002',
+  'a2400000-0000-4000-8000-000000000006',
+  'a2400000-0000-4000-8000-000000000007'
+ );
 UPDATE public.profiles SET puede_emitir_nc_periodo=true
  WHERE id='a2400000-0000-4000-8000-000000000003';
 UPDATE public.profiles SET puede_facturar=true
@@ -90,7 +101,7 @@ SELECT p.id,s.id
   FROM public.profiles p
  CROSS JOIN LATERAL (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1) s
  WHERE p.id BETWEEN 'a2400000-0000-4000-8000-000000000001'
-                AND 'a2400000-0000-4000-8000-000000000006';
+                AND 'a2400000-0000-4000-8000-000000000007';
 
 INSERT INTO public.clientes(id,razon_social,tipo,condicion_cta_cte,limite_credito,activo,es_generico)
 VALUES
@@ -149,6 +160,33 @@ SELECT pg_temp.assert_raises($sql$
 $sql$,'deshabilitada','el flag apagado rechaza al empleado autorizado');
 
 UPDATE public.settings SET nota_credito_periodo_enabled=true WHERE id=true;
+
+SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000007');
+SELECT pg_temp.assert_raises($sql$
+  SELECT * FROM public.crear_nota_credito_periodo_fiscal(
+    (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+    'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+    '2026-07-01','2026-07-31','Perfil sin rol empleado','SALDO_FAVOR',
+    '[{"producto_id":"c2400000-0000-4000-8000-000000000001","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":21}]','[]',
+    'e2400000-0000-4000-8000-000000000028'
+  )
+$sql$,'permiso','los booleanos no habilitan a un perfil sin rol empleado');
+
+DELETE FROM public.user_roles
+ WHERE user_id='a2400000-0000-4000-8000-000000000002'
+   AND role='empleado';
+SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000002');
+SELECT pg_temp.assert_raises($sql$
+  SELECT * FROM public.crear_nota_credito_periodo_fiscal(
+    (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+    'b2400000-0000-4000-8000-000000000001','DEVOLUCION_PRODUCTOS',
+    '2026-07-01','2026-07-31','Rol empleado removido','SALDO_FAVOR',
+    '[{"producto_id":"c2400000-0000-4000-8000-000000000001","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":21}]','[]',
+    'e2400000-0000-4000-8000-000000000029'
+  )
+$sql$,'permiso','remover el rol empleado revoca la acción inmediatamente');
+INSERT INTO public.user_roles(user_id,role)
+VALUES ('a2400000-0000-4000-8000-000000000002','empleado');
 
 SELECT pg_temp.actor('a2400000-0000-4000-8000-000000000005');
 SELECT pg_temp.assert_raises($sql$

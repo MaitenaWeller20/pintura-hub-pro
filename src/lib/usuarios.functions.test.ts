@@ -21,7 +21,10 @@ type EjecutarAdministrarNcPeriodo = (
     rpc(
       nombre: string,
       args: Record<string, unknown>,
-    ): Promise<{ data: unknown; error: { message?: string } | null }>;
+    ): Promise<{
+      data: unknown;
+      error: { message?: string; code?: string; details?: string; hint?: string } | null;
+    }>;
   },
 ) => Promise<{ ok: true }>;
 
@@ -78,6 +81,96 @@ describe("administrarPuedeEmitirNcPeriodo", () => {
         args: { p_profile_id: EMPLEADO, p_habilitado: true },
       },
     ]);
+  });
+
+  it("traduce el rechazo conocido de destinatario no empleado a un error estable", async () => {
+    const promesa = administrarNcPeriodo()(
+      { actorId: ADMIN, user_id: EMPLEADO, value: true },
+      {
+        async rpc(nombre) {
+          return nombre === "is_admin"
+            ? { data: true, error: null }
+            : {
+                data: null,
+                error: {
+                  code: "PNC01",
+                  message:
+                    'permission denied: public.user_roles table, function "administrar_puede_emitir_nc_periodo"',
+                  details: "target=a210... role=empleado",
+                  hint: "inspect pg_catalog",
+                },
+              };
+        },
+      },
+    );
+
+    await expect(promesa).rejects.toMatchObject({
+      name: "ErrorAdministracionUsuario",
+      codigo: "DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO",
+      message: "El permiso de NC por período sólo se puede asignar a empleados.",
+    });
+  });
+
+  it("no cruza mensajes ni detalles técnicos inesperados hacia la UI", async () => {
+    const mensajeTecnico =
+      'relation "profiles" does not exist in function public.administrar_puede_emitir_nc_periodo';
+    let recibido: unknown;
+
+    try {
+      await administrarNcPeriodo()(
+        { actorId: ADMIN, user_id: EMPLEADO, value: false },
+        {
+          async rpc(nombre) {
+            return nombre === "is_admin"
+              ? { data: true, error: null }
+              : {
+                  data: null,
+                  error: {
+                    code: "42P01",
+                    message: mensajeTecnico,
+                    details: "schema=public table=profiles",
+                  },
+                };
+          },
+        },
+      );
+    } catch (error) {
+      recibido = error;
+    }
+
+    expect(recibido).toMatchObject({
+      name: "ErrorAdministracionUsuario",
+      codigo: "NO_SE_PUDO_ACTUALIZAR_NC_PERIODO",
+      message:
+        "No se pudo actualizar el permiso de NC por período. Volvé a cargar la pantalla antes de intentar nuevamente.",
+    });
+    expect(String(recibido)).not.toContain(mensajeTecnico);
+    expect(JSON.stringify(recibido)).not.toMatch(/profiles|function|schema|42P01/i);
+  });
+
+  it("preserva como validación segura el perfil inexistente informado por la RPC", async () => {
+    await expect(
+      administrarNcPeriodo()(
+        { actorId: ADMIN, user_id: EMPLEADO, value: true },
+        {
+          async rpc(nombre) {
+            return nombre === "is_admin"
+              ? { data: true, error: null }
+              : {
+                  data: null,
+                  error: {
+                    code: "PNC02",
+                    message: 'Perfil inexistente en table "public.profiles"',
+                  },
+                };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: "ErrorAdministracionUsuario",
+      codigo: "PERFIL_NC_PERIODO_INEXISTENTE",
+      message: "No se encontró el usuario al que querés cambiarle el permiso.",
+    });
   });
 });
 

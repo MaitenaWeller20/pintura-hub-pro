@@ -41,3 +41,38 @@
 
 - No se implementaron PDF, copy de outage ni detalle auditado de T11, ARCA real, deploy, push ni activación de flags.
 - La DB y el dominio continúan siendo autoritativos para importes, permisos, letra y estado fiscal; la UI sólo calcula y explica estimaciones.
+
+## Fix round 1
+
+### Correcciones aplicadas
+
+- El diálogo de NC por período ya no bloquea `Revisar datos fiscales` cuando la letra solicitada es `null`: ese valor representa la resolución automática. El recorrido montado llega a preview, confirmación de período y emisión.
+- `ReceptorFiscalForm` modela explícitamente la letra automática: permite cliente comercial, favorito y otro receptor; el receptor manual exige CUIT y condición fiscal, ofrece las cuatro condiciones posibles y deja que el servidor resuelva A/B/C. La condición confirmada por ARCA se vuelve de sólo lectura y un fallo mantiene la preview bloqueada con error asociado y foco en el CUIT.
+- El resumen post-preview de `Asociación fiscal por período` incorpora importe fiscal, receptor y letra resuelta como datos no editables.
+- La cola combina flag y capacidad efectiva sólo para filas NC por período. Sin ambos, `Facturar` queda deshabilitado con su explicación; las ventas v2 ordinarias conservan `puedeFacturar`. La defensa también existe en el callback de acción.
+- Al volver de `search.venta`, una fila facturable se selecciona y abre automáticamente una única vez por venta. El ciclo conserva navegación/reload y no reabre al cerrar. Tras un `APROBADO`, se activa el detalle comercial además del resultado de cola.
+- El selector de IVA del ajuste deriva directamente de `ALICUOTAS_SOPORTADAS` (0, 2,5, 5, 10,5, 21 y 27). La consulta comercial aplica `.neq('estado', 'PENDIENTE_FISCAL')` antes de `order`/`limit`, conservando la defensa de UI/exportación.
+- El editor conserva la misma idempotency key y una única creación durante doble click/reintento visual.
+
+### TDD (RED → GREEN)
+
+- RED: el diálogo por período dejaba deshabilitado el botón de revisión al recibir letra automática; la prueba montada reprodujo el bloqueo. GREEN: el bloqueo de letra nula quedó limitado a flujos no período.
+- RED: `Otro receptor` no cambiaba de estado si no había letra A/B. GREEN: se habilitó el modo automático y las pruebas montadas validan CUIT/condición confirmados y error ARCA.
+- RED: el cierre del diálogo podía reabrir tras mover la fila en la cola. GREEN: la marca de apertura es por venta y las pruebas cubren create→open, cierre sin replay y aprobado→detalle.
+
+### Verificaciones Fix round 1
+
+- Focal montada: `npx vitest run src/components/fiscal/dialogo-emision-fiscal.test.ts src/components/fiscal/cola-fiscal-tabla.test.ts src/components/ventas/editor-nota-credito-periodo.test.ts src/routes/_authenticated/facturacion.cola-lifecycle.test.ts src/lib/nota-credito-periodo-ui.test.ts` → 43 pasadas.
+- Completa: `npm test` → 75 archivos pasados, 2 omitidos; 1584 pruebas pasadas, 22 omitidas.
+- Tipos: `npx tsc --noEmit` pasó.
+- Calidad: Prettier focal, ESLint focal y `git diff --check` pasaron.
+
+### React y accesibilidad
+
+- Se revisaron dependencias de hooks: la lista de filas está memoizada para que la apertura automática no reaccione a arrays vacíos nuevos; no se agregaron fetches ni mutaciones duplicadas.
+- Los errores del receptor usan `aria-invalid`, `aria-describedby` y `role=alert`; la validación enfoca el primer control inválido. Botones/controles conservan foco visible y los estados bloqueados son nativos.
+- No se ejecutó un navegador autenticado/responsive: faltan sesión y datos locales reproducibles. La cobertura jsdom valida controles y teclado/foco del flujo; queda una pasada manual responsiva recomendada en staging.
+
+### Commit Fix round 1
+
+- `49225c94efe42e261ac1880bc55f76a1a76e0acb fix(ui): completar flujo NC fiscal por período`

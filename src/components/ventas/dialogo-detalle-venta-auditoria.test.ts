@@ -60,6 +60,7 @@ const ventaBase = {
 const auditoriaAplicada: DatosAuditoriaNotaCreditoPeriodo = {
   fiscal: {
     estado: "SNAPSHOT_V3_VALIDADO",
+    lifecycle: "APROBADO",
     periodoDesde: "2026-08-01",
     periodoHasta: "2026-08-15",
     modalidad: "DEVOLUCION_PRODUCTOS",
@@ -127,7 +128,6 @@ describe("detalle auditado de NC por período", () => {
         periodoHasta: "2026-08-15",
         modalidad: "DEVOLUCION_PRODUCTOS",
         motivo: "Productos dañados devueltos",
-        requiereEvidenciaAutorizacion: false,
         ...overrides,
       },
       cargarOperador: async () => ({
@@ -141,6 +141,51 @@ describe("detalle auditado de NC por período", () => {
       cargarStock: async () => ({ data: [], error: null }),
       cargarCuentaCorriente: async () => ({ data: [], error: null }),
       cargarEvidenciaAutorizacion: async () => null,
+    } as Parameters<typeof cargarAuditoriaNotaCreditoPeriodo>[0];
+  }
+
+  function dependenciasCongeladas(
+    overrides: Record<string, unknown> = {},
+    evidencia: { origen: "EMISION" | "RECUPERACION"; confirmadoAt: string } | null = null,
+  ): Parameters<typeof cargarAuditoriaNotaCreditoPeriodo>[0] {
+    return {
+      venta: {
+        id: ventaBase.id,
+        estado: "PENDIENTE_FISCAL",
+        afipEstado: "EMITIENDO",
+        afipFase: "RESERVADO",
+        afipVersion: 2,
+        afipIntentos: 1,
+        afipSnapshot: snapshotV3,
+        afipSnapshotHash: snapshotV3.hash,
+        cae: null,
+        caeVencimiento: null,
+        afipEmisorCuit: snapshotV3.identidad.emisorCuit,
+        afipPuntoVenta: snapshotV3.identidad.puntoVenta,
+        afipCbteTipo: snapshotV3.identidad.cbteTipo,
+        afipNumero: snapshotV3.identidad.numero,
+        afipModo: snapshotV3.identidad.modo,
+        afipValidez: snapshotV3.identidad.validez,
+        afipFechaComprobante: snapshotV3.fechaComprobante,
+        afipEmitidoAt: null,
+        afipImpTotal: Number(snapshotV3.importeTotal),
+        afipSimulado: snapshotV3.identidad.simulado,
+        afipCbteAsocId: null,
+        ncEfectosAplicadosAt: null,
+        periodoDesde: "2026-08-01",
+        periodoHasta: "2026-08-15",
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Productos dañados devueltos",
+        ...overrides,
+      },
+      cargarOperador: async () => ({
+        data: { nombre_completo: "Ana", username: "ana" },
+        error: null,
+      }),
+      cargarReintegros: async () => ({ data: [], error: null }),
+      cargarStock: async () => ({ data: [], error: null }),
+      cargarCuentaCorriente: async () => ({ data: [], error: null }),
+      cargarEvidenciaAutorizacion: async () => evidencia,
     } as Parameters<typeof cargarAuditoriaNotaCreditoPeriodo>[0];
   }
 
@@ -227,23 +272,169 @@ describe("detalle auditado de NC por período", () => {
     expect(html).toContain("Todavía no se aplicaron movimientos comerciales");
   });
 
+  it.each([
+    ["CUIT emisor", { afipEmisorCuit: "30714199665" }],
+    ["punto de venta", { afipPuntoVenta: snapshotV3.identidad.puntoVenta + 1 }],
+    ["tipo", { afipCbteTipo: snapshotV3.identidad.cbteTipo + 1 }],
+    ["número", { afipNumero: snapshotV3.identidad.numero + 1 }],
+    ["modo", { afipModo: "HOMOLOGACION" }],
+    ["simulación", { afipSimulado: !snapshotV3.identidad.simulado }],
+    ["validez", { afipValidez: "HOMOLOGACION" }],
+    ["fecha", { afipFechaComprobante: "2026-08-23" }],
+    ["total decimal", { afipImpTotal: 1360.01 }],
+    ["asociación puntual", { afipCbteAsocId: "71000000-0000-4000-8000-000000000777" }],
+  ])("falla cerrado si diverge %s entre snapshot y columnas", async (_caso, overrides) => {
+    await expect(
+      cargarAuditoriaNotaCreditoPeriodo(dependenciasCongeladas(overrides)),
+    ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
+  });
+
+  it.each([
+    ["RESERVADO", { afipEstado: "EMITIENDO", afipFase: "RESERVADO", afipVersion: 2 }],
+    ["REQUEST_INICIADO", { afipEstado: "EMITIENDO", afipFase: "REQUEST_INICIADO", afipVersion: 3 }],
+    [
+      "RESPUESTA_RECIBIDA",
+      { afipEstado: "EMITIENDO", afipFase: "RESPUESTA_RECIBIDA", afipVersion: 4 },
+    ],
+    [
+      "RECONCILIANDO_REQUEST",
+      { afipEstado: "RECONCILIAR", afipFase: "REQUEST_INICIADO", afipVersion: 4 },
+    ],
+    [
+      "RECONCILIANDO_RESPUESTA",
+      { afipEstado: "RECONCILIAR", afipFase: "RESPUESTA_RECIBIDA", afipVersion: 5 },
+    ],
+    ["BLOQUEADO_RESERVADO", { afipEstado: "BLOQUEADO", afipFase: "RESERVADO", afipVersion: 3 }],
+    [
+      "BLOQUEADO_REQUEST",
+      { afipEstado: "BLOQUEADO", afipFase: "REQUEST_INICIADO", afipVersion: 4 },
+    ],
+    [
+      "BLOQUEADO_RESPUESTA",
+      { afipEstado: "BLOQUEADO", afipFase: "RESPUESTA_RECIBIDA", afipVersion: 5 },
+    ],
+    [
+      "ERROR_CORREGIBLE_IDENTIDAD",
+      { afipEstado: "ERROR_CORREGIBLE", afipFase: null, afipVersion: 3 },
+    ],
+  ])("acepta el lifecycle congelado real %s", async (lifecycle, overrides) => {
+    const resultado = await cargarAuditoriaNotaCreditoPeriodo(dependenciasCongeladas(overrides));
+
+    expect(resultado.fiscal).toMatchObject({ estado: "SNAPSHOT_V3_VALIDADO", lifecycle });
+    expect(resultado.evidenciaAutorizacion).toBeNull();
+  });
+
+  it.each([
+    ["PREFLIGHT con snapshot", { afipEstado: "EMITIENDO", afipFase: "PREFLIGHT" }],
+    ["persistido sin aprobación", { afipEstado: "EMITIENDO", afipFase: "PERSISTIDO" }],
+    ["aprobado antes de persistir", { afipEstado: "APROBADO", afipFase: "RESPUESTA_RECIBIDA" }],
+    ["cancelado congelado", { afipEstado: "CANCELADO", afipFase: null }],
+  ])("rechaza el lifecycle congelado incoherente %s", async (_caso, overrides) => {
+    await expect(
+      cargarAuditoriaNotaCreditoPeriodo(dependenciasCongeladas(overrides)),
+    ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
+  });
+
+  it.each([
+    ["CAE prematuro", { cae: "75123456789012" }],
+    ["vencimiento prematuro", { caeVencimiento: "2026-08-30" }],
+    ["emisión prematura", { afipEmitidoAt: "2026-08-20T13:02:00.000Z" }],
+    ["efectos prematuros", { ncEfectosAplicadosAt: "2026-08-20T13:03:00.000Z" }],
+  ])("rechaza %s antes de APROBADO/PERSISTIDO", async (_caso, overrides) => {
+    await expect(
+      cargarAuditoriaNotaCreditoPeriodo(dependenciasCongeladas(overrides)),
+    ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
+  });
+
+  it("no carga ni afirma evidencia antes de la aprobación", async () => {
+    const resultado = await cargarAuditoriaNotaCreditoPeriodo(
+      dependenciasCongeladas(
+        {},
+        {
+          origen: "EMISION",
+          confirmadoAt: "2026-08-20T13:02:00.000Z",
+        },
+      ),
+    );
+
+    expect(resultado.evidenciaAutorizacion).toBeNull();
+  });
+
+  it.each([
+    ["sin CAE", { cae: null }],
+    ["CAE inválido", { cae: "ARCA-RAW" }],
+    ["sin emisión", { afipEmitidoAt: null }],
+    ["sin efectos", { ncEfectosAplicadosAt: null }],
+  ])("falla cerrado APROBADO/PERSISTIDO %s", async (_caso, overrides) => {
+    await expect(
+      cargarAuditoriaNotaCreditoPeriodo(
+        dependenciasCongeladas(
+          {
+            estado: "ACTIVA",
+            afipEstado: "APROBADO",
+            afipFase: "PERSISTIDO",
+            afipVersion: 5,
+            cae: "75123456789012",
+            caeVencimiento: "2026-08-30",
+            afipEmitidoAt: "2026-08-20T13:02:00.000Z",
+            ncEfectosAplicadosAt: "2026-08-20T13:03:00.000Z",
+            ...overrides,
+          },
+          { origen: "EMISION", confirmadoAt: "2026-08-20T13:02:00.000Z" },
+        ),
+      ),
+    ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
+  });
+
+  it("deriva internamente que una aprobación exige evidencia segura", async () => {
+    await expect(
+      cargarAuditoriaNotaCreditoPeriodo(
+        dependenciasCongeladas({
+          estado: "ACTIVA",
+          afipEstado: "APROBADO",
+          afipFase: "PERSISTIDO",
+          afipVersion: 5,
+          cae: "75123456789012",
+          caeVencimiento: "2026-08-30",
+          afipEmitidoAt: "2026-08-20T13:02:00.000Z",
+          ncEfectosAplicadosAt: "2026-08-20T13:03:00.000Z",
+        }),
+      ),
+    ).rejects.toThrow("No se pudo validar la evidencia de autorización fiscal.");
+  });
+
+  it.each([
+    ["EMISION", "2026-08-30"],
+    ["RECUPERACION", null],
+  ] as const)("acepta aprobación coherente por %s", async (origen, caeVencimiento) => {
+    const resultado = await cargarAuditoriaNotaCreditoPeriodo(
+      dependenciasCongeladas(
+        {
+          estado: "ACTIVA",
+          afipEstado: "APROBADO",
+          afipFase: "PERSISTIDO",
+          afipVersion: 5,
+          cae: "75123456789012",
+          caeVencimiento,
+          afipEmitidoAt: "2026-08-20T13:02:00.000Z",
+          ncEfectosAplicadosAt: "2026-08-20T13:03:00.000Z",
+        },
+        { origen, confirmadoAt: "2026-08-20T13:02:00.000Z" },
+      ),
+    );
+
+    expect(resultado.fiscal).toMatchObject({
+      estado: "SNAPSHOT_V3_VALIDADO",
+      lifecycle: "APROBADO",
+    });
+    expect(resultado.evidenciaAutorizacion?.origen).toBe(origen);
+  });
+
   it("falla cerrado si falta cualquiera de las fuentes de movimientos", async () => {
     await expect(
       cargarAuditoriaNotaCreditoPeriodo({
-        venta: {
-          id: ventaBase.id,
-          afipSnapshot: snapshotV3,
-          afipSnapshotHash: snapshotV3.hash,
-          requiereEvidenciaAutorizacion: false,
-        },
-        cargarOperador: async () => ({
-          data: { nombre_completo: "Ana", username: "ana" },
-          error: null,
-        }),
-        cargarReintegros: async () => ({ data: [], error: null }),
+        ...dependenciasCongeladas(),
         cargarStock: async () => ({ data: null, error: { message: "SQL secreto stock" } }),
-        cargarCuentaCorriente: async () => ({ data: [], error: null }),
-        cargarEvidenciaAutorizacion: async () => null,
       }),
     ).rejects.toThrow("No se pudo reconstruir la auditoría de la nota de crédito.");
   });
@@ -290,12 +481,7 @@ describe("detalle auditado de NC por período", () => {
 
   it("deriva período, modalidad, motivo, receptor y letra sólo del snapshot v3 validado", async () => {
     const resultado = await cargarAuditoriaNotaCreditoPeriodo({
-      venta: {
-        id: ventaBase.id,
-        afipSnapshot: snapshotV3,
-        afipSnapshotHash: snapshotV3.hash,
-        requiereEvidenciaAutorizacion: true,
-      },
+      ...dependenciasCongeladas(),
       cargarOperador: async () => ({
         data: { nombre_completo: "Nombre actual", username: "usuario-actual" },
         error: null,
@@ -315,15 +501,11 @@ describe("detalle auditado de NC por período", () => {
         ],
         error: null,
       }),
-      cargarCuentaCorriente: async () => ({ data: [], error: null }),
-      cargarEvidenciaAutorizacion: async () => ({
-        origen: "EMISION" as const,
-        confirmadoAt: "2026-08-20T13:02:00.000Z",
-      }),
     });
 
     expect(resultado.fiscal).toEqual({
       estado: "SNAPSHOT_V3_VALIDADO",
+      lifecycle: "RESERVADO",
       periodoDesde: "2026-08-01",
       periodoHasta: "2026-08-15",
       modalidad: "DEVOLUCION_PRODUCTOS",
@@ -338,30 +520,14 @@ describe("detalle auditado de NC por período", () => {
       productoId: "71000000-0000-4000-8000-000000000501",
       etiquetaActual: "COD-ACTUAL · Nombre actual del producto",
     });
-    expect(resultado.evidenciaAutorizacion).toEqual({
-      origen: "EMISION",
-      confirmadoAt: "2026-08-20T13:02:00.000Z",
-    });
+    expect(resultado.evidenciaAutorizacion).toBeNull();
   });
 
   it("falla cerrado si el hash externo no coincide con el snapshot v3", async () => {
     await expect(
-      cargarAuditoriaNotaCreditoPeriodo({
-        venta: {
-          id: ventaBase.id,
-          afipSnapshot: snapshotV3,
-          afipSnapshotHash: "f".repeat(64),
-          requiereEvidenciaAutorizacion: false,
-        },
-        cargarOperador: async () => ({
-          data: { nombre_completo: "Nombre actual", username: "usuario-actual" },
-          error: null,
-        }),
-        cargarReintegros: async () => ({ data: [], error: null }),
-        cargarStock: async () => ({ data: [], error: null }),
-        cargarCuentaCorriente: async () => ({ data: [], error: null }),
-        cargarEvidenciaAutorizacion: async () => null,
-      }),
+      cargarAuditoriaNotaCreditoPeriodo(
+        dependenciasCongeladas({ afipSnapshotHash: "f".repeat(64) }),
+      ),
     ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
   });
 
@@ -372,22 +538,7 @@ describe("detalle auditado de NC por período", () => {
     alterado.notaCredito.motivo = "Motivo alterado después del hash";
 
     await expect(
-      cargarAuditoriaNotaCreditoPeriodo({
-        venta: {
-          id: ventaBase.id,
-          afipSnapshot: alterado,
-          afipSnapshotHash: snapshotV3.hash,
-          requiereEvidenciaAutorizacion: false,
-        },
-        cargarOperador: async () => ({
-          data: { nombre_completo: "Nombre actual", username: "usuario-actual" },
-          error: null,
-        }),
-        cargarReintegros: async () => ({ data: [], error: null }),
-        cargarStock: async () => ({ data: [], error: null }),
-        cargarCuentaCorriente: async () => ({ data: [], error: null }),
-        cargarEvidenciaAutorizacion: async () => null,
-      }),
+      cargarAuditoriaNotaCreditoPeriodo(dependenciasCongeladas({ afipSnapshot: alterado })),
     ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
   });
 
@@ -405,6 +556,7 @@ describe("detalle auditado de NC por período", () => {
           ...auditoriaAplicada,
           fiscal: {
             estado: "SNAPSHOT_V3_VALIDADO",
+            lifecycle: "APROBADO",
             periodoDesde: "2026-08-01",
             periodoHasta: "2026-08-15",
             modalidad: "DEVOLUCION_PRODUCTOS",
@@ -470,6 +622,9 @@ describe("detalle auditado de NC por período", () => {
   });
 
   it("antes del CAE muestra la intención y aclara que aún no hay efectos", () => {
+    if (auditoriaAplicada.fiscal.estado !== "SNAPSHOT_V3_VALIDADO") {
+      throw new Error("Fixture fiscal inválido");
+    }
     const ventaPendiente = {
       ...ventaBase,
       estado: "PENDIENTE_FISCAL",
@@ -485,6 +640,8 @@ describe("detalle auditado de NC por período", () => {
         venta: ventaPendiente,
         auditoria: {
           ...auditoriaAplicada,
+          fiscal: { ...auditoriaAplicada.fiscal, lifecycle: "RESERVADO" },
+          evidenciaAutorizacion: null,
           reintegrosIntencion: [{ id: "r-1", formaPago: "EFECTIVO", monto: 121, orden: 0 }],
           pagosAplicados: [],
           movimientosStock: [],
@@ -495,6 +652,7 @@ describe("detalle auditado de NC por período", () => {
     expect(html).toContain("Intención pendiente antes del CAE");
     expect(html).toContain("EFECTIVO");
     expect(html).toContain("Todavía no se aplicaron movimientos comerciales");
+    expect(html).not.toContain("Autorización directa confirmada");
     expect(html).not.toContain("Efectos aplicados el");
   });
 });

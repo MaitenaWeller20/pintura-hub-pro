@@ -108,7 +108,7 @@ export function AuditoriaNotaCreditoPeriodo({
   }
   const fiscal = auditoria.fiscal;
   const congelada = fiscal.estado === "SNAPSHOT_V3_VALIDADO";
-  const aprobada = congelada && Boolean(venta.cae && venta.nc_efectos_aplicados_at);
+  const aprobada = congelada && fiscal.lifecycle === "APROBADO";
   return (
     <Card className="mt-3 space-y-4 p-4" aria-label="Auditoría de nota de crédito por período">
       <div>
@@ -176,13 +176,13 @@ export function AuditoriaNotaCreditoPeriodo({
             {venta.afip_estado} · {venta.afip_fase ?? "SIN FASE"}
           </dd>
         </div>
-        {congelada ? (
+        {aprobada ? (
           <div>
             <dt className="text-xs text-muted-foreground">CAE</dt>
             <dd className="font-mono">{venta.cae ?? "Pendiente"}</dd>
           </div>
         ) : null}
-        {congelada && auditoria.evidenciaAutorizacion ? (
+        {aprobada && auditoria.evidenciaAutorizacion ? (
           <div>
             <dt className="text-xs text-muted-foreground">
               {auditoria.evidenciaAutorizacion.origen === "EMISION"
@@ -192,7 +192,7 @@ export function AuditoriaNotaCreditoPeriodo({
             <dd>{fmtDateTime(auditoria.evidenciaAutorizacion.confirmadoAt)}</dd>
           </div>
         ) : null}
-        {venta.nc_efectos_aplicados_at ? (
+        {aprobada && venta.nc_efectos_aplicados_at ? (
           <div>
             <dt className="text-xs text-muted-foreground">Efectos aplicados el</dt>
             <dd>{fmtDateTime(venta.nc_efectos_aplicados_at)}</dd>
@@ -411,7 +411,6 @@ export function DialogoDetalleVenta({
           periodoHasta: venta.periodo_asoc_hasta,
           modalidad: venta.nc_periodo_modalidad,
           motivo: venta.motivo_nota_credito,
-          requiereEvidenciaAutorizacion: Boolean(venta.cae),
         },
         async cargarOperador() {
           const respuesta = await supabase

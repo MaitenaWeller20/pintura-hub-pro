@@ -264,6 +264,35 @@ function exigirCoincidencia(actual: unknown, esperado: unknown, campo: string): 
   }
 }
 
+export function validarParidadColumnasSnapshotFiscal(
+  fila: Record<string, unknown>,
+  snapshot: SnapshotFiscalPersistido,
+): void {
+  exigirCoincidencia(fila.afip_snapshot_hash, snapshot.hash, "afip_snapshot_hash");
+  exigirCoincidencia(fila.id, snapshot.venta.id, "id");
+  exigirCoincidencia(fila.afip_emisor_cuit, snapshot.identidad.emisorCuit, "afip_emisor_cuit");
+  exigirCoincidencia(fila.afip_punto_venta, snapshot.identidad.puntoVenta, "afip_punto_venta");
+  exigirCoincidencia(fila.afip_cbte_tipo, snapshot.identidad.cbteTipo, "afip_cbte_tipo");
+  exigirCoincidencia(fila.afip_numero, snapshot.identidad.numero, "afip_numero");
+  exigirCoincidencia(fila.afip_modo, snapshot.identidad.modo, "afip_modo");
+  exigirCoincidencia(fila.afip_simulado, snapshot.identidad.simulado, "afip_simulado");
+  exigirCoincidencia(fila.afip_validez, snapshot.identidad.validez, "afip_validez");
+  exigirCoincidencia(
+    fila.afip_fecha_comprobante,
+    snapshot.fechaComprobante,
+    "afip_fecha_comprobante",
+  );
+  if (fila.afip_imp_total == null) {
+    fallar("COMPROBANTE_FISCAL_INCONSISTENTE", "Falta el total fiscal autorizado.");
+  }
+  if (decimalCanonico(fila.afip_imp_total, "afip_imp_total") !== snapshot.importeTotal) {
+    fallar(
+      "SNAPSHOT_FISCAL_DIVERGENTE",
+      "El total fiscal persistido no coincide con el snapshot autorizado.",
+    );
+  }
+}
+
 function validarFilaNueva(fila: Registro): {
   snapshot: SnapshotFiscalPersistido;
   cae: string;
@@ -295,29 +324,7 @@ function validarFilaNueva(fila: Registro): {
     );
   }
 
-  exigirCoincidencia(fila.afip_snapshot_hash, snapshot.hash, "afip_snapshot_hash");
-  exigirCoincidencia(fila.id, snapshot.venta.id, "id");
-  exigirCoincidencia(fila.afip_emisor_cuit, snapshot.identidad.emisorCuit, "afip_emisor_cuit");
-  exigirCoincidencia(fila.afip_punto_venta, snapshot.identidad.puntoVenta, "afip_punto_venta");
-  exigirCoincidencia(fila.afip_cbte_tipo, snapshot.identidad.cbteTipo, "afip_cbte_tipo");
-  exigirCoincidencia(fila.afip_numero, snapshot.identidad.numero, "afip_numero");
-  exigirCoincidencia(fila.afip_modo, snapshot.identidad.modo, "afip_modo");
-  exigirCoincidencia(fila.afip_simulado, snapshot.identidad.simulado, "afip_simulado");
-  exigirCoincidencia(fila.afip_validez, snapshot.identidad.validez, "afip_validez");
-  exigirCoincidencia(
-    fila.afip_fecha_comprobante,
-    snapshot.fechaComprobante,
-    "afip_fecha_comprobante",
-  );
-  if (fila.afip_imp_total == null) {
-    fallar("COMPROBANTE_FISCAL_INCONSISTENTE", "Falta el total fiscal autorizado.");
-  }
-  if (decimalCanonico(fila.afip_imp_total, "afip_imp_total") !== snapshot.importeTotal) {
-    fallar(
-      "SNAPSHOT_FISCAL_DIVERGENTE",
-      "El total fiscal persistido no coincide con el snapshot autorizado.",
-    );
-  }
+  validarParidadColumnasSnapshotFiscal(fila, snapshot);
 
   return {
     snapshot,

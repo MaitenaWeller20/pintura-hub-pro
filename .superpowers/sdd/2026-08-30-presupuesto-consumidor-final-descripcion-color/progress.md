@@ -155,3 +155,8 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     y el lint local pasan; este último conserva sólo `_objetivo` histórico. Un
     reset final seguido por un tercer focal dejó nuevamente contador `[]`, cero
     fixtures/sesiones y ningún hook de prueba.
+- Task 2 complete (`24c7bc5..48267ae`). Independent re-review: `Spec: PASS`,
+  `Quality: PASS`; no Critical, Important or Minor findings. All four
+  number-generating workers assert inside their transactions and roll back;
+  the full numbering snapshot remains unchanged and the production migration
+  is ready for the server-contract layer.

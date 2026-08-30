@@ -187,3 +187,7 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     quedó alineado; `db lint` conserva sólo `_objetivo` histórico y advisors
     conserva deuda histórica de RLS/vistas sin hallazgos sobre Task 3.
   - No se usaron proyecto remoto, `--linked`, `db push`, ARCA ni certificados.
+- Task 3 complete (`527a729..4171d5c`). Independent review: `Spec: PASS`,
+  `Quality: PASS`; no Critical, Important or Minor findings. The authenticated
+  preflight, closed DTO, effective receiver result, shared description contract
+  and regenerated local types are approved for the UI tasks.

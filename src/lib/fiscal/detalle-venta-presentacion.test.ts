@@ -13,7 +13,9 @@ function clavesReservadas(value: unknown, ruta = "$", halladas: string[] = []): 
   }
   if (typeof value !== "object" || value === null) return halladas;
   for (const [key, item] of Object.entries(value)) {
-    if (/snapshot|hash|payload|raw|afip_error/i.test(key)) halladas.push(`${ruta}.${key}`);
+    if (/snapshot|hash|payload|raw|afip_error|secret|claim|service_role/i.test(key)) {
+      halladas.push(`${ruta}.${key}`);
+    }
     clavesReservadas(item, `${ruta}.${key}`, halladas);
   }
   return halladas;
@@ -93,11 +95,14 @@ describe("DTO cerrado del detalle fiscal", () => {
       afip_error: "diagnóstico SQL prohibido",
       afip_error_clase: "DATABASE",
       afip_error_codigo: "42501",
+      afip_claim_token: "claim raíz prohibido",
+      service_role: "rol privilegiado prohibido",
       afip_intentos: 1,
       cliente: {
         razon_social: "Comprador vivo",
         cuit_dni: "30711111118",
         raw_payload: "prohibido",
+        secret: "secreto anidado prohibido",
       },
       sucursal: { nombre: "O'Higgins", telefono: "3510000000" },
     } as unknown as DetalleVentaFiscalServidor;
@@ -127,6 +132,7 @@ describe("DTO cerrado del detalle fiscal", () => {
           monto: 1360,
           orden: 0,
           raw: "reintegro prohibido",
+          secret: "secreto de reintegro prohibido",
         },
       ],
       movimientosStock: [
@@ -139,6 +145,7 @@ describe("DTO cerrado del detalle fiscal", () => {
           cantidadNueva: 6,
           createdAt: "2026-08-20T13:02:00.000Z",
           snapshotHash: "movimiento prohibido",
+          claim: "claim de stock prohibido",
         },
       ],
       movimientosCuentaCorriente: [
@@ -150,15 +157,24 @@ describe("DTO cerrado del detalle fiscal", () => {
           descripcion: "Ajuste",
           createdAt: "2026-08-20T13:02:00.000Z",
           payload: "cuenta corriente prohibida",
+          service_role: "rol de cuenta corriente prohibido",
         },
       ],
       payload: "payload de auditoría prohibido",
+      service_role: "rol de auditoría prohibido",
     };
     const fiscalEsperado = structuredClone(auditoriaPeriodo.fiscal);
-    Object.assign(auditoriaPeriodo.fiscal, { snapshot_hash: "hash interno prohibido" });
-    Object.assign(auditoriaPeriodo.operador, { raw: "fila de operador prohibida" });
+    Object.assign(auditoriaPeriodo.fiscal, {
+      snapshot_hash: "hash interno prohibido",
+      secret: "secreto fiscal prohibido",
+    });
+    Object.assign(auditoriaPeriodo.operador, {
+      raw: "fila de operador prohibida",
+      claim: "claim de operador prohibido",
+    });
     Object.assign(auditoriaPeriodo.evidenciaAutorizacion, {
       intent_payload: "payload de intento prohibido",
+      service_role: "rol de evidencia prohibido",
     });
 
     const dto = proyectarDetalleVentaFiscalPresentacion(venta, auditoriaPeriodo);

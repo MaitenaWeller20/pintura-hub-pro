@@ -1,91 +1,102 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { promisify } from "node:util";
 import { ESLint } from "eslint";
+import {
+  clasificarHallazgosNuevos,
+  normalizarResultados,
+  parsearHunksGit,
+} from "./lint-no-new-debt-lib.mjs";
 
+const ejecutar = promisify(execFile);
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const rutaBaseline = path.join(raiz, "scripts", "lint-debt-baseline.json");
-const escribir = process.argv.includes("--write-baseline");
+const rutaConfig = path.join(raiz, "scripts", "lint-no-new-debt.config.json");
 
-function entradasDeuda(resultados) {
-  const agrupadas = new Map();
-  for (const resultado of resultados) {
-    const archivo = path.relative(raiz, resultado.filePath).split(path.sep).join("/");
-    for (const mensaje of resultado.messages) {
-      if (mensaje.severity === 0) continue;
-      const entrada = {
-        archivo,
-        regla: mensaje.ruleId ?? "error-de-parseo",
-        severidad: mensaje.severity,
-        mensaje: mensaje.message,
-      };
-      const clave = JSON.stringify(entrada);
-      const existente = agrupadas.get(clave);
-      agrupadas.set(
-        clave,
-        existente
-          ? { ...existente, cantidad: existente.cantidad + 1 }
-          : {
-              ...entrada,
-              cantidad: 1,
-            },
-      );
-    }
-  }
-  return [...agrupadas.values()].sort((a, b) =>
-    `${a.archivo}\0${a.regla}\0${a.mensaje}`.localeCompare(
-      `${b.archivo}\0${b.regla}\0${b.mensaje}`,
-    ),
+if (process.argv.length > 2) {
+  console.error(
+    "El baseline es un commit Git inmutable; este gate no admite opciones de escritura.",
   );
+  process.exit(2);
+}
+
+const config = JSON.parse(await readFile(rutaConfig, "utf8"));
+if (
+  config.formato !== 2 ||
+  typeof config.baseSha !== "string" ||
+  !/^[0-9a-f]{40}$/.test(config.baseSha) ||
+  typeof config.alcance !== "string"
+) {
+  console.error("scripts/lint-no-new-debt.config.json no define un ancla válida.");
+  process.exit(2);
+}
+
+async function git(args, opciones = {}) {
+  const respuesta = await ejecutar("git", args, {
+    cwd: raiz,
+    encoding: opciones.encoding ?? "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  return respuesta.stdout;
+}
+
+try {
+  await git(["cat-file", "-e", `${config.baseSha}^{commit}`]);
+  await git(["merge-base", "--is-ancestor", config.baseSha, "HEAD"]);
+} catch {
+  console.error(`El commit base ${config.baseSha} no existe o no es ancestro de HEAD.`);
+  process.exit(2);
 }
 
 const eslint = new ESLint({ cwd: raiz });
-const actuales = entradasDeuda(await eslint.lintFiles([raiz]));
-const totalActual = actuales.reduce((total, entrada) => total + entrada.cantidad, 0);
+const actuales = normalizarResultados(await eslint.lintFiles([raiz]), raiz);
+const salidaArchivos = await git(["ls-tree", "-r", "--name-only", "-z", config.baseSha], {
+  encoding: "buffer",
+});
+const archivosBase = new Set(salidaArchivos.toString("utf8").split("\0").filter(Boolean));
 
-if (escribir) {
-  const baseline = {
-    formato: 1,
-    alcance: "eslint . con src/integrations/supabase/types.ts excluido por ser generado",
-    total: totalActual,
-    entradas: actuales,
-  };
-  await writeFile(rutaBaseline, `${JSON.stringify(baseline, null, 2)}\n`, "utf8");
-  console.log(`Baseline de lint escrito: ${totalActual} hallazgos históricos agrupados.`);
-  process.exit(0);
+const resultadosBase = [];
+for (const archivo of archivosBase) {
+  const rutaAbsoluta = path.join(raiz, archivo);
+  if (await eslint.isPathIgnored(rutaAbsoluta)) continue;
+  if (!(await eslint.calculateConfigForFile(rutaAbsoluta))) continue;
+  const contenido = await git(["show", `${config.baseSha}:${archivo}`]);
+  resultadosBase.push(
+    ...(await eslint.lintText(contenido, { filePath: rutaAbsoluta, warnIgnored: false })),
+  );
+}
+const base = normalizarResultados(resultadosBase, raiz);
+
+const hunksPorArchivo = new Map();
+for (const archivo of new Set(actuales.map((hallazgo) => hallazgo.archivo))) {
+  if (!archivosBase.has(archivo)) continue;
+  const diff = await git([
+    "diff",
+    "--unified=0",
+    "--no-ext-diff",
+    "--no-renames",
+    config.baseSha,
+    "--",
+    archivo,
+  ]);
+  hunksPorArchivo.set(archivo, parsearHunksGit(diff));
 }
 
-let baseline;
-try {
-  baseline = JSON.parse(await readFile(rutaBaseline, "utf8"));
-} catch {
-  console.error("Falta scripts/lint-debt-baseline.json. Generalo y revisalo explícitamente.");
-  process.exit(1);
-}
-if (baseline.formato !== 1 || !Array.isArray(baseline.entradas)) {
-  console.error("El baseline de lint tiene un formato desconocido.");
-  process.exit(1);
-}
-
-const permitidas = new Map(
-  baseline.entradas.map(({ cantidad, ...entrada }) => [JSON.stringify(entrada), cantidad]),
-);
-const nuevas = actuales
-  .map(({ cantidad, ...entrada }) => ({
-    ...entrada,
-    cantidad: Math.max(0, cantidad - (permitidas.get(JSON.stringify(entrada)) ?? 0)),
-  }))
-  .filter((entrada) => entrada.cantidad > 0);
-
-if (nuevas.length > 0) {
-  console.error("ESLint detectó deuda nueva fuera del baseline:");
-  for (const entrada of nuevas) {
-    console.error(`- ${entrada.archivo} ${entrada.regla} ×${entrada.cantidad}: ${entrada.mensaje}`);
+const nuevos = clasificarHallazgosNuevos({ base, actuales, archivosBase, hunksPorArchivo });
+if (nuevos.length > 0) {
+  console.error(
+    `ESLint detectó ${nuevos.length} hallazgo(s) nuevo(s) contra ${config.baseSha.slice(0, 12)}:`,
+  );
+  for (const hallazgo of nuevos) {
+    console.error(
+      `- ${hallazgo.archivo}:${hallazgo.linea}:${hallazgo.columna} ${hallazgo.regla}: ${hallazgo.mensaje}`,
+    );
   }
   process.exit(1);
 }
 
 console.log(
-  `Sin deuda nueva de lint: ${totalActual} hallazgos actuales, ` +
-    `${baseline.total} aceptados en el baseline histórico.`,
+  `Sin deuda nueva de lint contra ${config.baseSha.slice(0, 12)}: ` +
+    `${actuales.length} hallazgos actuales, ${base.length} en la base comparable.`,
 );

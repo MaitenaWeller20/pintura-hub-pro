@@ -11,6 +11,7 @@ import {
   type TipoEntradaFiscal,
 } from "./fiscal/feature.server";
 import {
+  autorizarLecturaVenta,
   autorizarOperacionFiscal,
   evaluarPermisoFiscal,
   type LecturasPermisoFiscal,
@@ -830,10 +831,44 @@ export const detalleVentaFiscalSegura = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) =>
     ejecutarDetalleVentaFiscalPresentacion(data.venta_id, {
       async autorizar(ventaId) {
-        await autorizarVenta(context, {
+        await autorizarLecturaVenta({
+          userId: context.userId,
           ventaId,
-          accion: "PREVISUALIZAR",
-          confirmaVentaAntigua: false,
+          lecturas: {
+            async cargarVentaVisible(id) {
+              const { data: venta, error } = await context.supabase
+                .from("ventas")
+                .select("id,sucursal_id")
+                .eq("id", id)
+                .maybeSingle();
+              if (error || !venta) return null;
+              return { id: venta.id, sucursalId: venta.sucursal_id };
+            },
+            async consultarEsAdmin(userId) {
+              const { data: esAdmin, error } = await context.supabase.rpc("is_admin", {
+                _user_id: userId,
+              });
+              if (error || typeof esAdmin !== "boolean") {
+                throw new Error("No se pudo verificar el rol para leer la venta.");
+              }
+              return esAdmin;
+            },
+            async cargarPerfil(userId) {
+              const { data: perfil, error } = await context.supabase
+                .from("profiles")
+                .select("activo,sucursal_id,secciones")
+                .eq("id", userId)
+                .maybeSingle();
+              if (error) throw new Error("No se pudo verificar el perfil para leer la venta.");
+              return perfil
+                ? {
+                    activo: perfil.activo,
+                    sucursalId: perfil.sucursal_id,
+                    secciones: perfil.secciones,
+                  }
+                : null;
+            },
+          },
         });
       },
       async cargarVenta(ventaId) {

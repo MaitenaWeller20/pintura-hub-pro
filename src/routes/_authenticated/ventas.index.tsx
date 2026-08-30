@@ -65,6 +65,7 @@ import {
   esVentaVisibleEnListadoComercial,
   excluirPendientesFiscalesDeConsulta,
 } from "@/lib/nota-credito-periodo-ui";
+import { crearSecuenciadorDetalleVenta } from "@/lib/ventas-detalle-concurrencia";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -140,16 +141,28 @@ function VentasList() {
   const [pagoFilter, setPagoFilter] = useState("all");
   const [q, setQ] = useState("");
   const [verVenta, setVerVenta] = useState<VentaDetalle | null>(null);
+  const [detalleCargandoId, setDetalleCargandoId] = useState<string | null>(null);
   const [anularDlg, setAnularDlg] = useState<IntentoAnulacion<VentaDetalle> | null>(null);
   const anulandoRef = useRef(false);
+  const secuenciadorDetalleRef = useRef(crearSecuenciadorDetalleVenta());
   const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
   const detalleVentaFn = useServerFn(detalleVentaFiscalSegura);
-  const cargarDetalle = useMutation({
-    mutationFn: (ventaId: string) => detalleVentaFn({ data: { venta_id: ventaId } }),
-    onSuccess: (venta) => setVerVenta(venta),
-    onError: (error) => toast.error(mensajeErrorFiscal(error, "CONSULTA"), { duration: 12000 }),
-  });
+
+  const cargarDetalle = async (ventaId: string) => {
+    const solicitud = secuenciadorDetalleRef.current.iniciar();
+    setDetalleCargandoId(ventaId);
+    try {
+      const venta = await detalleVentaFn({ data: { venta_id: ventaId } });
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) setVerVenta(venta);
+    } catch (error) {
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) {
+        toast.error(mensajeErrorFiscal(error, "CONSULTA"), { duration: 12000 });
+      }
+    } finally {
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) setDetalleCargandoId(null);
+    }
+  };
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -469,10 +482,10 @@ function VentasList() {
                 className="min-h-11 min-w-11"
                 aria-label={`Ver detalle de ${v.numero_comprobante}`}
                 title="Ver detalle"
-                onClick={() => cargarDetalle.mutate(v.id)}
-                disabled={cargarDetalle.isPending && cargarDetalle.variables === v.id}
+                onClick={() => void cargarDetalle(v.id)}
+                disabled={detalleCargandoId === v.id}
               >
-                {cargarDetalle.isPending && cargarDetalle.variables === v.id ? (
+                {detalleCargandoId === v.id ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Eye className="h-3.5 w-3.5" />

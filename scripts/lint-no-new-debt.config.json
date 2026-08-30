@@ -1,0 +1,5 @@
+{
+  "formato": 2,
+  "baseSha": "1b3bc2ceedf41e6506b26b4968b3243165e980bd",
+  "alcance": "ESLint actual sobre base y checkout; tipos Supabase generados excluidos por eslint.config.js; sólo se tolera un hallazgo actual si su ubicación se mapea a la misma identidad en el commit base"
+}

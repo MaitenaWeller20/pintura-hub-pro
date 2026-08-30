@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "lint:no-new-debt": "node scripts/lint-no-new-debt.mjs",
+    "lint:no-new-debt": "node --test scripts/lint-no-new-debt.test.mjs && node scripts/lint-no-new-debt.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",

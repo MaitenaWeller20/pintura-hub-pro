@@ -387,8 +387,8 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     `false/false/false`, sin listener E2E en 8080. El stack local
     `gagrdirwlcunygtztiuk` se detuvo conservando su backup. No se usaron remoto,
     linked, deploy, push, ARCA, certificados ni flags externos.
-- Final re-review fix wave 2 (`8e93423..HEAD`) — implementación y matriz
-  completas; commit final pendiente al momento de escribir este ledger.
+- Final re-review fix wave 2 (`8e93423..40f3591`) — implementación y matriz
+  completas en `40f3591`.
   - Se confirmaron los dos Important: `20260830220345` asociaba duplicados por
     `row_number()` y orden físico `ctid`, y la huella durable quedaba calculada
     sobre los ítems sin la descripción histórica que luego se persistía.
@@ -422,3 +422,7 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     build Vercel mock y E2E 6/6 GREEN. Advisors locales no señalaron el helper;
     conservan dos errores históricos ajenos (views security-definer) y warnings
     previos de search path/extensión/policies, fuera de esta ola exacta.
+  - Re-review independiente final (`8e93423..40f3591`): `Spec: PASS`,
+    `Quality: PASS`, `Production readiness: READY` sujeto al cutover documentado.
+    Cero hallazgos Critical/Important; el único Minor de procedencia documental
+    quedó corregido antes del release.

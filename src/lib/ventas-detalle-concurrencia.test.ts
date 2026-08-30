@@ -3,10 +3,12 @@ import { crearSecuenciadorDetalleVenta } from "./ventas-detalle-concurrencia";
 
 function diferida<T>() {
   let resolver!: (valor: T) => void;
-  const promesa = new Promise<T>((resolve) => {
+  let rechazar!: (error: unknown) => void;
+  const promesa = new Promise<T>((resolve, reject) => {
     resolver = resolve;
+    rechazar = reject;
   });
-  return { promesa, resolver };
+  return { promesa, resolver, rechazar };
 }
 
 describe("detalle de ventas concurrente", () => {
@@ -31,5 +33,80 @@ describe("detalle de ventas concurrente", () => {
     await cargaPrimera;
 
     expect(detallesAbiertos).toEqual(["venta-ultima"]);
+  });
+
+  it("ignora el rechazo anterior y no muestra toast después de una selección nueva", async () => {
+    const secuenciador = crearSecuenciadorDetalleVenta();
+    const anterior = diferida<string>();
+    const ultima = diferida<string>();
+    const errores: string[] = [];
+
+    const solicitar = async (respuesta: Promise<string>) => {
+      const solicitud = secuenciador.iniciar();
+      try {
+        await respuesta;
+      } catch {
+        if (secuenciador.esVigente(solicitud)) errores.push("toast");
+      }
+    };
+
+    const cargaAnterior = solicitar(anterior.promesa);
+    const cargaUltima = solicitar(ultima.promesa);
+    ultima.resolver("venta-ultima");
+    await cargaUltima;
+    anterior.rechazar(new Error("respuesta vieja"));
+    await cargaAnterior;
+
+    expect(errores).toEqual([]);
+  });
+
+  it("sólo la solicitud más nueva puede limpiar su estado de carga", async () => {
+    const secuenciador = crearSecuenciadorDetalleVenta();
+    const anterior = diferida<string>();
+    const ultima = diferida<string>();
+    let cargando: string | null = null;
+
+    const solicitar = async (id: string, respuesta: Promise<string>) => {
+      const solicitud = secuenciador.iniciar();
+      cargando = id;
+      try {
+        await respuesta;
+      } finally {
+        if (secuenciador.esVigente(solicitud)) cargando = null;
+      }
+    };
+
+    const cargaAnterior = solicitar("venta-anterior", anterior.promesa);
+    const cargaUltima = solicitar("venta-ultima", ultima.promesa);
+    anterior.resolver("venta-anterior");
+    await cargaAnterior;
+    expect(cargando).toBe("venta-ultima");
+    ultima.resolver("venta-ultima");
+    await cargaUltima;
+    expect(cargando).toBeNull();
+  });
+
+  it("invalida al desmontar y bloquea success, toast y finally tardíos", async () => {
+    const secuenciador = crearSecuenciadorDetalleVenta();
+    const pendiente = diferida<string>();
+    const efectos: string[] = [];
+    const solicitud = secuenciador.iniciar();
+
+    const carga = pendiente.promesa
+      .then(() => {
+        if (secuenciador.esVigente(solicitud)) efectos.push("success");
+      })
+      .catch(() => {
+        if (secuenciador.esVigente(solicitud)) efectos.push("toast");
+      })
+      .finally(() => {
+        if (secuenciador.esVigente(solicitud)) efectos.push("loading");
+      });
+
+    secuenciador.invalidar();
+    pendiente.rechazar(new Error("terminó después del unmount"));
+    await carga;
+
+    expect(efectos).toEqual([]);
   });
 });

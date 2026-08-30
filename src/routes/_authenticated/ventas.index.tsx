@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Button } from "@/components/ui/button";
@@ -148,6 +148,11 @@ function VentasList() {
   const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
   const detalleVentaFn = useServerFn(detalleVentaFiscalSegura);
+
+  useEffect(() => {
+    const secuenciador = secuenciadorDetalleRef.current;
+    return () => secuenciador.invalidar();
+  }, []);
 
   const cargarDetalle = async (ventaId: string) => {
     const solicitud = secuenciadorDetalleRef.current.iniciar();

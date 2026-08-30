@@ -15,5 +15,8 @@ export function crearSecuenciadorDetalleVenta() {
     esVigente(solicitud: SolicitudDetalleVenta): boolean {
       return solicitud === ultimaSolicitud;
     },
+    invalidar(): void {
+      ultimaSolicitud += 1;
+    },
   };
 }

@@ -2,15 +2,12 @@ import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { ESLint } from "eslint";
-import {
-  clasificarHallazgosNuevos,
-  normalizarResultados,
-  parsearHunksGit,
-} from "./lint-no-new-debt-lib.mjs";
+import { clasificarHallazgosNuevos, parsearHunksGit } from "./lint-no-new-debt-lib.mjs";
 
 const ejecutar = promisify(execFile);
+const rutaWorker = fileURLToPath(new URL("./lint-no-new-debt-worker.mjs", import.meta.url));
 
 export const ANCLA_DEUDA_LINT = "1b3bc2ceedf41e6506b26b4968b3243165e980bd";
 
@@ -86,6 +83,28 @@ function errorHallazgos(nuevos, baseSha) {
   );
 }
 
+async function ejecutarLintAislado(raiz, opciones = {}) {
+  const argumentos = [rutaWorker, raiz];
+  if (opciones.configExterna) {
+    argumentos.push(opciones.configExterna);
+    if (opciones.excluirTiposGenerados) argumentos.push("--excluir-tipos-generados");
+  }
+  const { stdout } = await ejecutar(process.execPath, argumentos, {
+    cwd: raiz,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  return JSON.parse(stdout);
+}
+
+function unirHallazgos(...colecciones) {
+  const unicos = new Map();
+  for (const hallazgo of colecciones.flat()) {
+    unicos.set(JSON.stringify(hallazgo), hallazgo);
+  }
+  return [...unicos.values()];
+}
+
 export async function ejecutarGateLint({ raiz, baseSha = ANCLA_DEUDA_LINT }) {
   await exigirCheckoutLimpio(raiz);
   await asegurarAncla(raiz, baseSha);
@@ -95,10 +114,14 @@ export async function ejecutarGateLint({ raiz, baseSha = ANCLA_DEUDA_LINT }) {
   let errorPrincipal;
   try {
     const directorioBase = await materializarBase(raiz, baseSha, temporal);
-    const eslintActual = new ESLint({ cwd: raiz });
-    const eslintBase = new ESLint({ cwd: directorioBase });
-    const actuales = normalizarResultados(await eslintActual.lintFiles(["."]), raiz);
-    const base = normalizarResultados(await eslintBase.lintFiles(["."]), directorioBase);
+    const configBase = path.join(directorioBase, "eslint.config.js");
+    const actualesHead = await ejecutarLintAislado(raiz);
+    const actualesConPoliticaBase = await ejecutarLintAislado(raiz, {
+      configExterna: configBase,
+      excluirTiposGenerados: true,
+    });
+    const actuales = unirHallazgos(actualesHead, actualesConPoliticaBase);
+    const base = await ejecutarLintAislado(directorioBase);
     const salidaArchivos = await git(raiz, ["ls-tree", "-r", "--name-only", "-z", baseSha], {
       encoding: "buffer",
     });

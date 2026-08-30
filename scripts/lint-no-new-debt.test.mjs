@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { clasificarHallazgosNuevos, parsearHunksGit } from "./lint-no-new-debt-lib.mjs";
 import {
@@ -14,6 +15,7 @@ import {
 
 const ejecutar = promisify(execFile);
 const temporales = [];
+const raizProyecto = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function git(raiz, ...args) {
   return ejecutar("git", args, { cwd: raiz, encoding: "utf8" });
@@ -175,5 +177,70 @@ describe("configuración ESLint aislada por commit", () => {
       ejecutarGateLint({ raiz, baseSha: baseSha.trim() }),
       /1 hallazgo\(s\) nuevo\(s\).*no-console/s,
     );
+  });
+
+  it("aplica la política base sobre líneas nuevas aunque HEAD deshabilite la regla", async () => {
+    const raiz = await mkdtemp(path.join(tmpdir(), "lint-config-desactivada-test-"));
+    temporales.push(raiz);
+    await git(raiz, "init", "--initial-branch=main");
+    await git(raiz, "config", "user.email", "lint-test@local.invalid");
+    await git(raiz, "config", "user.name", "Lint test");
+    await writeFile(path.join(raiz, "package.json"), '{"type":"module"}\n');
+    await writeFile(
+      path.join(raiz, "eslint.config.js"),
+      'export default [{ files: ["**/*.js"], rules: { "no-console": "error" } }];\n',
+    );
+    await writeFile(path.join(raiz, "app.js"), 'export const valor = "base";\n');
+    await git(raiz, "add", ".");
+    await git(raiz, "commit", "-m", "base con regla activa");
+    const { stdout: baseSha } = await git(raiz, "rev-parse", "HEAD");
+
+    await writeFile(
+      path.join(raiz, "eslint.config.js"),
+      'export default [{ files: ["**/*.js"], rules: { "no-console": "off" } }];\n',
+    );
+    await writeFile(path.join(raiz, "app.js"), 'console.log("deuda nueva oculta");\n');
+    await git(raiz, "add", ".");
+    await git(raiz, "commit", "-m", "intenta ocultar deuda");
+
+    await assert.rejects(
+      ejecutarGateLint({ raiz, baseSha: baseSha.trim() }),
+      /1 hallazgo\(s\) nuevo\(s\).*no-console/s,
+    );
+  });
+
+  it("conserva deuda TypeScript histórica sin contaminar tsconfigRootDir entre checkouts", async () => {
+    const raiz = await mkdtemp(path.join(tmpdir(), "lint-config-ts-aislada-test-"));
+    temporales.push(raiz);
+    await git(raiz, "init", "--initial-branch=main");
+    await git(raiz, "config", "user.email", "lint-test@local.invalid");
+    await git(raiz, "config", "user.name", "Lint test");
+    await writeFile(path.join(raiz, ".gitignore"), "node_modules\n");
+    await writeFile(path.join(raiz, "package.json"), '{"type":"module"}\n');
+    await writeFile(
+      path.join(raiz, "eslint.config.js"),
+      [
+        'import tseslint from "typescript-eslint";',
+        "export default tseslint.config({",
+        "  extends: [...tseslint.configs.recommended],",
+        '  files: ["**/*.ts"],',
+        "});",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(path.join(raiz, "legacy.ts"), "export const historico: any = 1;\n");
+    await symlink(path.join(raizProyecto, "node_modules"), path.join(raiz, "node_modules"), "dir");
+    await git(raiz, "add", ".");
+    await git(raiz, "commit", "-m", "base TypeScript");
+    const { stdout: baseSha } = await git(raiz, "rev-parse", "HEAD");
+
+    await writeFile(path.join(raiz, "README.md"), "# Cambio sin deuda\n");
+    await git(raiz, "add", "README.md");
+    await git(raiz, "commit", "-m", "cambio actual");
+
+    const resultado = await ejecutarGateLint({ raiz, baseSha: baseSha.trim() });
+    assert.equal(resultado.actuales.length, 1);
+    assert.equal(resultado.base.length, 1);
+    assert.deepEqual(resultado.nuevos, []);
   });
 });

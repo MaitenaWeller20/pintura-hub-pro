@@ -37,7 +37,7 @@ function accionSegura(row: ColaFiscalFila, esAdmin: boolean): string {
     return presentarEstadoColaFiscal({
       estado: row.afip_estado,
       fase: row.afip_fase,
-      claimVencido: row.claim_vencido,
+      claimVencido: row.reclamo_vencido,
       numeroFiscal: row.afip_numero,
       ventaAntigua: row.venta_antigua,
       legacyIncompleto: row.afip_legacy_incompleto,
@@ -216,10 +216,10 @@ export function ColaFiscalTabla({
                           compacta
                         />
                       </p>
-                      {row.claim_vencido || row.venta_antigua ? (
+                      {row.reclamo_vencido || row.venta_antigua ? (
                         <p className="mt-1 flex items-center gap-1 text-xs font-medium text-warning">
                           <AlertTriangle className="h-3 w-3" />
-                          {row.claim_vencido ? "Claim vencido" : "Venta demorada"}
+                          {row.reclamo_vencido ? "Claim vencido" : "Venta demorada"}
                         </p>
                       ) : null}
                     </TableCell>

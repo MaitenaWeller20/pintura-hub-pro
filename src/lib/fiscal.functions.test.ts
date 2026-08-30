@@ -5,9 +5,39 @@ import {
   emitirInputSchema,
   ejecutarConsultaPadronOperador,
   ejecutarFachadaEmisionPostBorrador,
+  ejecutarLecturaFiscalExactaAutorizada,
   postBorradorInputSchema,
   proyectarIncidenteFiscal,
 } from "./fiscal.functions";
+
+describe("frontera de lectura fiscal exacta", () => {
+  it("autoriza con RLS antes de abrir admin y corta BOLA", async () => {
+    const orden: string[] = [];
+    await expect(
+      ejecutarLecturaFiscalExactaAutorizada("venta", {
+        autorizar: async () => {
+          orden.push("autorizar");
+        },
+        cargarExacta: async () => {
+          orden.push("admin");
+          return { id: "venta" };
+        },
+      }),
+    ).resolves.toEqual({ id: "venta" });
+    expect(orden).toEqual(["autorizar", "admin"]);
+
+    const cargarExacta = vi.fn();
+    await expect(
+      ejecutarLecturaFiscalExactaAutorizada("ajena", {
+        autorizar: async () => {
+          throw new Error("no visible");
+        },
+        cargarExacta,
+      }),
+    ).rejects.toThrow("no visible");
+    expect(cargarExacta).not.toHaveBeenCalled();
+  });
+});
 import type { ContextoFiscal } from "./fiscal/contexto";
 import type { ReceptorPadronArca } from "./fiscal/padron-arca-shared";
 import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./fiscal/error-usuario";

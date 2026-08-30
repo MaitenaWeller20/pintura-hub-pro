@@ -172,7 +172,7 @@ function accionFila(row: ColaFiscalFila, esAdmin: boolean): string {
     return presentarEstadoColaFiscal({
       estado: row.afip_estado,
       fase: row.afip_fase,
-      claimVencido: row.claim_vencido,
+      claimVencido: row.reclamo_vencido,
       numeroFiscal: row.afip_numero,
       ventaAntigua: row.venta_antigua,
       legacyIncompleto: row.afip_legacy_incompleto,

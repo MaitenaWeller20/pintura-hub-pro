@@ -503,12 +503,15 @@ BEGIN
        WHERE id='d2000000-0000-0000-0000-000000000002') THEN
     RAISE EXCEPTION 'admin no pudo desactivar el favorito de otra sucursal por RPC';
   END IF;
+END $$;
+RESET ROLE;
+DO $$
+BEGIN
   IF (SELECT afip_snapshot FROM public.ventas WHERE numero_comprobante='T2-ESTADO-NO_APLICA')
        IS DISTINCT FROM (SELECT snapshot FROM t2_snapshot_congelado) THEN
     RAISE EXCEPTION 'editar un favorito modificó el snapshot ya congelado de una venta';
   END IF;
 END $$;
-RESET ROLE;
 SELECT set_config('request.jwt.claims','{}',true);
 
 -- Fixtures del backfill. La rutina se ejecuta en aplicar=true sólo dentro de

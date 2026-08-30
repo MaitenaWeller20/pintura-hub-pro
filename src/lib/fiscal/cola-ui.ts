@@ -150,9 +150,9 @@ export function resolverTabAutoritativo(
 }
 
 export function debeRefrescarCola(
-  filas: Array<{ afip_estado: string; claim_vencido: boolean }>,
+  filas: Array<{ afip_estado: string; reclamo_vencido: boolean }>,
 ): boolean {
-  return filas.some((fila) => fila.afip_estado === "EMITIENDO" && !fila.claim_vencido);
+  return filas.some((fila) => fila.afip_estado === "EMITIENDO" && !fila.reclamo_vencido);
 }
 
 /** `isFetching` también cubre polling; sólo placeholder significa datos de otra clave. */

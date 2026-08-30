@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   autorizarAdministradorFiscal,
+  autorizarContextoVentas,
   autorizarContextoColaFiscal,
   autorizarLecturaVenta,
   evaluarPermisoFiscal,
@@ -202,6 +203,85 @@ describe("lectura user-bound del detalle de Ventas", () => {
         }),
       ).toThrow(/capacidad fiscal/i);
     }
+  });
+});
+
+describe("contexto user-bound de listados de Ventas", () => {
+  const lecturas = (
+    overrides: Partial<{
+      esAdmin: boolean;
+      perfil: {
+        activo: boolean;
+        puedeFacturar: boolean;
+        sucursalId: string | null;
+        secciones: string[] | null;
+      } | null;
+    }> = {},
+  ) => ({
+    consultarEsAdmin: async () => overrides.esAdmin ?? false,
+    cargarPerfil: async () =>
+      overrides.perfil ?? {
+        activo: true,
+        puedeFacturar: false,
+        sucursalId: "sucursal-a",
+        secciones: ["ventas"],
+      },
+  });
+
+  it("permite listar ventas al operador de la sección aunque no pueda facturar", async () => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "empleado",
+        exigirCapacidadFiscal: false,
+        lecturas: lecturas(),
+      }),
+    ).resolves.toEqual({ userId: "empleado", esAdmin: false, sucursalId: "sucursal-a" });
+  });
+
+  it("exige capacidad fiscal para seleccionar el original de una NC", async () => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "empleado",
+        exigirCapacidadFiscal: true,
+        lecturas: lecturas(),
+      }),
+    ).rejects.toThrow(/capacidad fiscal/i);
+  });
+
+  it.each([
+    [
+      { activo: true, puedeFacturar: true, sucursalId: "sucursal-a", secciones: ["stock"] },
+      /sección Ventas/i,
+    ],
+    [
+      { activo: false, puedeFacturar: true, sucursalId: "sucursal-a", secciones: ["ventas"] },
+      /inactivo/i,
+    ],
+    [
+      { activo: true, puedeFacturar: true, sucursalId: null, secciones: ["ventas"] },
+      /sucursal activa/i,
+    ],
+  ])("rechaza un empleado fuera del ámbito comercial", async (perfil, mensaje) => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "empleado",
+        exigirCapacidadFiscal: false,
+        lecturas: lecturas({ perfil }),
+      }),
+    ).rejects.toThrow(mensaje);
+  });
+
+  it("mantiene al admin activo sin forzar sucursal ni capacidad fiscal", async () => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "admin",
+        exigirCapacidadFiscal: true,
+        lecturas: lecturas({
+          esAdmin: true,
+          perfil: { activo: true, puedeFacturar: false, sucursalId: null, secciones: [] },
+        }),
+      }),
+    ).resolves.toEqual({ userId: "admin", esAdmin: true, sucursalId: null });
   });
 });
 

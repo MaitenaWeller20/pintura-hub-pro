@@ -3,6 +3,9 @@ import {
   anulacionVentaInputSchema,
   ejecutarCreacionNotaSegunFlags,
   ejecutarConversionPresupuestoSegunFlags,
+  ejecutarListadoComprobantesOriginalesSeguro,
+  ejecutarListadoVentasSeguro,
+  ejecutarLecturaOriginalFiscalAutorizada,
   ventaInputSchema,
 } from "./ventas.functions";
 
@@ -176,6 +179,120 @@ describe("cerco comercial de NC/ND", () => {
     ).rejects.toThrow(/comprobante original/i);
     expect(crearRegular).not.toHaveBeenCalled();
     expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
+  });
+});
+
+describe("fachadas cerradas de lectura de ventas", () => {
+  const original = {
+    id: "78000000-0000-4000-8000-000000000001",
+    numero_comprobante: "VTA-1",
+    tipo_comprobante: "VENTA",
+    fecha: "2026-08-28T12:00:00.000Z",
+    subtotal_sin_iva: "100.00",
+    iva_total: "21.00",
+    percepciones: "0.00",
+    total: "121.00",
+    total_pagado: "121.00",
+    condicion_venta: "CONTADO",
+    afip_estado: "APROBADO",
+    afip_fase: "PERSISTIDO",
+    afip_validez: "PRODUCCION",
+    afip_modo: "PRODUCCION",
+    afip_simulado: false,
+    afip_numero: 1,
+    afip_emisor_cuit: "30711111118",
+    afip_punto_venta: 997,
+    afip_cbte_tipo: 6,
+    cae: "CAE",
+  };
+
+  it("autoriza y carga por RLS antes de leer evidencia de listado en un único batch", async () => {
+    const orden: string[] = [];
+    const ventas = [{ id: original.id, cliente: null, sucursal: null, pagos: [] }];
+    const resultado = await ejecutarListadoVentasSeguro(
+      { sucursalId: "sucursal-inyectada", estadoPago: null },
+      {
+        autorizar: async () => {
+          orden.push("autorizar");
+          return { userId: "u", esAdmin: false, sucursalId: "sucursal-a" };
+        },
+        cargarVisibles: async (filtros) => {
+          orden.push("rls");
+          expect(filtros.sucursalId).toBe("sucursal-a");
+          return ventas;
+        },
+        cargarEvidencias: async (ids) => {
+          orden.push("admin-batch");
+          expect(ids).toEqual([original.id]);
+          return [{ id: original.id, afip_snapshot: null }];
+        },
+      },
+    );
+    expect(orden).toEqual(["autorizar", "rls", "admin-batch"]);
+    expect(resultado[0]).not.toHaveProperty("afip_snapshot");
+  });
+
+  it("no abre admin cuando autorización o RLS fallan", async () => {
+    const cargarEvidencias = vi.fn();
+    await expect(
+      ejecutarListadoVentasSeguro(
+        { sucursalId: null, estadoPago: null },
+        {
+          autorizar: async () => {
+            throw new Error("sin sección");
+          },
+          cargarVisibles: vi.fn(),
+          cargarEvidencias,
+        },
+      ),
+    ).rejects.toThrow("sin sección");
+    expect(cargarEvidencias).not.toHaveBeenCalled();
+  });
+
+  it("devuelve sólo el booleano autoritativo al seleccionar originales v2", async () => {
+    const resultado = await ejecutarListadoComprobantesOriginalesSeguro(
+      { clienteId: "cliente", receptorV2: true },
+      {
+        autorizar: async () => ({ userId: "u", esAdmin: false, sucursalId: "sucursal-a" }),
+        cargarVisibles: async () => [original],
+        cargarEvidencias: async () => [
+          {
+            id: original.id,
+            afip_snapshot: { hash: "a".repeat(64) },
+            afip_snapshot_hash: "a".repeat(64),
+          },
+        ],
+      },
+    );
+    expect(resultado).toEqual([{ ...original, tiene_snapshot_persistido: true }]);
+    expect(resultado[0]).not.toHaveProperty("afip_snapshot");
+    expect(resultado[0]).not.toHaveProperty("afip_snapshot_hash");
+  });
+
+  it("autoriza fiscalmente antes de la lectura exacta del original y cierra BOLA", async () => {
+    const orden: string[] = [];
+    const cargarExacta = vi.fn(async () => {
+      orden.push("admin");
+      return original;
+    });
+    await ejecutarLecturaOriginalFiscalAutorizada(original.id, {
+      autorizar: async () => {
+        orden.push("autorizar");
+      },
+      cargarExacta,
+    });
+    expect(orden).toEqual(["autorizar", "admin"]);
+
+    cargarExacta.mockClear();
+    await expect(
+      ejecutarLecturaOriginalFiscalAutorizada("venta-ajena", {
+        autorizar: async () => {
+          throw new Error("no visible");
+        },
+        cargarExacta,
+      }),
+    ).rejects.toThrow("no visible");
+    expect(cargarExacta).not.toHaveBeenCalled();
   });
 });
 

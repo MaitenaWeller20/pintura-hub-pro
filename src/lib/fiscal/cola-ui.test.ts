@@ -412,9 +412,11 @@ describe("actualización y resultado autoritativos", () => {
   });
 
   it("hace polling sólo si la página contiene un EMITIENDO reciente según el servidor", () => {
-    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", claim_vencido: false }])).toBe(true);
-    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", claim_vencido: true }])).toBe(false);
-    expect(debeRefrescarCola([{ afip_estado: "SIN_FACTURAR", claim_vencido: false }])).toBe(false);
+    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", reclamo_vencido: false }])).toBe(true);
+    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", reclamo_vencido: true }])).toBe(false);
+    expect(debeRefrescarCola([{ afip_estado: "SIN_FACTURAR", reclamo_vencido: false }])).toBe(
+      false,
+    );
   });
 
   it("explica el resultado parcial sin invitar a repetir venta ni cobro", () => {

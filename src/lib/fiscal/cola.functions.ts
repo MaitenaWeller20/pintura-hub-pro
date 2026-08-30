@@ -142,7 +142,7 @@ const filaColaSchema = z
     afip_estado: estadoSchema,
     afip_fase: z.enum(fasesCola).nullable(),
     afip_legacy_incompleto: z.boolean(),
-    claim_vencido: z.boolean(),
+    reclamo_vencido: z.boolean(),
     venta_antigua: z.boolean(),
     afip_validez: z.enum(["PRODUCCION", "HOMOLOGACION", "SIMULADA"]).nullable(),
     afip_punto_venta: z.number().int().nullable(),
@@ -155,7 +155,6 @@ const filaColaSchema = z
     nc_periodo_modalidad: z.enum(["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"]).nullable(),
     motivo_nota_credito: z.string().nullable(),
     nc_resolucion: z.enum(["REINTEGRO", "SALDO_FAVOR"]).nullable(),
-    nc_periodo_payload_hash: z.string().nullable(),
     nc_efectos_aplicados_at: z.string().datetime({ offset: true }).nullable(),
     tab: tabSchema,
   })
@@ -273,6 +272,37 @@ function proyeccionSegura<T>(schema: z.ZodType<T>, value: unknown): T {
   return parsed.data;
 }
 
+const CLAVE_RESERVADA_COLA = /snapshot|hash|claim|idempotency|payload|raw|secret|service_role/i;
+
+function claveReservadaRecursiva(
+  value: unknown,
+  visitados: WeakSet<object> = new WeakSet(),
+): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  if (visitados.has(value)) return null;
+  visitados.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const encontrada = claveReservadaRecursiva(item, visitados);
+      if (encontrada) return encontrada;
+    }
+    return null;
+  }
+  for (const [clave, child] of Object.entries(value)) {
+    if (CLAVE_RESERVADA_COLA.test(clave)) return clave;
+    const encontrada = claveReservadaRecursiva(child, visitados);
+    if (encontrada) return encontrada;
+  }
+  return null;
+}
+
+function exigirSalidaColaSinClavesReservadas(value: unknown): void {
+  const clave = claveReservadaRecursiva(value);
+  if (clave) {
+    throw new Error(`La salida de la cola contiene la clave reservada ${clave}.`);
+  }
+}
+
 export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
   return {
     async listarColaFiscal(userId: string, rawInput: unknown) {
@@ -280,21 +310,20 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
       await exigirRolloutV2(deps);
       const contexto = await deps.autorizar(userId);
       const sucursalId = contexto.esAdmin ? input.sucursal_id : (contexto.sucursalId ?? undefined);
-      const respuesta = proyeccionSegura(
-        respuestaRpcSchema,
-        await deps.consultarCola({
-          p_tab: input.tab,
-          p_page: input.venta_id ? 1 : input.page,
-          p_page_size: input.pageSize,
-          p_desde: input.desde,
-          p_hasta: input.hasta,
-          p_sucursal_id: sucursalId,
-          p_emisor_id: input.emisor_id,
-          p_documento: input.documento,
-          p_estado: input.estado,
-          p_venta_id: input.venta_id,
-        }),
-      )[0];
+      const respuestaCruda = await deps.consultarCola({
+        p_tab: input.tab,
+        p_page: input.venta_id ? 1 : input.page,
+        p_page_size: input.pageSize,
+        p_desde: input.desde,
+        p_hasta: input.hasta,
+        p_sucursal_id: sucursalId,
+        p_emisor_id: input.emisor_id,
+        p_documento: input.documento,
+        p_estado: input.estado,
+        p_venta_id: input.venta_id,
+      });
+      exigirSalidaColaSinClavesReservadas(respuestaCruda);
+      const respuesta = proyeccionSegura(respuestaRpcSchema, respuestaCruda)[0];
 
       return {
         filas: respuesta.filas,

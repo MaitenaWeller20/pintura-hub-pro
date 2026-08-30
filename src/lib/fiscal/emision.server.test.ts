@@ -1286,7 +1286,19 @@ describe("credencial ARCA congelada después de reservar", () => {
         cargarEmisor,
         cargarCredencial,
       } as never),
-    ).rejects.toThrow(/emisor|CUIT|credencial|ambiente/i);
+    ).rejects.toThrow(/emisor|CUIT|credencial|certificado|ambiente/i);
+  });
+
+  it("clasifica una credencial ausente como configuración segura", async () => {
+    const promise = cargarContextoArcaCongelado(reservaCongelada(), {
+      cargarEmisor: async (id) => ({ id, cuit: "30714199664" }),
+      cargarCredencial: async () => null,
+    });
+
+    await expect(promise).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "CERTIFICADO_ARCA_INVALIDO",
+    );
+    await expect(promise).rejects.not.toThrow(/tabla|SQL|credenciales_arca/i);
   });
 
   it("rechaza una reserva cuya PV/tipo/número no coincide con el snapshot", async () => {

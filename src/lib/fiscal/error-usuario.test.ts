@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  codigoCaidaArcaSegunFase,
   codigoErrorFiscalUsuario,
   crearErrorFiscalUsuario,
   mensajeCodigoErrorFiscalUsuario,
@@ -9,6 +10,70 @@ import {
 } from "./error-usuario";
 
 describe("mensajes de error de facturación", () => {
+  it("distingue una caída previa de la incertidumbre posterior usando la fase persistida", () => {
+    expect(codigoCaidaArcaSegunFase("PREFLIGHT")).toBe("ARCA_CAIDA_PRE_REQUEST_NC");
+    expect(codigoCaidaArcaSegunFase("RESERVADO")).toBe("ARCA_CAIDA_PRE_REQUEST_NC");
+    expect(codigoCaidaArcaSegunFase("REQUEST_INICIADO")).toBe("ARCA_INCIERTA_POST_REQUEST_NC");
+    expect(codigoCaidaArcaSegunFase("RESPUESTA_RECIBIDA")).toBe("ARCA_INCIERTA_POST_REQUEST_NC");
+
+    expect(mensajeCodigoErrorFiscalUsuario("ARCA_CAIDA_PRE_REQUEST_NC")).toBe(
+      "ARCA está caída. No se pudo emitir la nota de crédito. Intentá nuevamente en otro momento.",
+    );
+    expect(mensajeCodigoErrorFiscalUsuario("ARCA_INCIERTA_POST_REQUEST_NC")).toBe(
+      "ARCA está caída y estamos verificando si autorizó la nota. No vuelvas a emitirla.",
+    );
+  });
+
+  it.each([
+    ["periodo_desde", "Elegí la fecha desde del período asociado."],
+    ["periodo_hasta", "Elegí la fecha hasta del período asociado."],
+    ["motivo", "Explicá el motivo de la nota de crédito con al menos 5 caracteres."],
+    ["modalidad", "Elegí cómo se compone la nota de crédito."],
+    ["resolucion", "Elegí qué ocurre con el importe acreditado."],
+    ["items", "Revisá los productos o el importe de la nota de crédito."],
+    ["pagos", "El reintegro debe coincidir con el total de la nota."],
+  ] as const)("traduce la validación inline de %s sin filtrar Zod", (campo, esperado) => {
+    const mensaje = mensajeErrorFiscal(
+      new Error(
+        JSON.stringify({
+          issues: [{ code: "custom", path: [campo], message: "raw Zod issue secreto" }],
+        }),
+      ),
+      "REVISION",
+    );
+
+    expect(mensaje).toBe(esperado);
+    expect(mensaje).not.toMatch(/Zod|custom|issues|raw|path|JSON/i);
+  });
+
+  it.each([
+    [
+      "PERMISO_NC_PERIODO",
+      "No tenés permiso para crear notas de crédito por período. Pedile acceso a un administrador.",
+    ],
+    [
+      "FCE_NC_PERIODO_NO_SOPORTADA",
+      "Una nota de crédito por período no es compatible con FCE. Asociá los comprobantes puntuales que querés ajustar.",
+    ],
+    [
+      "CERTIFICADO_ARCA_INVALIDO",
+      "No se pudo emitir porque el certificado de ARCA está vencido o no autorizado. Un administrador debe corregir la configuración fiscal del emisor.",
+    ],
+    [
+      "CONFLICTO_RECONCILIACION_NC",
+      "Los datos recuperados de ARCA no coinciden con la nota reservada. La emisión quedó bloqueada para revisión; no vuelvas a emitirla.",
+    ],
+  ] as const)("expone una acción segura para %s", (codigo, esperado) => {
+    const error = Object.assign(crearErrorFiscalUsuario(codigo), {
+      cause: new Error("SOAP SQL certificate PEM raw ARCA"),
+    });
+    const mensaje = mensajeErrorFiscal(error, "EMISION");
+
+    expect(mensaje).toBe(esperado);
+    expect(mensaje).not.toMatch(/SOAP|SQL|PEM|raw/i);
+    if (codigo === "CERTIFICADO_ARCA_INVALIDO") expect(mensaje).not.toContain("ARCA está caída");
+  });
+
   it("usa exactamente el mensaje aprobado cuando el padrón está caído", () => {
     const mensaje = mensajeErrorFiscal(crearErrorFiscalUsuario("PADRON_ARCA_CAIDO"), "EMISION");
 

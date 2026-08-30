@@ -314,7 +314,7 @@ export async function cargarContextoArcaCongelado(
     !credencial.arcaKeyEnc ||
     !credencial.arcaCertEnc
   ) {
-    throw new Error("Falta la credencial del emisor y ambiente congelados.");
+    throw crearErrorFiscalUsuario("CERTIFICADO_ARCA_INVALIDO");
   }
 
   return {

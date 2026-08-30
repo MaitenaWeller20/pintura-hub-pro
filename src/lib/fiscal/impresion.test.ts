@@ -8,6 +8,7 @@ import {
 } from "./impresion";
 import { esPngDataUrlFiscal, qrAfipDataUrlObligatorio, urlQrAfip } from "./qr";
 import { crearSnapshotFiscalV2, type SnapshotFiscalV2 } from "./snapshot";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 import { resolverDatosFiscalesComprobanteDesdeFila } from "../fiscal.functions";
 
 const fixture = JSON.parse(
@@ -45,6 +46,25 @@ function filaAprobada(snapshot = crearSnapshot()) {
     afip_imp_total: snapshot.importeTotal,
     cae: "75123456789012",
     cae_vencimiento: "2026-08-30",
+  };
+}
+
+function filaAprobadaV3() {
+  const snapshot = crearSnapshotFiscalV3Fixture();
+  return {
+    ...filaAprobada(),
+    id: snapshot.venta.id,
+    afip_snapshot: snapshot,
+    afip_snapshot_hash: snapshot.hash,
+    afip_emisor_cuit: snapshot.identidad.emisorCuit,
+    afip_punto_venta: snapshot.identidad.puntoVenta,
+    afip_cbte_tipo: snapshot.identidad.cbteTipo,
+    afip_numero: snapshot.identidad.numero,
+    afip_modo: snapshot.identidad.modo,
+    afip_simulado: snapshot.identidad.simulado,
+    afip_validez: snapshot.identidad.validez,
+    afip_fecha_comprobante: snapshot.fechaComprobante,
+    afip_imp_total: snapshot.importeTotal,
   };
 }
 
@@ -146,6 +166,43 @@ describe("preparación fiscal v2 para impresión", () => {
         expect.objectContaining({ codigo: "COMPROBANTE_FISCAL_INCONSISTENTE" }),
       );
     }
+  });
+});
+
+describe("preparación fiscal v3 para impresión", () => {
+  it("deriva período, modalidad y motivo sólo del snapshot v3 validado", () => {
+    const preparado = prepararDatosFiscalesImpresos({
+      ...filaAprobadaV3(),
+      periodo_asoc_desde: "1999-01-01",
+      periodo_asoc_hasta: "1999-12-31",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "dato vivo adulterado",
+    });
+
+    expect(preparado).toMatchObject({
+      origen: "SNAPSHOT_V3",
+      nota_credito_periodo: {
+        periodo_desde: "2026-08-01",
+        periodo_hasta: "2026-08-15",
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Devolución de productos del período",
+      },
+    });
+    expect(JSON.stringify(preparado)).not.toMatch(/1999|dato vivo adulterado/);
+  });
+
+  it("falla cerrado si el snapshot v3 fue adulterado aunque las columnas vivas parezcan válidas", () => {
+    const fila = filaAprobadaV3();
+    const snapshot = structuredClone(fila.afip_snapshot);
+    snapshot.notaCredito.motivo = "Motivo adulterado después del CAE";
+
+    expect(() =>
+      prepararDatosFiscalesImpresos({
+        ...fila,
+        afip_snapshot: snapshot,
+        motivo_nota_credito: "Motivo de columna mutable",
+      }),
+    ).toThrowError(expect.objectContaining({ codigo: "SNAPSHOT_FISCAL_INVALIDO" }));
   });
 });
 
@@ -460,6 +517,20 @@ describe("fachada de lectura fiscal", () => {
     });
 
     expect(resultado).toMatchObject({ origen: "SNAPSHOT_V2", qr: QR_PNG });
+    expect(lecturasLegacy).toBe(0);
+  });
+
+  it("para v3 prepara, exige QR y jamás consulta datos fiscales vivos", async () => {
+    let lecturasLegacy = 0;
+    const resultado = await resolverDatosFiscalesComprobanteDesdeFila(filaAprobadaV3(), {
+      cargarLegacy: async () => {
+        lecturasLegacy += 1;
+        throw new Error("no debe leerse");
+      },
+      generarQr: async () => QR_PNG,
+    });
+
+    expect(resultado).toMatchObject({ origen: "SNAPSHOT_V3", qr: QR_PNG });
     expect(lecturasLegacy).toBe(0);
   });
 

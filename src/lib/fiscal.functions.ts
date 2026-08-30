@@ -390,6 +390,9 @@ export async function ejecutarCreacionNotaCreditoPeriodoFiscal(
     return { id: row.venta_id, numero: row.numero, cta_cte: row.es_cta_cte };
   } catch (error) {
     if (codigoErrorFiscalUsuario(error)) throw error;
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "42501") {
+      throw crearErrorFiscalUsuario("PERMISO_NC_PERIODO");
+    }
     throw crearErrorFiscalUsuario("ERROR_CORREGIBLE");
   }
 }

@@ -1,7 +1,12 @@
 import type { CondicionIva } from "./codigos";
 import { fmtFechaIsoAr } from "./fecha";
 import type { QrAfipInput } from "./qr";
-import { validarSnapshotFiscalV2, type SnapshotFiscalV2 } from "./snapshot";
+import {
+  validarSnapshotFiscalPersistido,
+  type SnapshotFiscalPersistido,
+  type SnapshotFiscalV2,
+  type SnapshotFiscalV3,
+} from "./snapshot";
 
 export type CodigoErrorImpresionFiscal =
   | "COMPROBANTE_FISCAL_INCONSISTENTE"
@@ -92,8 +97,7 @@ interface DatosFiscalesImpresosBase {
   qr?: string;
 }
 
-export interface DatosFiscalesImpresos extends DatosFiscalesImpresosBase {
-  origen: "SNAPSHOT_V2";
+interface DatosFiscalesImpresosSnapshotBase extends DatosFiscalesImpresosBase {
   advertencia: null;
   emisor: EmisorImpreso;
   totales: TotalesFiscalesImpresos;
@@ -101,6 +105,22 @@ export interface DatosFiscalesImpresos extends DatosFiscalesImpresosBase {
   iva_contenido: string;
   otros_impuestos_nacionales_indirectos: string;
 }
+
+export interface DatosFiscalesImpresosV2 extends DatosFiscalesImpresosSnapshotBase {
+  origen: "SNAPSHOT_V2";
+}
+
+export interface DatosFiscalesImpresosV3 extends DatosFiscalesImpresosSnapshotBase {
+  origen: "SNAPSHOT_V3";
+  nota_credito_periodo: {
+    periodo_desde: string;
+    periodo_hasta: string;
+    modalidad: SnapshotFiscalV3["notaCredito"]["modalidad"];
+    motivo: string;
+  };
+}
+
+export type DatosFiscalesImpresos = DatosFiscalesImpresosV2 | DatosFiscalesImpresosV3;
 
 export interface DatosFiscalesImpresosLegacy extends DatosFiscalesImpresosBase {
   origen: "LEGACY_INCOMPLETO";
@@ -245,7 +265,7 @@ function exigirCoincidencia(actual: unknown, esperado: unknown, campo: string): 
 }
 
 function validarFilaNueva(fila: Registro): {
-  snapshot: SnapshotFiscalV2;
+  snapshot: SnapshotFiscalPersistido;
   cae: string;
   caeVencimiento: string | null;
 } {
@@ -264,13 +284,13 @@ function validarFilaNueva(fila: Registro): {
   }
 
   const cae = caeValido(fila.cae);
-  let snapshot: SnapshotFiscalV2;
+  let snapshot: SnapshotFiscalPersistido;
   try {
-    snapshot = validarSnapshotFiscalV2(fila.afip_snapshot);
+    snapshot = validarSnapshotFiscalPersistido(fila.afip_snapshot);
   } catch (cause) {
     fallar(
       "SNAPSHOT_FISCAL_INVALIDO",
-      "El snapshot fiscal v2 no es válido; se bloqueó la impresión.",
+      "El snapshot fiscal persistido no es válido; se bloqueó la impresión.",
       cause,
     );
   }
@@ -308,12 +328,11 @@ function validarFilaNueva(fila: Registro): {
 }
 
 function mapearSnapshot(
-  snapshot: SnapshotFiscalV2,
+  snapshot: SnapshotFiscalPersistido,
   cae: string,
   caeVencimiento: string | null,
 ): DatosFiscalesImpresos {
-  return {
-    origen: "SNAPSHOT_V2",
+  const base = {
     advertencia: null,
     emisor: {
       razon_social: snapshot.emisor.razonSocial,
@@ -333,7 +352,7 @@ function mapearSnapshot(
       condicion_iva: snapshot.receptor.condicionIva,
       domicilio: snapshot.receptor.domicilio,
     },
-    condicion_venta: snapshot.venta.condicionVenta,
+    condicion_venta: snapshot.version === 2 ? snapshot.venta.condicionVenta : null,
     totales: {
       neto: decimalSnapshot(snapshot.importeNeto, "importeNeto"),
       exento: decimalSnapshot(snapshot.importeExento, "importeExento"),
@@ -379,6 +398,20 @@ function mapearSnapshot(
       tipoDocRec: snapshot.receptor.docTipoArca,
       nroDocRec: snapshot.receptor.docNroArca,
       codAut: cae,
+    },
+  } satisfies Omit<DatosFiscalesImpresosSnapshotBase, "origen">;
+
+  if (snapshot.version === 2) {
+    return { ...base, origen: "SNAPSHOT_V2" };
+  }
+  return {
+    ...base,
+    origen: "SNAPSHOT_V3",
+    nota_credito_periodo: {
+      periodo_desde: snapshot.periodoAsoc.desde,
+      periodo_hasta: snapshot.periodoAsoc.hasta,
+      modalidad: snapshot.notaCredito.modalidad,
+      motivo: snapshot.notaCredito.motivo,
     },
   };
 }

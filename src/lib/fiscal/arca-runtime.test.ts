@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { encryptString } from "./crypto";
+import { codigoErrorFiscalUsuario } from "./error-usuario";
 import type { SnapshotFiscalPersistido } from "./snapshot";
 
 const resultGetFixture = {
@@ -96,6 +97,21 @@ describe("cliente ARCA en el runtime ESM de Vercel", () => {
     expect(ultimo).toBe(42);
     expect(sdk.contexts[0]?.ticketPath).toBe("/tmp/quimex-arca-tickets");
     expect(sdk.contexts[0]?.ticketStorage).toBeDefined();
+  });
+
+  it("clasifica certificado ausente como configuración sin filtrar detalles técnicos", async () => {
+    const { ultimoAutorizado } = await import("./arca");
+
+    const promise = ultimoAutorizado(
+      { cuit: "30-71419966-4", arca_key_enc: null, arca_cert_enc: null },
+      { numero: 5, modo: "PRODUCCION" },
+      6,
+      {},
+    );
+
+    await expect(promise).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "CERTIFICADO_ARCA_INVALIDO",
+    );
   });
 
   it("mantiene @arcasdk/core fijado exactamente en 2.0.0", () => {

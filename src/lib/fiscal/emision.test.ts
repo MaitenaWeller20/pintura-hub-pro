@@ -405,6 +405,115 @@ function acciones(doble: FiscalDouble): string[] {
 }
 
 describe("ejecutarEmisionFiscal", () => {
+  it("una caída ARCA previa al request de una NC por período libera con copy reintentable", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "DEVOLUCION_PRODUCTOS",
+      motivo: "Devolución del período",
+      resolucion: "REINTEGRO",
+    };
+    doble.throwBeforeSequence = Object.assign(new Error("SOAP timeout secreto"), {
+      name: "AfipTimeout",
+    });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      doble.deps(),
+    );
+
+    expect(resultado).toEqual({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "ARCA_CAIDA_PRE_REQUEST_NC",
+      mensaje:
+        "ARCA está caída. No se pudo emitir la nota de crédito. Intentá nuevamente en otro momento.",
+    });
+    expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
+    expect(JSON.stringify(doble.calls)).not.toMatch(/SOAP timeout secreto/);
+  });
+
+  it("un timeout post-request de NC por período concilia con copy que prohíbe reemitir", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Bonificación del período",
+      resolucion: "SALDO_FAVOR",
+    };
+    doble.throwSolicitud = Object.assign(new Error("timeout SOAP raw"), { name: "AfipTimeout" });
+    const deps = doble.deps();
+    deps.crearSnapshot = async () => crearSnapshotFiscalV3Fixture({ letra: "B" });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      estado: "RECONCILIAR",
+      mensaje: "ARCA está caída y estamos verificando si autorizó la nota. No vuelvas a emitirla.",
+    });
+    expect(doble.calls.at(-1)?.payload).toMatchObject({
+      error_codigo: "ARCA_INCIERTA_POST_REQUEST_NC",
+      mensaje_mascarado:
+        "ARCA está caída y estamos verificando si autorizó la nota. No vuelvas a emitirla.",
+    });
+    expect(JSON.stringify(doble.calls)).not.toMatch(/timeout SOAP raw/);
+  });
+
+  it("un certificado inválido post-request concilia como configuración y no como caída", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "DEVOLUCION_PRODUCTOS",
+      motivo: "Devolución del período",
+      resolucion: "REINTEGRO",
+    };
+    doble.throwSolicitud = crearErrorFiscalUsuario("CERTIFICADO_ARCA_INVALIDO");
+    const deps = doble.deps();
+    deps.crearSnapshot = async () => crearSnapshotFiscalV3Fixture({ letra: "B" });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      deps,
+    );
+
+    expect(resultado.estado).toBe("RECONCILIAR");
+    if (resultado.estado !== "RECONCILIAR") throw new Error("debió conciliar");
+    expect(resultado.mensaje).toContain("certificado de ARCA");
+    expect(resultado.mensaje).not.toContain("ARCA está caída");
+    expect(doble.calls.at(-1)?.payload).toMatchObject({
+      error_codigo: "CERTIFICADO_ARCA_INVALIDO",
+    });
+  });
+
   it.each([
     ["A", 3, MANUAL_A],
     ["B", 8, MANUAL_B],
@@ -554,7 +663,10 @@ describe("ejecutarEmisionFiscal", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/CbteTipo.*3.*8.*13/i);
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof Error && error.message === "FISCAL_USUARIO_V1:FCE_NC_PERIODO_NO_SOPORTADA",
+    );
 
     expect(doble.calls).toEqual([]);
     expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
@@ -1274,6 +1386,28 @@ describe("ejecutarConciliacionFiscal", () => {
       campos: ["receptor.docNro", "total"],
     });
     expect(JSON.stringify(doble.calls[0].payload)).not.toContain("distinto");
+  });
+
+  it("una diferencia de NC por período bloquea con copy accionable y sin valores fiscales", async () => {
+    const doble = new FiscalDouble();
+    reconciliable(doble);
+    doble.persistedSnapshot = crearSnapshotFiscalV3Fixture({ letra: "B", numero: 7 });
+    doble.remote = { voucher: "SOAP secreto distinto" };
+    doble.decision = { accion: "BLOQUEAR", diferencias: ["total"] };
+
+    const result = await ejecutarConciliacionFiscal(
+      { ventaId: "71000000-0000-4000-8000-000000000001" },
+      doble.deps(),
+    );
+
+    expect(result.estado).toBe("BLOQUEADO");
+    expect(doble.calls[0].payload).toMatchObject({
+      error_codigo: "CONFLICTO_RECONCILIACION_NC",
+      mensaje_mascarado:
+        "Los datos recuperados de ARCA no coinciden con la nota reservada. La emisión quedó bloqueada para revisión; no vuelvas a emitirla.",
+      diferencias: { campos: ["total"] },
+    });
+    expect(JSON.stringify(doble.calls[0].payload)).not.toContain("SOAP secreto distinto");
   });
 
   it("una ausencia segura rota claim y reenvía exactamente número, receptor, importes y hash", async () => {

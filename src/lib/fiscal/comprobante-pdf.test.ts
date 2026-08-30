@@ -7,6 +7,8 @@ import {
   type DatosFiscalesImpresos,
 } from "./impresion";
 import { esPngDataUrlFiscal } from "./qr";
+import { prepararDatosFiscalesImpresos } from "./impresion";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 
 /**
  * El PDF es el papel que ve el cliente y que mira el contador. Lo que se
@@ -339,6 +341,66 @@ describe("nota de crédito", () => {
     expect(texto).toMatch(/\$\s?1\.210,00/);
     expect(texto).not.toMatch(/-\s?\$/);
     expect(texto).toContain("COD. 08");
+  });
+});
+
+describe("nota de crédito por período desde snapshot v3", () => {
+  const snapshot = crearSnapshotFiscalV3Fixture();
+  const fiscal = {
+    ...prepararDatosFiscalesImpresos({
+      id: snapshot.venta.id,
+      afip_estado: "APROBADO",
+      afip_fase: "PERSISTIDO",
+      afip_version: 7,
+      afip_legacy_incompleto: false,
+      afip_snapshot: snapshot,
+      afip_snapshot_hash: snapshot.hash,
+      afip_emisor_cuit: snapshot.identidad.emisorCuit,
+      afip_punto_venta: snapshot.identidad.puntoVenta,
+      afip_cbte_tipo: snapshot.identidad.cbteTipo,
+      afip_numero: snapshot.identidad.numero,
+      afip_modo: snapshot.identidad.modo,
+      afip_simulado: snapshot.identidad.simulado,
+      afip_validez: snapshot.identidad.validez,
+      afip_fecha_comprobante: snapshot.fechaComprobante,
+      afip_imp_total: snapshot.importeTotal,
+      cae: "75123456789012",
+      cae_vencimiento: "2026-08-30",
+      periodo_asoc_desde: "1999-01-01",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "dato vivo que no debe imprimirse",
+    }),
+    qr: QR_PNG,
+  };
+  const { doc } = generarComprobantePdf(
+    {
+      ...venta,
+      tipo_comprobante: "NOTA_CREDITO",
+      cliente: { razon_social: "Comprador comercial", cuit_dni: "20333444559" },
+    },
+    [{ ...items[0], descripcion: "línea viva que no debe imprimirse" }],
+    fiscal,
+  );
+  const texto = textoDelPdf(doc);
+
+  it("imprime asociación, modo y motivo congelados junto con receptor, importes y CAE", () => {
+    expect(texto).toContain("Período asociado: 01/08/2026 a 15/08/2026");
+    expect(texto).toContain("Modalidad: Devolución de productos");
+    expect(texto).toContain("Motivo: Devolución de productos del período");
+    expect(texto).toContain(snapshot.receptor.razonSocial);
+    expect(texto).toContain(snapshot.items[0].descripcion);
+    expect(texto).toContain("Neto gravado");
+    expect(texto).toContain("IVA");
+    expect(texto).toContain("TOTAL");
+    expect(texto).toContain("CAE N°: 75123456789012");
+  });
+
+  it("no usa receptor, líneas ni metadata fiscal viva", () => {
+    expect(texto).not.toContain("Comprador comercial");
+    expect(texto).not.toContain("OHI-FVTA-0042");
+    expect(texto).not.toContain("línea viva que no debe imprimirse");
+    expect(texto).not.toContain("01/01/1999");
+    expect(texto).not.toContain("dato vivo que no debe imprimirse");
   });
 });
 

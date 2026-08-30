@@ -8,7 +8,10 @@ import {
   type ConfirmacionFiscalPostBorrador,
 } from "./confirmacion";
 import {
+  codigoCaidaArcaSegunFase,
   codigoErrorFiscalUsuario,
+  crearErrorFiscalUsuario,
+  esCaidaArcaConfirmada,
   mensajeCodigoErrorFiscalUsuario,
   type CodigoErrorFiscalUsuario,
 } from "./error-usuario";
@@ -321,8 +324,13 @@ async function marcarPreflightCorregible(
   version: number,
   cause: unknown,
   deps: DependenciasEmisionFiscal,
+  esNotaCreditoPeriodo = false,
 ): Promise<ResultadoEmisionFiscal> {
-  const codigo = codigoErrorFiscalUsuario(cause) ?? "ERROR_CORREGIBLE";
+  const codigo =
+    codigoErrorFiscalUsuario(cause) ??
+    (esNotaCreditoPeriodo && esCaidaArcaConfirmada(cause)
+      ? codigoCaidaArcaSegunFase("PREFLIGHT")
+      : "ERROR_CORREGIBLE");
   const mensaje = mensajeCodigoErrorFiscalUsuario(codigo);
   try {
     await deps.transicionar({
@@ -464,18 +472,24 @@ async function marcarReconciliacion(
   version: number,
   deps: DependenciasEmisionFiscal,
   codigo: string,
+  cause?: unknown,
 ): Promise<ResultadoEmisionFiscal> {
+  const codigoMarcado = codigoErrorFiscalUsuario(cause);
+  const codigoSeguro =
+    codigoMarcado ??
+    (reserva.snapshot.version === 3 && esCaidaArcaConfirmada(cause)
+      ? codigoCaidaArcaSegunFase("REQUEST_INICIADO")
+      : null);
+  const codigoPersistido = codigoSeguro ?? codigo;
+  const mensaje = codigoSeguro
+    ? mensajeCodigoErrorFiscalUsuario(codigoSeguro)
+    : "La respuesta fiscal es incierta y requiere conciliación.";
   const intentar = (expectedVersion: number) =>
     deps.transicionar({
       ventaId: reserva.ventaId,
       accion: "RECONCILIAR",
       claimToken: reserva.claimToken,
-      payload: errorEnmascarado(
-        "REQUEST_INICIADO",
-        codigo,
-        "La respuesta fiscal es incierta y requiere conciliación.",
-        expectedVersion,
-      ),
+      payload: errorEnmascarado("REQUEST_INICIADO", codigoPersistido, mensaje, expectedVersion),
     });
   try {
     await intentar(version);
@@ -505,7 +519,7 @@ async function marcarReconciliacion(
   }
   return {
     estado: "RECONCILIAR",
-    mensaje: "La respuesta fiscal es incierta y requiere conciliación.",
+    mensaje,
   };
 }
 
@@ -554,8 +568,14 @@ async function procesarRequestCae(
   try {
     const payloadCae = deps.crearPayloadCae(reserva.snapshot);
     respuesta = await deps.solicitarCae(reserva, payloadCae);
-  } catch {
-    return marcarReconciliacion(reserva, estadoRequest.afip_version, deps, "REQUEST_INCIERTO");
+  } catch (cause) {
+    return marcarReconciliacion(
+      reserva,
+      estadoRequest.afip_version,
+      deps,
+      "REQUEST_INCIERTO",
+      cause,
+    );
   }
 
   if (respuesta.resultado === "RECHAZADA") {
@@ -755,7 +775,7 @@ export async function ejecutarEmisionFiscal(
       throw new Error("La asociación fiscal cambió durante la validación previa al claim.");
     }
     if (![3, 8, 13].includes(validacionPreclaim.cbteTipo)) {
-      throw new Error("La NC por período sólo admite CbteTipo estándar 3, 8 o 13.");
+      throw crearErrorFiscalUsuario("FCE_NC_PERIODO_NO_SOPORTADA");
     }
   }
 
@@ -800,7 +820,7 @@ export async function ejecutarEmisionFiscal(
       throw new Error("La asociación fiscal cambió durante el preflight.");
     }
     if (asociacion.tipo === "PERIODO" && ![3, 8, 13].includes(preparacion.cbteTipo)) {
-      throw new Error("La NC por período sólo admite CbteTipo estándar 3, 8 o 13.");
+      throw crearErrorFiscalUsuario("FCE_NC_PERIODO_NO_SOPORTADA");
     }
     const huellaAutoritativa = huellaCanonicaPreparacion(preparacion);
     if (input.huellaConfirmacion !== huellaAutoritativa) {
@@ -822,6 +842,7 @@ export async function ejecutarEmisionFiscal(
       persistido.afip_version,
       cause,
       deps,
+      asociacion.tipo === "PERIODO",
     );
   }
 
@@ -887,6 +908,7 @@ export async function ejecutarEmisionFiscal(
           persistido.afip_version,
           error,
           deps,
+          asociacion.tipo === "PERIODO",
         );
       }
       estado = persistido;
@@ -900,7 +922,7 @@ export async function ejecutarEmisionFiscal(
           throw new Error("La asociación fiscal cambió durante el preflight.");
         }
         if (asociacion.tipo === "PERIODO" && ![3, 8, 13].includes(preparacion.cbteTipo)) {
-          throw new Error("La NC por período sólo admite CbteTipo estándar 3, 8 o 13.");
+          throw crearErrorFiscalUsuario("FCE_NC_PERIODO_NO_SOPORTADA");
         }
         if (input.huellaConfirmacion !== huellaCanonicaPreparacion(preparacion)) {
           return liberarPreflightParaReconfirmar(
@@ -920,6 +942,7 @@ export async function ejecutarEmisionFiscal(
           estado.afip_version,
           cause,
           deps,
+          asociacion.tipo === "PERIODO",
         );
       }
     }
@@ -974,6 +997,7 @@ export async function ejecutarEmisionFiscal(
       persistido.afip_version,
       cause,
       deps,
+      asociacion.tipo === "PERIODO",
     );
   }
   return procesarRequestCae(reserva, estado, deps, input);
@@ -1039,6 +1063,11 @@ export async function ejecutarConciliacionFiscal(
 
   if (decision.accion === "BLOQUEAR") {
     const campos = [...new Set(decision.diferencias)].sort();
+    const esNotaPeriodo = reserva.snapshot.version === 3;
+    const codigoDivergencia = esNotaPeriodo ? "CONFLICTO_RECONCILIACION_NC" : "DIVERGENCIA_ARCA";
+    const mensajeDivergencia = esNotaPeriodo
+      ? mensajeCodigoErrorFiscalUsuario("CONFLICTO_RECONCILIACION_NC")
+      : "La consulta ARCA no coincide con la identidad fiscal reservada.";
     try {
       await deps.transicionar({
         ventaId: input.ventaId,
@@ -1047,8 +1076,8 @@ export async function ejecutarConciliacionFiscal(
         payload: {
           ...errorEnmascarado(
             "CONCILIACION",
-            "DIVERGENCIA_ARCA",
-            "La consulta ARCA no coincide con la identidad fiscal reservada.",
+            codigoDivergencia,
+            mensajeDivergencia,
             reserva.afipVersion,
           ),
           error_clase: "DIVERGENCIA",

@@ -377,6 +377,22 @@ describe("fachada de alta de NC fiscal por período", () => {
     expect(String(error)).not.toContain("SQL secreto");
   });
 
+  it("traduce una denegación SQL por capacidad a un mensaje de permiso cerrado", async () => {
+    const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {
+      cargarFlags: async () => ({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: true,
+      }),
+      crear: async () => {
+        throw Object.assign(new Error("permission denied SQL raw"), { code: "42501" });
+      },
+    }).catch((cause: unknown) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PERMISO_NC_PERIODO");
+    expect(String(error)).not.toMatch(/permission denied|SQL raw/i);
+  });
+
   it("tipa un fallo al releer settings sin filtrar detalles de la consulta", async () => {
     const crear = vi.fn();
     const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {

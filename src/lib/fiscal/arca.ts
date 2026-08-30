@@ -5,6 +5,7 @@ import { SupabaseTicketStorage } from "./ticket-storage";
 import type { AlicuotaAfip } from "./iva";
 import { validarSnapshotFiscalV3, type SnapshotFiscalPersistido } from "./snapshot";
 import { proyectarSnapshotParaArca } from "./proyeccion-arca";
+import { crearErrorFiscalUsuario } from "./error-usuario";
 import {
   entornoHabilitaMockFiscal,
   entornoMockFiscalDelProceso,
@@ -646,7 +647,7 @@ export async function crearClienteArca(
   const cert = decryptString(emisor.arca_cert_enc);
   const key = decryptString(emisor.arca_key_enc);
   if (!cert || !key) {
-    throw new Error("No hay certificado de AFIP cargado. Completá la configuración fiscal.");
+    throw crearErrorFiscalUsuario("CERTIFICADO_ARCA_INVALIDO");
   }
 
   const { Arca } = await import("@arcasdk/core");

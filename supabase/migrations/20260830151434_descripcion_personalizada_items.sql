@@ -15,10 +15,11 @@ BEGIN
   v_texto := pg_catalog.btrim(
     pg_catalog.regexp_replace(
       p_valor,
-      '[[:space:]]+',
+      U&'[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000\FEFF]+',
       ' ',
       'g'
-    )
+    ),
+    ' '
   );
   IF v_texto IS NULL OR v_texto = '' THEN
     RAISE EXCEPTION 'Ingresá una descripción para la línea';

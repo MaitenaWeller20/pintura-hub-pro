@@ -92,6 +92,79 @@ SELECT p.id,c.sucursal_id,100
    'c5100000-0000-4000-8000-000000000002'
  );
 
+-- El normalizador comparte una clase Unicode cerrada con TypeScript. Estos
+-- casos detectan tanto diferencias de clasificación como invertir trim/collapse.
+CREATE TEMP TABLE t_whitespace_unicode(
+  caso text PRIMARY KEY,
+  whitespace text NOT NULL
+) ON COMMIT DROP;
+INSERT INTO t_whitespace_unicode(caso,whitespace) VALUES
+  ('BOM U+FEFF',U&'\FEFF'),
+  ('NEXT LINE U+0085',U&'\0085'),
+  ('NBSP U+00A0',U&'\00A0');
+SELECT pg_temp.assert_true(
+  NOT EXISTS (
+    SELECT 1
+      FROM t_whitespace_unicode AS c
+     WHERE public._normalizar_descripcion_item_20260830(
+       c.whitespace||'Base'||c.whitespace||c.whitespace||'10 L'||c.whitespace,
+       'fallback',
+       true
+     ) IS DISTINCT FROM 'Base 10 L'
+  ),
+  'SQL colapsa y recorta U+FEFF, U+0085 y NBSP con la misma frontera explícita'
+);
+DO $$
+DECLARE
+  v_caso record;
+BEGIN
+  FOR v_caso IN SELECT * FROM t_whitespace_unicode ORDER BY caso LOOP
+    BEGIN
+      PERFORM public._normalizar_descripcion_item_20260830(
+        pg_catalog.repeat(v_caso.whitespace,3),
+        'fallback',
+        true
+      );
+      RAISE EXCEPTION USING
+        ERRCODE='ZX001',
+        MESSAGE='SQL aceptó descripción formada sólo por '||v_caso.caso;
+    EXCEPTION WHEN OTHERS THEN
+      IF SQLSTATE='ZX001' OR SQLERRM NOT ILIKE '%descripción%' THEN
+        RAISE;
+      END IF;
+    END;
+  END LOOP;
+  RAISE NOTICE '✓ SQL rechaza descripciones formadas sólo por U+FEFF, U+0085 y NBSP';
+END;
+$$;
+SELECT pg_temp.assert_true(
+  public._normalizar_descripcion_item_20260830(
+    pg_catalog.repeat('😀',160),
+    'fallback',
+    true
+  )=pg_catalog.repeat('😀',160),
+  'SQL acepta exactamente 160 emoji medidos como code points'
+);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM public._normalizar_descripcion_item_20260830(
+      pg_catalog.repeat('😀',161),
+      'fallback',
+      true
+    );
+    RAISE EXCEPTION USING
+      ERRCODE='ZX001',
+      MESSAGE='SQL aceptó 161 emoji';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLSTATE='ZX001' OR SQLERRM NOT LIKE '%160%' THEN
+      RAISE;
+    END IF;
+  END;
+  RAISE NOTICE '✓ SQL rechaza 161 emoji medidos como code points';
+END;
+$$;
+
 -- Alta: congela el texto normalizado sin tocar catálogo ni importes.
 CREATE TEMP TABLE t_presupuesto_personalizado ON COMMIT DROP AS
 SELECT * FROM public.crear_presupuesto(

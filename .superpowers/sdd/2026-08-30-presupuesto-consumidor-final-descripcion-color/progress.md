@@ -298,3 +298,28 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
   - Verificación fresca: suite Vitest completa 85 archivos/1779 tests GREEN
     (2 archivos/22 tests omitidos), TypeScript y build Vercel mock GREEN. El
     build conserva únicamente sus warnings históricos ya inventariados.
+- Task 5 scoped re-review round 2 (`bd8d5fa`): `Quality: FAIL` por dos hallazgos
+  Important de máquina de estados.
+  - Un error determinístico conservaba payload/key/acción estables; si seguía a
+    un ambiguo, además dejaba todo congelado. El botón de replay ambiguo ignoraba
+    `puedeConvertir`, pero su handler volvía a exigirlo.
+- Task 5 fix round 2 — implementación completa; re-review independiente pendiente.
+  - RED montado limpio: 4/16 fallaron. V2 y legacy reutilizaron la clave tras un
+    error determinístico; un determinístico posterior a ambiguo no desbloqueó;
+    y perder caja en el preflight impidió llamar el replay habilitado.
+  - GREEN focal: 16/16. Sólo un último resultado ambiguo retiene payload, key y
+    acción; repetirlo conserva bytes exactos y sigue congelado. Cualquier error
+    determinístico, inicial o posterior a replay, limpia ambos refs, rota UUID y
+    desbloquea controles/cierre dejando el error seguro visible. El siguiente
+    intento refleja pagos/acción V2 o comprobante/forma legacy corregidos.
+  - El handler de click usa el mismo predicado que los botones: un replay exacto
+    no depende de un refetch de caja, mientras una acción distinta sigue
+    bloqueada. Los callbacks legacy también rechazan cambios durante ambiguo.
+  - Verificación fresca parcial: focal 16/16 y suite Vitest completa 85
+    archivos/1783 tests GREEN (2 archivos/22 tests omitidos); TypeScript GREEN.
+    Un primer typecheck detectó sólo una introspección `.mock` mal tipada en la
+    prueba nueva; se reemplazó por el contrato completo de `onConvertida` y se
+    repitieron focal, suite y typecheck en verde.
+  - Build Vercel mock, Prettier/ESLint focal y `git diff --check` GREEN; el build
+    conserva sólo warnings históricos de rutas-test, deprecaciones y módulos
+    Node externalizados. No se usaron Supabase, red, deploy ni ARCA.

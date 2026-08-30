@@ -3,13 +3,14 @@
 import { StrictMode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DialogoConvertirPresupuesto } from "./dialogo-convertir-presupuesto";
 
 const PRESUPUESTO_ID = "10000000-0000-4000-8000-000000000001";
 const CLIENTE_PRESUPUESTO_ID = "20000000-0000-4000-8000-000000000001";
 const CLIENTE_EFECTIVO_ID = "20000000-0000-4000-8000-000000000002";
 const CAJA_ID = "30000000-0000-4000-8000-000000000001";
+const scrollIntoViewOriginal = Element.prototype.scrollIntoView;
 
 const dobles = vi.hoisted(() => ({
   preflight: vi.fn(),
@@ -92,6 +93,14 @@ function diferida<T>() {
   return { promise, resolver, rechazar };
 }
 
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
+
+afterAll(() => {
+  Element.prototype.scrollIntoView = scrollIntoViewOriginal;
+});
+
 const PREFLIGHT_ABIERTO = {
   presupuestoId: PRESUPUESTO_ID,
   sucursalId: "40000000-0000-4000-8000-000000000001",
@@ -122,7 +131,7 @@ function renderDialogo(
     </QueryClientProvider>
   );
   render(strict ? <StrictMode>{contenido}</StrictMode> : contenido);
-  return props;
+  return { ...props, queryClient };
 }
 
 async function prepararPago() {
@@ -362,6 +371,178 @@ describe("diálogo de conversión de presupuesto", () => {
     await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(2));
     expect(JSON.stringify(dobles.convertir.mock.calls[1][0].data)).toBe(primerPayloadSerializado);
     expect(dobles.convertir.mock.calls[1][0].data.idempotency_key).toBe(primeraClave);
+  });
+
+  it("descarta un primer fallo determinístico y crea otro intento V2 con pagos, clave y acción nuevos", async () => {
+    dobles.convertir
+      .mockRejectedValueOnce(new Error("validación determinística"))
+      .mockResolvedValueOnce({
+        id: "50000000-0000-4000-8000-000000000001",
+        numero: "GPZ-VTA-0001",
+        cta_cte: false,
+        clienteId: CLIENTE_EFECTIVO_ID,
+      });
+    const props = renderDialogo({
+      presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
+    });
+    await prepararPago();
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await screen.findByRole("alert");
+    const primeraEntrada = dobles.convertir.mock.calls[0][0].data;
+
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago completo" }));
+    expect(screen.getByText("2 pagos")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("conv-y-facturar"));
+
+    await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(2));
+    const segundaEntrada = dobles.convertir.mock.calls[1][0].data;
+    expect(segundaEntrada.idempotency_key).not.toBe(primeraEntrada.idempotency_key);
+    expect(segundaEntrada.pagos).toEqual([
+      { forma_pago: "EFECTIVO", monto: 121, detalle: {} },
+      { forma_pago: "TRANSFERENCIA", monto: 50, detalle: {} },
+    ]);
+    expect(JSON.stringify(segundaEntrada)).not.toBe(JSON.stringify(primeraEntrada));
+    await waitFor(() =>
+      expect(props.onConvertida).toHaveBeenCalledWith({
+        ventaId: "50000000-0000-4000-8000-000000000001",
+        clienteId: CLIENTE_EFECTIVO_ID,
+        facturarAhora: true,
+      }),
+    );
+  });
+
+  it("descarta un fallo determinístico legacy y usa comprobante y forma de pago corregidos", async () => {
+    dobles.convertir
+      .mockRejectedValueOnce(new Error("validación determinística"))
+      .mockResolvedValueOnce({
+        id: "50000000-0000-4000-8000-000000000001",
+        numero: "GPZ-VTA-0001",
+        cta_cte: false,
+        clienteId: CLIENTE_EFECTIVO_ID,
+      });
+    renderDialogo({
+      presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
+      facturacionV2Habilitada: false,
+      facturacionLegacyHabilitada: true,
+      puedeFacturar: false,
+    });
+    await screen.findByText(/Caja abierta desde .*30\/08\/2026.*11:35/);
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await screen.findByRole("alert");
+    const primeraEntrada = dobles.convertir.mock.calls[0][0].data;
+
+    fireEvent.click(screen.getAllByRole("combobox")[0]);
+    fireEvent.click(await screen.findByRole("option", { name: "Factura A" }));
+    fireEvent.click(screen.getByTestId("conv-forma-pago"));
+    fireEvent.click(await screen.findByRole("option", { name: "Transferencia" }));
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+
+    await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(2));
+    const segundaEntrada = dobles.convertir.mock.calls[1][0].data;
+    expect(segundaEntrada.idempotency_key).not.toBe(primeraEntrada.idempotency_key);
+    expect(segundaEntrada).toMatchObject({
+      entrada: "LEGACY",
+      tipo_comprobante: "FACTURA_A",
+      pagos: [{ forma_pago: "TRANSFERENCIA", monto: 121, detalle: {} }],
+    });
+  });
+
+  it("desbloquea tras un replay determinístico y el siguiente intento rota payload, clave y acción", async () => {
+    dobles.convertir
+      .mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"))
+      .mockRejectedValueOnce(new Error("validación determinística"))
+      .mockResolvedValueOnce({
+        id: "50000000-0000-4000-8000-000000000001",
+        numero: "GPZ-VTA-0001",
+        cta_cte: false,
+        clienteId: CLIENTE_EFECTIVO_ID,
+      });
+    const props = renderDialogo({
+      presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
+    });
+    await prepararPago();
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await screen.findByRole("alert");
+    const primeraEntradaSerializada = JSON.stringify(dobles.convertir.mock.calls[0][0].data);
+    const primeraClave = dobles.convertir.mock.calls[0][0].data.idempotency_key;
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(2));
+    expect(JSON.stringify(dobles.convertir.mock.calls[1][0].data)).toBe(primeraEntradaSerializada);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("No se pudo convertir"),
+    );
+    expect(
+      (screen.getByRole("radio", { name: "Consumidor final / sin cliente" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect((screen.getByRole("button", { name: "Cancelar" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(screen.getByRole("button", { name: "Cerrar" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago completo" }));
+    expect(screen.getByText("2 pagos")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("conv-y-facturar"));
+
+    await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(3));
+    const terceraEntrada = dobles.convertir.mock.calls[2][0].data;
+    expect(terceraEntrada.idempotency_key).not.toBe(primeraClave);
+    expect(terceraEntrada.pagos).toHaveLength(2);
+    await waitFor(() =>
+      expect(props.onConvertida).toHaveBeenCalledWith({
+        ventaId: "50000000-0000-4000-8000-000000000001",
+        clienteId: CLIENTE_EFECTIVO_ID,
+        facturarAhora: true,
+      }),
+    );
+  });
+
+  it("mantiene exacto y congelado cada replay ambiguo aunque el preflight pierda la caja", async () => {
+    dobles.convertir
+      .mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"))
+      .mockRejectedValueOnce(new Error("timeout al confirmar"))
+      .mockResolvedValueOnce({
+        id: "50000000-0000-4000-8000-000000000001",
+        numero: "GPZ-VTA-0001",
+        cta_cte: false,
+        clienteId: CLIENTE_EFECTIVO_ID,
+      });
+    const props = renderDialogo();
+    await prepararPago();
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await screen.findByRole("alert");
+    const entradaOriginal = JSON.stringify(dobles.convertir.mock.calls[0][0].data);
+
+    act(() => {
+      props.queryClient.setQueryData(["preflight-conversion-presupuesto", PRESUPUESTO_ID], {
+        ...PREFLIGHT_ABIERTO,
+        caja: null,
+      });
+    });
+    await screen.findByText("No hay caja abierta");
+    expect((screen.getByTestId("conv-confirmar") as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(2));
+    expect(JSON.stringify(dobles.convertir.mock.calls[1][0].data)).toBe(entradaOriginal);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("No se pudo confirmar"),
+    );
+    expect(
+      (screen.getByRole("button", { name: "Agregar pago completo" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Cerrar" })).toBeNull();
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+    await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(3));
+    expect(JSON.stringify(dobles.convertir.mock.calls[2][0].data)).toBe(entradaOriginal);
   });
 
   it("presenta el error RPC como guía humana segura con role alert", async () => {

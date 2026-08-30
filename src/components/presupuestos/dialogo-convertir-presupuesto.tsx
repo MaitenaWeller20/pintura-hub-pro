@@ -246,7 +246,14 @@ export function DialogoConvertirPresupuesto({
       onConvertida(resultado.conversion);
     },
     onError: (cause) => {
-      if (esErrorAmbiguo(cause)) setIntentoAmbiguo(true);
+      if (esErrorAmbiguo(cause)) {
+        setIntentoAmbiguo(true);
+      } else {
+        entradaEstableRef.current = null;
+        facturarAhoraEstableRef.current = null;
+        idempotencyKeyRef.current = crypto.randomUUID();
+        setIntentoAmbiguo(false);
+      }
       setError(mensajeErrorConversion(cause));
     },
     onSettled: () => {
@@ -255,7 +262,10 @@ export function DialogoConvertirPresupuesto({
   });
 
   const iniciarConversion = (facturarAhora: boolean) => {
-    if (!puedeConvertir || mutacion.isPending || convirtiendoRef.current) return;
+    const accionInvalida = intentoAmbiguo
+      ? facturarAhoraEstableRef.current !== facturarAhora
+      : !puedeConvertir;
+    if (accionInvalida || mutacion.isPending || convirtiendoRef.current) return;
     convirtiendoRef.current = true;
     mutacion.mutate(facturarAhora);
   };
@@ -417,7 +427,11 @@ export function DialogoConvertirPresupuesto({
                   <Label>Comprobante</Label>
                   <Select
                     value={tipoLegacy}
-                    onValueChange={(value) => setTipoLegacy(value as typeof tipoLegacy)}
+                    disabled={controlesCongelados}
+                    onValueChange={(value) => {
+                      if (intentoAmbiguo) return;
+                      setTipoLegacy(value as typeof tipoLegacy);
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -470,7 +484,11 @@ export function DialogoConvertirPresupuesto({
                 <Label>Cómo paga</Label>
                 <Select
                   value={formaPagoLegacy}
-                  onValueChange={(value) => setFormaPagoLegacy(value as FormaPagoVenta)}
+                  disabled={controlesCongelados}
+                  onValueChange={(value) => {
+                    if (intentoAmbiguo) return;
+                    setFormaPagoLegacy(value as FormaPagoVenta);
+                  }}
                 >
                   <SelectTrigger data-testid="conv-forma-pago">
                     <SelectValue />

@@ -155,3 +155,52 @@ Verificación fresca del fix:
 | `npm test` | PASS, 85 archivos/1779 tests; 2 archivos/22 tests omitidos |
 | `npm run typecheck` | PASS |
 | `INVOICING_MOCK_MODE=true npm run build:vercel` | PASS, sólo warnings históricos |
+
+## Scoped re-review round 2 — transición determinística
+
+La segunda revisión encontró dos estados incompletos. Un fallo no ambiguo no
+descartaba el request estable ni rotaba la clave; cuando ocurría después de un
+replay ambiguo, tampoco desbloqueaba el diálogo. Además, el botón permitía el
+replay ambiguo aunque cambiara el preflight, pero `iniciarConversion` volvía a
+bloquearlo con `puedeConvertir`.
+
+El RED montado quedó en 4/16 fallos funcionales:
+
+- V2 conservó la misma clave tras editar pagos y elegir facturar;
+- legacy conservó la misma clave/payload tras elegir Factura A y Transferencia;
+- un determinístico posterior a ambiguo dejó radio/cierre congelados;
+- perder caja en el preflight dejó el botón habilitado pero la RPC en una sola
+  llamada.
+
+El GREEN 16/16 implementa una transición cerrada:
+
+- sólo el último resultado ambiguo conserva `entradaEstableRef`,
+  `facturarAhoraEstableRef` e `idempotencyKeyRef`;
+- cada ambiguo repetido mantiene exactamente bytes, clave y acción, con todos
+  los campos y el cierre congelados;
+- cualquier fallo determinístico limpia ambos refs, rota inmediatamente a un
+  UUID nuevo, apaga `intentoAmbiguo`, conserva el error humano y habilita la
+  corrección;
+- el intento siguiente serializa los pagos/acción V2 o comprobante/forma legacy
+  visibles, sin reutilizar clave;
+- el handler y los botones comparten la regla de replay: la misma acción puede
+  recuperar una operación ambigua aunque el preflight ya muestre caja ausente.
+
+El shim `scrollIntoView` agregado vive sólo en la prueba montada y cubre la
+carencia de jsdom necesaria para operar los Select reales de Radix. No hubo
+cambios de Supabase, RPC, E2E, fiscalidad ni red.
+
+Verificación fresca del fix round 2:
+
+| Gate | Resultado |
+| --- | --- |
+| `npx vitest run src/components/presupuestos/dialogo-convertir-presupuesto.test.tsx` | PASS, 16/16 |
+| `npm test` | PASS, 85 archivos/1783 tests; 2 archivos/22 tests omitidos |
+| `npm run typecheck` | PASS |
+| `INVOICING_MOCK_MODE=true npm run build:vercel` | PASS, sólo warnings históricos |
+| Prettier/ESLint focal y `git diff --check` | PASS |
+
+El primer typecheck señaló únicamente que una prueba accedía a `.mock` desde el
+tipo público del callback. La aserción se cambió al objeto completo entregado a
+`onConvertida`; focal, suite completa y typecheck se ejecutaron otra vez y
+quedaron verdes.

@@ -229,3 +229,56 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
   `Quality: PASS`; no Critical, Important or Minor findings. Preview/create use
   one payload, mounted budget flows preserve descriptions, and duplicate rows
   have stable UI-only identities excluded from commercial payloads.
+- Task 5 — implementación y matriz final completas; revisión independiente pendiente.
+  - RED montado observado: 9/9 casos iniciales fallaron porque el diálogo no
+    ofrecía modo de receptor ni preflight de sucursal/caja. El GREEN focal
+    cubre anónimo/identificado, loading/sin caja/error, null V2 y receptor
+    efectivo, freeze de cierre y controles, doble clic/retry con key y payload
+    estables, errores seguros y resultado tardío tras unmount. Una regresión
+    adicional reprodujo el callback perdido bajo `StrictMode`; el guard de
+    montaje se rearma en cada setup y quedó GREEN.
+  - El diálogo usa un solo preflight autenticado al abrir. Consumidor Final
+    limpia el cliente local, fuerza contado, oculta picker/CTA_CTE y envía null;
+    la ruta conserva directamente el objeto autoritativo retornado antes de sus
+    refetch. Loading, error, mantenimiento o cardinalidad de caja distinta de
+    uno bloquean las dos acciones. Durante la mutación quedan congelados cierre,
+    radios, selects, picker, pagos y botones.
+  - Primer RED E2E: las tres historias de lectura/foco pasaron y la conversión
+    no abrió fiscal; el trace y un RED montado aislaron el cleanup de ensayo de
+    `StrictMode`. Después, fiscal abrió con Consumidor Final pero el preview
+    falló porque la fixture sólo preparaba O'Higgins. Se agregó snapshot y
+    restauración exacta independientes para emisor/PV/credencial mock de General
+    Paz, siempre local y con marcadores `T13_TEST_ONLY_NO_NETWORK`.
+  - Segundo recorrido: conversión, factura mock y PDF pasaron; la aserción PDF
+    se hizo exacta sobre el literal escapado. La regresión CTA_CTE reveló por
+    trace que su cliente de fixture no estaba habilitado; corregido el dato, el
+    rerun aislado quedó 1/1. El último full previo quedó 5/6 únicamente por ese
+    dato y se repetirá completo en la matriz final.
+  - El E2E verifica presupuesto NULL/venta genérica efectiva, sucursal/caja,
+    hash, descripción de color en DB/detalle/PDF, pago, stock, ausencia de deuda,
+    doble clic y recarga sin duplicación; además no-caja sin mutaciones y cliente
+    identificado con CTA_CTE. El cleanup borra sólo fixtures, restaura ambas
+    configuraciones y el snapshot exacto de secuencias VENTA de las dos
+    sucursales. Tras cada rerun se observaron cero cajas, credenciales mock y
+    residuos.
+  - El runbook incluye SQL ejecutable para candidato global, cajas por sucursal,
+    flags/retiro legacy, auditoría de descripción/efectos y rollback fail-closed.
+    Declara explícitamente: no autoapertura, no reactivar legacy y ningún
+    certificado ARCA adicional para esta función comercial.
+  - `vitest.config.ts` amplía el glob ya existente de `src/**/*.test.ts` a
+    `src/**/*.test.{ts,tsx}`: utilidad mínima de harness necesaria para ejecutar
+    el archivo `.test.tsx` exigido por el brief.
+  - Matriz final desde `supabase db reset --local`: descripción personalizada,
+    presupuesto Consumidor Final/caja/concurrencia, edición (19/19) y venta
+    fiscal atómica GREEN; Vitest completo 85 archivos pasaron, 2 omitidos,
+    1778 tests pasaron y 22 omitidos; TypeScript, build Vercel mock,
+    E2E 6/6 y `git diff --check` GREEN.
+  - ESLint focal no agrega deuda: los seis archivos nuevos/modificados fuera de
+    la ruta pasan; `presupuestos.$id.tsx` conserva exactamente sus cuatro
+    `no-explicit-any` históricos (mismas expresiones, líneas desplazadas). El
+    build/E2E conserva warnings históricos de rutas-test, `inputValidator()` y
+    el primer `getUser` previo al login, sin llamadas reales a ARCA.
+  - Auditoría posterior al E2E: cero presupuestos/usuarios/cajas/credenciales
+    mock de fixture, `comprobante_secuencias` VENTA vacío como tras el reset,
+    flags restaurados a `false/false` y configuración de ambos emisores/PV
+    idéntica al baseline.

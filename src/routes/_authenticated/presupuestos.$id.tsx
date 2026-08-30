@@ -60,10 +60,8 @@ function DetallePresupuesto() {
   const qc = useQueryClient();
   const { data: cu } = useCurrentUser();
   const [abrirConv, setAbrirConv] = useState(false);
-  const [ventaParaFacturar, setVentaParaFacturar] = useState<{
-    id: string;
-    clienteId: string;
-  } | null>(null);
+  const [conversionParaFacturar, setConversionParaFacturar] =
+    useState<PresupuestoConvertido | null>(null);
   const botonConvertirRef = useRef<HTMLButtonElement>(null);
   const navegacionFiscalRef = useRef(false);
   const listarFavoritos = useServerFn(listarReceptoresFiscales);
@@ -90,13 +88,13 @@ function DetallePresupuesto() {
         []) as any[],
   });
   const { data: clienteFiscal } = useQuery({
-    queryKey: ["cliente-fiscal-presupuesto", ventaParaFacturar?.clienteId],
-    enabled: !!ventaParaFacturar,
+    queryKey: ["cliente-fiscal-presupuesto", conversionParaFacturar?.clienteId],
+    enabled: !!conversionParaFacturar,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("clientes")
         .select("id,razon_social,cuit_dni,tipo")
-        .eq("id", ventaParaFacturar!.clienteId)
+        .eq("id", conversionParaFacturar!.clienteId)
         .maybeSingle();
       if (error || !data) throw new Error("No se pudo leer el comprador de la venta convertida.");
       return data;
@@ -104,7 +102,7 @@ function DetallePresupuesto() {
   });
   const { data: favoritosFiscales = [] } = useQuery({
     queryKey: ["receptores-fiscales", p?.sucursal_id ?? null],
-    enabled: !!ventaParaFacturar && !!p?.sucursal_id,
+    enabled: !!conversionParaFacturar && !!p?.sucursal_id,
     queryFn: () => listarFavoritos({ data: { sucursal_id: p!.sucursal_id } }),
   });
 
@@ -350,14 +348,14 @@ function DetallePresupuesto() {
           setAbrirConv(false);
           const accion = accionFiscalDespuesDeConvertirPresupuesto(resultado, cu);
           if (accion === "FACTURAR_AHORA") {
-            setVentaParaFacturar({ id: resultado.ventaId, clienteId: resultado.clienteId });
+            setConversionParaFacturar(resultado);
           } else if (accion === "ABRIR_COLA") {
             navegarACola(resultado.ventaId, "venta_creada_factura_pendiente");
           }
         }}
       />
 
-      {ventaParaFacturar ? (
+      {conversionParaFacturar ? (
         <DialogoEmisionFiscal
           open
           contexto={{
@@ -383,16 +381,16 @@ function DetallePresupuesto() {
           returnFocusRef={botonConvertirRef}
           onOpenChange={(open) => {
             if (open) return;
-            setVentaParaFacturar(null);
+            setConversionParaFacturar(null);
             if (!navegacionFiscalRef.current) {
-              navegarACola(ventaParaFacturar.id, "venta_creada_factura_pendiente");
+              navegarACola(conversionParaFacturar.ventaId, "venta_creada_factura_pendiente");
             }
           }}
           onPrevisualizar={({ receptor, letraSolicitada }) =>
             previsualizarFiscal({
               data: {
                 origen: "VENTA_EXISTENTE",
-                venta_id: ventaParaFacturar.id,
+                venta_id: conversionParaFacturar.ventaId,
                 receptor,
                 letra_solicitada: letraSolicitada,
               },
@@ -410,7 +408,7 @@ function DetallePresupuesto() {
             try {
               const respuesta = await emitirFiscal({
                 data: {
-                  venta_id: ventaParaFacturar.id,
+                  venta_id: conversionParaFacturar.ventaId,
                   receptor,
                   letra_solicitada: letraSolicitada,
                   confirma_venta_antigua: confirmaVentaAntigua,
@@ -443,7 +441,7 @@ function DetallePresupuesto() {
                 { duration: 12_000 },
               );
             }
-            navegarACola(ventaParaFacturar.id, resultadoCola);
+            navegarACola(conversionParaFacturar.ventaId, resultadoCola);
           }}
         />
       ) : null}

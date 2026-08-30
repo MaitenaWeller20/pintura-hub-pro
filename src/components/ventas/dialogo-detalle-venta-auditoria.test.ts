@@ -59,6 +59,7 @@ const ventaBase = {
 
 const auditoriaAplicada: DatosAuditoriaNotaCreditoPeriodo = {
   fiscal: {
+    estado: "SNAPSHOT_V3_VALIDADO",
     periodoDesde: "2026-08-01",
     periodoHasta: "2026-08-15",
     modalidad: "DEVOLUCION_PRODUCTOS",
@@ -93,6 +94,137 @@ describe("detalle auditado de NC por período", () => {
   const snapshotV3 = crearSnapshotFiscalV3Fixture({
     ventaId: "71000000-0000-4000-8000-000000000001",
     letra: "B",
+  });
+
+  function dependenciasSinCongelar(
+    overrides: Record<string, unknown> = {},
+  ): Parameters<typeof cargarAuditoriaNotaCreditoPeriodo>[0] {
+    return {
+      venta: {
+        id: ventaBase.id,
+        estado: "PENDIENTE_FISCAL",
+        afipEstado: "SIN_FACTURAR",
+        afipFase: null,
+        afipVersion: 0,
+        afipIntentos: 0,
+        afipSnapshot: null,
+        afipSnapshotHash: null,
+        cae: null,
+        caeVencimiento: null,
+        afipEmisorCuit: null,
+        afipPuntoVenta: null,
+        afipCbteTipo: null,
+        afipNumero: null,
+        afipModo: null,
+        afipValidez: null,
+        afipFechaComprobante: null,
+        afipEmitidoAt: null,
+        afipImpTotal: null,
+        afipSimulado: false,
+        afipCbteAsocId: null,
+        ncEfectosAplicadosAt: null,
+        periodoDesde: "2026-08-01",
+        periodoHasta: "2026-08-15",
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Productos dañados devueltos",
+        requiereEvidenciaAutorizacion: false,
+        ...overrides,
+      },
+      cargarOperador: async () => ({
+        data: { nombre_completo: "Ana", username: "ana" },
+        error: null,
+      }),
+      cargarReintegros: async () => ({
+        data: [{ id: "r-1", forma_pago: "EFECTIVO", monto: 121, orden: 0 }],
+        error: null,
+      }),
+      cargarStock: async () => ({ data: [], error: null }),
+      cargarCuentaCorriente: async () => ({ data: [], error: null }),
+      cargarEvidenciaAutorizacion: async () => null,
+    } as Parameters<typeof cargarAuditoriaNotaCreditoPeriodo>[0];
+  }
+
+  it("reconstruye estrictamente la intención recién creada sin inventar identidad fiscal", async () => {
+    const resultado = await cargarAuditoriaNotaCreditoPeriodo(dependenciasSinCongelar());
+
+    expect(resultado.fiscal).toEqual({
+      estado: "INTENCION_NO_CONGELADA",
+      periodoDesde: "2026-08-01",
+      periodoHasta: "2026-08-15",
+      modalidad: "DEVOLUCION_PRODUCTOS",
+      motivo: "Productos dañados devueltos",
+    });
+    expect(resultado.evidenciaAutorizacion).toBeNull();
+  });
+
+  it("acepta sólo la cancelación pre-reserva intacta como intención no congelada", async () => {
+    const resultado = await cargarAuditoriaNotaCreditoPeriodo(
+      dependenciasSinCongelar({
+        estado: "ANULADA",
+        afipEstado: "CANCELADO",
+        afipVersion: 1,
+      }),
+    );
+
+    expect(resultado.fiscal.estado).toBe("INTENCION_NO_CONGELADA");
+    expect(resultado.evidenciaAutorizacion).toBeNull();
+  });
+
+  it.each([
+    ["snapshot parcial", { afipSnapshot: {}, afipSnapshotHash: null }],
+    ["snapshot v3 sin hash", { afipSnapshot: snapshotV3, afipSnapshotHash: null }],
+    ["hash sin snapshot", { afipSnapshotHash: "a".repeat(64) }],
+    ["identidad parcial", { afipNumero: 7 }],
+    ["fase avanzada", { afipFase: "PREFLIGHT", afipIntentos: 1, afipVersion: 1 }],
+    ["reserva sin snapshot", { afipFase: "RESERVADO", afipIntentos: 1, afipVersion: 2 }],
+    [
+      "request iniciado sin snapshot",
+      { afipFase: "REQUEST_INICIADO", afipIntentos: 1, afipVersion: 3 },
+    ],
+    [
+      "fila aprobada",
+      {
+        estado: "ACTIVA",
+        afipEstado: "APROBADO",
+        afipFase: "PERSISTIDO",
+        afipVersion: 5,
+        afipIntentos: 1,
+        cae: "75123456789012",
+      },
+    ],
+  ])("falla cerrado sin snapshot v3 ante %s", async (_caso, overrides) => {
+    await expect(
+      cargarAuditoriaNotaCreditoPeriodo(dependenciasSinCongelar(overrides)),
+    ).rejects.toThrow("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
+  });
+
+  it("rotula la intención no congelada y omite receptor, letra, CAE y efectos", async () => {
+    const persistida = await cargarAuditoriaNotaCreditoPeriodo(dependenciasSinCongelar());
+    const html = renderToStaticMarkup(
+      createElement(AuditoriaNotaCreditoPeriodo, {
+        venta: {
+          ...ventaBase,
+          estado: "PENDIENTE_FISCAL",
+          estado_pago: "PENDIENTE",
+          cae: null,
+          cae_vencimiento: null,
+          afip_estado: "SIN_FACTURAR",
+          afip_fase: null,
+          afip_emitido_at: null,
+          nc_efectos_aplicados_at: null,
+        } as unknown as VentaDetalle,
+        auditoria: { ...persistida, pagosAplicados: [] },
+      }),
+    );
+
+    expect(html).toContain("Intención aún no congelada");
+    expect(html).toContain("01/08/2026 a 15/08/2026");
+    expect(html).toContain("Productos dañados devueltos");
+    expect(html).toContain("EFECTIVO");
+    expect(html).not.toMatch(
+      /Receptor fiscal|Letra [ABC]|CAE|Autorización directa|Efectos aplicados/,
+    );
+    expect(html).toContain("Todavía no se aplicaron movimientos comerciales");
   });
 
   it("falla cerrado si falta cualquiera de las fuentes de movimientos", async () => {
@@ -191,6 +323,7 @@ describe("detalle auditado de NC por período", () => {
     });
 
     expect(resultado.fiscal).toEqual({
+      estado: "SNAPSHOT_V3_VALIDADO",
       periodoDesde: "2026-08-01",
       periodoHasta: "2026-08-15",
       modalidad: "DEVOLUCION_PRODUCTOS",
@@ -271,6 +404,7 @@ describe("detalle auditado de NC por período", () => {
         auditoria: {
           ...auditoriaAplicada,
           fiscal: {
+            estado: "SNAPSHOT_V3_VALIDADO",
             periodoDesde: "2026-08-01",
             periodoHasta: "2026-08-15",
             modalidad: "DEVOLUCION_PRODUCTOS",

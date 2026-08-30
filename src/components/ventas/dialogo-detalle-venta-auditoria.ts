@@ -31,14 +31,25 @@ export type CuentaAuditoriaRow = {
   created_at: string;
 };
 
+type FiscalAuditoriaNotaCreditoPeriodo =
+  | {
+      estado: "SNAPSHOT_V3_VALIDADO";
+      periodoDesde: string;
+      periodoHasta: string;
+      modalidad: "DEVOLUCION_PRODUCTOS" | "BONIFICACION_AJUSTE";
+      motivo: string;
+      receptor: { razonSocial: string; documento: string | null; letra: "A" | "B" | "C" };
+    }
+  | {
+      estado: "INTENCION_NO_CONGELADA";
+      periodoDesde: string;
+      periodoHasta: string;
+      modalidad: "DEVOLUCION_PRODUCTOS" | "BONIFICACION_AJUSTE";
+      motivo: string;
+    };
+
 export type AuditoriaPersistidaNotaCreditoPeriodo = {
-  fiscal: {
-    periodoDesde: string;
-    periodoHasta: string;
-    modalidad: "DEVOLUCION_PRODUCTOS" | "BONIFICACION_AJUSTE";
-    motivo: string;
-    receptor: { razonSocial: string; documento: string | null; letra: "A" | "B" | "C" };
-  };
+  fiscal: FiscalAuditoriaNotaCreditoPeriodo;
   operador: { nombre: string; username: string } | null;
   evidenciaAutorizacion: EvidenciaAutorizacionFiscal | null;
   reintegrosIntencion: Array<{ id: string; formaPago: string; monto: number; orden: number }>;
@@ -61,25 +72,135 @@ export type AuditoriaPersistidaNotaCreditoPeriodo = {
   }>;
 };
 
-export async function cargarAuditoriaNotaCreditoPeriodo(deps: {
-  venta: {
-    id: string;
-    afipSnapshot: unknown;
-    afipSnapshotHash: string | null;
-    requiereEvidenciaAutorizacion: boolean;
+type VentaAuditoriaNotaCreditoPeriodo = {
+  id: string;
+  estado?: string;
+  afipEstado?: string;
+  afipFase?: string | null;
+  afipVersion?: number;
+  afipIntentos?: number;
+  afipSnapshot: unknown;
+  afipSnapshotHash: string | null;
+  cae?: string | null;
+  caeVencimiento?: string | null;
+  afipEmisorCuit?: string | null;
+  afipPuntoVenta?: number | null;
+  afipCbteTipo?: number | null;
+  afipNumero?: number | null;
+  afipModo?: string | null;
+  afipValidez?: string | null;
+  afipFechaComprobante?: string | null;
+  afipEmitidoAt?: string | null;
+  afipImpTotal?: number | null;
+  afipSimulado?: boolean;
+  afipCbteAsocId?: string | null;
+  ncEfectosAplicadosAt?: string | null;
+  periodoDesde?: string | null;
+  periodoHasta?: string | null;
+  modalidad?: string | null;
+  motivo?: string | null;
+  requiereEvidenciaAutorizacion: boolean;
+};
+
+function esFechaCanonica(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const fecha = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === value;
+}
+
+function esIntencionNoCongelada(
+  venta: VentaAuditoriaNotaCreditoPeriodo,
+): venta is VentaAuditoriaNotaCreditoPeriodo & {
+  periodoDesde: string;
+  periodoHasta: string;
+  modalidad: "DEVOLUCION_PRODUCTOS" | "BONIFICACION_AJUSTE";
+  motivo: string;
+} {
+  const cicloValido =
+    (venta.estado === "PENDIENTE_FISCAL" &&
+      venta.afipEstado === "SIN_FACTURAR" &&
+      venta.afipVersion === 0) ||
+    (venta.estado === "ANULADA" && venta.afipEstado === "CANCELADO" && venta.afipVersion === 1);
+  const identidadAusente = [
+    venta.afipSnapshot,
+    venta.afipSnapshotHash,
+    venta.cae,
+    venta.caeVencimiento,
+    venta.afipEmisorCuit,
+    venta.afipPuntoVenta,
+    venta.afipCbteTipo,
+    venta.afipNumero,
+    venta.afipModo,
+    venta.afipValidez,
+    venta.afipFechaComprobante,
+    venta.afipEmitidoAt,
+    venta.afipImpTotal,
+    venta.afipCbteAsocId,
+    venta.ncEfectosAplicadosAt,
+  ].every((value) => value === null);
+  const modalidadValida =
+    venta.modalidad === "DEVOLUCION_PRODUCTOS" || venta.modalidad === "BONIFICACION_AJUSTE";
+  const motivoValido =
+    typeof venta.motivo === "string" &&
+    venta.motivo === venta.motivo.trim() &&
+    venta.motivo.length >= 5;
+
+  return Boolean(
+    cicloValido &&
+    venta.afipFase === null &&
+    venta.afipIntentos === 0 &&
+    venta.afipSimulado === false &&
+    identidadAusente &&
+    esFechaCanonica(venta.periodoDesde) &&
+    esFechaCanonica(venta.periodoHasta) &&
+    venta.periodoDesde <= venta.periodoHasta &&
+    modalidadValida &&
+    motivoValido,
+  );
+}
+
+function resolverFiscalAuditado(
+  venta: VentaAuditoriaNotaCreditoPeriodo,
+): FiscalAuditoriaNotaCreditoPeriodo {
+  if (esIntencionNoCongelada(venta)) {
+    return {
+      estado: "INTENCION_NO_CONGELADA",
+      periodoDesde: venta.periodoDesde,
+      periodoHasta: venta.periodoHasta,
+      modalidad: venta.modalidad,
+      motivo: venta.motivo,
+    };
+  }
+
+  const snapshot = validarSnapshotFiscalV3(venta.afipSnapshot);
+  if (snapshot.hash !== venta.afipSnapshotHash || snapshot.venta.id !== venta.id) {
+    throw new Error("Snapshot v3 divergente");
+  }
+  return {
+    estado: "SNAPSHOT_V3_VALIDADO",
+    periodoDesde: snapshot.periodoAsoc.desde,
+    periodoHasta: snapshot.periodoAsoc.hasta,
+    modalidad: snapshot.notaCredito.modalidad,
+    motivo: snapshot.notaCredito.motivo,
+    receptor: {
+      razonSocial: snapshot.receptor.razonSocial,
+      documento: snapshot.receptor.numeroDocumento,
+      letra: snapshot.letra,
+    },
   };
+}
+
+export async function cargarAuditoriaNotaCreditoPeriodo(deps: {
+  venta: VentaAuditoriaNotaCreditoPeriodo;
   cargarOperador(): RespuestaAuditoria<OperadorAuditoriaRow>;
   cargarReintegros(): RespuestaAuditoria<ReintegroAuditoriaRow[]>;
   cargarStock(): RespuestaAuditoria<StockAuditoriaRow[]>;
   cargarCuentaCorriente(): RespuestaAuditoria<CuentaAuditoriaRow[]>;
   cargarEvidenciaAutorizacion(): Promise<EvidenciaAutorizacionFiscal | null>;
 }): Promise<AuditoriaPersistidaNotaCreditoPeriodo> {
-  let snapshot;
+  let fiscal: FiscalAuditoriaNotaCreditoPeriodo;
   try {
-    snapshot = validarSnapshotFiscalV3(deps.venta.afipSnapshot);
-    if (snapshot.hash !== deps.venta.afipSnapshotHash || snapshot.venta.id !== deps.venta.id) {
-      throw new Error("Snapshot v3 divergente");
-    }
+    fiscal = resolverFiscalAuditado(deps.venta);
   } catch {
     throw new Error("No se pudo validar la evidencia fiscal congelada de la nota de crédito.");
   }
@@ -89,7 +210,9 @@ export async function cargarAuditoriaNotaCreditoPeriodo(deps: {
     deps.cargarReintegros(),
     deps.cargarStock(),
     deps.cargarCuentaCorriente(),
-    deps.cargarEvidenciaAutorizacion(),
+    fiscal.estado === "SNAPSHOT_V3_VALIDADO"
+      ? deps.cargarEvidenciaAutorizacion()
+      : Promise.resolve(null),
   ]);
   if (
     operador.error ||
@@ -111,17 +234,7 @@ export async function cargarAuditoriaNotaCreditoPeriodo(deps: {
   }
 
   return {
-    fiscal: {
-      periodoDesde: snapshot.periodoAsoc.desde,
-      periodoHasta: snapshot.periodoAsoc.hasta,
-      modalidad: snapshot.notaCredito.modalidad,
-      motivo: snapshot.notaCredito.motivo,
-      receptor: {
-        razonSocial: snapshot.receptor.razonSocial,
-        documento: snapshot.receptor.numeroDocumento,
-        letra: snapshot.letra,
-      },
-    },
+    fiscal,
     operador: {
       nombre: operador.data.nombre_completo?.trim() || operador.data.username,
       username: operador.data.username,

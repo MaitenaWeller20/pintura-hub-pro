@@ -25,6 +25,7 @@ describe("proyección de ventas para operadores", () => {
         "nc_resolucion",
         "nc_efectos_aplicados_at",
         "afip_emitido_at",
+        "afip_version",
       ]),
     );
     expect(columnas).not.toEqual(

@@ -106,8 +106,9 @@ export function AuditoriaNotaCreditoPeriodo({
       </div>
     );
   }
-  const aprobada = Boolean(venta.cae && venta.nc_efectos_aplicados_at);
   const fiscal = auditoria.fiscal;
+  const congelada = fiscal.estado === "SNAPSHOT_V3_VALIDADO";
+  const aprobada = congelada && Boolean(venta.cae && venta.nc_efectos_aplicados_at);
   return (
     <Card className="mt-3 space-y-4 p-4" aria-label="Auditoría de nota de crédito por período">
       <div>
@@ -120,7 +121,9 @@ export function AuditoriaNotaCreditoPeriodo({
 
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
         <div>
-          <dt className="text-xs text-muted-foreground">Período asociado (snapshot v3)</dt>
+          <dt className="text-xs text-muted-foreground">
+            Período asociado ({congelada ? "snapshot v3" : "intención persistida"})
+          </dt>
           <dd>
             {fechaCalendario(fiscal.periodoDesde)} a {fechaCalendario(fiscal.periodoHasta)}
           </dd>
@@ -143,7 +146,9 @@ export function AuditoriaNotaCreditoPeriodo({
           <dd className="text-xs text-muted-foreground">{fmtDateTime(venta.created_at)}</dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Motivo (snapshot v3)</dt>
+          <dt className="text-xs text-muted-foreground">
+            Motivo ({congelada ? "snapshot v3" : "intención persistida"})
+          </dt>
           <dd className="whitespace-pre-wrap">{fiscal.motivo}</dd>
         </div>
         <div>
@@ -154,26 +159,30 @@ export function AuditoriaNotaCreditoPeriodo({
             {fmtDocumento(venta.cliente?.cuit_dni)}
           </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Receptor fiscal congelado</dt>
-          <dd>{fiscal.receptor.razonSocial}</dd>
-          <dd className="text-xs text-muted-foreground">
-            {[fiscal.receptor.documento, `Letra ${fiscal.receptor.letra}`]
-              .filter(Boolean)
-              .join(" · ")}
-          </dd>
-        </div>
+        {congelada ? (
+          <div>
+            <dt className="text-xs text-muted-foreground">Receptor fiscal congelado</dt>
+            <dd>{fiscal.receptor.razonSocial}</dd>
+            <dd className="text-xs text-muted-foreground">
+              {[fiscal.receptor.documento, `Letra ${fiscal.receptor.letra}`]
+                .filter(Boolean)
+                .join(" · ")}
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt className="text-xs text-muted-foreground">Estado / fase</dt>
           <dd>
             {venta.afip_estado} · {venta.afip_fase ?? "SIN FASE"}
           </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">CAE</dt>
-          <dd className="font-mono">{venta.cae ?? "Pendiente"}</dd>
-        </div>
-        {auditoria.evidenciaAutorizacion ? (
+        {congelada ? (
+          <div>
+            <dt className="text-xs text-muted-foreground">CAE</dt>
+            <dd className="font-mono">{venta.cae ?? "Pendiente"}</dd>
+          </div>
+        ) : null}
+        {congelada && auditoria.evidenciaAutorizacion ? (
           <div>
             <dt className="text-xs text-muted-foreground">
               {auditoria.evidenciaAutorizacion.origen === "EMISION"
@@ -193,7 +202,9 @@ export function AuditoriaNotaCreditoPeriodo({
 
       {!aprobada ? (
         <div className="rounded-md border border-warning/40 bg-warning/5 p-3">
-          <h5 className="text-sm font-medium">Intención pendiente antes del CAE</h5>
+          <h5 className="text-sm font-medium">
+            {congelada ? "Intención pendiente antes del CAE" : "Intención aún no congelada"}
+          </h5>
           {venta.nc_resolucion === "REINTEGRO" && auditoria.reintegrosIntencion.length ? (
             <ul className="mt-2 space-y-1 text-sm">
               {auditoria.reintegrosIntencion.map((reintegro) => (
@@ -375,8 +386,31 @@ export function DialogoDetalleVenta({
       return cargarAuditoriaNotaCreditoPeriodo({
         venta: {
           id: venta.id,
+          estado: venta.estado,
+          afipEstado: venta.afip_estado,
+          afipFase: venta.afip_fase,
+          afipVersion: venta.afip_version,
+          afipIntentos: venta.afip_intentos,
           afipSnapshot: venta.afip_snapshot,
           afipSnapshotHash: venta.afip_snapshot_hash,
+          cae: venta.cae,
+          caeVencimiento: venta.cae_vencimiento,
+          afipEmisorCuit: venta.afip_emisor_cuit,
+          afipPuntoVenta: venta.afip_punto_venta,
+          afipCbteTipo: venta.afip_cbte_tipo,
+          afipNumero: venta.afip_numero,
+          afipModo: venta.afip_modo,
+          afipValidez: venta.afip_validez,
+          afipFechaComprobante: venta.afip_fecha_comprobante,
+          afipEmitidoAt: venta.afip_emitido_at,
+          afipImpTotal: venta.afip_imp_total,
+          afipSimulado: venta.afip_simulado,
+          afipCbteAsocId: venta.afip_cbte_asoc_id,
+          ncEfectosAplicadosAt: venta.nc_efectos_aplicados_at,
+          periodoDesde: venta.periodo_asoc_desde,
+          periodoHasta: venta.periodo_asoc_hasta,
+          modalidad: venta.nc_periodo_modalidad,
+          motivo: venta.motivo_nota_credito,
           requiereEvidenciaAutorizacion: Boolean(venta.cae),
         },
         async cargarOperador() {

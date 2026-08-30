@@ -323,3 +323,10 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
   - Build Vercel mock, Prettier/ESLint focal y `git diff --check` GREEN; el build
     conserva sólo warnings históricos de rutas-test, deprecaciones y módulos
     Node externalizados. No se usaron Supabase, red, deploy ni ARCA.
+- Task 5 final scoped re-review (`bd8d5fa..2039b46`): `Spec: PASS`,
+  `Quality: PASS`; no hay hallazgos Critical, Important ni Minor. El reviewer
+  confirmó las transiciones determinística/ambigua, el replay exacto aunque
+  cambie el preflight, la paridad V2/legacy y los resets de apertura/unmount.
+  Evidencia fresca del review: focal 16/16, suite completa 1783 tests,
+  TypeScript y `git diff --check` GREEN; árbol limpio. Task 5 lista para la
+  revisión integral del release.

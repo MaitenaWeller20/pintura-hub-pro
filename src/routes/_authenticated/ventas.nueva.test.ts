@@ -59,6 +59,32 @@ vi.mock("@/lib/fiscal/cola.functions", () => ({
   listarReceptoresFiscales: dobles.listarFavoritos,
 }));
 
+vi.mock("@/components/fiscal/dialogo-emision-fiscal", () => ({
+  DialogoEmisionFiscal: ({
+    onOpenChange,
+    onPrevisualizar,
+  }: {
+    onOpenChange(open: boolean): void;
+    onPrevisualizar(input: { receptor: unknown; letraSolicitada: "B" }): Promise<unknown>;
+  }) =>
+    createElement(
+      "div",
+      null,
+      createElement(
+        "button",
+        {
+          onClick: () =>
+            void onPrevisualizar({
+              receptor: { origen: "CLIENTE_COMERCIAL" },
+              letraSolicitada: "B",
+            }),
+        },
+        "Previsualizar datos fiscales",
+      ),
+      createElement("button", { onClick: () => onOpenChange(false) }, "Cancelar"),
+    ),
+}));
+
 vi.mock("@tanstack/react-query", async () => {
   const React = await import("react");
   return {
@@ -261,7 +287,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ruta real de Nueva venta para NC por período", () => {
-  it("conserva la descripción personalizada de una venta directa en el payload de creación", async () => {
+  it("deriva la misma descripción personalizada para preview y creación", async () => {
     renderRuta();
 
     fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
@@ -276,6 +302,22 @@ describe("ruta real de Nueva venta para NC por período", () => {
 
     await elegirCliente();
     fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+    fireEvent.click(screen.getByTestId("registrar-y-facturar"));
+    fireEvent.click(screen.getByRole("button", { name: "Previsualizar datos fiscales" }));
+
+    await waitFor(() => expect(dobles.previsualizar).toHaveBeenCalledOnce());
+    expect(dobles.previsualizar.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        items: [
+          {
+            producto_id: PRODUCTO_ID,
+            descripcion: "Base 10 L (Código 1234)",
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     fireEvent.click(screen.getByTestId("registrar-sin-facturar"));
 
     await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
@@ -289,6 +331,23 @@ describe("ruta real de Nueva venta para NC por período", () => {
         ],
       },
     });
+  });
+
+  it("mantiene la descripción de cada línea cuando se repite el mismo producto", async () => {
+    renderRuta();
+
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+
+    const descripciones = screen.getAllByLabelText("Descripción de P-1") as HTMLInputElement[];
+    fireEvent.change(descripciones[1]!, { target: { value: "Base 10 L (Código 1234)" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Quitar Producto Uno" })[0]!);
+
+    expect((screen.getByLabelText("Descripción de P-1") as HTMLInputElement).value).toBe(
+      "Base 10 L (Código 1234)",
+    );
   });
 
   it.each([

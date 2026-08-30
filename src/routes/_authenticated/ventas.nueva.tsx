@@ -65,6 +65,7 @@ export const Route = createFileRoute("/_authenticated/ventas/nueva")({
 });
 
 interface ItemRow {
+  lineaId: string;
   producto_id: string;
   codigo: string;
   descripcion: string;
@@ -240,6 +241,7 @@ function NuevaVenta() {
     setItems((prev) => [
       ...prev,
       {
+        lineaId: crypto.randomUUID(),
         producto_id: p.id,
         codigo: p.codigo,
         descripcion: p.nombre,
@@ -307,6 +309,7 @@ function NuevaVenta() {
     }
     setItems(
       (itemsResult.data ?? []).map((it: any) => ({
+        lineaId: crypto.randomUUID(),
         producto_id: it.producto_id,
         codigo: it.codigo,
         descripcion: it.descripcion,
@@ -1296,7 +1299,7 @@ function NuevaVenta() {
                       Math.abs(Number(it.precio_unitario_sin_iva) - Number(it.precio_lista || 0)) >
                         0.005;
                     return (
-                      <TableRow key={i}>
+                      <TableRow key={it.lineaId}>
                         <TableCell className="font-mono text-xs">{it.codigo}</TableCell>
                         <TableCell className="max-w-xs">
                           <Input
@@ -1453,14 +1456,7 @@ function NuevaVenta() {
                 sucursal_id: effSucursal,
                 cliente_id: clienteId,
                 fecha_comercial: new Date().toISOString(),
-                items: items.map((item) => ({
-                  producto_id: item.producto_id,
-                  cantidad: Number(item.cantidad || 0),
-                  descuento_porcentaje: Number(item.descuento_porcentaje || 0),
-                  ...(item.precio_unitario_sin_iva == null
-                    ? {}
-                    : { precio_unitario_sin_iva: Number(item.precio_unitario_sin_iva) }),
-                })),
+                items: itemsPayload,
                 pagos: pagosPayload,
                 percepciones: Number(percepciones || 0),
                 receptor,

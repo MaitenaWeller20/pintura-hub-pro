@@ -10,25 +10,25 @@ Environment: this isolated worktree reuses the dependency directory from `/priva
 
 ## Pre-flight self-consistency scan
 
-| Task | Produces/tests | Consumes/implementation | Finding |
-|---|---|---|---|
-| 1 | normalizer + SQL description writers | pure TS contract; current effective budget/sale writers | Consistent; description changes no price/IVA/stock inputs. |
-| 2 | generic/cash conversion RPC | Task 1 frozen budget descriptions | Consistent; copied descriptions precede RPC return/API work. |
-| 3 | schemas, preflight, generated types | Tasks 1–2 SQL contracts | Consistent; types regenerate once after both migrations. |
-| 4 | direct-sale/budget editors and print regressions | Tasks 1 and 3 contracts | Consistent; UI sends description but server remains authoritative. |
-| 5 | conversion dialog, E2E and runbook | Tasks 2–4 complete flow | Consistent; browser uses server-resolved client and DB-revalidated cash. |
+| Task | Produces/tests                                   | Consumes/implementation                                 | Finding                                                                  |
+| ---- | ------------------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1    | normalizer + SQL description writers             | pure TS contract; current effective budget/sale writers | Consistent; description changes no price/IVA/stock inputs.               |
+| 2    | generic/cash conversion RPC                      | Task 1 frozen budget descriptions                       | Consistent; copied descriptions precede RPC return/API work.             |
+| 3    | schemas, preflight, generated types              | Tasks 1–2 SQL contracts                                 | Consistent; types regenerate once after both migrations.                 |
+| 4    | direct-sale/budget editors and print regressions | Tasks 1 and 3 contracts                                 | Consistent; UI sends description but server remains authoritative.       |
+| 5    | conversion dialog, E2E and runbook               | Tasks 2–4 complete flow                                 | Consistent; browser uses server-resolved client and DB-revalidated cash. |
 
 ## Pre-flight shared-file/interface scan
 
-| Tasks | Producer → consumer | Finding |
-|---|---|---|
-| 1 → 2 | `presupuesto_items.descripcion` → converted `venta_items.descripcion` | Ordered correctly. |
-| 1 → 3/4 | `normalizarDescripcionItem` → server schemas and inputs | Stable name/signature declared in spec/plan. |
-| 2 → 3 | RPC adds effective `cliente_id` → `normalizarConversion` | Exact return contract is declared before generated types. |
-| 2 → 5 | caja/sucursal enforcement → dialog preflight and E2E | UI is advisory; transaction remains authoritative. |
-| 3 → 5 | `preflightConversionPresupuesto` → dialog | Closed DTO and auth-first boundary precede UI. |
-| 4 ↔ 5 | `presupuestos.$id.tsx` | Intentional staged edit: Task 4 description/detail, Task 5 dialog wiring. No parallel implementers. |
-| 3 ↔ 4 | `ventas.functions.ts` / route payload | Server contract lands before UI sends description. |
+| Tasks   | Producer → consumer                                                   | Finding                                                                                             |
+| ------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 1 → 2   | `presupuesto_items.descripcion` → converted `venta_items.descripcion` | Ordered correctly.                                                                                  |
+| 1 → 3/4 | `normalizarDescripcionItem` → server schemas and inputs               | Stable name/signature declared in spec/plan.                                                        |
+| 2 → 3   | RPC adds effective `cliente_id` → `normalizarConversion`              | Exact return contract is declared before generated types.                                           |
+| 2 → 5   | caja/sucursal enforcement → dialog preflight and E2E                  | UI is advisory; transaction remains authoritative.                                                  |
+| 3 → 5   | `preflightConversionPresupuesto` → dialog                             | Closed DTO and auth-first boundary precede UI.                                                      |
+| 4 ↔ 5   | `presupuestos.$id.tsx`                                                | Intentional staged edit: Task 4 description/detail, Task 5 dialog wiring. No parallel implementers. |
+| 3 ↔ 4   | `ventas.functions.ts` / route payload                                 | Server contract lands before UI sends description.                                                  |
 
 Pre-flight result: no unresolved contradiction. Decisions locked: global generic candidate, strict pre-opened cash, 160-character custom description, V2-only anonymous conversion.
 
@@ -69,8 +69,7 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     fiscal atómica, incluidas sus pruebas de concurrencia.
   - Checks no-DB en verde: Bash parse, Prettier focal TypeScript, ESLint focal,
     TypeScript, Vitest focal (10/10) y `git diff --check`.
-  - `supabase migration list --local` muestra historia local alineada hasta
-    20260830154723. `supabase db lint` conserva únicamente el error histórico de
+  - `supabase migration list --local` muestra historia local alineada hasta 20260830154723. `supabase db lint` conserva únicamente el error histórico de
     `cambiar_precios_masivo` sobre `_objetivo`; advisors conserva deuda histórica,
     incluidos los errores de vistas SECURITY DEFINER `fiscal_config_publica` y
     `cuenta_corriente_saldos`, sin hallazgos sobre el helper de Task 1.
@@ -208,3 +207,21 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     modificadas; el build conserva advertencias históricas de rutas-test,
     `inputValidator()` y módulos Node externalizados. Sin warnings nuevos de
     esta tarea.
+- Task 4 review round 1 (`3cc8a2a`): `Spec: FAIL`, `Quality: FAIL`.
+  - Crítico: la preview fiscal reconstruía sus ítems y omitía `descripcion`,
+    mientras creación usaba el adaptador correcto.
+  - Importantes: faltaban montajes de alta/edición/detalle de presupuesto y la
+    tabla de venta usaba índice como key aunque admite productos repetidos.
+- Task 4 fix round 1/5 — implementación completa; revisión independiente pendiente.
+  - RED observado en la ruta montada de venta: preview recibió P-1 sin
+    `descripcion` y creación recibió `Base 10 L (Código 1234)`; tras reutilizar
+    `itemsPayload`, ambos límites reciben el mismo payload.
+  - Se agregaron tests montados para alta, edición/reprecio y detalle de
+    presupuesto. Alta manda la descripción; edición parte del snapshot y no la
+    pisa al cambiar cantidad/reprecio; el detalle la muestra.
+  - `lineaId` UUID estabiliza los renglones de venta duplicados. La regresión
+    elimina la primera de dos P-1 y conserva la descripción de la segunda.
+  - GREEN: 6 archivos / 102 tests, TypeScript, build y `git diff --check`.
+    ESLint conserva las 49 violaciones `any` históricas y build los warnings
+    históricos ya documentados; los nuevos tests usan prefijo `-` y no agregan
+    warnings de rutas. No se usaron remoto, `db reset`, `db push` ni ARCA.

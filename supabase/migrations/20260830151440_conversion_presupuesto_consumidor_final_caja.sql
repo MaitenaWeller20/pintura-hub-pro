@@ -181,7 +181,7 @@ BEGIN
     END IF;
 
     -- LIMIT 2 conserva una comprobación fail-closed aunque el índice se haya
-    -- dañado; FOR KEY SHARE mantiene estable al candidato durante la venta.
+    -- dañado; FOR SHARE bloquea toda mutación de elegibilidad hasta confirmar.
     SELECT pg_catalog.array_agg(candidato.id ORDER BY candidato.id)
       INTO v_clientes
       FROM (
@@ -194,7 +194,7 @@ BEGIN
            AND NOT COALESCE(c.es_obra,false)
          ORDER BY c.id
          LIMIT 2
-         FOR KEY SHARE OF c
+         FOR SHARE OF c
       ) AS candidato;
     IF COALESCE(pg_catalog.cardinality(v_clientes),0)<>1 THEN
       RAISE EXCEPTION 'No hay un único Consumidor Final global activo';
@@ -206,7 +206,7 @@ BEGIN
       FROM public.clientes AS c
      WHERE c.id=p_cliente_id
        AND c.activo
-     FOR KEY SHARE;
+     FOR SHARE;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'Cliente inexistente o inactivo';
     END IF;
@@ -214,28 +214,6 @@ BEGIN
       RAISE EXCEPTION 'El modo Consumidor Final se indica sin cliente';
     END IF;
   END IF;
-
-  -- Mismo advisory que caja_sesion_actual/abrir_caja. Después se bloquean las
-  -- filas ABIERTA: si cerrar_caja ganó antes, la condición se reevalúa y queda
-  -- cero; si la conversión ganó, el cierre espera hasta que la venta termine.
-  PERFORM pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended(v_p.sucursal_id::text,0)
-  );
-  SELECT pg_catalog.array_agg(caja.id ORDER BY caja.id)
-    INTO v_cajas
-    FROM (
-      SELECT cs.id
-        FROM public.caja_sesiones AS cs
-       WHERE cs.sucursal_id=v_p.sucursal_id
-         AND cs.estado='ABIERTA'
-       ORDER BY cs.abierta_en DESC,cs.id
-       LIMIT 2
-       FOR SHARE OF cs
-    ) AS caja;
-  IF COALESCE(pg_catalog.cardinality(v_cajas),0)<>1 THEN
-    RAISE EXCEPTION 'No hay una única caja abierta en la sucursal del presupuesto';
-  END IF;
-  v_caja_prevalidada := v_cajas[1];
 
   -- Conserva las validaciones comerciales de la definición efectiva anterior.
   IF p_condicion_venta<>'CTA_CTE' AND v_p.total>=0.01 THEN
@@ -296,6 +274,29 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Ya hay una venta cargada con la clave de este presupuesto. Revisala antes de convertirlo.';
   END IF;
+
+  -- crear_venta toma productos antes de caja. La conversión conserva el mismo
+  -- orden: recién después de bloquear/construir los ítems toma el advisory y la
+  -- fila ABIERTA. Si cerrar_caja ganó se reevalúa a cero; si esta transacción
+  -- ganó, el cierre espera. Nada comercial se mutó antes de esta prevalidación.
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(v_p.sucursal_id::text,0)
+  );
+  SELECT pg_catalog.array_agg(caja.id ORDER BY caja.id)
+    INTO v_cajas
+    FROM (
+      SELECT cs.id
+        FROM public.caja_sesiones AS cs
+       WHERE cs.sucursal_id=v_p.sucursal_id
+         AND cs.estado='ABIERTA'
+       ORDER BY cs.abierta_en DESC,cs.id
+       LIMIT 2
+       FOR SHARE OF cs
+    ) AS caja;
+  IF COALESCE(pg_catalog.cardinality(v_cajas),0)<>1 THEN
+    RAISE EXCEPTION 'No hay una única caja abierta en la sucursal del presupuesto';
+  END IF;
+  v_caja_prevalidada := v_cajas[1];
 
   SELECT r.venta_id,r.numero,r.es_cta_cte
     INTO v_res

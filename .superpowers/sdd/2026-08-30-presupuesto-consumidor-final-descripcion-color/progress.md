@@ -109,3 +109,31 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     `cambiar_precios_masivo` sobre `_objetivo`; advisors conserva los avisos
     históricos de RLS/vistas/funciones y no señala objetos de Task 2.
   - No se usaron proyecto remoto, `--linked`, `db push`, certificados ni ARCA.
+- Task 2 review round 1 (`6c7e49b`): `Spec: FAIL`, `Quality: FAIL`; sin
+  Critical ni Minor. Dos Important: `FOR KEY SHARE` permitía cambiar la
+  elegibilidad del receptor durante la conversión y el orden caja→productos se
+  invertía respecto de venta directa productos→caja, habilitando un deadlock.
+- Task 2 fix round 1: implementación completa; revisión del fix pendiente.
+  - RED de receptor observado: con la conversión anónima detenida después de
+    elegir candidato, `es_generico=false` se adelantó y el focal salió 1. La
+    regresión final cubre en un UPDATE `es_generico`, `tipo`,
+    `sucursal_habitual_id`, `es_obra` y `activo`; para cliente identificado
+    cubre `es_generico` y `activo`.
+  - RED de orden observado después del primer fix: venta directa sostuvo el
+    producto y esperó el advisory de caja mientras conversión sostuvo caja y
+    esperó producto. PostgreSQL devolvió `deadlock detected` y el focal salió 1.
+  - Ambos selectores usan ahora el lock mínimo compatible `FOR SHARE`. La caja
+    se prevalida después de bloquear/construir ítems y justo antes de
+    `crear_venta`, alineando productos→caja sin mutaciones comerciales previas.
+  - GREEN focal: ambos receptores permanecen elegibles; venta directa y
+    conversión terminan sin deadlock, usan la única caja preabierta, no dejan
+    huérfanos ni autoapertura y descuentan stock una vez por operación. La
+    carrera cierre-vs-conversión original sigue pasando.
+  - `npx supabase db reset --local` reaplicó toda la historia y los gates GREEN
+    incluyen focal/concurrencia, venta fiscal atómica, descripción personalizada
+    y edición de presupuesto (19/19). TypeScript, Bash parse y `git diff --check`
+    pasan; el lint de DB conserva sólo `_objetivo` histórico.
+  - Prettier conserva warnings previos en las tablas Markdown del ledger; su
+    diff propuesto no incluye el bloque de evidencia agregado en este fix.
+  - Cleanup final: cero sesiones `t2_%`, cero fixtures, hook de prueba ausente y
+    flags restaurados. No se usaron remoto, `--linked`, `db push` ni ARCA.

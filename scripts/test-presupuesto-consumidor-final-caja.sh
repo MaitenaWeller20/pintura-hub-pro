@@ -536,11 +536,29 @@ SELECT pg_temp.assert_true(
 ROLLBACK;
 SQL
 
-# Carrera real: el cierre obtiene FOR UPDATE primero. La conversión debe esperar,
-# observar la caja cerrada y fallar sin autoabrir una sesión distinta.
+# Fixtures comprometidos para observar locks entre sesiones reales. Cada carrera
+# usa un presupuesto distinto para que una conversión previa no tome el replay.
 LOCK_DIR="$(mktemp -d)"
 LOCK_PID=""
+CONVERSION_PID=""
+IDENTIFIED_PID=""
+DIRECT_PID=""
 cleanup() {
+  if [[ -n "$DIRECT_PID" ]] && kill -0 "$DIRECT_PID" 2>/dev/null; then
+    kill "$DIRECT_PID"
+    wait "$DIRECT_PID" 2>/dev/null || true
+    DIRECT_PID=""
+  fi
+  if [[ -n "$CONVERSION_PID" ]] && kill -0 "$CONVERSION_PID" 2>/dev/null; then
+    kill "$CONVERSION_PID"
+    wait "$CONVERSION_PID" 2>/dev/null || true
+    CONVERSION_PID=""
+  fi
+  if [[ -n "$IDENTIFIED_PID" ]] && kill -0 "$IDENTIFIED_PID" 2>/dev/null; then
+    kill "$IDENTIFIED_PID"
+    wait "$IDENTIFIED_PID" 2>/dev/null || true
+    IDENTIFIED_PID=""
+  fi
   if [[ -n "$LOCK_PID" ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
     kill "$LOCK_PID"
     wait "$LOCK_PID" 2>/dev/null || true
@@ -548,24 +566,43 @@ cleanup() {
   fi
   "${PSQL[@]}" >/dev/null <<'SQL'
 BEGIN;
-DELETE FROM public.venta_pagos WHERE venta_id IN (
-  SELECT venta_id FROM public.presupuestos WHERE id='f5200000-0000-4000-8000-000000000201'
-);
-DELETE FROM public.stock_movimientos WHERE referencia_id IN (
-  SELECT venta_id FROM public.presupuestos WHERE id='f5200000-0000-4000-8000-000000000201'
-);
-DELETE FROM public.venta_items WHERE venta_id IN (
-  SELECT venta_id FROM public.presupuestos WHERE id='f5200000-0000-4000-8000-000000000201'
-);
-UPDATE public.presupuestos SET estado='ABIERTO',venta_id=NULL
- WHERE id='f5200000-0000-4000-8000-000000000201';
-DELETE FROM public.ventas WHERE observaciones='Presupuesto T2-CONC-0001';
-DELETE FROM public.presupuesto_items WHERE presupuesto_id='f5200000-0000-4000-8000-000000000201';
-DELETE FROM public.presupuestos WHERE id='f5200000-0000-4000-8000-000000000201';
+DROP TRIGGER IF EXISTS aaa_t2_pausar_venta_directa ON public.ventas;
+DROP FUNCTION IF EXISTS public._t2_pausar_venta_directa_20260830();
+UPDATE public.settings
+   SET facturacion_receptor_v2_enabled=false,
+       facturacion_legacy_writer_enabled=false
+ WHERE id=true;
+CREATE TEMP TABLE t2_cleanup_budgets ON COMMIT DROP AS
+SELECT id,venta_id FROM public.presupuestos
+ WHERE id=ANY(ARRAY[
+   'f5200000-0000-4000-8000-000000000201',
+   'f5200000-0000-4000-8000-000000000202',
+   'f5200000-0000-4000-8000-000000000203',
+   'f5200000-0000-4000-8000-000000000204'
+ ]::uuid[]);
+CREATE TEMP TABLE t2_cleanup_sales ON COMMIT DROP AS
+SELECT venta_id AS id FROM t2_cleanup_budgets WHERE venta_id IS NOT NULL
+UNION
+SELECT id FROM public.ventas WHERE observaciones='T2-DIRECTA-LOCK';
+DELETE FROM public.venta_pagos
+ WHERE venta_id IN (SELECT id FROM t2_cleanup_sales);
+DELETE FROM public.stock_movimientos
+ WHERE referencia_id IN (SELECT id FROM t2_cleanup_sales);
+DELETE FROM public.venta_items
+ WHERE venta_id IN (SELECT id FROM t2_cleanup_sales);
+UPDATE public.presupuestos
+   SET estado='ABIERTO',venta_id=NULL,conversion_payload_hash=NULL
+ WHERE id IN (SELECT id FROM t2_cleanup_budgets);
+DELETE FROM public.ventas WHERE id IN (SELECT id FROM t2_cleanup_sales);
+DELETE FROM public.presupuesto_items
+ WHERE presupuesto_id IN (SELECT id FROM t2_cleanup_budgets);
+DELETE FROM public.presupuestos
+ WHERE id IN (SELECT id FROM t2_cleanup_budgets);
 DELETE FROM public.caja_movimientos WHERE caja_sesion_id='d5200000-0000-4000-8000-000000000201';
 DELETE FROM public.caja_sesiones WHERE id='d5200000-0000-4000-8000-000000000201';
 DELETE FROM public.stock_sucursal WHERE producto_id='c5200000-0000-4000-8000-000000000201';
 DELETE FROM public.productos WHERE id='c5200000-0000-4000-8000-000000000201';
+DELETE FROM public.clientes WHERE id='b5200000-0000-4000-8000-000000000201';
 UPDATE public.profiles SET sucursal_id=NULL
  WHERE id='a5200000-0000-4000-8000-000000000201';
 DELETE FROM public.profile_sucursales WHERE profile_id='a5200000-0000-4000-8000-000000000201';
@@ -589,6 +626,10 @@ BEGIN
   END IF;
 END;
 $$;
+UPDATE public.settings
+   SET facturacion_receptor_v2_enabled=true,
+       facturacion_legacy_writer_enabled=false
+ WHERE id=true;
 INSERT INTO auth.users(
   id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at
 ) VALUES (
@@ -607,8 +648,15 @@ SELECT 'a5200000-0000-4000-8000-000000000201',id
 INSERT INTO public.productos(id,codigo,nombre,precio_sin_iva,iva_porcentaje,activo,archivado)
 VALUES ('c5200000-0000-4000-8000-000000000201','T2-CONC','T2 Producto concurrencia',100,21,true,false);
 INSERT INTO public.stock_sucursal(producto_id,sucursal_id,cantidad)
-SELECT 'c5200000-0000-4000-8000-000000000201',id,10
+SELECT 'c5200000-0000-4000-8000-000000000201',id,20
   FROM public.sucursales WHERE codigo='OHIGGINS';
+INSERT INTO public.clientes(
+  id,razon_social,tipo,condicion_cta_cte,limite_credito,activo,
+  es_generico,sucursal_habitual_id,es_obra
+) VALUES (
+  'b5200000-0000-4000-8000-000000000201','T2 CLIENTE CONCURRENCIA',
+  'MONOTRIBUTISTA',false,NULL,true,false,NULL,false
+);
 INSERT INTO public.caja_sesiones(id,sucursal_id,estado,abierta_por,fondo_inicial)
 SELECT 'd5200000-0000-4000-8000-000000000201',id,'ABIERTA',
        'a5200000-0000-4000-8000-000000000201',0
@@ -617,21 +665,310 @@ INSERT INTO public.presupuestos(
   id,sucursal_id,usuario_id,numero,cliente_id,nombre_cliente,
   subtotal_sin_iva,iva_total,total,estado,observaciones
 )
-SELECT 'f5200000-0000-4000-8000-000000000201',id,
-       'a5200000-0000-4000-8000-000000000201','T2-CONC-0001',NULL,NULL,
-       100,21,121,'ABIERTO','T2-CONCURRENCIA'
-  FROM public.sucursales WHERE codigo='OHIGGINS';
+SELECT fixture.presupuesto_id,s.id,
+       'a5200000-0000-4000-8000-000000000201',fixture.numero,
+       fixture.cliente_id,fixture.nombre_cliente,
+       100,21,121,'ABIERTO',fixture.observaciones
+  FROM public.sucursales AS s
+ CROSS JOIN (
+   VALUES
+     ('f5200000-0000-4000-8000-000000000201'::uuid,'T2-CONC-0001',
+      NULL::uuid,NULL::text,'T2-CANDIDATO-ANONIMO'),
+     ('f5200000-0000-4000-8000-000000000202'::uuid,'T2-CONC-0002',
+      'b5200000-0000-4000-8000-000000000201'::uuid,'T2 CLIENTE CONCURRENCIA','T2-CLIENTE-IDENTIFICADO'),
+     ('f5200000-0000-4000-8000-000000000203'::uuid,'T2-CONC-0003',
+      NULL::uuid,NULL::text,'T2-ORDEN-LOCKS'),
+     ('f5200000-0000-4000-8000-000000000204'::uuid,'T2-CONC-0004',
+      NULL::uuid,NULL::text,'T2-CIERRE-CAJA')
+ ) AS fixture(presupuesto_id,numero,cliente_id,nombre_cliente,observaciones)
+ WHERE s.codigo='OHIGGINS';
 INSERT INTO public.presupuesto_items(
   presupuesto_id,producto_id,codigo,descripcion,cantidad,
   precio_lista_sin_iva,descuento_porcentaje,precio_sin_iva,
   iva_porcentaje,subtotal_sin_iva,iva_monto,subtotal_con_iva
-) VALUES (
-  'f5200000-0000-4000-8000-000000000201',
-  'c5200000-0000-4000-8000-000000000201','T2-CONC','T2 Producto concurrencia',1,
-  100,0,100,21,100,21,121
-);
+)
+SELECT fixture.presupuesto_id,
+       'c5200000-0000-4000-8000-000000000201','T2-CONC',fixture.descripcion,1,
+       100,0,100,21,100,21,121
+  FROM (
+    VALUES
+      ('f5200000-0000-4000-8000-000000000201'::uuid,'T2 candidato anónimo'),
+      ('f5200000-0000-4000-8000-000000000202'::uuid,'T2 cliente identificado'),
+      ('f5200000-0000-4000-8000-000000000203'::uuid,'T2 orden de locks'),
+      ('f5200000-0000-4000-8000-000000000204'::uuid,'T2 cierre concurrente')
+  ) AS fixture(presupuesto_id,descripcion);
 SQL
 
+expect_client_mutation_blocked() {
+  local label="$1"
+  local client_id="$2"
+  local assignment="$3"
+  local mutation_out
+  local mutation_status
+
+  set +e
+  mutation_out="$("${PSQL[@]}" -Atq -c "
+    BEGIN;
+    SET LOCAL statement_timeout='250ms';
+    UPDATE public.clientes SET ${assignment} WHERE id='${client_id}';
+    ROLLBACK;
+  " 2>&1)"
+  mutation_status=$?
+  set -e
+
+  if [[ "$mutation_status" -eq 0 ]] || [[ "$mutation_out" != *"statement timeout"* ]]; then
+    echo "FALLO: ${label} se adelantó a la conversión: ${mutation_out}" >&2
+    exit 1
+  fi
+  echo "✓ ${label} espera a que termine la conversión"
+}
+
+# Dos conversiones se detienen juntas sobre productos después de elegir sus
+# receptores. El UPDATE multicolumna prueba toda la elegibilidad en un lock.
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/producto-holder.out" 2>"$LOCK_DIR/producto-holder.err" <<'SQL' &
+BEGIN;
+LOCK TABLE public.productos IN ACCESS EXCLUSIVE MODE;
+SELECT 'T2_PRODUCTO_LOCK_LISTO';
+SELECT pg_sleep(6);
+COMMIT;
+SQL
+LOCK_PID=$!
+
+for _ in {1..100}; do
+  if rg -q 'T2_PRODUCTO_LOCK_LISTO' "$LOCK_DIR/producto-holder.out"; then break; fi
+  sleep 0.05
+done
+if ! rg -q 'T2_PRODUCTO_LOCK_LISTO' "$LOCK_DIR/producto-holder.out"; then
+  echo 'FALLO: no se pudo detener la conversión sobre productos' >&2
+  exit 1
+fi
+
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/conversion-candidato.out" 2>"$LOCK_DIR/conversion-candidato.err" <<'SQL' &
+BEGIN;
+SET application_name='t2_conversion_candidato_anonimo';
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a5200000-0000-4000-8000-000000000201","role":"authenticated"}',
+  true
+);
+SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
+  'f5200000-0000-4000-8000-000000000201',NULL,'CONTADO',
+  '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
+);
+COMMIT;
+SQL
+CONVERSION_PID=$!
+
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/conversion-identificada.out" 2>"$LOCK_DIR/conversion-identificada.err" <<'SQL' &
+BEGIN;
+SET application_name='t2_conversion_cliente_identificado';
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a5200000-0000-4000-8000-000000000201","role":"authenticated"}',
+  true
+);
+SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
+  'f5200000-0000-4000-8000-000000000202',
+  'b5200000-0000-4000-8000-000000000201','CONTADO',
+  '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
+);
+COMMIT;
+SQL
+IDENTIFIED_PID=$!
+
+CONVERSION_WAITING="f"
+for _ in {1..100}; do
+  CONVERSION_WAITING="$("${PSQL[@]}" -Atq -c \
+    "SELECT count(*)=2 FROM pg_stat_activity WHERE application_name IN ('t2_conversion_candidato_anonimo','t2_conversion_cliente_identificado') AND wait_event_type='Lock'")"
+  if [[ "$CONVERSION_WAITING" == "t" ]]; then break; fi
+  sleep 0.05
+done
+if [[ "$CONVERSION_WAITING" != "t" ]]; then
+  echo 'FALLO: las conversiones no llegaron al lock posterior a sus clientes' >&2
+  exit 1
+fi
+
+GLOBAL_CF_ID="$("${PSQL[@]}" -Atq -c "
+  SELECT id FROM public.clientes
+   WHERE activo AND es_generico AND tipo='CONSUMIDOR_FINAL'
+     AND sucursal_habitual_id IS NULL AND NOT COALESCE(es_obra,false)
+")"
+expect_client_mutation_blocked \
+  'elegibilidad completa del candidato anónimo' "$GLOBAL_CF_ID" \
+  "es_generico=false,tipo='MONOTRIBUTISTA',sucursal_habitual_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'),es_obra=true,activo=false"
+expect_client_mutation_blocked \
+  'elegibilidad del cliente identificado' \
+  'b5200000-0000-4000-8000-000000000201' 'es_generico=true,activo=false'
+
+wait "$LOCK_PID"
+LOCK_PID=""
+if ! wait "$CONVERSION_PID"; then
+  CONVERSION_PID=""
+  sed -n '1,160p' "$LOCK_DIR/conversion-candidato.err" >&2
+  echo 'FALLO: la conversión anónima no terminó luego de liberar productos' >&2
+  exit 1
+fi
+CONVERSION_PID=""
+if ! wait "$IDENTIFIED_PID"; then
+  IDENTIFIED_PID=""
+  sed -n '1,160p' "$LOCK_DIR/conversion-identificada.err" >&2
+  echo 'FALLO: la conversión identificada no terminó luego de liberar productos' >&2
+  exit 1
+fi
+IDENTIFIED_PID=""
+echo '✓ ambos receptores quedan elegibles hasta completar sus conversiones'
+
+# Hook local y descartable: la venta directa ya tomó FOR UPDATE sobre producto,
+# pero todavía no llegó al trigger que toma advisory/fila de caja. Esto vuelve
+# determinista la inversión directa producto→caja vs conversión caja→producto.
+"${PSQL[@]}" <<'SQL'
+CREATE FUNCTION public._t2_pausar_venta_directa_20260830()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=''
+AS $$
+BEGIN
+  IF NEW.observaciones='T2-DIRECTA-LOCK' THEN
+    RAISE NOTICE 'T2_DIRECTA_PRODUCTO_LISTO';
+    PERFORM pg_catalog.pg_sleep(4);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public._t2_pausar_venta_directa_20260830()
+  FROM PUBLIC,anon,authenticated,service_role;
+CREATE TRIGGER aaa_t2_pausar_venta_directa
+  BEFORE INSERT ON public.ventas
+  FOR EACH ROW
+  EXECUTE FUNCTION public._t2_pausar_venta_directa_20260830();
+SQL
+
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/venta-directa.out" 2>"$LOCK_DIR/venta-directa.err" <<'SQL' &
+BEGIN;
+SET application_name='t2_venta_directa_orden_locks';
+SET LOCAL deadlock_timeout='200ms';
+SET LOCAL lock_timeout='10s';
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a5200000-0000-4000-8000-000000000201","role":"authenticated"}',
+  true
+);
+SELECT * FROM public.crear_venta(
+  (SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'),
+  'b5200000-0000-4000-8000-000000000201','VENTA','CONTADO',
+  '[{"producto_id":"c5200000-0000-4000-8000-000000000201","cantidad":1,"precio_unitario_sin_iva":100,"descripcion":"T2 venta directa"}]'::jsonb,
+  '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,
+  0,'T2-DIRECTA-LOCK',NULL,NULL,NULL,
+  'e5200000-0000-4000-8000-000000000203'
+);
+COMMIT;
+SQL
+DIRECT_PID=$!
+
+for _ in {1..100}; do
+  if rg -q 'T2_DIRECTA_PRODUCTO_LISTO' \
+    "$LOCK_DIR/venta-directa.out" "$LOCK_DIR/venta-directa.err"; then
+    break
+  fi
+  if ! kill -0 "$DIRECT_PID" 2>/dev/null; then
+    sed -n '1,160p' "$LOCK_DIR/venta-directa.err" >&2
+    echo 'FALLO: la venta directa terminó antes de exponer el lock de producto' >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if ! rg -q 'T2_DIRECTA_PRODUCTO_LISTO' \
+  "$LOCK_DIR/venta-directa.out" "$LOCK_DIR/venta-directa.err"; then
+  echo 'FALLO: la venta directa no confirmó el lock de producto' >&2
+  exit 1
+fi
+
+docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
+  >"$LOCK_DIR/conversion-orden-locks.out" \
+  2>"$LOCK_DIR/conversion-orden-locks.err" <<'SQL' &
+BEGIN;
+SET application_name='t2_conversion_orden_locks';
+SET LOCAL deadlock_timeout='200ms';
+SET LOCAL lock_timeout='10s';
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a5200000-0000-4000-8000-000000000201","role":"authenticated"}',
+  true
+);
+SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
+  'f5200000-0000-4000-8000-000000000203',NULL,'CONTADO',
+  '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
+);
+COMMIT;
+SQL
+CONVERSION_PID=$!
+
+CONVERSION_WAITING="f"
+for _ in {1..100}; do
+  CONVERSION_WAITING="$("${PSQL[@]}" -Atq -c \
+    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='t2_conversion_orden_locks' AND wait_event_type='Lock')")"
+  if [[ "$CONVERSION_WAITING" == "t" ]]; then break; fi
+  if ! kill -0 "$CONVERSION_PID" 2>/dev/null; then break; fi
+  sleep 0.05
+done
+if [[ "$CONVERSION_WAITING" != "t" ]]; then
+  sed -n '1,160p' "$LOCK_DIR/conversion-orden-locks.err" >&2
+  echo 'FALLO: la conversión no llegó al lock de producto durante la venta directa' >&2
+  exit 1
+fi
+
+set +e
+wait "$DIRECT_PID"
+DIRECT_STATUS=$?
+DIRECT_PID=""
+wait "$CONVERSION_PID"
+CONVERSION_STATUS=$?
+CONVERSION_PID=""
+set -e
+if [[ "$DIRECT_STATUS" -ne 0 ]] || [[ "$CONVERSION_STATUS" -ne 0 ]]; then
+  echo 'FALLO: venta directa y conversión no completaron; posible deadlock caja/producto' >&2
+  sed -n '1,160p' "$LOCK_DIR/venta-directa.err" >&2
+  sed -n '1,160p' "$LOCK_DIR/conversion-orden-locks.err" >&2
+  exit 1
+fi
+
+"${PSQL[@]}" <<'SQL'
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM public.ventas
+       WHERE observaciones IN ('T2-DIRECTA-LOCK','Presupuesto T2-CONC-0003'))<>2
+     OR EXISTS (
+       SELECT 1 FROM public.ventas
+        WHERE observaciones IN ('T2-DIRECTA-LOCK','Presupuesto T2-CONC-0003')
+          AND caja_sesion_id IS DISTINCT FROM 'd5200000-0000-4000-8000-000000000201'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.presupuestos
+        WHERE id='f5200000-0000-4000-8000-000000000203'
+          AND estado='CONVERTIDO' AND venta_id IS NOT NULL AND cliente_id IS NULL
+     )
+     OR (SELECT count(*) FROM public.caja_sesiones AS cs
+          JOIN public.sucursales AS s ON s.id=cs.sucursal_id
+         WHERE s.codigo='OHIGGINS' AND cs.estado='ABIERTA')<>1
+     OR (SELECT cantidad FROM public.stock_sucursal
+          WHERE producto_id='c5200000-0000-4000-8000-000000000201'
+            AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'))<>16 THEN
+    RAISE EXCEPTION 'FALLO: el orden producto→caja dejó venta, presupuesto, caja o stock incorrecto';
+  END IF;
+  RAISE NOTICE '✓ venta directa y conversión terminan sin deadlock, huérfanos ni autoapertura';
+END;
+$$;
+DROP TRIGGER aaa_t2_pausar_venta_directa ON public.ventas;
+DROP FUNCTION public._t2_pausar_venta_directa_20260830();
+SQL
+
+# Si cerrar_caja obtiene FOR UPDATE primero, la conversión debe esperar, observar
+# la caja cerrada y fallar sin autoabrir una sesión distinta.
 docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
   >"$LOCK_DIR/cierre.out" 2>"$LOCK_DIR/cierre.err" <<'SQL' &
 BEGIN;
@@ -673,7 +1010,7 @@ SELECT set_config(
   true
 );
 SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
-  'f5200000-0000-4000-8000-000000000201',NULL,'CONTADO',
+  'f5200000-0000-4000-8000-000000000204',NULL,'CONTADO',
   '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
 );
 COMMIT;
@@ -697,10 +1034,10 @@ BEGIN
     JOIN public.sucursales AS s ON s.id=cs.sucursal_id
     WHERE s.codigo='OHIGGINS' AND cs.estado='ABIERTA'
   ) OR EXISTS (
-    SELECT 1 FROM public.ventas WHERE observaciones='Presupuesto T2-CONC-0001'
+    SELECT 1 FROM public.ventas WHERE observaciones='Presupuesto T2-CONC-0004'
   ) OR NOT EXISTS (
     SELECT 1 FROM public.presupuestos
-     WHERE id='f5200000-0000-4000-8000-000000000201'
+     WHERE id='f5200000-0000-4000-8000-000000000204'
        AND estado='ABIERTO' AND venta_id IS NULL
   ) THEN
     RAISE EXCEPTION 'FALLO: el cierre concurrente dejó una caja nueva, una venta o un presupuesto convertido';

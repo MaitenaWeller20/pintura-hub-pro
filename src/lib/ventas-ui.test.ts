@@ -177,6 +177,16 @@ describe("receptor fiscal congelado en el listado", () => {
   const venta = {
     numero_comprobante: "V-0042",
     cliente: { razon_social: "COMPRADOR COMERCIAL", cuit_dni: "30111222333" },
+    fiscalPresentacion: {
+      receptor: {
+        razonSocial: "RECEPTOR FISCAL CONGELADO",
+        tipoDocumento: "CUIT",
+        numeroDocumento: "30714199664",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "Belgrano 500, Córdoba",
+      },
+      comprobanteAsociado: null,
+    },
     afip_snapshot: {
       version: 2,
       receptor: {
@@ -203,6 +213,16 @@ describe("receptor fiscal congelado en el listado", () => {
       domicilio: "Belgrano 500, Córdoba",
     });
     expect(receptorFiscalDifiereDelComprador(venta)).toBe(true);
+  });
+
+  it("consume la proyección fiscal cerrada aunque el browser no reciba el snapshot", () => {
+    const { afip_snapshot: _omitido, ...ventaSinSnapshot } = venta;
+    expect(receptorFiscalDifiereDelComprador(ventaSinSnapshot)).toBe(true);
+    expect(textoBusquedaVenta(ventaSinSnapshot)).toContain("receptor fiscal congelado");
+    expect(camposExportacionReceptorFiscal(ventaSinSnapshot)).toEqual({
+      "Receptor fiscal": "RECEPTOR FISCAL CONGELADO",
+      "Documento receptor fiscal": "CUIT 30714199664",
+    });
   });
 
   it("incorpora receptor y documento congelados a búsqueda y exportación", () => {

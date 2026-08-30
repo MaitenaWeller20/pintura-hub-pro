@@ -19,6 +19,22 @@ export type ContextoColaFiscal = {
   sucursalId: string | null;
 };
 
+export type ContextoVentas = {
+  userId: string;
+  esAdmin: boolean;
+  sucursalId: string | null;
+};
+
+export type LecturasContextoVentas = {
+  consultarEsAdmin(userId: string): Promise<boolean>;
+  cargarPerfil(userId: string): Promise<{
+    activo: boolean;
+    puedeFacturar: boolean;
+    sucursalId: string | null;
+    secciones: string[] | null;
+  } | null>;
+};
+
 export type LecturasContextoColaFiscal = {
   consultarEsAdmin(userId: string): Promise<boolean>;
   cargarPerfil(
@@ -93,6 +109,36 @@ export async function autorizarLecturaVenta(input: {
     throw new Error("El perfil no tiene habilitada la sección Ventas.");
   }
   return { ventaId: venta.id, sucursalId: venta.sucursalId, esAdmin: false };
+}
+
+/**
+ * Autoriza listados comerciales antes de abrir service-role. El listado común
+ * exige la sección Ventas, pero no capacidad fiscal; la selección de un
+ * original para previsualizar/emitir una NC sí la exige.
+ */
+export async function autorizarContextoVentas(input: {
+  userId: string;
+  exigirCapacidadFiscal: boolean;
+  lecturas: LecturasContextoVentas;
+}): Promise<ContextoVentas> {
+  const [esAdmin, perfil] = await Promise.all([
+    input.lecturas.consultarEsAdmin(input.userId),
+    input.lecturas.cargarPerfil(input.userId),
+  ]);
+  exigirPerfilActivo(perfil);
+  if (esAdmin) return { userId: input.userId, esAdmin: true, sucursalId: null };
+  if (!perfil.sucursalId) throw new Error("El operador no tiene una sucursal activa.");
+  if (!puedeVer("ventas", { isAdmin: false, secciones: perfil.secciones })) {
+    throw new Error("El perfil no tiene habilitada la sección Ventas.");
+  }
+  if (input.exigirCapacidadFiscal && !perfil.puedeFacturar) {
+    throw new Error("El perfil no tiene la capacidad fiscal puede_facturar.");
+  }
+  return {
+    userId: input.userId,
+    esAdmin: false,
+    sucursalId: perfil.sucursalId,
+  };
 }
 
 /** Autoriza lecturas operativas sin abrir un cliente privilegiado. */

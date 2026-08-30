@@ -26,6 +26,7 @@ const dobles = vi.hoisted(() => ({
   },
   navigate: vi.fn(),
   crearVenta: vi.fn(),
+  listarOriginales: vi.fn(),
   crearPeriodo: vi.fn(),
   previsualizar: vi.fn(),
   emitir: vi.fn(),
@@ -43,7 +44,10 @@ vi.mock("@/hooks/use-current-user", () => ({
   useCurrentUser: () => ({ data: dobles.usuario }),
 }));
 
-vi.mock("@/lib/ventas.functions", () => ({ crearVenta: dobles.crearVenta }));
+vi.mock("@/lib/ventas.functions", () => ({
+  crearVenta: dobles.crearVenta,
+  listarComprobantesOriginalesVenta: dobles.listarOriginales,
+}));
 
 vi.mock("@/lib/fiscal.functions", () => ({
   crearNotaCreditoPeriodoFiscal: dobles.crearPeriodo,

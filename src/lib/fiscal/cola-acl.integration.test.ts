@@ -232,6 +232,18 @@ suite("ACL de cola fiscal v2/v3 contra PostgreSQL local", () => {
       [ids.ventaV2, ids.ventaV3].sort(),
     );
     expect(filas.every((fila: any) => !("reintegrosIntencion" in fila))).toBe(true);
+    const recorrer = (value: unknown): string[] => {
+      if (Array.isArray(value)) return value.flatMap(recorrer);
+      if (!value || typeof value !== "object") return [];
+      return Object.entries(value).flatMap(([key, child]) => [key, ...recorrer(child)]);
+    };
+    const claves = recorrer(respuesta);
+    expect(
+      claves.filter((clave) =>
+        /snapshot|hash|claim|idempotency|payload|raw|secret|service_role/i.test(clave),
+      ),
+    ).toEqual([]);
+    expect(filas.every((fila: any) => "reclamo_vencido" in fila)).toBe(true);
   });
 
   it("mantiene bloqueados a usuarios sin capacidad o sucursal", async () => {

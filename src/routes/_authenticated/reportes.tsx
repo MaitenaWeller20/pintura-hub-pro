@@ -13,7 +13,7 @@ import { DataTable } from "@/components/app/data-table";
 import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
 import { fmtDocumento } from "@/lib/documento";
 import { rangeToUtc, todayLocalISO } from "@/lib/dates";
-import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
+import { COLUMNAS_VENTA_REPORTE } from "@/lib/ventas-proyeccion";
 import { FileSpreadsheet, FileText, TrendingUp, Wallet, Receipt, CircleDollarSign, Hash, Undo2 } from "lucide-react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
@@ -57,7 +57,7 @@ function ReportesPage() {
     queryFn: async () => {
       const { gte, lt } = rangeToUtc(desde, hasta);
       let q = supabase.from("ventas").select(`
-        ${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social), sucursal:sucursales(nombre),
+        ${COLUMNAS_VENTA_REPORTE}, cliente:clientes(razon_social), sucursal:sucursales(nombre),
         pagos:venta_pagos(forma_pago, monto)
       `).gte("fecha", gte).lt("fecha", lt).eq("estado", "ACTIVA").order("fecha", { ascending: false });
       if (sucId) q = q.eq("sucursal_id", sucId);

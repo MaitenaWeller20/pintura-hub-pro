@@ -31,7 +31,7 @@ import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/l
 import { Plus, Eye, Ban, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { anularVenta } from "@/lib/ventas.functions";
+import { anularVenta, listarVentasSeguras } from "@/lib/ventas.functions";
 import { detalleVentaFiscalSegura, emitirComprobante } from "@/lib/fiscal.functions";
 import { obtenerEstadoFiscalPublico } from "@/lib/fiscal/config.functions";
 import { QUERY_KEY_ESTADO_FISCAL_PUBLICO } from "@/lib/fiscal/config";
@@ -47,7 +47,6 @@ import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import {
   camposExportacionReceptorFiscal,
   describirCaeLegacy,
-  leerReceptorFiscalCongelado,
   puedeOfrecerEmisionLegacy,
   receptorFiscalDifiereDelComprador,
   requiereAdvertenciaAnulacionProduccion,
@@ -60,11 +59,7 @@ import {
   solicitudAnulacion,
   type IntentoAnulacion,
 } from "@/lib/anulacion-venta-ui";
-import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
-import {
-  esVentaVisibleEnListadoComercial,
-  excluirPendientesFiscalesDeConsulta,
-} from "@/lib/nota-credito-periodo-ui";
+import { esVentaVisibleEnListadoComercial } from "@/lib/nota-credito-periodo-ui";
 import { crearSecuenciadorDetalleVenta } from "@/lib/ventas-detalle-concurrencia";
 import * as XLSX from "xlsx";
 
@@ -148,6 +143,7 @@ function VentasList() {
   const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
   const detalleVentaFn = useServerFn(detalleVentaFiscalSegura);
+  const listarVentasFn = useServerFn(listarVentasSeguras);
 
   useEffect(() => {
     const secuenciador = secuenciadorDetalleRef.current;
@@ -177,21 +173,14 @@ function VentasList() {
   const { data: ventas = [], isLoading: loadingVentas } = useQuery({
     queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
     enabled: !!cu,
-    queryFn: async () => {
-      let q = excluirPendientesFiscalesDeConsulta(
-        supabase.from("ventas").select(
-          `
-        ${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
-        pagos:venta_pagos(forma_pago,monto)
-      `,
-        ),
-      )
-        .order("fecha", { ascending: false })
-        .limit(200);
-      if (sucFilter) q = q.eq("sucursal_id", sucFilter);
-      if (pagoFilter !== "all") q = q.eq("estado_pago", pagoFilter as any);
-      return ((await q).data ?? []) as any[];
-    },
+    queryFn: () =>
+      listarVentasFn({
+        data: {
+          sucursal_id: sucFilter || undefined,
+          estado_pago:
+            pagoFilter === "all" ? undefined : (pagoFilter as "PAGADO" | "PARCIAL" | "PENDIENTE"),
+        },
+      }),
   });
 
   const filtered = useMemo(
@@ -447,7 +436,7 @@ function VentasList() {
               <p>{v.cliente?.razon_social}</p>
               {receptorFiscalDifiereDelComprador(v) ? (
                 <p className="text-xs text-muted-foreground" data-testid={`receptor-${v.id}`}>
-                  → {leerReceptorFiscalCongelado(v.afip_snapshot)?.razonSocial}
+                  → {v.fiscalPresentacion?.receptor?.razonSocial}
                 </p>
               ) : null}
             </TableCell>

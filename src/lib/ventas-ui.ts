@@ -13,7 +13,7 @@ export type ReceptorFiscalCongeladoListado = {
 type VentaConReceptorCongelado = {
   numero_comprobante?: string | null;
   cliente?: { razon_social?: string | null; cuit_dni?: string | null } | null;
-  afip_snapshot?: unknown;
+  fiscalPresentacion?: { receptor?: ReceptorFiscalCongeladoListado | null } | null;
 };
 
 function esRegistro(value: unknown): value is Record<string, unknown> {
@@ -68,7 +68,7 @@ function normalizarIdentidad(value: string | null | undefined): string {
 }
 
 export function receptorFiscalDifiereDelComprador(venta: VentaConReceptorCongelado): boolean {
-  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  const receptor = venta.fiscalPresentacion?.receptor ?? null;
   if (!receptor) return false;
   const comprador = normalizarIdentidad(venta.cliente?.razon_social);
   const documentoComprador = normalizarIdentidad(venta.cliente?.cuit_dni);
@@ -80,7 +80,7 @@ export function receptorFiscalDifiereDelComprador(venta: VentaConReceptorCongela
 }
 
 function camposBusquedaVenta(venta: VentaConReceptorCongelado): string[] {
-  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  const receptor = venta.fiscalPresentacion?.receptor ?? null;
   return [
     venta.numero_comprobante,
     venta.cliente?.razon_social,
@@ -114,7 +114,7 @@ export function camposExportacionReceptorFiscal(venta: VentaConReceptorCongelado
   "Receptor fiscal": string;
   "Documento receptor fiscal": string;
 } {
-  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  const receptor = venta.fiscalPresentacion?.receptor ?? null;
   return {
     "Receptor fiscal": receptor?.razonSocial ?? "—",
     "Documento receptor fiscal": receptor?.numeroDocumento

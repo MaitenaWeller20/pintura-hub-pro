@@ -13,12 +13,20 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Database } from "@/integrations/supabase/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
   cargarFlagsFacturacionDesdeSupabase,
   decidirEscritorFiscal,
   type FlagsFacturacion,
 } from "./fiscal/feature.server";
+import {
+  autorizarContextoVentas,
+  autorizarOperacionFiscal,
+  type ContextoVentas,
+} from "./fiscal/permiso.server";
+import { COLUMNAS_VENTA_SEGURAS, proyectarListadoVentasSeguro } from "./ventas-proyeccion";
 
 const itemSchema = z
   .object({
@@ -91,6 +99,272 @@ export const ventaInputSchema = z.object({
 
 export type VentaInput = z.infer<typeof ventaInputSchema>;
 type ResultadoCreacionVenta = { id: string; numero: string; cta_cte: boolean };
+
+const columnasOriginalSeguro = [
+  "id",
+  "numero_comprobante",
+  "tipo_comprobante",
+  "fecha",
+  "subtotal_sin_iva",
+  "iva_total",
+  "percepciones",
+  "total",
+  "total_pagado",
+  "condicion_venta",
+  "afip_estado",
+  "afip_fase",
+  "afip_validez",
+  "afip_modo",
+  "afip_simulado",
+  "afip_numero",
+  "afip_emisor_cuit",
+  "afip_punto_venta",
+  "afip_cbte_tipo",
+  "cae",
+] as const;
+
+export const COLUMNAS_COMPROBANTE_ORIGINAL_SEGURAS = columnasOriginalSeguro.join(",");
+type ColumnaOriginalSegura = (typeof columnasOriginalSeguro)[number];
+export type ComprobanteOriginalSeguro = Pick<
+  Database["public"]["Tables"]["ventas"]["Row"],
+  ColumnaOriginalSegura
+> & { tiene_snapshot_persistido: boolean };
+
+type FiltrosListadoVentas = { sucursalId: string | null; estadoPago: string | null };
+type EvidenciaListado = { id: string; afip_snapshot: unknown };
+type EvidenciaOriginal = EvidenciaListado & { afip_snapshot_hash: string | null };
+
+export async function ejecutarListadoVentasSeguro(
+  input: FiltrosListadoVentas,
+  deps: {
+    autorizar(): Promise<ContextoVentas>;
+    cargarVisibles(filtros: FiltrosListadoVentas): Promise<Array<Record<string, unknown>>>;
+    cargarEvidencias(ids: string[]): Promise<EvidenciaListado[]>;
+  },
+) {
+  const contexto = await deps.autorizar();
+  const filtros = {
+    sucursalId: contexto.esAdmin ? input.sucursalId : contexto.sucursalId,
+    estadoPago: input.estadoPago,
+  };
+  const visibles = await deps.cargarVisibles(filtros);
+  if (visibles.length === 0) return [];
+  const evidencias = await deps.cargarEvidencias(visibles.map((venta) => String(venta.id)));
+  return proyectarListadoVentasSeguro(visibles, evidencias);
+}
+
+function snapshotPersistido(evidencia: EvidenciaOriginal | undefined): boolean {
+  if (!evidencia?.afip_snapshot || !evidencia.afip_snapshot_hash) return false;
+  if (typeof evidencia.afip_snapshot !== "object" || Array.isArray(evidencia.afip_snapshot)) {
+    return false;
+  }
+  return (evidencia.afip_snapshot as Record<string, unknown>).hash === evidencia.afip_snapshot_hash;
+}
+
+export async function ejecutarListadoComprobantesOriginalesSeguro(
+  input: { clienteId: string; receptorV2: boolean },
+  deps: {
+    autorizar(): Promise<ContextoVentas>;
+    cargarVisibles(contexto: ContextoVentas): Promise<Array<Record<string, unknown>>>;
+    cargarEvidencias(ids: string[]): Promise<EvidenciaOriginal[]>;
+  },
+) {
+  const contexto = await deps.autorizar();
+  const visibles = await deps.cargarVisibles(contexto);
+  if (visibles.length === 0) return [];
+  const evidencias = await deps.cargarEvidencias(visibles.map((venta) => String(venta.id)));
+  const evidenciaPorId = new Map(evidencias.map((evidencia) => [evidencia.id, evidencia]));
+  return visibles
+    .map((venta) => {
+      const segura = Object.fromEntries(
+        columnasOriginalSeguro.map((columna) => [columna, venta[columna]]),
+      );
+      return {
+        ...segura,
+        tiene_snapshot_persistido: snapshotPersistido(evidenciaPorId.get(String(venta.id))),
+      } as ComprobanteOriginalSeguro;
+    })
+    .filter((venta) => !input.receptorV2 || venta.tiene_snapshot_persistido);
+}
+
+export async function ejecutarLecturaOriginalFiscalAutorizada<T>(
+  ventaId: string,
+  deps: {
+    autorizar(ventaId: string): Promise<void>;
+    cargarExacta(ventaId: string): Promise<T>;
+  },
+): Promise<T> {
+  await deps.autorizar(ventaId);
+  return deps.cargarExacta(ventaId);
+}
+
+type ClienteVentas = SupabaseClient<Database>;
+
+function lecturasContextoVentas(supabase: ClienteVentas) {
+  return {
+    async consultarEsAdmin(userId: string) {
+      const { data, error } = await supabase.rpc("is_admin", { _user_id: userId });
+      if (error || typeof data !== "boolean")
+        throw new Error("No se pudo verificar el rol de Ventas.");
+      return data;
+    },
+    async cargarPerfil(userId: string) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("activo,puede_facturar,sucursal_id,secciones")
+        .eq("id", userId)
+        .maybeSingle();
+      if (error) throw new Error("No se pudo verificar el perfil de Ventas.");
+      return data
+        ? {
+            activo: data.activo,
+            puedeFacturar: data.puede_facturar,
+            sucursalId: data.sucursal_id,
+            secciones: data.secciones,
+          }
+        : null;
+    },
+  };
+}
+
+async function autorizarConsultaVentas(
+  supabase: ClienteVentas,
+  userId: string,
+  exigirCapacidadFiscal: boolean,
+) {
+  return autorizarContextoVentas({
+    userId,
+    exigirCapacidadFiscal,
+    lecturas: lecturasContextoVentas(supabase),
+  });
+}
+
+async function autorizarOriginalFiscal(supabase: ClienteVentas, userId: string, ventaId: string) {
+  await autorizarOperacionFiscal({
+    userId,
+    ventaId,
+    accion: "PREVISUALIZAR",
+    confirmaVentaAntigua: false,
+    lecturas: {
+      async cargarVenta(id) {
+        const { data, error } = await supabase
+          .from("ventas")
+          .select("id,sucursal_id,fecha")
+          .eq("id", id)
+          .maybeSingle();
+        if (error || !data) return null;
+        return { id: data.id, sucursalId: data.sucursal_id, fecha: data.fecha };
+      },
+      ...lecturasContextoVentas(supabase),
+      ahora: () => new Date(),
+    },
+  });
+}
+
+const listadoVentasInputSchema = z
+  .object({
+    sucursal_id: z.string().uuid().optional(),
+    estado_pago: z.enum(["PAGADO", "PARCIAL", "PENDIENTE"]).optional(),
+  })
+  .strict();
+
+export const listarVentasSeguras = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => listadoVentasInputSchema.parse(value))
+  .handler(async ({ data, context }) =>
+    ejecutarListadoVentasSeguro(
+      {
+        sucursalId: data.sucursal_id ?? null,
+        estadoPago: data.estado_pago ?? null,
+      },
+      {
+        autorizar: () => autorizarConsultaVentas(context.supabase, context.userId, false),
+        async cargarVisibles(filtros) {
+          let consulta = context.supabase
+            .from("ventas")
+            .select(
+              `${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono), pagos:venta_pagos(forma_pago,monto)`,
+            )
+            .neq("estado", "PENDIENTE_FISCAL")
+            .order("fecha", { ascending: false })
+            .limit(200);
+          if (filtros.sucursalId) consulta = consulta.eq("sucursal_id", filtros.sucursalId);
+          if (filtros.estadoPago) {
+            consulta = consulta.eq(
+              "estado_pago",
+              filtros.estadoPago as Database["public"]["Enums"]["estado_pago"],
+            );
+          }
+          const { data: ventas, error } = await consulta;
+          if (error) throw new Error("No se pudo cargar el listado de ventas autorizado.");
+          return (ventas ?? []) as unknown as Array<Record<string, unknown>>;
+        },
+        async cargarEvidencias(ids) {
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const { data: evidencias, error } = await supabaseAdmin
+            .from("ventas")
+            .select("id,afip_snapshot")
+            .in("id", ids);
+          if (error) throw new Error("No se pudo completar la presentación fiscal del listado.");
+          return (evidencias ?? []) as EvidenciaListado[];
+        },
+      },
+    ),
+  );
+
+const originalesInputSchema = z
+  .object({ cliente_id: z.string().uuid(), receptor_v2: z.boolean() })
+  .strict();
+
+export const listarComprobantesOriginalesVenta = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => originalesInputSchema.parse(value))
+  .handler(async ({ data, context }) =>
+    ejecutarListadoComprobantesOriginalesSeguro(
+      { clienteId: data.cliente_id, receptorV2: data.receptor_v2 },
+      {
+        autorizar: () => autorizarConsultaVentas(context.supabase, context.userId, true),
+        async cargarVisibles(contexto) {
+          let consulta = context.supabase
+            .from("ventas")
+            .select(COLUMNAS_COMPROBANTE_ORIGINAL_SEGURAS)
+            .eq("cliente_id", data.cliente_id)
+            .eq("estado", "ACTIVA");
+          if (!contexto.esAdmin && contexto.sucursalId) {
+            consulta = consulta.eq("sucursal_id", contexto.sucursalId);
+          }
+          if (data.receptor_v2) {
+            consulta = consulta
+              .eq("tipo_comprobante", "VENTA")
+              .eq("afip_estado", "APROBADO")
+              .eq("afip_fase", "PERSISTIDO")
+              .eq("afip_validez", "PRODUCCION")
+              .eq("afip_modo", "PRODUCCION")
+              .eq("afip_simulado", false)
+              .not("cae", "is", null)
+              .not("afip_numero", "is", null);
+          } else {
+            consulta = consulta.in("tipo_comprobante", ["FACTURA_A", "FACTURA_B", "FACTURA_C"]);
+          }
+          const { data: ventas, error } = await consulta
+            .order("fecha", { ascending: false })
+            .limit(30);
+          if (error)
+            throw new Error("No se pudieron leer los comprobantes originales autorizados.");
+          return (ventas ?? []) as unknown as Array<Record<string, unknown>>;
+        },
+        async cargarEvidencias(ids) {
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const { data: evidencias, error } = await supabaseAdmin
+            .from("ventas")
+            .select("id,afip_snapshot,afip_snapshot_hash")
+            .in("id", ids);
+          if (error) throw new Error("No se pudo verificar la evidencia fiscal de los originales.");
+          return (evidencias ?? []) as EvidenciaOriginal[];
+        },
+      },
+    ),
+  );
 
 export async function ejecutarCreacionNotaSegunFlags(
   input: Omit<VentaInput, "tipo_comprobante"> & {
@@ -177,16 +451,23 @@ export const crearVenta = createServerFn({ method: "POST" })
         cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(supabase as never),
         crearRegular,
         async crearNotaCreditoTotal(originalId, idempotencyKey) {
-          const { data: original, error: lecturaError } = await supabase
-            .from("ventas")
-            .select(
-              "id,tipo_comprobante,estado,afip_estado,afip_fase,afip_validez,afip_modo,afip_simulado,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_snapshot,afip_snapshot_hash,cae",
-            )
-            .eq("id", originalId)
-            .maybeSingle();
-          if (lecturaError || !original) {
-            throw new Error("No se pudo leer el comprobante original.");
-          }
+          const original = await ejecutarLecturaOriginalFiscalAutorizada(originalId, {
+            autorizar: (ventaId) => autorizarOriginalFiscal(supabase, context.userId, ventaId),
+            async cargarExacta(ventaId) {
+              const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+              const { data: fila, error } = await supabaseAdmin
+                .from("ventas")
+                .select(
+                  "id,tipo_comprobante,estado,afip_estado,afip_fase,afip_validez,afip_modo,afip_simulado,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_snapshot,afip_snapshot_hash,cae",
+                )
+                .eq("id", ventaId)
+                .maybeSingle();
+              if (error || !fila) {
+                throw new Error("No se pudo leer el comprobante original autorizado.");
+              }
+              return fila;
+            },
+          });
           if (
             original.tipo_comprobante !== "VENTA" ||
             original.estado !== "ACTIVA" ||

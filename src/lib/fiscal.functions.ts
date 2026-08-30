@@ -14,6 +14,7 @@ import {
   autorizarLecturaVenta,
   autorizarOperacionFiscal,
   evaluarPermisoFiscal,
+  type LecturasLecturaVenta,
   type LecturasPermisoFiscal,
 } from "./fiscal/permiso.server";
 import {
@@ -239,6 +240,57 @@ async function autorizarVenta(
     userId: context.userId,
     lecturas: lecturasPermiso(context.supabase),
   });
+}
+
+function lecturasLecturaVenta(supabase: SupabaseClient<Database>): LecturasLecturaVenta {
+  return {
+    async cargarVentaVisible(ventaId) {
+      const { data, error } = await supabase
+        .from("ventas")
+        .select("id,sucursal_id")
+        .eq("id", ventaId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return { id: data.id, sucursalId: data.sucursal_id };
+    },
+    async consultarEsAdmin(userId) {
+      const { data, error } = await supabase.rpc("is_admin", { _user_id: userId });
+      if (error || typeof data !== "boolean") {
+        throw new Error("No se pudo verificar el rol para leer la venta.");
+      }
+      return data;
+    },
+    async cargarPerfil(userId) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("activo,sucursal_id,secciones")
+        .eq("id", userId)
+        .maybeSingle();
+      if (error) throw new Error("No se pudo verificar el perfil para leer la venta.");
+      return data
+        ? { activo: data.activo, sucursalId: data.sucursal_id, secciones: data.secciones }
+        : null;
+    },
+  };
+}
+
+async function autorizarLecturaVentaContexto(context: ContextoFiscalFn, ventaId: string) {
+  return autorizarLecturaVenta({
+    userId: context.userId,
+    ventaId,
+    lecturas: lecturasLecturaVenta(context.supabase),
+  });
+}
+
+export async function ejecutarLecturaFiscalExactaAutorizada<T>(
+  ventaId: string,
+  deps: {
+    autorizar(ventaId: string): Promise<void>;
+    cargarExacta(ventaId: string): Promise<T>;
+  },
+): Promise<T> {
+  await deps.autorizar(ventaId);
+  return deps.cargarExacta(ventaId);
 }
 
 const mantenimiento = () => ({
@@ -496,7 +548,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
 
     if (escritor === "LEGACY") {
       const { emitirComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
-      return emitirComprobanteLegacy({ data, context });
+      return emitirComprobanteLegacy({ data, context, ventaIdAutorizada: data.venta_id });
     }
 
     if (!("receptor" in data)) throw new Error("El escritor v2 exige receptor confirmado.");
@@ -831,45 +883,7 @@ export const detalleVentaFiscalSegura = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) =>
     ejecutarDetalleVentaFiscalPresentacion(data.venta_id, {
       async autorizar(ventaId) {
-        await autorizarLecturaVenta({
-          userId: context.userId,
-          ventaId,
-          lecturas: {
-            async cargarVentaVisible(id) {
-              const { data: venta, error } = await context.supabase
-                .from("ventas")
-                .select("id,sucursal_id")
-                .eq("id", id)
-                .maybeSingle();
-              if (error || !venta) return null;
-              return { id: venta.id, sucursalId: venta.sucursal_id };
-            },
-            async consultarEsAdmin(userId) {
-              const { data: esAdmin, error } = await context.supabase.rpc("is_admin", {
-                _user_id: userId,
-              });
-              if (error || typeof esAdmin !== "boolean") {
-                throw new Error("No se pudo verificar el rol para leer la venta.");
-              }
-              return esAdmin;
-            },
-            async cargarPerfil(userId) {
-              const { data: perfil, error } = await context.supabase
-                .from("profiles")
-                .select("activo,sucursal_id,secciones")
-                .eq("id", userId)
-                .maybeSingle();
-              if (error) throw new Error("No se pudo verificar el perfil para leer la venta.");
-              return perfil
-                ? {
-                    activo: perfil.activo,
-                    sucursalId: perfil.sucursal_id,
-                    secciones: perfil.secciones,
-                  }
-                : null;
-            },
-          },
-        });
+        await autorizarLecturaVentaContexto(context, ventaId);
       },
       async cargarVenta(ventaId) {
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -1062,25 +1076,28 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
   .handler(async ({ data, context }) => {
-    await autorizarVenta(context, {
-      ventaId: data.venta_id,
-      accion: "PREVISUALIZAR",
-      confirmaVentaAntigua: false,
+    const venta = await ejecutarLecturaFiscalExactaAutorizada(data.venta_id, {
+      autorizar: async (ventaId) => {
+        await autorizarLecturaVentaContexto(context, ventaId);
+      },
+      async cargarExacta(ventaId) {
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        const { data: fila, error } = await supabaseAdmin
+          .from("ventas")
+          .select(
+            "id,afip_estado,afip_fase,afip_version,afip_legacy_incompleto,afip_snapshot,afip_snapshot_hash,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,cae,cae_vencimiento",
+          )
+          .eq("id", ventaId)
+          .maybeSingle();
+        if (error || !fila) {
+          throw new ErrorImpresionFiscal(
+            "COMPROBANTE_FISCAL_INCONSISTENTE",
+            "No se pudo leer el comprobante fiscal autorizado.",
+          );
+        }
+        return fila;
+      },
     });
-    const { data: venta, error } = await context.supabase
-      .from("ventas")
-      .select(
-        "id,afip_estado,afip_fase,afip_version,afip_legacy_incompleto,afip_snapshot,afip_snapshot_hash,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,cae,cae_vencimiento",
-      )
-      .eq("id", data.venta_id)
-      .maybeSingle();
-    if (error || !venta) {
-      throw new ErrorImpresionFiscal(
-        "COMPROBANTE_FISCAL_INCONSISTENTE",
-        "No se pudo leer el comprobante fiscal autorizado.",
-        error ? { cause: error } : undefined,
-      );
-    }
 
     const [flags, { qrAfipDataUrlObligatorio }, { escenarioMockFiscalActual }] = await Promise.all([
       cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
@@ -1101,7 +1118,11 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
       generarQr,
       async cargarLegacy() {
         const { datosFiscalesComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
-        return datosFiscalesComprobanteLegacy({ data, context });
+        return datosFiscalesComprobanteLegacy({
+          data,
+          context,
+          ventaIdAutorizada: data.venta_id,
+        });
       },
     });
   });

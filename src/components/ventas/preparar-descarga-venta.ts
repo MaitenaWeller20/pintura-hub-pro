@@ -7,8 +7,6 @@ type VentaConEvidenciaFiscal = {
   cae?: unknown;
   afip_estado?: unknown;
   afip_fase?: unknown;
-  afip_snapshot?: unknown;
-  afip_snapshot_hash?: unknown;
   afip_emisor_cuit?: unknown;
   afip_punto_venta?: unknown;
   afip_cbte_tipo?: unknown;
@@ -26,8 +24,6 @@ export function requiereDatosFiscalesVenta(venta: VentaConEvidenciaFiscal): bool
     [
       venta.cae,
       venta.afip_fase,
-      venta.afip_snapshot,
-      venta.afip_snapshot_hash,
       venta.afip_emisor_cuit,
       venta.afip_punto_venta,
       venta.afip_cbte_tipo,

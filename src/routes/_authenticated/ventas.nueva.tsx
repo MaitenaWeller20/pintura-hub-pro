@@ -34,7 +34,7 @@ import { ordenarProductosPorRelevancia, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/po
 import { Trash2, ArrowLeft, AlertTriangle, Loader2, Search, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { crearVenta } from "@/lib/ventas.functions";
+import { crearVenta, listarComprobantesOriginalesVenta } from "@/lib/ventas.functions";
 import { calcTotalesComprobante } from "@/lib/ventas-totales";
 import { round2 } from "@/lib/fiscal/iva";
 import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
@@ -90,6 +90,7 @@ function NuevaVenta() {
   const { data: cu } = useCurrentUser();
   const navigate = useNavigate();
   const crear = useServerFn(crearVenta);
+  const listarOriginales = useServerFn(listarComprobantesOriginalesVenta);
   const crearNotaPeriodo = useServerFn(crearNotaCreditoPeriodoFiscal);
   const previsualizarFiscal = useServerFn(previsualizarEmisionFiscal);
   const emitirPostBorrador = useServerFn(emitirComprobantePostBorrador);
@@ -398,31 +399,13 @@ function NuevaVenta() {
   const { data: facturasDelCliente = [] } = useQuery({
     queryKey: ["facturas-cliente", clienteId, cu?.facturacionV2Habilitada ?? false],
     enabled: esNota && !!clienteId,
-    queryFn: async () => {
-      let query = supabase
-        .from("ventas")
-        .select(
-          "id,numero_comprobante,tipo_comprobante,fecha,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,condicion_venta,afip_estado,afip_fase,afip_validez,afip_modo,afip_simulado,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_snapshot_hash,cae",
-        )
-        .eq("cliente_id", clienteId)
-        .eq("estado", "ACTIVA");
-      if (cu?.facturacionV2Habilitada) {
-        query = query
-          .eq("tipo_comprobante", "VENTA")
-          .eq("afip_estado", "APROBADO")
-          .eq("afip_fase", "PERSISTIDO")
-          .eq("afip_validez", "PRODUCCION")
-          .eq("afip_modo", "PRODUCCION")
-          .eq("afip_simulado", false)
-          .not("cae", "is", null)
-          .not("afip_numero", "is", null)
-          .not("afip_snapshot_hash", "is", null);
-      } else {
-        query = query.in("tipo_comprobante", ["FACTURA_A", "FACTURA_B", "FACTURA_C"]);
-      }
-      const { data } = await query.order("fecha", { ascending: false }).limit(30);
-      return (data ?? []) as any[];
-    },
+    queryFn: () =>
+      listarOriginales({
+        data: {
+          cliente_id: clienteId,
+          receptor_v2: cu?.facturacionV2Habilitada ?? false,
+        },
+      }),
   });
 
   // R5: la Nota de Débito NO trae productos. Es un recargo (interés/mora) sobre la

@@ -160,7 +160,7 @@ const filaPendiente: ColaFiscalFila = {
   afip_estado: "SIN_FACTURAR",
   afip_fase: null,
   afip_legacy_incompleto: false,
-  claim_vencido: false,
+  reclamo_vencido: false,
   venta_antigua: false,
   afip_validez: null,
   afip_punto_venta: null,
@@ -173,7 +173,6 @@ const filaPendiente: ColaFiscalFila = {
   nc_periodo_modalidad: null,
   motivo_nota_credito: null,
   nc_resolucion: null,
-  nc_periodo_payload_hash: null,
   nc_efectos_aplicados_at: null,
   tab: "pendientes",
 };

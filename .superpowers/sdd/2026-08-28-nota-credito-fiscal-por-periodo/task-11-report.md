@@ -186,3 +186,58 @@
 - Revisión React: los discriminantes `congelada`/`aprobada` se derivan en render; no se agregaron effects, estado duplicado ni waterfalls. Las lecturas independientes permanecen en `Promise.all`.
 - `impresion.test.ts` y `comprobante-pdf.test.ts` pasaron en la focal. El PDF v2/v3 y su layout permanecen intactos; no correspondió repetir QA visual porque este fix sólo extrae y reutiliza la validación previa a impresión y modifica el detalle HTML.
 - No se ejecutaron ARCA real, deploy, push, producción, flags ni reescritura de historia.
+
+## Fix round 4 — reloj canónico de recuperación CAE
+
+### Commit funcional
+
+- `faef2e944d8de32afd35fda47575ebe9c43c0086 fix(fiscal): auditar reloj de recuperación CAE`.
+
+### Causa raíz y solución compatible
+
+- La recuperación aprobada actualiza `ventas.afip_emitido_at` con `clock_timestamp()`, pero el
+  trigger genérico del intento asigna `updated_at=now()`. PostgreSQL fija `now()` al inicio de
+  la transacción, por lo que una fila legítima queda normalmente con
+  `emision_fiscal_intentos.updated_at < ventas.afip_emitido_at`. Usar el primero como
+  `confirmadoAt` producía un falso rechazo en la matriz temporal del detalle.
+- No se agregó migración: todas las filas existentes ya conservan el `afip_emitido_at`
+  autoritativo exigido por el lifecycle aprobado. La proyección cerrada del intento sigue
+  probando literalmente `RECUPERADO_CAE / CONSULTA_ARCA / COINCIDE / FECompConsultar / true`;
+  una vez probada, `confirmadoAt` se toma del `afip_emitido_at` persistido de la venta.
+- `updated_at` se eliminó de `COLUMNAS_EVIDENCIA_AUTORIZACION_SEGURA` y del tipo proyectado. Se
+  conserva únicamente como orden interno de la consulta para elegir el intento persistido más
+  reciente; nunca se selecciona, devuelve ni usa como reloj de confirmación.
+- Después de autorizar `PREVISUALIZAR`, el loader lee sólo `ventas.afip_emitido_at` mediante el
+  cliente user-bound. Recién después abre la lectura admin del intento. Error, ausencia o
+  timestamp inválido de la venta fallan cerrados antes de tocar la frontera admin. El cliente
+  continúa recibiendo exclusivamente `{ origen, confirmadoAt }`; no se exponen respuesta,
+  payload, error, hash, CAE ni datos arbitrarios.
+
+### TDD y regresión SQL real
+
+- RED unitario: 4/4 casos fallaron porque el loader previo sólo aceptaba `deps.cargar` y la
+  recuperación todavía dependía del timestamp del intento. RED de integración: el lifecycle
+  SQL real llegó hasta `RECUPERAR_CAE`, pero el nuevo contrato aún no existía y el ejecutable
+  falló al importar la proyección user-bound.
+- GREEN unitario: 4/4 casos cubren orden `venta user-bound → intento admin`, timestamp de venta
+  para recuperación, exclusión de `updated_at` y fail-closed antes de admin.
+- `scripts/test-auditoria-recuperacion-cae.sh` ejecuta la creación v3, `RECLAMAR`, `RESERVAR`,
+  `REQUEST_INICIADO`, `RECONCILIAR` y `RECUPERAR_CAE` reales contra PostgreSQL local. La corrida
+  final persistió `updated_at=2026-08-30T01:42:25.539502Z` y
+  `afip_emitido_at=2026-08-30T01:42:25.550730Z`, demostrando explícitamente el orden real. La
+  fila persistida pasó luego por `cargarEvidenciaAutorizacionFiscal` y por
+  `cargarAuditoriaNotaCreditoPeriodo`, que devolvió lifecycle `APROBADO` con origen
+  `RECUPERACION` y el timestamp de la venta.
+
+### Verificaciones Fix round 4
+
+- Focal ampliada: 9 archivos, 372 pruebas pasadas (evidencia, detalle auditado, fachada,
+  errores, motor/server/runtime, impresión y PDF).
+- Integración SQL/TypeScript nueva: pasó con desfase `now() < clock_timestamp()` y ambos loaders
+  auditando la misma fila recuperada.
+- Suite completa: 78 archivos pasados, 2 omitidos; 1696 pruebas pasadas, 22 omitidas.
+- `npm run typecheck` pasó. ESLint focal pasó sin errores ni warnings. Prettier focal,
+  `bash -n` de ambos scripts y `git diff --check` pasaron.
+- La matriz frozen, paridad, intención no congelada, pagos fail-closed, copies humanos y PDF
+  v2/v3 permanecen intactos. `tmp/pdfs/` quedó vacío.
+- No se ejecutaron ARCA real, deploy, push, producción, flags ni reescritura de historia.

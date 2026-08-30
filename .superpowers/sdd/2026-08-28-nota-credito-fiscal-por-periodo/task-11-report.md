@@ -110,3 +110,32 @@
 - `impresion.test.ts` y `comprobante-pdf.test.ts` pasaron dentro de la focal. No se modificó el código PDF ni se regeneró un artefacto visual: se preservó el PDF v3 aprobado y el camino v2 sin regresión.
 - Revisión React: las cinco lecturas independientes del audit corren en un único `Promise.all` bajo React Query; no se agregaron effects ni estado derivado. Los errores de auditoría mantienen `role=alert`.
 - No se ejecutaron ARCA real, deploy, push, producción, flags ni reescritura de historia.
+
+## Fix round 2 — intención legítima anterior al snapshot
+
+### Commit funcional
+
+- `3657ab74a727d655ec46c74e021ab8ccc9d24354 fix(fiscal): auditar intención de NC sin snapshot`.
+
+### Contrato estricto del estado no congelado
+
+- El lifecycle SQL admite exactamente dos combinaciones sin snapshot: recién creada con `estado=PENDIENTE_FISCAL`, `afip_estado=SIN_FACTURAR`, `afip_fase=NULL`, `afip_version=0`, `afip_intentos=0`; o cancelada por la transición pre-reserva con `estado=ANULADA`, `afip_estado=CANCELADO`, `afip_fase=NULL`, `afip_version=1`, `afip_intentos=0`.
+- Ambas exigen ausencia total de snapshot/hash, CAE/vencimiento, emisor, punto de venta, tipo, número, modo, validez, fecha fiscal, importe fiscal, fecha de emisión, asociación y efectos aplicados; `afip_simulado` debe ser `false`. Período, modalidad y motivo comerciales también se validan de forma cerrada antes de producir `INTENCION_NO_CONGELADA`.
+- No se agregó `afip_claim_token` a la proyección del navegador. `afip_intentos=0`, la fase nula y la matriz SQL exacta prueban que `RECLAMAR` nunca ocurrió; la transición de cancelación además exige claim/claimed_at nulos. Sólo se añadió `afip_version`, un contador no secreto necesario para distinguir creación de cancelación.
+- Cualquier otra combinación cae en el camino preexistente: exige snapshot v3 canónico, hash externo coincidente y `venta.id` coincidente. Snapshot/hash parciales, identidad parcial, `PREFLIGHT`, `RESERVADO`, `REQUEST_INICIADO` o una fila aprobada sin snapshot fallan cerrados. El snapshot con contenido adulterado sigue siendo rechazado por el validador canónico.
+
+### Render de sólo lectura
+
+- El resultado fiscal ahora es una unión discriminada: `SNAPSHOT_V3_VALIDADO` conserva receptor, letra, CAE y evidencia; `INTENCION_NO_CONGELADA` sólo contiene período, modalidad y motivo persistidos.
+- La intención sin congelar se rotula explícitamente “Intención aún no congelada”. Muestra resolución y plan de reintegro persistidos, pero omite receptor, letra, CAE y evidencia de autorización, y aclara que todavía no se aplicaron movimientos comerciales.
+- Las lecturas independientes permanecen paralelas en `Promise.all`; el endpoint de evidencia no se invoca para una intención no congelada. Los cierres previos de pagos fail-closed, evidencia cerrada, snapshot adulterado e identidades por ID permanecen vigentes.
+
+### TDD RED → GREEN y verificaciones
+
+- RED focal: 3 fallas esperadas demostraron que creación, cancelación pre-reserva y el render/copy intentaban validar `NULL` como snapshot v3. Los casos fail-closed ya pasaban contra el loader anterior y quedaron como protección al abrir el nuevo branch.
+- GREEN focal final ampliada: 9 archivos y 231 pruebas pasadas, incluyendo errores humanos, motor, evidencia, fachada, detalle auditado/comercial, impresión, PDF y proyección.
+- Suite completa: 78 archivos pasados, 2 omitidos; 1660 pruebas pasadas, 22 omitidas.
+- `npm run typecheck`, ESLint focal, Prettier focal y `git diff --check` pasaron.
+- Revisión React: el discriminante se deriva durante render, sin effects ni estado duplicado; no se agregaron waterfalls ni controles mutables.
+- PDF v2/v3 no fue modificado. `impresion.test.ts` y `comprobante-pdf.test.ts` pasaron en la focal; no se generó ni dejó un artefacto PDF nuevo para este cambio sin impacto visual en el comprobante.
+- No se ejecutaron ARCA real, deploy, push, producción, flags ni reescritura de historia.

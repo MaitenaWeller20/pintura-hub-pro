@@ -53,14 +53,26 @@ vi.mock("@/components/ventas/editor-pagos", () => ({
         type="button"
         disabled={disabled}
         onClick={() =>
-          onChange([
-            {
-              id: "pago-1",
-              forma_pago: "EFECTIVO",
-              monto: 121,
-              detalle: {},
-            },
-          ])
+          onChange(
+            pagos.length === 0
+              ? [
+                  {
+                    id: "pago-1",
+                    forma_pago: "EFECTIVO",
+                    monto: 121,
+                    detalle: {},
+                  },
+                ]
+              : [
+                  ...pagos,
+                  {
+                    id: "pago-2",
+                    forma_pago: "TRANSFERENCIA",
+                    monto: 50,
+                    detalle: {},
+                  },
+                ],
+          )
         }
       >
         Agregar pago completo
@@ -283,7 +295,42 @@ describe("diálogo de conversión de presupuesto", () => {
     expect(props.onConvertida).not.toHaveBeenCalled();
   });
 
-  it("reutiliza exactamente la clave y el payload ante error ambiguo, sin duplicar el doble clic", async () => {
+  it("mantiene receptor, cliente, condición, pagos y cierre congelados tras un error ambiguo", async () => {
+    dobles.convertir.mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"));
+    const props = renderDialogo({
+      presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
+    });
+    await prepararPago();
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain("No se pudo confirmar si la venta se creó");
+    expect(
+      (screen.getByRole("radio", { name: "Consumidor final / sin cliente" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByTestId("conv-cliente").closest("fieldset") as HTMLFieldSetElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("combobox", { name: "Condición de venta" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Agregar pago completo" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByRole("button", { name: "Cancelar" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(screen.queryByRole("button", { name: "Cerrar" })).toBeNull();
+    expect((screen.getByTestId("conv-confirmar") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("conv-y-facturar") as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("reutiliza bytes y clave del intento ambiguo aunque se intenten editar cliente y pagos", async () => {
     dobles.convertir
       .mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"))
       .mockResolvedValueOnce({
@@ -292,7 +339,9 @@ describe("diálogo de conversión de presupuesto", () => {
         cta_cte: false,
         clienteId: CLIENTE_EFECTIVO_ID,
       });
-    renderDialogo();
+    renderDialogo({
+      presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
+    });
     await prepararPago();
 
     const confirmar = screen.getByTestId("conv-confirmar");
@@ -301,12 +350,18 @@ describe("diálogo de conversión de presupuesto", () => {
     const alerta = await screen.findByRole("alert");
     expect(alerta.textContent).toContain("No se pudo confirmar si la venta se creó");
     expect(dobles.convertir).toHaveBeenCalledTimes(1);
-    const primerPayload = structuredClone(dobles.convertir.mock.calls[0][0].data);
+    const primerPayloadSerializado = JSON.stringify(dobles.convertir.mock.calls[0][0].data);
+    const primeraClave = dobles.convertir.mock.calls[0][0].data.idempotency_key;
+
+    fireEvent.click(screen.getByTestId("conv-cliente"));
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago completo" }));
+    expect(screen.getByText("1 pagos")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("conv-confirmar"));
 
     await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(2));
-    expect(dobles.convertir.mock.calls[1][0].data).toEqual(primerPayload);
+    expect(JSON.stringify(dobles.convertir.mock.calls[1][0].data)).toBe(primerPayloadSerializado);
+    expect(dobles.convertir.mock.calls[1][0].data.idempotency_key).toBe(primeraClave);
   });
 
   it("presenta el error RPC como guía humana segura con role alert", async () => {

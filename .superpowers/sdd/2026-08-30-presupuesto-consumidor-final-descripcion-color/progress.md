@@ -282,3 +282,19 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     mock de fixture, `comprobante_secuencias` VENTA vacío como tras el reset,
     flags restaurados a `false/false` y configuración de ambos emisores/PV
     idéntica al baseline.
+- Task 5 review round 1 (`d98a771`): `Quality: FAIL` por un hallazgo Important.
+  - El resultado ambiguo reactivaba controles: cliente/receptor/condición podían
+    descartar el payload estable sin rotar la clave, y pagos podían mostrar un
+    valor distinto del payload congelado.
+- Task 5 fix round 1 — implementación completa; re-review independiente pendiente.
+  - RED montado observado: 2/12 fallaron. Tras `Failed to fetch`, el radio quedó
+    habilitado y un intento de editar cliente/pagos cambió la UI de uno a dos
+    pagos antes del replay.
+  - GREEN focal: 12/12. El estado ambiguo congela fieldset, receptor, picker,
+    condición, pagos, Cancelar, X y Escape. Sólo la misma acción inicial queda
+    disponible y conserva conjuntamente payload serializado, clave y decisión
+    de facturar; los callbacks también rechazan cambios aunque un hijo los
+    invoque programáticamente.
+  - Verificación fresca: suite Vitest completa 85 archivos/1779 tests GREEN
+    (2 archivos/22 tests omitidos), TypeScript y build Vercel mock GREEN. El
+    build conserva únicamente sus warnings históricos ya inventariados.

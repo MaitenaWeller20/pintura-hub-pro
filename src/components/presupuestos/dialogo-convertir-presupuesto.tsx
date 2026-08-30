@@ -56,9 +56,14 @@ function mensajeErrorPreflight(): string {
   return "No se pudo confirmar la sucursal y su caja. Cerrá el diálogo y volvé a intentar.";
 }
 
+function esErrorAmbiguo(cause: unknown): boolean {
+  const detalle = cause instanceof Error ? cause.message : "";
+  return /failed to fetch|network|conexi|timeout|tiempo de espera/i.test(detalle);
+}
+
 function mensajeErrorConversion(cause: unknown): string {
   const detalle = cause instanceof Error ? cause.message : "";
-  if (/failed to fetch|network|conexi|timeout|tiempo de espera/i.test(detalle)) {
+  if (esErrorAmbiguo(cause)) {
     return "No se pudo confirmar si la venta se creó. Reintentá: se usará la misma operación y no se duplicará.";
   }
   if (/caja/i.test(detalle)) {
@@ -114,8 +119,10 @@ export function DialogoConvertirPresupuesto({
   const [formaPagoLegacy, setFormaPagoLegacy] = useState<FormaPagoVenta>("EFECTIVO");
   const [pagos, setPagos] = useState<PagoVentaEditable[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [intentoAmbiguo, setIntentoAmbiguo] = useState(false);
   const idempotencyKeyRef = useRef(crypto.randomUUID());
   const entradaEstableRef = useRef<ConversionPresupuestoInput | null>(null);
+  const facturarAhoraEstableRef = useRef<boolean | null>(null);
   const convirtiendoRef = useRef(false);
   const cicloRef = useRef(0);
   const mountedRef = useRef(true);
@@ -132,6 +139,7 @@ export function DialogoConvertirPresupuesto({
     cicloRef.current += 1;
     convirtiendoRef.current = false;
     entradaEstableRef.current = null;
+    facturarAhoraEstableRef.current = null;
     if (!open) return;
     setReceptor(modoInicial(presupuesto.cliente_id));
     setClienteId(presupuesto.cliente_id ?? "");
@@ -140,6 +148,7 @@ export function DialogoConvertirPresupuesto({
     setFormaPagoLegacy("EFECTIVO");
     setPagos([]);
     setError(null);
+    setIntentoAmbiguo(false);
     idempotencyKeyRef.current = crypto.randomUUID();
   }, [open, presupuesto.cliente_id, presupuesto.id]);
 
@@ -215,6 +224,7 @@ export function DialogoConvertirPresupuesto({
               idempotency_key: idempotencyKeyRef.current,
             } as const);
         entradaEstableRef.current = entrada;
+        facturarAhoraEstableRef.current = facturarAhora;
       }
       const resultado = await convertir({ data: entrada });
       if (esMantenimiento(resultado)) throw new Error(resultado.mensaje);
@@ -223,7 +233,10 @@ export function DialogoConvertirPresupuesto({
         conversion: {
           ventaId: resultado.id,
           clienteId: resultado.clienteId,
-          facturarAhora: facturacionV2Habilitada && puedeFacturar && facturarAhora,
+          facturarAhora:
+            facturacionV2Habilitada &&
+            puedeFacturar &&
+            (facturarAhoraEstableRef.current ?? facturarAhora),
         },
       };
     },
@@ -232,7 +245,10 @@ export function DialogoConvertirPresupuesto({
       if (!mountedRef.current || !open || resultado.ciclo !== cicloRef.current) return;
       onConvertida(resultado.conversion);
     },
-    onError: (cause) => setError(mensajeErrorConversion(cause)),
+    onError: (cause) => {
+      if (esErrorAmbiguo(cause)) setIntentoAmbiguo(true);
+      setError(mensajeErrorConversion(cause));
+    },
     onSettled: () => {
       convirtiendoRef.current = false;
     },
@@ -245,6 +261,7 @@ export function DialogoConvertirPresupuesto({
   };
 
   const cambiarReceptor = (value: string) => {
+    if (intentoAmbiguo) return;
     const next = value as ModoReceptor;
     setReceptor(next);
     entradaEstableRef.current = null;
@@ -254,18 +271,26 @@ export function DialogoConvertirPresupuesto({
     }
   };
 
+  const controlesCongelados = mutacion.isPending || intentoAmbiguo;
+  const deshabilitarConvertir =
+    mutacion.isPending ||
+    (intentoAmbiguo ? facturarAhoraEstableRef.current !== false : !puedeConvertir);
+  const deshabilitarConvertirYFacturar =
+    mutacion.isPending ||
+    (intentoAmbiguo ? facturarAhoraEstableRef.current !== true : !puedeConvertir);
+
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (mutacion.isPending || convirtiendoRef.current) return;
+        if (controlesCongelados || convirtiendoRef.current) return;
         onOpenChange(next);
       }}
     >
       <DialogContent
         className="max-w-2xl p-0"
-        closeDisabled={mutacion.isPending}
-        hideClose={mutacion.isPending}
+        closeDisabled={controlesCongelados}
+        hideClose={controlesCongelados}
         onCloseAutoFocus={(event) => {
           if (!returnFocusRef?.current) return;
           event.preventDefault();
@@ -297,12 +322,12 @@ export function DialogoConvertirPresupuesto({
             </div>
           ) : null}
 
-          <fieldset disabled={mutacion.isPending} className="contents">
+          <fieldset disabled={controlesCongelados} className="contents">
             <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
               <Label>Receptor de la venta</Label>
               <RadioGroup
                 value={receptor}
-                disabled={mutacion.isPending}
+                disabled={controlesCongelados}
                 onValueChange={cambiarReceptor}
                 className="gap-3"
               >
@@ -338,6 +363,7 @@ export function DialogoConvertirPresupuesto({
                 <ClientePicker
                   value={clienteId}
                   onChange={(value) => {
+                    if (intentoAmbiguo) return;
                     setClienteId(value);
                     entradaEstableRef.current = null;
                   }}
@@ -419,8 +445,9 @@ export function DialogoConvertirPresupuesto({
                 ) : (
                   <Select
                     value={condicion}
-                    disabled={mutacion.isPending}
+                    disabled={controlesCongelados}
                     onValueChange={(value) => {
+                      if (intentoAmbiguo) return;
                       setCondicion(value as typeof condicion);
                       entradaEstableRef.current = null;
                       if (value === "CTA_CTE") setPagos([]);
@@ -470,8 +497,11 @@ export function DialogoConvertirPresupuesto({
               <EditorPagos
                 pagos={pagos}
                 saldo={saldo}
-                disabled={mutacion.isPending}
-                onChange={setPagos}
+                disabled={controlesCongelados}
+                onChange={(value) => {
+                  if (intentoAmbiguo) return;
+                  setPagos(value);
+                }}
               />
             ) : null}
 
@@ -496,7 +526,7 @@ export function DialogoConvertirPresupuesto({
             type="button"
             variant="outline"
             className="min-h-11 w-full sm:w-auto"
-            disabled={mutacion.isPending}
+            disabled={controlesCongelados}
             onClick={() => onOpenChange(false)}
           >
             Cancelar
@@ -508,7 +538,7 @@ export function DialogoConvertirPresupuesto({
                 variant="outline"
                 className="min-h-11 w-full sm:w-auto"
                 data-testid="conv-confirmar"
-                disabled={!puedeConvertir || mutacion.isPending}
+                disabled={deshabilitarConvertir}
                 onClick={() => iniciarConversion(false)}
               >
                 {mutacion.isPending && mutacion.variables === false ? (
@@ -521,7 +551,7 @@ export function DialogoConvertirPresupuesto({
                   type="button"
                   className="min-h-11 w-full sm:w-auto"
                   data-testid="conv-y-facturar"
-                  disabled={!puedeConvertir || mutacion.isPending}
+                  disabled={deshabilitarConvertirYFacturar}
                   onClick={() => iniciarConversion(true)}
                 >
                   {mutacion.isPending && mutacion.variables === true ? (
@@ -538,7 +568,7 @@ export function DialogoConvertirPresupuesto({
               type="button"
               className="min-h-11 w-full sm:w-auto"
               data-testid="conv-confirmar"
-              disabled={!puedeConvertir || mutacion.isPending}
+              disabled={deshabilitarConvertir}
               onClick={() => iniciarConversion(false)}
             >
               {mutacion.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

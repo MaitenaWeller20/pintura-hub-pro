@@ -479,6 +479,45 @@ describe("ejecutarEmisionFiscal", () => {
     expect(JSON.stringify(doble.calls)).not.toMatch(/timeout SOAP raw/);
   });
 
+  it("una respuesta incierta no-transporte concilia sin afirmar que ARCA cayó", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Bonificación del período",
+      resolucion: "SALDO_FAVOR",
+    };
+    doble.throwSolicitud = Object.assign(new Error("respuesta contradictoria raw"), {
+      name: "ArcaRespuestaIncierta",
+    });
+    const deps = doble.deps();
+    deps.crearSnapshot = async () => crearSnapshotFiscalV3Fixture({ letra: "B" });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      estado: "RECONCILIAR",
+      mensaje: "La respuesta fiscal es incierta y requiere conciliación.",
+    });
+    expect(doble.calls.at(-1)?.payload).toMatchObject({
+      error_codigo: "REQUEST_INCIERTO",
+      mensaje_mascarado: "La respuesta fiscal es incierta y requiere conciliación.",
+    });
+    expect(JSON.stringify(doble.calls)).not.toMatch(/respuesta contradictoria raw/);
+  });
+
   it("un certificado inválido post-request concilia como configuración y no como caída", async () => {
     const doble = new FiscalDouble();
     doble.tipo = "NOTA_CREDITO";

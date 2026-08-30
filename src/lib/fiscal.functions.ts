@@ -36,6 +36,10 @@ import {
   notaCreditoPeriodoInputSchema,
   type NotaCreditoPeriodoInput,
 } from "./fiscal/nota-credito-periodo";
+import {
+  cargarEvidenciaAutorizacionFiscal,
+  type FilaEvidenciaAutorizacionSegura,
+} from "./fiscal/evidencia-auditoria";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -765,6 +769,41 @@ export async function resolverDatosFiscalesComprobanteDesdeFila(
   const qr = exigirPngDataUrlFiscal(await deps.generarQr(preparado.qrInput));
   return { ...preparado, qr };
 }
+
+/**
+ * Proyección user-bound: el navegador recibe sólo origen y timestamp confirmados.
+ * El admin lee aliases escalares de evidencia_externa; nunca transporta el JSON
+ * completo del intento, payload/hash ni diagnósticos.
+ */
+export const evidenciaAutorizacionNotaCreditoPeriodo = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
+  .handler(async ({ data, context }) => {
+    await autorizarVenta(context, {
+      ventaId: data.venta_id,
+      accion: "PREVISUALIZAR",
+      confirmaVentaAntigua: false,
+    });
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    return cargarEvidenciaAutorizacionFiscal(data.venta_id, {
+      async cargar({ ventaId, columnas }) {
+        const respuesta = await supabaseAdmin
+          .from("emision_fiscal_intentos")
+          .select(columnas)
+          .eq("venta_id", ventaId)
+          .eq("snapshot_version", 3)
+          .eq("fase", "PERSISTIDO")
+          .in("resultado", ["APROBADO", "RECUPERADO_CAE"])
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        return respuesta as unknown as {
+          data: FilaEvidenciaAutorizacionSegura | null;
+          error: { message: string } | null;
+        };
+      },
+    });
+  });
 
 /** Lectura user-bound y fail-closed para PDF fiscal. No participa del writer v2. */
 export const datosFiscalesComprobante = createServerFn({ method: "GET" })

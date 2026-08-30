@@ -4,6 +4,7 @@ import {
   codigoCaidaArcaSegunFase,
   codigoErrorFiscalUsuario,
   crearErrorFiscalUsuario,
+  esCaidaArcaConfirmada,
   mensajeCodigoErrorFiscalUsuario,
   mensajeErrorFiscal,
   parsearEntradaFiscal,
@@ -22,6 +23,20 @@ describe("mensajes de error de facturación", () => {
     expect(mensajeCodigoErrorFiscalUsuario("ARCA_INCIERTA_POST_REQUEST_NC")).toBe(
       "ARCA está caída y estamos verificando si autorizó la nota. No vuelvas a emitirla.",
     );
+  });
+
+  it("no afirma una caída ante una respuesta ARCA incierta que sí llegó", () => {
+    const respuestaMalformada = Object.assign(new Error("respuesta contradictoria raw"), {
+      name: "ArcaRespuestaIncierta",
+    });
+
+    expect(esCaidaArcaConfirmada(respuestaMalformada)).toBe(false);
+    expect(
+      esCaidaArcaConfirmada(Object.assign(new Error("timeout raw"), { name: "AfipTimeout" })),
+    ).toBe(true);
+    expect(
+      esCaidaArcaConfirmada(Object.assign(new Error("socket raw"), { code: "ECONNRESET" })),
+    ).toBe(true);
   });
 
   it.each([

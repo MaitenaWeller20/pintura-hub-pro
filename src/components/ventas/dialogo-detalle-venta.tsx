@@ -21,7 +21,10 @@ import { TableCell, TableRow } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { fmtDocumento } from "@/lib/documento";
-import { datosFiscalesComprobante } from "@/lib/fiscal.functions";
+import {
+  datosFiscalesComprobante,
+  evidenciaAutorizacionNotaCreditoPeriodo,
+} from "@/lib/fiscal.functions";
 import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import {
   generarComprobantePdf,
@@ -38,6 +41,7 @@ import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
 import {
   cargarAuditoriaNotaCreditoPeriodo,
+  type AuditoriaPersistidaNotaCreditoPeriodo,
   type CuentaAuditoriaRow,
   type ErrorLecturaSegura,
   type OperadorAuditoriaRow,
@@ -58,13 +62,6 @@ export type VentaDetalle = VentaSeguraOperador & {
   sucursal?: { nombre: string | null; telefono?: string | null } | null;
 };
 
-type ReintegroIntencionAuditado = {
-  id: string;
-  formaPago: string;
-  monto: number;
-  orden: number;
-};
-
 type PagoAplicadoAuditado = {
   id: string;
   formaPago: string;
@@ -72,35 +69,8 @@ type PagoAplicadoAuditado = {
   createdAt: string;
 };
 
-type MovimientoStockAuditado = {
-  id: string;
-  producto: string;
-  cantidad: number;
-  cantidadAnterior: number | null;
-  cantidadNueva: number | null;
-  createdAt: string;
-};
-
-type MovimientoCuentaAuditado = {
-  id: string;
-  tipo: string;
-  estado: string;
-  monto: number;
-  descripcion: string | null;
-  createdAt: string;
-};
-
-export type DatosAuditoriaNotaCreditoPeriodo = {
-  operador: { nombre: string; username: string } | null;
-  receptorFiscal: {
-    razonSocial: string;
-    documento: string | null;
-    letra: string | null;
-  } | null;
-  reintegrosIntencion: ReintegroIntencionAuditado[];
+export type DatosAuditoriaNotaCreditoPeriodo = AuditoriaPersistidaNotaCreditoPeriodo & {
   pagosAplicados: PagoAplicadoAuditado[];
-  movimientosStock: MovimientoStockAuditado[];
-  movimientosCuentaCorriente: MovimientoCuentaAuditado[];
 };
 
 function fechaCalendario(value: string | null): string {
@@ -120,14 +90,24 @@ const resolucionNcPeriodoLabel: Record<string, string> = {
 export function AuditoriaNotaCreditoPeriodo({
   venta,
   auditoria,
+  errorDetalle,
 }: {
   venta: VentaDetalle;
   auditoria: DatosAuditoriaNotaCreditoPeriodo;
+  errorDetalle?: unknown;
 }) {
+  if (errorDetalle) {
+    return (
+      <div
+        className="mt-3 rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
+        role="alert"
+      >
+        No se pudo reconstruir la auditoría de la nota de crédito.
+      </div>
+    );
+  }
   const aprobada = Boolean(venta.cae && venta.nc_efectos_aplicados_at);
-  const operador = auditoria.operador
-    ? `${auditoria.operador.nombre} (${auditoria.operador.username})`
-    : venta.usuario_id;
+  const fiscal = auditoria.fiscal;
   return (
     <Card className="mt-3 space-y-4 p-4" aria-label="Auditoría de nota de crédito por período">
       <div>
@@ -140,47 +120,48 @@ export function AuditoriaNotaCreditoPeriodo({
 
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
         <div>
-          <dt className="text-xs text-muted-foreground">Período asociado</dt>
+          <dt className="text-xs text-muted-foreground">Período asociado (snapshot v3)</dt>
           <dd>
-            {fechaCalendario(venta.periodo_asoc_desde)} a{" "}
-            {fechaCalendario(venta.periodo_asoc_hasta)}
+            {fechaCalendario(fiscal.periodoDesde)} a {fechaCalendario(fiscal.periodoHasta)}
           </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Modalidad</dt>
-          <dd>{modalidadNcPeriodoLabel[venta.nc_periodo_modalidad ?? ""] ?? "—"}</dd>
+          <dd>{modalidadNcPeriodoLabel[fiscal.modalidad] ?? "—"}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Resolución comercial</dt>
           <dd>{resolucionNcPeriodoLabel[venta.nc_resolucion ?? ""] ?? "—"}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Creada por</dt>
-          <dd>{operador}</dd>
+          <dt className="text-xs text-muted-foreground">Operador ID</dt>
+          <dd>{venta.usuario_id}</dd>
+          <dd className="text-xs text-muted-foreground">
+            Nombre / usuario actual: {auditoria.operador?.nombre ?? "—"} (
+            {auditoria.operador?.username ?? "—"})
+          </dd>
           <dd className="text-xs text-muted-foreground">{fmtDateTime(venta.created_at)}</dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Motivo</dt>
-          <dd className="whitespace-pre-wrap">{venta.motivo_nota_credito}</dd>
+          <dt className="text-xs text-muted-foreground">Motivo (snapshot v3)</dt>
+          <dd className="whitespace-pre-wrap">{fiscal.motivo}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Cliente comercial</dt>
-          <dd>{venta.cliente?.razon_social ?? "—"}</dd>
-          <dd className="text-xs text-muted-foreground">{fmtDocumento(venta.cliente?.cuit_dni)}</dd>
+          <dt className="text-xs text-muted-foreground">Cliente comercial ID</dt>
+          <dd>{venta.cliente_id}</dd>
+          <dd className="text-xs text-muted-foreground">
+            Razón social / documento actual: {venta.cliente?.razon_social ?? "—"} ·{" "}
+            {fmtDocumento(venta.cliente?.cuit_dni)}
+          </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Receptor fiscal congelado</dt>
-          <dd>{auditoria.receptorFiscal?.razonSocial ?? "Pendiente de congelar"}</dd>
-          {auditoria.receptorFiscal ? (
-            <dd className="text-xs text-muted-foreground">
-              {[
-                auditoria.receptorFiscal.documento,
-                auditoria.receptorFiscal.letra ? `Letra ${auditoria.receptorFiscal.letra}` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </dd>
-          ) : null}
+          <dd>{fiscal.receptor.razonSocial}</dd>
+          <dd className="text-xs text-muted-foreground">
+            {[fiscal.receptor.documento, `Letra ${fiscal.receptor.letra}`]
+              .filter(Boolean)
+              .join(" · ")}
+          </dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Estado / fase</dt>
@@ -192,12 +173,14 @@ export function AuditoriaNotaCreditoPeriodo({
           <dt className="text-xs text-muted-foreground">CAE</dt>
           <dd className="font-mono">{venta.cae ?? "Pendiente"}</dd>
         </div>
-        {venta.afip_emitido_at ? (
+        {auditoria.evidenciaAutorizacion ? (
           <div>
             <dt className="text-xs text-muted-foreground">
-              Autorización / recuperación confirmada
+              {auditoria.evidenciaAutorizacion.origen === "EMISION"
+                ? "Autorización directa confirmada"
+                : "CAE recuperado por conciliación"}
             </dt>
-            <dd>{fmtDateTime(venta.afip_emitido_at)}</dd>
+            <dd>{fmtDateTime(auditoria.evidenciaAutorizacion.confirmadoAt)}</dd>
           </div>
         ) : null}
         {venta.nc_efectos_aplicados_at ? (
@@ -260,9 +243,12 @@ export function AuditoriaNotaCreditoPeriodo({
               <ul className="mt-2 space-y-1 text-sm">
                 {auditoria.movimientosStock.map((movimiento) => (
                   <li key={movimiento.id}>
-                    {movimiento.producto}: {fmtNumAuditado(movimiento.cantidad)} u. (
-                    {fmtNumAuditado(movimiento.cantidadAnterior)} →{" "}
+                    Producto ID: {movimiento.productoId} · {fmtNumAuditado(movimiento.cantidad)} u.
+                    ({fmtNumAuditado(movimiento.cantidadAnterior)} →{" "}
                     {fmtNumAuditado(movimiento.cantidadNueva)})
+                    <span className="block text-xs text-muted-foreground">
+                      Etiqueta actual: {movimiento.etiquetaActual}
+                    </span>
                     <span className="block text-xs text-muted-foreground">
                       {fmtDateTime(movimiento.createdAt)}
                     </span>
@@ -380,12 +366,19 @@ export function DialogoDetalleVenta({
   });
   const detalle = detalleQuery.data;
   const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
+  const evidenciaAutorizacionFn = useServerFn(evidenciaAutorizacionNotaCreditoPeriodo);
   const auditoriaNcPeriodoQuery = useQuery({
     queryKey: ["venta-auditoria-nc-periodo", venta?.id],
     enabled: Boolean(venta && esNcPeriodo),
     queryFn: async () => {
       if (!venta) throw new Error("No hay una nota seleccionada para auditar.");
       return cargarAuditoriaNotaCreditoPeriodo({
+        venta: {
+          id: venta.id,
+          afipSnapshot: venta.afip_snapshot,
+          afipSnapshotHash: venta.afip_snapshot_hash,
+          requiereEvidenciaAutorizacion: Boolean(venta.cae),
+        },
         async cargarOperador() {
           const respuesta = await supabase
             .from("profiles")
@@ -412,7 +405,7 @@ export function DialogoDetalleVenta({
           const respuesta = await supabase
             .from("stock_movimientos")
             .select(
-              "id,cantidad,cantidad_anterior,cantidad_nueva,created_at,producto:productos(codigo,nombre)",
+              "id,producto_id,cantidad,cantidad_anterior,cantidad_nueva,created_at,producto:productos(codigo,nombre)",
             )
             .eq("referencia_id", venta.id)
             .eq("tipo", "DEVOLUCION")
@@ -432,6 +425,9 @@ export function DialogoDetalleVenta({
             data: CuentaAuditoriaRow[] | null;
             error: ErrorLecturaSegura;
           };
+        },
+        async cargarEvidenciaAutorizacion() {
+          return evidenciaAutorizacionFn({ data: { venta_id: venta.id } });
         },
       });
     },
@@ -473,33 +469,17 @@ export function DialogoDetalleVenta({
   const comprobanteAsociado = venta ? leerComprobanteAsociadoFiscal(venta.afip_snapshot) : null;
   const fiscal = venta ? descripcionFiscal(venta) : null;
   const datosAuditoriaNcPeriodo: DatosAuditoriaNotaCreditoPeriodo | null =
-    venta && receptor && auditoriaNcPeriodoQuery.data
+    venta && auditoriaNcPeriodoQuery.data && detalle
       ? {
           ...auditoriaNcPeriodoQuery.data,
-          receptorFiscal: {
-            razonSocial: receptor.razonSocial,
-            documento: receptor.numeroDocumento,
-            letra: venta.afip_cbte_tipo ? (CBTE_INFO[venta.afip_cbte_tipo]?.letra ?? null) : null,
-          },
-          pagosAplicados: (detalle?.pagos ?? []).map((pago) => ({
+          pagosAplicados: detalle.pagos.map((pago) => ({
             id: pago.id,
             formaPago: pago.forma_pago,
             monto: Number(pago.monto),
             createdAt: pago.created_at,
           })),
         }
-      : venta && auditoriaNcPeriodoQuery.data
-        ? {
-            ...auditoriaNcPeriodoQuery.data,
-            receptorFiscal: null,
-            pagosAplicados: (detalle?.pagos ?? []).map((pago) => ({
-              id: pago.id,
-              formaPago: pago.forma_pago,
-              monto: Number(pago.monto),
-              createdAt: pago.created_at,
-            })),
-          }
-        : null;
+      : null;
 
   return (
     <Dialog open={!!venta} onOpenChange={(open) => !open && onClose()}>
@@ -571,7 +551,7 @@ export function DialogoDetalleVenta({
                   </p>
                 ) : null}
               </div>
-              {receptor ? (
+              {receptor && !esNcPeriodo ? (
                 <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
                   <strong>Receptor fiscal de la emisión:</strong> {receptor.razonSocial}
                   <p className="text-xs text-muted-foreground">
@@ -632,16 +612,27 @@ export function DialogoDetalleVenta({
                     Reconstruyendo auditoría de la nota…
                   </span>
                 </div>
-              ) : auditoriaNcPeriodoQuery.error ? (
+              ) : auditoriaNcPeriodoQuery.error || detalleQuery.error ? (
                 <div
                   className="rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
                   role="alert"
                 >
-                  {mensajeErrorFiscal(auditoriaNcPeriodoQuery.error, "CONSULTA")}
+                  No se pudo reconstruir la auditoría de la nota de crédito.
                 </div>
               ) : datosAuditoriaNcPeriodo ? (
-                <AuditoriaNotaCreditoPeriodo venta={venta} auditoria={datosAuditoriaNcPeriodo} />
-              ) : null
+                <AuditoriaNotaCreditoPeriodo
+                  venta={venta}
+                  auditoria={datosAuditoriaNcPeriodo}
+                  errorDetalle={detalleQuery.error}
+                />
+              ) : (
+                <div
+                  className="rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
+                  role="alert"
+                >
+                  No se pudo reconstruir la auditoría de la nota de crédito.
+                </div>
+              )
             ) : null}
 
             {detalleQuery.isPending ? (

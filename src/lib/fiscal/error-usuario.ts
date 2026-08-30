@@ -288,7 +288,7 @@ export function esCaidaArcaConfirmada(error: unknown): boolean {
     return true;
   }
   if (!esRegistro(error)) return false;
-  if (error.name === "AfipTimeout" || error.name === "ArcaRespuestaIncierta") return true;
+  if (error.name === "AfipTimeout") return true;
   return (
     typeof error.code === "string" &&
     [

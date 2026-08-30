@@ -139,3 +139,50 @@
 - Revisión React: el discriminante se deriva durante render, sin effects ni estado duplicado; no se agregaron waterfalls ni controles mutables.
 - PDF v2/v3 no fue modificado. `impresion.test.ts` y `comprobante-pdf.test.ts` pasaron en la focal; no se generó ni dejó un artefacto PDF nuevo para este cambio sin impacto visual en el comprobante.
 - No se ejecutaron ARCA real, deploy, push, producción, flags ni reescritura de historia.
+
+## Fix round 3 — paridad completa y lifecycle fiscal congelado
+
+### Commit funcional
+
+- `089b5a5b769f4233713d4ffb62626543259b9073 fix(fiscal): cerrar lifecycle auditado de NC`.
+
+### Paridad snapshot/columnas
+
+- El branch `SNAPSHOT_V3_VALIDADO` primero valida el snapshot v3 y su hash canónico y luego reutiliza el mismo validador de paridad de impresión. Compara `venta.id`, hash, CUIT emisor, punto de venta, tipo y número de comprobante, modo, simulación, validez, fecha fiscal e importe total. El total usa la semántica decimal canónica de impresión: número o texto finito con hasta dos decimales se normaliza a dos posiciones antes de comparar.
+- La asociación por período exige `afip_cbte_asoc_id=NULL`. Una asociación puntual, una identidad parcial o cualquier divergencia entre snapshot y columnas persistidas bloquea todo el audit con el mensaje seguro existente.
+- Se extrajo `validarParidadColumnasSnapshotFiscal` desde el camino v2/v3 existente y `validarFilaNueva` continúa invocándolo. El contrato de impresión no cambió y no se tocaron la composición ni el layout del PDF.
+
+### Matriz lifecycle cerrada
+
+| Estado comercial   | Estado/fase fiscal                          | Versión mínima | Resultado auditado           |
+| ------------------ | ------------------------------------------- | -------------- | ---------------------------- |
+| `PENDIENTE_FISCAL` | `EMITIENDO/RESERVADO`                       | 2              | `RESERVADO`                  |
+| `PENDIENTE_FISCAL` | `EMITIENDO/REQUEST_INICIADO`                | 3              | `REQUEST_INICIADO`           |
+| `PENDIENTE_FISCAL` | `EMITIENDO/RESPUESTA_RECIBIDA`              | 4              | `RESPUESTA_RECIBIDA`         |
+| `PENDIENTE_FISCAL` | `RECONCILIAR/REQUEST_INICIADO`              | 4              | `RECONCILIANDO_REQUEST`      |
+| `PENDIENTE_FISCAL` | `RECONCILIAR/RESPUESTA_RECIBIDA`            | 5              | `RECONCILIANDO_RESPUESTA`    |
+| `PENDIENTE_FISCAL` | `BLOQUEADO/RESERVADO`                       | 3              | `BLOQUEADO_RESERVADO`        |
+| `PENDIENTE_FISCAL` | `BLOQUEADO/REQUEST_INICIADO`                | 4              | `BLOQUEADO_REQUEST`          |
+| `PENDIENTE_FISCAL` | `BLOQUEADO/RESPUESTA_RECIBIDA`              | 5              | `BLOQUEADO_RESPUESTA`        |
+| `PENDIENTE_FISCAL` | `ERROR_CORREGIBLE/NULL`, identidad retenida | 3              | `ERROR_CORREGIBLE_IDENTIDAD` |
+| `ACTIVA`           | `APROBADO/PERSISTIDO`                       | 5              | `APROBADO`                   |
+
+- Las versiones son mínimos porque los reintentos verificados incrementan `afip_version` y pueden volver legítimamente a `RESERVADO`; todos los estados congelados exigen `afip_intentos>=1` e identidad completa coherente.
+- En cualquier estado anterior a aprobación, CAE, vencimiento, `afip_emitido_at` y `nc_efectos_aplicados_at` deben permanecer nulos. `APROBADO/PERSISTIDO` exige estado comercial `ACTIVA`, CAE canónico de 14 dígitos, timestamps fiscales finitos y efectos no anteriores a la emisión.
+- La necesidad de evidencia ya no es un booleano controlado por el caller ni deriva de `Boolean(venta.cae)`: nace únicamente del discriminante `lifecycle === "APROBADO"`. Emisión directa exige vencimiento canónico y que el timestamp persistido de la evidencia coincida con `afip_emitido_at`; recuperación admite vencimiento nulo y exige que `emision_fiscal_intentos.updated_at` esté entre emisión y aplicación de efectos. Una aprobación sin evidencia segura falla cerrada.
+- El render sólo muestra CAE, evidencia de autorización/recuperación y efectos cuando el loader produjo el lifecycle `APROBADO`. Un snapshot congelado pero aún reservado/enviado no afirma autorización ni efectos.
+
+### TDD RED → GREEN y seguridad
+
+- RED focal: 35 fallas esperadas. Diez cubrieron paridad y asociación puntual; nueve recorrieron los discriminantes válidos; cuatro rechazaron estados/fases fuera de matriz; cuatro rechazaron CAE, vencimiento, emisión o efectos prematuros; una rechazó evidencia prematura; cuatro cubrieron aprobaciones incompletas; una exigió evidencia segura y dos actualizaron fixtures aprobadas para expresar el lifecycle validado.
+- GREEN: todos esos ataques fallan antes de construir el resultado auditado. La proyección sigue sin incorporar respuesta ARCA, payload, errores, claim token, hash del intento ni secretos; sólo consume las columnas fiscales ya autorizadas para el detalle y el endpoint escalar de evidencia cerrado en Fix round 1.
+- Se conservaron sin cambios el predicado estricto `INTENCION_NO_CONGELADA`, el gating de pagos/movimientos y las etiquetas de datos actuales por IDs persistidos.
+
+### Verificaciones Fix round 3
+
+- Focal ampliada: 9 archivos, 266 pruebas pasadas (`error-usuario`, motor, evidencia, fachada, detalle auditado/comercial, impresión, PDF y proyección).
+- Suite completa: 78 archivos pasados, 2 omitidos; 1695 pruebas pasadas, 22 omitidas.
+- `npm run typecheck`, ESLint focal, Prettier focal y `git diff --check` pasaron.
+- Revisión React: los discriminantes `congelada`/`aprobada` se derivan en render; no se agregaron effects, estado duplicado ni waterfalls. Las lecturas independientes permanecen en `Promise.all`.
+- `impresion.test.ts` y `comprobante-pdf.test.ts` pasaron en la focal. El PDF v2/v3 y su layout permanecen intactos; no correspondió repetir QA visual porque este fix sólo extrae y reutiliza la validación previa a impresión y modifica el detalle HTML.
+- No se ejecutaron ARCA real, deploy, push, producción, flags ni reescritura de historia.

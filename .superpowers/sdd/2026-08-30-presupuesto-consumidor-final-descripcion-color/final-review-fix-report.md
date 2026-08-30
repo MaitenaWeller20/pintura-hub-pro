@@ -4,6 +4,7 @@ Fecha: 2026-08-30
 Workspace: `/private/tmp/quimex-presupuesto-color.N9cBhs`
 Base: `086def0`
 Rango revisado: `1fea73d..086def0`
+Re-review 2: `086def0..8e93423`
 
 ## Resultado
 
@@ -37,6 +38,25 @@ que no lo es.
   crea la venta con productos/cantidades/precios autoritativos y copia en la
   misma transacción los snapshots exactos de `presupuesto_items`. Un mismatch de
   cardinalidad aborta venta, stock, caja y presupuesto.
+
+### Cierre del segundo re-review
+
+Una migración nueva, forward-only y posterior,
+`20260830224905_identidad_items_hash_final_conversion_presupuesto.sql`, reemplaza
+el emparejamiento físico de la primera solución. Cada UUID de
+`presupuesto_items.id` se transforma en un marker interno único que atraviesa el
+core owner-only; luego un UPDATE autoritativo marker→UUID copia la descripción
+exacta y verifica producto, cantidad, precio neto y descuento final. La función
+especializada tiene `search_path=''`, owner `postgres` y cero privilegios para
+PUBLIC, `anon`, `authenticated` y `service_role`. Ninguna función de esta ruta
+contiene `ctid`.
+
+El writer calcula además la huella v1 con el mismo objeto y campos que
+`crear_venta`, pero sobre los valores finales, incluida cada descripción
+histórica exacta; los markers nunca llegan al hash durable. El lock y el chequeo
+cerrado de la key ocurren antes de entrar al core. Por eso el replay público con
+payload exacto recupera la venta, mientras una descripción cambiada u omitida
+conflicta sin duplicar efectos.
 
 ## Transporte y retry
 
@@ -82,7 +102,7 @@ puntos sigue rechazada.
 ## Matriz final
 
 Ejecutada desde un reset local que aplicó todas las migraciones, incluida
-`20260830220345`:
+`20260830224905`:
 
 | Gate                                                     | Resultado                                                  |
 | -------------------------------------------------------- | ---------------------------------------------------------- |
@@ -119,6 +139,36 @@ indica:
 Rollback es forward-only/fail-closed: mantener mantenimiento, V2 y legacy
 apagados; no volver a una app incompatible; preservar evidencia e idempotencia;
 reconciliar cualquier resultado ambiguo antes de reabrir.
+
+Las migraciones `20260830220345` y `20260830224905` son un único lote de
+mantenimiento: no debe circular tráfico entre ambas. No se intenta reconstruir
+ni sobrescribir automáticamente el hash de una venta que hubiera sido creada en
+ese estado intermedio no soportado; ante tal evidencia, el corte permanece
+cerrado hasta reconciliarla.
+
+## Evidencia adicional del segundo re-review
+
+- RED: la aserción del hash final falló; la definición efectiva confirmó uso de
+  `ctid` y ausencia del helper owner-only.
+- GREEN: dos renglones del mismo producto, con cantidades, descuentos, importes
+  y descripciones distintas, quedan asociados 1:1. Uno conserva más de 160
+  puntos de código y el otro conserva whitespace que normaliza a vacío.
+- El hash esperado se calcula en la prueba independientemente con el contrato
+  público v1. Replay exacto recupera; descripción distinta y descripción
+  omitida generan conflicto opaco.
+- Conteos y saldos de venta, ítems, pagos, stock, caja, cuenta corriente y
+  secuencias prueban que replay y conflictos no agregan ningún efecto.
+- El guard de catálogo inspecciona ambas funciones efectivas y exige ausencia
+  de `ctid`; el contrato custom de 161 puntos sigue rechazado por la suite de
+  descripciones.
+- La matriz final permaneció verde: cinco suites SQL tras reset, 87 archivos y
+  1834 tests Vitest (2/22 omitidos), typecheck, build mock y E2E 6/6.
+
+`supabase db advisors --local --type security --level warn --fail-on error` no
+reportó el helper nuevo. El comando conserva dos errores históricos ajenos por
+views security-definer (`fiscal_config_publica` y `cuenta_corriente_saldos`) y
+warnings anteriores de search path, extensión y policies; no se amplió esta ola
+acotada para alterar esas superficies.
 
 ## Auditoría y restricciones
 

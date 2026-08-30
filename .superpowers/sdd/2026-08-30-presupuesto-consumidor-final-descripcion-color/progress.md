@@ -387,3 +387,38 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     `false/false/false`, sin listener E2E en 8080. El stack local
     `gagrdirwlcunygtztiuk` se detuvo conservando su backup. No se usaron remoto,
     linked, deploy, push, ARCA, certificados ni flags externos.
+- Final re-review fix wave 2 (`8e93423..HEAD`) — implementación y matriz
+  completas; commit final pendiente al momento de escribir este ledger.
+  - Se confirmaron los dos Important: `20260830220345` asociaba duplicados por
+    `row_number()` y orden físico `ctid`, y la huella durable quedaba calculada
+    sobre los ítems sin la descripción histórica que luego se persistía.
+  - RED SQL: la nueva fixture con dos líneas del mismo producto alcanzó 2/2 por
+    casualidad de orden físico, pero falló la aserción de hash final. La
+    introspección confirmó `conversion_uses_ctid=true` y ausencia del helper
+    owner-only. El RED se ejecutó antes de crear la migración correctiva.
+  - La migración forward-only
+    `20260830224905_identidad_items_hash_final_conversion_presupuesto.sql`
+    agrega un writer owner-only, `SECURITY DEFINER` con `search_path=''` y sin
+    grants. Cada `presupuesto_item.id` viaja por el core como marker único; el
+    UPDATE autoritativo exige ese marker junto con producto, cantidad, neto y
+    descuento final antes de copiar los bytes exactos. No hay `ctid` ni un
+    emparejamiento por atributos no únicos.
+  - La misma ruta toma el advisory lock de la idempotency key antes del core y
+    calcula el hash v1 con el objeto exacto de `crear_venta`, usando los valores
+    finales y las descripciones históricas completas. El marker nunca participa
+    de la huella. Replay público exacto recupera; descripción distinta u omitida
+    entra al conflicto opaco; ventas, ítems, pagos, stock, caja, cuenta corriente
+    y secuencias no se duplican.
+  - GREEN SQL incluye duplicados con cantidades/descuentos/importes distintos,
+    descripción mayor a 160 y otra que normaliza a vacío, asociación exacta,
+    hash independiente, replay/conflictos, ACL owner-only y guard explícito de
+    ausencia de `ctid`. El contrato público/custom 1..160 no se relajó.
+  - Clarificación de release: `20260830220345` y `20260830224905` se aplican en
+    el mismo lote con mantenimiento y sin tráfico entre ambas. No se hace un
+    backfill inseguro de una eventual operación intermedia; si existiera, el
+    runbook exige mantener cerrado y reconciliarla preservando la evidencia.
+  - Matriz fresca: reset local y cinco suites SQL GREEN; Vitest completo 87
+    archivos/1834 tests GREEN con 2 archivos/22 tests omitidos; typecheck,
+    build Vercel mock y E2E 6/6 GREEN. Advisors locales no señalaron el helper;
+    conservan dos errores históricos ajenos (views security-definer) y warnings
+    previos de search path/extensión/policies, fuera de esta ola exacta.

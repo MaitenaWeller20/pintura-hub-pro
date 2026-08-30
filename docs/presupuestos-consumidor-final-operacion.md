@@ -113,9 +113,11 @@ La secuencia operativa es:
    orden y verificar esquema y ledger después de cada una. El lote debe incluir
    `20260830154723_cerrar_acl_ventas_y_proyeccion_cola_fiscal.sql` y
    `20260830220345_preservar_descripciones_historicas_conversion.sql`, además de
-   cualquier versión anterior pendiente. Un hash, postcondición o ledger
-   inesperado aborta el corte; nunca se salta ni se marca manualmente una
-   migración sin comprobar su SQL efectivo.
+   `20260830224905_identidad_items_hash_final_conversion_presupuesto.sql` y
+   cualquier versión anterior pendiente. Las dos últimas forman un único cambio
+   de contrato: no se permite tráfico comercial entre ellas. Un hash,
+   postcondición o ledger inesperado aborta el corte; nunca se salta ni se marca
+   manualmente una migración sin comprobar su SQL efectivo.
 6. Promover exactamente la URL inmutable preparada en el paso 3, sin hacer un
    build nuevo durante el corte:
 
@@ -161,7 +163,10 @@ aplicación anterior: ya no es compatible con el esquema post-corte. Mantener el
 mantenimiento y ambos flags en `false`, preservar ventas, snapshots, hashes,
 cola e idempotency keys, y corregir hacia adelante. Sólo se puede promover otro
 artefacto si se demuestra compatible con el esquema ya instalado. Un resultado
-comercial o fiscal ambiguo se concilia antes de repetirlo.
+comercial o fiscal ambiguo se concilia antes de repetirlo. Si la auditoría
+detectara que hubo una conversión entre `20260830220345` y `20260830224905`, no
+reescribir su huella automáticamente: mantener cerrado, conservar la evidencia
+y reconciliar esa venta antes de avanzar.
 
 ## Verificación de una conversión
 

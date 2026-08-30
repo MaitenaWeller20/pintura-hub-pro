@@ -200,6 +200,211 @@ SELECT pg_temp.assert_true(
   'la conversión copia byte a byte una descripción histórica mayor a 160'
 );
 
+-- Regresión de la segunda revisión: un presupuesto pre-release puede contener
+-- dos renglones del mismo producto. Cantidad, descuento, importe y descripción
+-- identifican cada snapshot; el writer no puede emparejarlos por ubicación
+-- física ni calcular la huella antes de copiar sus bytes finales.
+CREATE TEMP TABLE t_historico_duplicado AS
+SELECT * FROM public.crear_presupuesto(
+  (SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'),
+  '[
+    {"producto_id":"c5200000-0000-4000-8000-000000000001","cantidad":2,"descuento_porcentaje":10},
+    {"producto_id":"c5200000-0000-4000-8000-000000000001","cantidad":3,"descuento_porcentaje":25}
+  ]'::jsonb,
+  NULL,NULL,NULL,'T2-HISTORICO-DUPLICADO'
+);
+UPDATE public.presupuesto_items AS i
+   SET descripcion=CASE i.cantidad
+     WHEN 2 THEN '  Duplicado largo  '||pg_catalog.repeat('🚀',170)||E'\t'
+     WHEN 3 THEN E' \t\n'
+   END
+ WHERE i.presupuesto_id=(SELECT presupuesto_id FROM t_historico_duplicado);
+
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2
+       AND count(*) FILTER (
+         WHERE cantidad=2 AND descuento_porcentaje=10
+           AND char_length(descripcion)>160
+       )=1
+       AND count(*) FILTER (
+         WHERE cantidad=3 AND descuento_porcentaje=25
+           AND descripcion=E' \t\n'
+       )=1
+     FROM public.presupuesto_items
+    WHERE presupuesto_id=(SELECT presupuesto_id FROM t_historico_duplicado)),
+  'la fixture conserva duplicados con cantidades, descuentos y descripciones históricas distintas'
+);
+DO $$
+DECLARE v_marker constant text := 'T2_VACIO_NO_FALLO';
+BEGIN
+  BEGIN
+    PERFORM public._normalizar_descripcion_item_20260830(E' \t\n','fallback',true);
+    RAISE EXCEPTION '%',v_marker;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM=v_marker OR SQLERRM NOT LIKE '%Ingresá una descripción%' THEN RAISE; END IF;
+  END;
+END;
+$$;
+SELECT pg_temp.assert_true(true,'el segundo snapshot histórico normaliza a vacío bajo el contrato actual');
+
+CREATE TEMP TABLE t_historico_duplicado_final AS
+SELECT pg_catalog.jsonb_agg(
+         pg_catalog.jsonb_build_object(
+           'producto_id',i.producto_id,
+           'cantidad',i.cantidad,
+           'precio_unitario_sin_iva',i.precio_sin_iva,
+           'descuento_porcentaje',0,
+           'descripcion',i.descripcion
+         )
+         ORDER BY i.id
+       ) AS items
+  FROM public.presupuesto_items AS i
+ WHERE i.presupuesto_id=(SELECT presupuesto_id FROM t_historico_duplicado);
+
+CREATE TEMP TABLE t_historico_duplicado_sale AS
+SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
+  (SELECT presupuesto_id FROM t_historico_duplicado),
+  'b5200000-0000-4000-8000-000000000001','CTA_CTE','[]'::jsonb,
+  'e5200000-0000-4000-8000-000000000091'
+);
+
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2
+       AND count(*) FILTER (
+         WHERE vi.cantidad=2
+           AND vi.precio_unitario_sin_iva=90
+           AND vi.descripcion='  Duplicado largo  '||pg_catalog.repeat('🚀',170)||E'\t'
+       )=1
+       AND count(*) FILTER (
+         WHERE vi.cantidad=3
+           AND vi.precio_unitario_sin_iva=75
+           AND vi.descripcion=E' \t\n'
+       )=1
+     FROM public.venta_items AS vi
+    WHERE vi.venta_id=(SELECT venta_id FROM t_historico_duplicado_sale)),
+  'cada duplicado llega a su venta_item exacto por identidad comercial'
+);
+
+CREATE TEMP TABLE t_historico_duplicado_hash AS
+SELECT pg_catalog.encode(
+         extensions.digest(
+           pg_catalog.convert_to(
+             pg_catalog.jsonb_build_object(
+               'version',1,
+               'actor_id','a5200000-0000-4000-8000-000000000001'::uuid,
+               'sucursal_id',p.sucursal_id,
+               'cliente_id','b5200000-0000-4000-8000-000000000001'::uuid,
+               'tipo_comprobante','VENTA'::public.tipo_comprobante,
+               'condicion_venta','CTA_CTE'::public.condicion_venta,
+               'items',f.items,
+               'pagos','[]'::jsonb,
+               'percepciones',0::numeric,
+               'observaciones','Presupuesto '||p.numero,
+               'nombre_obra',NULL::text,
+               'fecha',NULL::timestamptz,
+               'cbte_asoc_id',NULL::uuid,
+               'idempotency_key',pg_catalog.md5('presupuesto:'||p.id::text)::uuid
+             )::text,
+             'UTF8'
+           ),
+           'sha256'
+         ),
+         'hex'
+       ) AS hash
+  FROM public.presupuestos AS p
+ CROSS JOIN t_historico_duplicado_final AS f
+ WHERE p.id=(SELECT presupuesto_id FROM t_historico_duplicado);
+SELECT pg_temp.assert_true(
+  (SELECT v.idempotency_payload_hash=h.hash
+     FROM public.ventas AS v
+     CROSS JOIN t_historico_duplicado_hash AS h
+    WHERE v.id=(SELECT venta_id FROM t_historico_duplicado_sale)),
+  'ventas.idempotency_payload_hash representa los valores y bytes finales persistidos'
+);
+
+CREATE TEMP TABLE t_historico_duplicado_effects AS
+SELECT
+  (SELECT count(*) FROM public.ventas) AS ventas,
+  (SELECT count(*) FROM public.venta_items) AS items,
+  (SELECT count(*) FROM public.venta_pagos) AS pagos,
+  (SELECT count(*) FROM public.stock_movimientos) AS stock_movimientos,
+  (SELECT count(*) FROM public.caja_movimientos) AS caja_movimientos,
+  (SELECT count(*) FROM public.cuenta_corriente_movimientos) AS cuenta_corriente,
+  (SELECT COALESCE(sum(ultimo_numero),0) FROM public.comprobante_secuencias) AS secuencias,
+  (SELECT cantidad FROM public.stock_sucursal
+    WHERE producto_id='c5200000-0000-4000-8000-000000000001'
+      AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS')) AS stock;
+
+CREATE TEMP TABLE t_historico_duplicado_replay AS
+SELECT * FROM public.crear_venta(
+  (SELECT sucursal_id FROM public.presupuestos
+    WHERE id=(SELECT presupuesto_id FROM t_historico_duplicado)),
+  'b5200000-0000-4000-8000-000000000001','VENTA','CTA_CTE',
+  (SELECT items FROM t_historico_duplicado_final),'[]'::jsonb,0,
+  (SELECT 'Presupuesto '||numero FROM public.presupuestos
+    WHERE id=(SELECT presupuesto_id FROM t_historico_duplicado)),
+  NULL,NULL,NULL,
+  (SELECT pg_catalog.md5('presupuesto:'||presupuesto_id::text)::uuid
+     FROM t_historico_duplicado)
+);
+SELECT pg_temp.assert_true(
+  (SELECT r.venta_id=s.venta_id
+     FROM t_historico_duplicado_replay AS r
+     CROSS JOIN t_historico_duplicado_sale AS s),
+  'el replay público con descripciones históricas finales exactas recupera la venta'
+);
+
+DO $$
+DECLARE
+  v_items jsonb := (SELECT items FROM t_historico_duplicado_final);
+  v_marker constant text := 'T2_HASH_DESCRIPCION_NO_FALLO';
+  v_sucursal uuid := (SELECT sucursal_id FROM public.presupuestos
+    WHERE id=(SELECT presupuesto_id FROM t_historico_duplicado));
+  v_observaciones text := (SELECT 'Presupuesto '||numero FROM public.presupuestos
+    WHERE id=(SELECT presupuesto_id FROM t_historico_duplicado));
+  v_key uuid := (SELECT pg_catalog.md5('presupuesto:'||presupuesto_id::text)::uuid
+    FROM t_historico_duplicado);
+BEGIN
+  BEGIN
+    PERFORM * FROM public.crear_venta(
+      v_sucursal,'b5200000-0000-4000-8000-000000000001','VENTA','CTA_CTE',
+      pg_catalog.jsonb_set(v_items,'{0,descripcion}',pg_catalog.to_jsonb('distinta'::text),false),
+      '[]'::jsonb,0,v_observaciones,NULL,NULL,NULL,v_key
+    );
+    RAISE EXCEPTION '%',v_marker;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM=v_marker OR SQLERRM NOT LIKE '%clave de idempotencia no corresponde%' THEN RAISE; END IF;
+  END;
+  BEGIN
+    PERFORM * FROM public.crear_venta(
+      v_sucursal,'b5200000-0000-4000-8000-000000000001','VENTA','CTA_CTE',
+      v_items #- '{0,descripcion}','[]'::jsonb,0,v_observaciones,NULL,NULL,NULL,v_key
+    );
+    RAISE EXCEPTION '%',v_marker;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM=v_marker OR SQLERRM NOT LIKE '%clave de idempotencia no corresponde%' THEN RAISE; END IF;
+  END;
+END;
+$$;
+SELECT pg_temp.assert_true(
+  (SELECT b IS NOT DISTINCT FROM a
+     FROM t_historico_duplicado_effects AS b
+     CROSS JOIN LATERAL (
+       SELECT
+         (SELECT count(*) FROM public.ventas) AS ventas,
+         (SELECT count(*) FROM public.venta_items) AS items,
+         (SELECT count(*) FROM public.venta_pagos) AS pagos,
+         (SELECT count(*) FROM public.stock_movimientos) AS stock_movimientos,
+         (SELECT count(*) FROM public.caja_movimientos) AS caja_movimientos,
+         (SELECT count(*) FROM public.cuenta_corriente_movimientos) AS cuenta_corriente,
+         (SELECT COALESCE(sum(ultimo_numero),0) FROM public.comprobante_secuencias) AS secuencias,
+         (SELECT cantidad FROM public.stock_sucursal
+           WHERE producto_id='c5200000-0000-4000-8000-000000000001'
+             AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS')) AS stock
+     ) AS a),
+  'replay exacto y conflictos de descripción no duplican ningún efecto comercial'
+);
+
 -- RED principal: el escritor vigente todavía rechaza cliente NULL.
 CREATE TEMP TABLE t_anon_sale AS
 SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
@@ -556,6 +761,35 @@ SELECT pg_temp.assert_true(
   AND NOT has_function_privilege('authenticated','public._normalizar_descripcion_item_20260830(text,text,boolean)','execute')
   AND NOT has_function_privilege('service_role','public._normalizar_descripcion_item_20260830(text,text,boolean)','execute'),
   'core comercial y normalizador permanecen owner-only'
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=1
+       AND bool_and(p.proowner='postgres'::regrole)
+       AND bool_and(p.proconfig='{"search_path=\"\""}'::text[])
+       AND bool_and(NOT has_function_privilege('public',p.oid,'execute'))
+       AND bool_and(NOT has_function_privilege('anon',p.oid,'execute'))
+       AND bool_and(NOT has_function_privilege('authenticated',p.oid,'execute'))
+       AND bool_and(NOT has_function_privilege('service_role',p.oid,'execute'))
+     FROM pg_catalog.pg_proc AS p
+     JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
+    WHERE n.nspname='public'
+      AND p.proname='_crear_venta_desde_presupuesto_20260830'),
+  'el writer histórico especializado permanece owner-only'
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2
+       AND bool_and(pg_catalog.strpos(
+         pg_catalog.lower(pg_catalog.pg_get_functiondef(p.oid)),
+         'ctid'
+       )=0)
+     FROM pg_catalog.pg_proc AS p
+     JOIN pg_catalog.pg_namespace AS n ON n.oid=p.pronamespace
+    WHERE n.nspname='public'
+      AND p.proname IN (
+        'convertir_presupuesto_en_venta_neutral',
+        '_crear_venta_desde_presupuesto_20260830'
+      )),
+  'conversión y writer owner-only no dependen de ctid'
 );
 SELECT pg_temp.assert_true(
   to_regprocedure('public.convertir_presupuesto_en_venta(uuid,uuid,tipo_comprobante,condicion_venta,jsonb,uuid)') IS NULL,

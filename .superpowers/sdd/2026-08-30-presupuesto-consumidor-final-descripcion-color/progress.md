@@ -137,3 +137,21 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     diff propuesto no incluye el bloque de evidencia agregado en este fix.
   - Cleanup final: cero sesiones `t2_%`, cero fixtures, hook de prueba ausente y
     flags restaurados. No se usaron remoto, `--linked`, `db push` ni ARCA.
+- Task 2 review round 2 (`6cd9080`): los dos fixes productivos fueron validados,
+  pero `Spec: FAIL` y `Quality: FAIL` por un Important del harness. Cuatro
+  workers exitosos confirmaban ventas/conversiones y el cleanup no podía
+  restaurar con seguridad el contador compartido de comprobantes.
+- Task 2 fix round 2: implementación completa; revisión del fix pendiente.
+  - Tras un reset local, el RED canónico observó
+    `comprobante_secuencias: [] → OHIGGINS/VENTA/4` y el focal salió 1.
+  - Los cuatro workers que numeran ahora comprueban receptor, caja, presupuesto,
+    stock y aislamiento dentro de su propia sesión y terminan en `ROLLBACK`.
+    El harness no decrementa ni restaura manualmente numeración compartida.
+  - Dos ejecuciones focales consecutivas salieron 0; el snapshot completo del
+    contador fue `[]` antes, después de la primera y después de la segunda.
+    Ambas carreras conservan su sincronización real y no dejan efectos
+    comerciales persistentes.
+  - El gate de venta fiscal atómica, TypeScript, Bash parse, `git diff --check`
+    y el lint local pasan; este último conserva sólo `_objetivo` histórico. Un
+    reset final seguido por un tercer focal dejó nuevamente contador `[]`, cero
+    fixtures/sesiones y ningún hook de prueba.

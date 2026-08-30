@@ -536,6 +536,14 @@ SELECT pg_temp.assert_true(
 ROLLBACK;
 SQL
 
+SECUENCIAS_BEFORE="$("${PSQL[@]}" -Atq -c "
+  SELECT COALESCE(
+    jsonb_agg(to_jsonb(cs) ORDER BY cs.sucursal_id,cs.tipo),
+    '[]'::jsonb
+  )::text
+    FROM public.comprobante_secuencias AS cs
+")"
+
 # Fixtures comprometidos para observar locks entre sesiones reales. Cada carrera
 # usa un presupuesto distinto para que una conversión previa no tome el replay.
 LOCK_DIR="$(mktemp -d)"
@@ -757,7 +765,26 @@ SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
   'f5200000-0000-4000-8000-000000000201',NULL,'CONTADO',
   '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
 );
-COMMIT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM public.presupuestos AS p
+      JOIN public.ventas AS v ON v.id=p.venta_id
+     WHERE p.id='f5200000-0000-4000-8000-000000000201'
+       AND p.estado='CONVERTIDO' AND p.cliente_id IS NULL
+       AND v.caja_sesion_id='d5200000-0000-4000-8000-000000000201'
+       AND v.cliente_id=(
+         SELECT c.id FROM public.clientes AS c
+          WHERE c.activo AND c.es_generico AND c.tipo='CONSUMIDOR_FINAL'
+            AND c.sucursal_habitual_id IS NULL AND NOT COALESCE(c.es_obra,false)
+       )
+  ) THEN
+    RAISE EXCEPTION 'FALLO: la conversión anónima no confirmó receptor y caja dentro del worker';
+  END IF;
+END;
+$$;
+ROLLBACK;
 SQL
 CONVERSION_PID=$!
 
@@ -775,7 +802,23 @@ SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
   'b5200000-0000-4000-8000-000000000201','CONTADO',
   '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
 );
-COMMIT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM public.presupuestos AS p
+      JOIN public.ventas AS v ON v.id=p.venta_id
+     WHERE p.id='f5200000-0000-4000-8000-000000000202'
+       AND p.estado='CONVERTIDO'
+       AND p.cliente_id='b5200000-0000-4000-8000-000000000201'
+       AND v.cliente_id='b5200000-0000-4000-8000-000000000201'
+       AND v.caja_sesion_id='d5200000-0000-4000-8000-000000000201'
+  ) THEN
+    RAISE EXCEPTION 'FALLO: la conversión identificada no confirmó receptor y caja dentro del worker';
+  END IF;
+END;
+$$;
+ROLLBACK;
 SQL
 IDENTIFIED_PID=$!
 
@@ -866,7 +909,26 @@ SELECT * FROM public.crear_venta(
   0,'T2-DIRECTA-LOCK',NULL,NULL,NULL,
   'e5200000-0000-4000-8000-000000000203'
 );
-COMMIT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ventas AS v
+     WHERE v.observaciones='T2-DIRECTA-LOCK'
+       AND v.cliente_id='b5200000-0000-4000-8000-000000000201'
+       AND v.caja_sesion_id='d5200000-0000-4000-8000-000000000201'
+  ) OR (SELECT cantidad FROM public.stock_sucursal
+         WHERE producto_id='c5200000-0000-4000-8000-000000000201'
+           AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'))<>19
+     OR NOT EXISTS (
+       SELECT 1 FROM public.presupuestos
+        WHERE id='f5200000-0000-4000-8000-000000000203'
+          AND estado='ABIERTO' AND venta_id IS NULL
+     ) THEN
+    RAISE EXCEPTION 'FALLO: la venta directa no confirmó caja, stock y aislamiento dentro del worker';
+  END IF;
+END;
+$$;
+ROLLBACK;
 SQL
 DIRECT_PID=$!
 
@@ -904,7 +966,26 @@ SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
   'f5200000-0000-4000-8000-000000000203',NULL,'CONTADO',
   '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
 );
-COMMIT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM public.presupuestos AS p
+      JOIN public.ventas AS v ON v.id=p.venta_id
+     WHERE p.id='f5200000-0000-4000-8000-000000000203'
+       AND p.estado='CONVERTIDO' AND p.cliente_id IS NULL
+       AND v.caja_sesion_id='d5200000-0000-4000-8000-000000000201'
+  ) OR (SELECT cantidad FROM public.stock_sucursal
+         WHERE producto_id='c5200000-0000-4000-8000-000000000201'
+           AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'))<>19
+     OR (SELECT count(*) FROM public.caja_sesiones AS cs
+          JOIN public.sucursales AS s ON s.id=cs.sucursal_id
+         WHERE s.codigo='OHIGGINS' AND cs.estado='ABIERTA')<>1 THEN
+    RAISE EXCEPTION 'FALLO: la conversión no confirmó presupuesto, caja y stock dentro del worker';
+  END IF;
+END;
+$$;
+ROLLBACK;
 SQL
 CONVERSION_PID=$!
 
@@ -940,27 +1021,23 @@ fi
 "${PSQL[@]}" <<'SQL'
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM public.ventas
-       WHERE observaciones IN ('T2-DIRECTA-LOCK','Presupuesto T2-CONC-0003'))<>2
-     OR EXISTS (
+  IF EXISTS (
        SELECT 1 FROM public.ventas
         WHERE observaciones IN ('T2-DIRECTA-LOCK','Presupuesto T2-CONC-0003')
-          AND caja_sesion_id IS DISTINCT FROM 'd5200000-0000-4000-8000-000000000201'
-     )
-     OR NOT EXISTS (
+     ) OR NOT EXISTS (
        SELECT 1 FROM public.presupuestos
         WHERE id='f5200000-0000-4000-8000-000000000203'
-          AND estado='CONVERTIDO' AND venta_id IS NOT NULL AND cliente_id IS NULL
+          AND estado='ABIERTO' AND venta_id IS NULL AND cliente_id IS NULL
      )
      OR (SELECT count(*) FROM public.caja_sesiones AS cs
           JOIN public.sucursales AS s ON s.id=cs.sucursal_id
          WHERE s.codigo='OHIGGINS' AND cs.estado='ABIERTA')<>1
      OR (SELECT cantidad FROM public.stock_sucursal
           WHERE producto_id='c5200000-0000-4000-8000-000000000201'
-            AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'))<>16 THEN
-    RAISE EXCEPTION 'FALLO: el orden producto→caja dejó venta, presupuesto, caja o stock incorrecto';
+            AND sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'))<>20 THEN
+    RAISE EXCEPTION 'FALLO: los workers con rollback dejaron venta, presupuesto, caja o stock persistente';
   END IF;
-  RAISE NOTICE '✓ venta directa y conversión terminan sin deadlock, huérfanos ni autoapertura';
+  RAISE NOTICE '✓ venta directa y conversión terminan sin deadlock y revierten sus efectos';
 END;
 $$;
 DROP TRIGGER aaa_t2_pausar_venta_directa ON public.ventas;
@@ -1013,7 +1090,7 @@ SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
   'f5200000-0000-4000-8000-000000000204',NULL,'CONTADO',
   '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
 );
-COMMIT;
+ROLLBACK;
 SQL
 )"
 CONVERSION_STATUS=$?
@@ -1049,4 +1126,19 @@ SQL
 
 cleanup
 trap - EXIT
+
+SECUENCIAS_AFTER="$("${PSQL[@]}" -Atq -c "
+  SELECT COALESCE(
+    jsonb_agg(to_jsonb(cs) ORDER BY cs.sucursal_id,cs.tipo),
+    '[]'::jsonb
+  )::text
+    FROM public.comprobante_secuencias AS cs
+")"
+if [[ "$SECUENCIAS_AFTER" != "$SECUENCIAS_BEFORE" ]]; then
+  echo "FALLO: la concurrencia alteró comprobante_secuencias" >&2
+  echo "antes:   $SECUENCIAS_BEFORE" >&2
+  echo "después: $SECUENCIAS_AFTER" >&2
+  exit 1
+fi
+echo '✓ los workers concurrentes no alteran comprobante_secuencias'
 echo '✓ presupuesto consumidor final: candidato, caja, replay, BOLA y concurrencia'

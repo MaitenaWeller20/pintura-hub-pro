@@ -462,10 +462,18 @@ export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
     parsearEntradaFiscal(detalleNcPeriodoInputSchema, value, "CONSULTA"),
   )
   .handler(async ({ data, context }) => {
-    await autorizarContextoColaFiscal({
-      userId: context.userId,
-      lecturas: lecturasContexto(context.supabase),
+    // `ventas` ya no expone SELECT directo a `authenticated`. Reutilizar la
+    // RPC exacta de la cola conserva en PostgreSQL el scope admin/sucursal y
+    // evita abrir una lectura lateral sólo para este diálogo.
+    const cola = await crearServicioColaFiscal(
+      dependenciasSupabase(context.supabase),
+    ).listarColaFiscal(context.userId, {
+      tab: "pendientes",
+      page: 1,
+      pageSize: 1,
+      venta_id: data.venta_id,
     });
+    const venta = cola.filas[0];
     const consultaReintegros = (
       context.supabase as unknown as {
         from(table: string): {
@@ -489,29 +497,26 @@ export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
       .select("id,orden,forma_pago,monto")
       .eq("venta_id", data.venta_id)
       .order("orden");
-    const [
-      { data: venta, error: ventaError },
-      { data: items, error: itemsError },
-      { data: reintegros, error: reintegrosError },
-    ] = await Promise.all([
-      context.supabase
-        .from("ventas")
-        .select("subtotal_sin_iva,iva_total,total,nc_periodo_modalidad,nc_resolucion")
-        .eq("id", data.venta_id)
-        .maybeSingle(),
-      context.supabase
-        .from("venta_items")
-        .select("id,descripcion,subtotal_sin_iva,iva_porcentaje,iva_monto")
-        .eq("venta_id", data.venta_id)
-        .order("id"),
-      consultaReintegros,
-    ]);
-    if (ventaError || itemsError || reintegrosError || !venta || !venta.nc_periodo_modalidad) {
+    const [{ data: items, error: itemsError }, { data: reintegros, error: reintegrosError }] =
+      await Promise.all([
+        context.supabase
+          .from("venta_items")
+          .select("id,descripcion,subtotal_sin_iva,iva_porcentaje,iva_monto")
+          .eq("venta_id", data.venta_id)
+          .order("id"),
+        consultaReintegros,
+      ]);
+    if (itemsError || reintegrosError || !venta || !venta.nc_periodo_modalidad) {
       throw new Error("No se pudo leer la intención fiscal por período.");
     }
+    const neto = (items ?? []).reduce(
+      (total, item) => total + Math.abs(Number(item.subtotal_sin_iva)),
+      0,
+    );
+    const iva = (items ?? []).reduce((total, item) => total + Math.abs(Number(item.iva_monto)), 0);
     const detalle = {
-      neto: String(Math.abs(Number(venta.subtotal_sin_iva))),
-      iva: String(Math.abs(Number(venta.iva_total))),
+      neto: String(neto),
+      iva: String(iva),
       total: String(Math.abs(Number(venta.total))),
       concepto:
         venta.nc_periodo_modalidad === "BONIFICACION_AJUSTE"

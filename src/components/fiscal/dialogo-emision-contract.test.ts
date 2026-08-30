@@ -439,6 +439,26 @@ describe("contrato runtime del diálogo fiscal", () => {
     ).toThrow(/previsualizaci.n fiscal/i);
   });
 
+  it("acepta una NC sin CbteAsoc sólo cuando el caller acredita asociación por período", () => {
+    const confirmacion = {
+      ...CONFIRMACION,
+      cbteTipo: 3,
+      cbteAsoc: null,
+    };
+    const preview = {
+      ...PREVIEW,
+      cbte_tipo: 3,
+      cbte_asoc: null,
+      confirmacion_autoritativa: confirmacion,
+      huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacion),
+    };
+
+    expect(() => parsePreviewEmisionFiscal(preview)).toThrow(/previsualizaci.n fiscal/i);
+    expect(parsePreviewEmisionFiscal(preview, undefined, { asociacionNota: "PERIODO" })).toEqual(
+      preview,
+    );
+  });
+
   it.each([
     ["importe", { ...PREVIEW_PROVISIONAL, total: "122.00" }],
     ["CUIT emisor", { ...PREVIEW_PROVISIONAL, emisor_cuit: "30717322467" }],

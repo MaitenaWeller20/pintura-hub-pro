@@ -43,6 +43,7 @@ const dobles = vi.hoisted(() => {
     reconciliar: vi.fn(),
     liberar: vi.fn(),
     consultarIncidente: vi.fn(),
+    leerVentaDetalle: vi.fn(),
   };
 });
 
@@ -89,6 +90,7 @@ vi.mock("@/lib/fiscal.functions", () => ({
   reconciliarComprobante: dobles.reconciliar,
   liberarClaimFiscal: dobles.liberar,
   consultarIncidenteFiscal: dobles.consultarIncidente,
+  detalleVentaFiscalSegura: dobles.leerVentaDetalle,
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
@@ -356,7 +358,7 @@ describe("ciclo montado del diálogo en la ruta de cola", () => {
   });
 
   it("abre la NC por período desde la venta creada y muestra su detalle al aprobar", async () => {
-    let filasServidor = [filaPeriodo];
+    const filasServidor = [filaPeriodo];
     dobles.listarCola.mockImplementation(async () => respuestaCola(filasServidor));
     dobles.emitir.mockResolvedValue({
       estado: "APROBADO",

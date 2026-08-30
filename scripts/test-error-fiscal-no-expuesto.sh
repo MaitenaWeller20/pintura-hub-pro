@@ -26,11 +26,11 @@ BEGIN
       AND attnum>0
       AND NOT attisdropped
   LOOP
-    IF v_columna='afip_error' THEN
+    IF v_columna IN ('afip_error','nc_periodo_payload_hash') THEN
       IF pg_catalog.has_column_privilege(
         'authenticated','public.ventas',v_columna,'SELECT'
       ) THEN
-        RAISE EXCEPTION 'afip_error conserva un permiso de columna';
+        RAISE EXCEPTION 'la columna reservada % conserva permiso de operador',v_columna;
       END IF;
     ELSIF NOT pg_catalog.has_column_privilege(
       'authenticated','public.ventas',v_columna,'SELECT'
@@ -46,14 +46,44 @@ BEGIN
     WHEN insufficient_privilege THEN NULL;
   END;
 
-  -- Los datos operativos y las clasificaciones cerradas siguen disponibles.
-  PERFORM id,afip_estado,afip_error_clase,afip_error_codigo
+  -- Los datos operativos, las clasificaciones cerradas y la auditoría visible
+  -- de NC por período siguen disponibles para un operador autenticado.
+  PERFORM id,afip_estado,afip_error_clase,afip_error_codigo,
+          nc_periodo_modalidad,periodo_asoc_desde,periodo_asoc_hasta,
+          motivo_nota_credito,nc_resolucion,nc_efectos_aplicados_at
   FROM public.ventas
   LIMIT 1;
 END;
 $operador$;
 
 RESET ROLE;
+DO $anonimo$
+DECLARE
+  v_columna text;
+BEGIN
+  FOREACH v_columna IN ARRAY ARRAY[
+    'motivo_nota_credito',
+    'nc_efectos_aplicados_at',
+    'nc_periodo_modalidad',
+    'nc_resolucion',
+    'periodo_asoc_desde',
+    'periodo_asoc_hasta'
+  ]
+  LOOP
+    IF pg_catalog.has_column_privilege('anon','public.ventas',v_columna,'SELECT') THEN
+      RAISE EXCEPTION 'anon obtuvo lectura inesperada de %',v_columna;
+    END IF;
+  END LOOP;
+  IF NOT (
+    SELECT c.relrowsecurity
+      FROM pg_catalog.pg_class AS c
+     WHERE c.oid='public.ventas'::pg_catalog.regclass
+  ) THEN
+    RAISE EXCEPTION 'la reparación deshabilitó RLS de ventas';
+  END IF;
+END;
+$anonimo$;
+
 SET LOCAL ROLE service_role;
 DO $servicio$
 BEGIN

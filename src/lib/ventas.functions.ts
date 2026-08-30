@@ -304,17 +304,31 @@ export const convertirPresupuestoEnVenta = createServerFn({ method: "POST" })
         return normalizarConversion(result);
       },
       async convertirLegacy(input) {
-        const { data: result, error } = await context.supabase.rpc(
-          "convertir_presupuesto_en_venta",
-          {
-            p_presupuesto_id: input.presupuesto_id,
-            p_cliente_id: input.cliente_id,
-            p_tipo_comprobante: input.tipo_comprobante,
-            p_condicion_venta: input.condicion_venta,
-            p_pagos: input.pagos,
-            p_idempotency_key: input.idempotency_key,
-          },
-        );
+        // Compatibilidad con una base anterior al cutover. La migración
+        // 20260824025115 elimina esta firma del esquema local actual, por eso
+        // no forma parte de los tipos generados; el branch sigue cercado por
+        // los flags autoritativos para instalaciones aún en drain legacy.
+        const supabaseLegacy = context.supabase as unknown as {
+          rpc(
+            nombre: "convertir_presupuesto_en_venta",
+            args: {
+              p_presupuesto_id: string;
+              p_cliente_id: string;
+              p_tipo_comprobante: "FACTURA_A" | "FACTURA_B";
+              p_condicion_venta: "CONTADO" | "CTA_CTE";
+              p_pagos: unknown;
+              p_idempotency_key: string;
+            },
+          ): Promise<{ data: unknown; error: { message: string } | null }>;
+        };
+        const { data: result, error } = await supabaseLegacy.rpc("convertir_presupuesto_en_venta", {
+          p_presupuesto_id: input.presupuesto_id,
+          p_cliente_id: input.cliente_id,
+          p_tipo_comprobante: input.tipo_comprobante,
+          p_condicion_venta: input.condicion_venta,
+          p_pagos: input.pagos,
+          p_idempotency_key: input.idempotency_key,
+        });
         if (error) throw new Error(error.message);
         return normalizarConversion(result);
       },
@@ -343,6 +357,12 @@ export const anularVenta = createServerFn({ method: "POST" })
 
     if (error) throw new Error(error.message);
 
-    const row: any = Array.isArray(r) ? r[0] : r;
-    return { ok: true, nc_id: row.nc_id as string, nc_numero: row.nc_numero as string };
+    const row = (Array.isArray(r) ? r[0] : r) as {
+      nc_id?: unknown;
+      nc_numero?: unknown;
+    };
+    if (typeof row?.nc_id !== "string" || typeof row.nc_numero !== "string") {
+      throw new Error("El servidor no devolvió la nota de crédito anuladora.");
+    }
+    return { ok: true, nc_id: row.nc_id, nc_numero: row.nc_numero };
   });

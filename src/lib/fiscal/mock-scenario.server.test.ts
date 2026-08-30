@@ -6,6 +6,7 @@ import {
   validarEntornoServidorE2E,
 } from "../../../e2e/verificar-servidor";
 import { normalizarEntornoSupabaseLocalE2E } from "../../../e2e/entorno-supabase-local";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 
 const entornoOriginal = {
   NODE_ENV: process.env.NODE_ENV,
@@ -32,7 +33,13 @@ afterEach(() => {
 });
 
 describe("escenarios fiscales exclusivos del servidor de pruebas", () => {
-  it.each(["OK", "RECHAZO_DEFINITIVO", "TIMEOUT_POST_REQUEST", "QR_ERROR"] as const)(
+  it.each([
+    "OK",
+    "CAIDA_PRE_REQUEST",
+    "RECHAZO_DEFINITIVO",
+    "TIMEOUT_POST_REQUEST",
+    "QR_ERROR",
+  ] as const)(
     "acepta únicamente el escenario %s cuando test y mock están activos",
     async (scenario) => {
       const { resolverEscenarioMockFiscal } = await import("./mock-scenario.server");
@@ -115,6 +122,7 @@ describe("escenarios fiscales exclusivos del servidor de pruebas", () => {
 
   it.each([
     ["OK", "APROBADA"],
+    ["CAIDA_PRE_REQUEST", "PREFLIGHT_CAIDO"],
     ["RECHAZO_DEFINITIVO", "RECHAZO"],
     ["TIMEOUT_POST_REQUEST", "TIMEOUT"],
     ["QR_ERROR", "APROBADA"],
@@ -125,21 +133,59 @@ describe("escenarios fiscales exclusivos del servidor de pruebas", () => {
     vi.resetModules();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const arca = await import("./arca");
-    const accion = arca.solicitarCaeConPayload(
-      { cuit: "30714199664", arca_key_enc: null, arca_cert_enc: null },
-      { numero: 5, modo: "HOMOLOGACION" },
-      { CbteTipo: 6 },
-      1,
-      null,
-    );
+    const emisor = { cuit: "30714199664", arca_key_enc: null, arca_cert_enc: null };
+    const puntoVenta = { numero: 5, modo: "HOMOLOGACION" } as const;
+    const accion =
+      esperado === "PREFLIGHT_CAIDO"
+        ? arca.ultimoAutorizado(emisor, puntoVenta, 6, null)
+        : arca.solicitarCaeConPayload(emisor, puntoVenta, { CbteTipo: 6 }, 1, null);
 
     if (esperado === "APROBADA") {
       await expect(accion).resolves.toMatchObject({ cae: expect.stringMatching(/^\d{14}$/) });
     } else if (esperado === "RECHAZO") {
       await expect(accion).rejects.toBeInstanceOf(arca.ArcaRechazoDefinitivo);
+    } else if (esperado === "TIMEOUT") {
+      await expect(accion).rejects.toMatchObject({ name: "AfipTimeout" });
     } else {
       await expect(accion).rejects.toMatchObject({ name: "AfipTimeout" });
     }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("recupera localmente el comprobante que TIMEOUT_POST_REQUEST dejó incierto", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.VITEST = "true";
+    process.env.INVOICING_MOCK_MODE = "true";
+    process.env.INVOICING_MOCK_SCENARIO = "TIMEOUT_POST_REQUEST";
+    vi.resetModules();
+    const snapshot = crearSnapshotFiscalV3Fixture({ letra: "B", numero: 42, simulado: true });
+    const maybeSingle = vi.fn(async () => ({ data: { afip_snapshot: snapshot }, error: null }));
+    const eq = vi.fn().mockReturnThis();
+    const select = vi.fn(() => ({ eq, maybeSingle }));
+    const from = vi.fn(() => ({ select }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { consultarComprobanteCompleto } = await import("./arca");
+
+    await expect(
+      consultarComprobanteCompleto(
+        { cuit: snapshot.emisor.cuit, arca_key_enc: null, arca_cert_enc: null },
+        { numero: snapshot.identidad.puntoVenta, modo: snapshot.identidad.modo },
+        snapshot.identidad.cbteTipo,
+        snapshot.identidad.numero,
+        { from },
+      ),
+    ).resolves.toMatchObject({
+      puntoVenta: snapshot.identidad.puntoVenta,
+      cbteTipo: snapshot.identidad.cbteTipo,
+      numero: snapshot.identidad.numero,
+      cae: expect.stringMatching(/^\d{14}$/),
+      periodoAsoc: snapshot.periodoAsoc,
+      asociados: [],
+      total: snapshot.importeTotal,
+      docNro: snapshot.receptor.docNroArca,
+    });
+    expect(from).toHaveBeenCalledWith("ventas");
+    expect(maybeSingle).toHaveBeenCalledOnce();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

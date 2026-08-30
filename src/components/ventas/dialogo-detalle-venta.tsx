@@ -24,6 +24,7 @@ import { fmtDocumento } from "@/lib/documento";
 import {
   datosFiscalesComprobante,
   evidenciaAutorizacionNotaCreditoPeriodo,
+  fuentesAuditoriaNotaCreditoPeriodo,
 } from "@/lib/fiscal.functions";
 import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import {
@@ -378,11 +379,13 @@ export function DialogoDetalleVenta({
   const detalle = detalleQuery.data;
   const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
   const evidenciaAutorizacionFn = useServerFn(evidenciaAutorizacionNotaCreditoPeriodo);
+  const fuentesAuditoriaFn = useServerFn(fuentesAuditoriaNotaCreditoPeriodo);
   const auditoriaNcPeriodoQuery = useQuery({
     queryKey: ["venta-auditoria-nc-periodo", venta?.id],
     enabled: Boolean(venta && esNcPeriodo),
     queryFn: async () => {
       if (!venta) throw new Error("No hay una nota seleccionada para auditar.");
+      const fuentes = await fuentesAuditoriaFn({ data: { venta_id: venta.id } });
       return cargarAuditoriaNotaCreditoPeriodo({
         venta: {
           id: venta.id,
@@ -412,53 +415,22 @@ export function DialogoDetalleVenta({
           modalidad: venta.nc_periodo_modalidad,
           motivo: venta.motivo_nota_credito,
         },
-        async cargarOperador() {
-          const respuesta = await supabase
-            .from("profiles")
-            .select("nombre_completo,username")
-            .eq("id", venta.usuario_id)
-            .maybeSingle();
-          return respuesta as unknown as {
-            data: OperadorAuditoriaRow | null;
-            error: ErrorLecturaSegura;
-          };
-        },
-        async cargarReintegros() {
-          const respuesta = await supabase
-            .from("nota_credito_periodo_reintegros" as never)
-            .select("id,forma_pago,monto,orden" as never)
-            .eq("venta_id" as never, venta.id)
-            .order("orden" as never, { ascending: true });
-          return respuesta as unknown as {
-            data: ReintegroAuditoriaRow[] | null;
-            error: ErrorLecturaSegura;
-          };
-        },
-        async cargarStock() {
-          const respuesta = await supabase
-            .from("stock_movimientos")
-            .select(
-              "id,producto_id,cantidad,cantidad_anterior,cantidad_nueva,created_at,producto:productos(codigo,nombre)",
-            )
-            .eq("referencia_id", venta.id)
-            .eq("tipo", "DEVOLUCION")
-            .order("created_at", { ascending: true });
-          return respuesta as unknown as {
-            data: StockAuditoriaRow[] | null;
-            error: ErrorLecturaSegura;
-          };
-        },
-        async cargarCuentaCorriente() {
-          const respuesta = await supabase
-            .from("cuenta_corriente_movimientos")
-            .select("id,tipo,estado,monto,descripcion,created_at")
-            .eq("venta_id", venta.id)
-            .order("created_at", { ascending: true });
-          return respuesta as unknown as {
-            data: CuentaAuditoriaRow[] | null;
-            error: ErrorLecturaSegura;
-          };
-        },
+        cargarOperador: async () => ({
+          data: fuentes.operador as OperadorAuditoriaRow,
+          error: null,
+        }),
+        cargarReintegros: async () => ({
+          data: fuentes.reintegros as ReintegroAuditoriaRow[],
+          error: null,
+        }),
+        cargarStock: async () => ({
+          data: fuentes.stock as unknown as StockAuditoriaRow[],
+          error: null,
+        }),
+        cargarCuentaCorriente: async () => ({
+          data: fuentes.cuentaCorriente as CuentaAuditoriaRow[],
+          error: null,
+        }),
         async cargarEvidenciaAutorizacion() {
           return evidenciaAutorizacionFn({ data: { venta_id: venta.id } });
         },

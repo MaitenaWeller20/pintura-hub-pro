@@ -21,6 +21,7 @@ import { normalizarEntornoSupabaseLocalE2E } from "./e2e/entorno-supabase-local"
 const PUERTO = Number(process.env.E2E_PUERTO ?? 8080);
 const ESCENARIOS_FISCALES = new Set([
   "OK",
+  "CAIDA_PRE_REQUEST",
   "RECHAZO_DEFINITIVO",
   "TIMEOUT_POST_REQUEST",
   "QR_ERROR",

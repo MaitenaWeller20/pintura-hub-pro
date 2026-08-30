@@ -32,6 +32,15 @@ const PASSWORD_EMPLEADO = "t13-empleado-1234";
 const CLIENTE_COMPRADOR_ID = "e2130000-0000-4000-8000-000000000001";
 const CLIENTE_OTRO_ID = "e2130000-0000-4000-8000-000000000002";
 const CLIENTE_COLA_ID = "e2130000-0000-4000-8000-000000000015";
+const CLIENTE_PERIODO_ID = "e2130000-0000-4000-8000-000000000016";
+const CLIENTE_AJUSTE_ID = "e2130000-0000-4000-8000-000000000017";
+const CLIENTE_IDS = [
+  CLIENTE_COMPRADOR_ID,
+  CLIENTE_OTRO_ID,
+  CLIENTE_COLA_ID,
+  CLIENTE_PERIODO_ID,
+  CLIENTE_AJUSTE_ID,
+];
 const DOCUMENTO_COLA = "20-34567890-6";
 const DOCUMENTO_COLA_DIGITOS = "20345678906";
 const PRODUCTO_ID = "e2130000-0000-4000-8000-000000000003";
@@ -56,7 +65,9 @@ const uuidVenta = (indice: number) => `e2131000-0000-4000-8000-${String(indice).
 
 type SettingsRow = Pick<
   Database["public"]["Tables"]["settings"]["Row"],
-  "facturacion_receptor_v2_enabled" | "facturacion_legacy_writer_enabled"
+  | "facturacion_receptor_v2_enabled"
+  | "facturacion_legacy_writer_enabled"
+  | "nota_credito_periodo_enabled"
 >;
 type EmisorGuardado = Pick<
   Database["public"]["Tables"]["emisores"]["Row"],
@@ -95,6 +106,8 @@ export type FixtureFiscal = {
   fechaFiscal: string;
   fechaFiscalVisible: string;
   clienteCompradorId: string;
+  clientePeriodoId: string;
+  clienteAjusteId: string;
   documentoCola: string;
   productoId: string;
   presupuestoId: string;
@@ -307,6 +320,20 @@ async function cambiarCapacidadFiscal(userId: string, value: boolean) {
   );
 }
 
+async function cambiarCapacidadNcPeriodo(userId: string, value: boolean) {
+  errorDe(
+    (
+      await (
+        await adminConJwt()
+      ).rpc("administrar_puede_emitir_nc_periodo", {
+        p_profile_id: userId,
+        p_habilitado: value,
+      })
+    ).error,
+    "No se pudo preparar/restaurar la capacidad de NC por período E2E",
+  );
+}
+
 async function eliminarUsuarioEfimeroPorEmail(email: string) {
   const existente = await usuarioPorEmail(email);
   if (!existente) return;
@@ -506,10 +533,7 @@ async function auditarAusenciaFixtureFiscal(): Promise<void> {
         "productos E2E",
       ),
       contar(
-        sb
-          .from("clientes")
-          .select("id", { count: "exact", head: true })
-          .in("id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID, CLIENTE_COLA_ID]),
+        sb.from("clientes").select("id", { count: "exact", head: true }).in("id", CLIENTE_IDS),
         "clientes E2E",
       ),
       contar(
@@ -559,6 +583,15 @@ async function ventasDelProducto(): Promise<string[]> {
   return [...new Set((data ?? []).map((row) => row.venta_id))];
 }
 
+async function ventasDeClientesPeriodo(): Promise<string[]> {
+  const { data, error } = await admin()
+    .from("ventas")
+    .select("id")
+    .in("cliente_id", [CLIENTE_PERIODO_ID, CLIENTE_AJUSTE_ID]);
+  errorDe(error, "No se pudieron ubicar las NC por período E2E");
+  return (data ?? []).map((row) => row.id);
+}
+
 async function limpiarDatos() {
   const sb = admin();
   const errores: string[] = [];
@@ -568,7 +601,13 @@ async function limpiarDatos() {
     VENTA_NC_MANUAL_ORIGINAL_ID,
     ...Array.from({ length: 40 }, (_, index) => uuidVenta(index + 1)),
   ];
-  const ventaIds = [...new Set([...deterministicas, ...(await ventasDelProducto())])];
+  const ventaIds = [
+    ...new Set([
+      ...deterministicas,
+      ...(await ventasDelProducto()),
+      ...(await ventasDeClientesPeriodo()),
+    ]),
+  ];
 
   await intentarLimpieza(
     () =>
@@ -582,46 +621,34 @@ async function limpiarDatos() {
     errores,
   );
   if (ventaIds.length) {
-    await intentarLimpieza(
-      () =>
-        exigirOperacion(
-          sb.from("cuenta_corriente_movimientos").delete().in("venta_id", ventaIds),
-          "No se pudo limpiar la deuda E2E",
-        ),
-      errores,
-    );
-    await intentarLimpieza(
-      () =>
-        exigirOperacion(
-          sb.from("stock_movimientos").delete().in("referencia_id", ventaIds),
-          "No se pudieron limpiar los movimientos de stock por venta E2E",
-        ),
-      errores,
-    );
-    await intentarLimpieza(
-      () =>
-        exigirOperacion(
-          sb.from("venta_pagos").delete().in("venta_id", ventaIds),
-          "No se pudieron limpiar los pagos E2E",
-        ),
-      errores,
-    );
-    await intentarLimpieza(
-      () =>
-        exigirOperacion(
-          sb.from("venta_items").delete().in("venta_id", ventaIds),
-          "No se pudieron limpiar los ítems de venta E2E",
-        ),
-      errores,
-    );
-    await intentarLimpieza(
-      () =>
-        exigirOperacion(
-          sb.from("ventas").delete().in("id", ventaIds),
-          "No se pudieron limpiar las ventas E2E",
-        ),
-      errores,
-    );
+    await intentarLimpieza(async () => {
+      // El guard post-CAE bloquea correctamente a service_role. El fixture ya
+      // validó que está conectado al PostgreSQL local exacto; el owner se usa
+      // sólo para retirar sus propias filas determinísticas al cerrar la suite.
+      const sql = conexionPostgresLocal();
+      await sql.begin(async (transaccion) => {
+        await transaccion`
+          DELETE FROM public.cuenta_corriente_movimientos
+           WHERE venta_id=ANY(${ventaIds}::uuid[])
+        `;
+        await transaccion`
+          DELETE FROM public.stock_movimientos
+           WHERE referencia_id=ANY(${ventaIds}::uuid[])
+        `;
+        await transaccion`
+          DELETE FROM public.venta_pagos
+           WHERE venta_id=ANY(${ventaIds}::uuid[])
+        `;
+        await transaccion`
+          DELETE FROM public.venta_items
+           WHERE venta_id=ANY(${ventaIds}::uuid[])
+        `;
+        await transaccion`
+          DELETE FROM public.ventas
+           WHERE id=ANY(${ventaIds}::uuid[])
+        `;
+      });
+    }, errores);
     await intentarLimpieza(async () => {
       const { count, error } = await sb
         .from("emision_fiscal_intentos")
@@ -648,10 +675,7 @@ async function limpiarDatos() {
       "los receptores del cliente E2E",
       () =>
         exigirOperacion(
-          sb
-            .from("receptores_fiscales")
-            .delete()
-            .in("cliente_comercial_id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID, CLIENTE_COLA_ID]),
+          sb.from("receptores_fiscales").delete().in("cliente_comercial_id", CLIENTE_IDS),
           "No se pudieron limpiar los receptores del cliente E2E",
         ),
     ],
@@ -699,10 +723,7 @@ async function limpiarDatos() {
       "los clientes E2E",
       () =>
         exigirOperacion(
-          sb
-            .from("clientes")
-            .delete()
-            .in("id", [CLIENTE_COMPRADOR_ID, CLIENTE_OTRO_ID, CLIENTE_COLA_ID]),
+          sb.from("clientes").delete().in("id", CLIENTE_IDS),
           "No se pudieron limpiar los clientes E2E",
         ),
     ],
@@ -815,7 +836,9 @@ async function restaurarConfiguracion() {
     const [settingsActual, emisorActual, puntoVentaActual] = await Promise.all([
       sb
         .from("settings")
-        .select("facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
+        .select(
+          "facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled,nota_credito_periodo_enabled",
+        )
         .eq("id", true)
         .single(),
       sb
@@ -872,7 +895,9 @@ async function guardarYPrepararConfiguracion() {
     await Promise.all([
       sb
         .from("settings")
-        .select("facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
+        .select(
+          "facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled,nota_credito_periodo_enabled",
+        )
         .eq("id", true)
         .single(),
       sb
@@ -939,12 +964,17 @@ async function guardarYPrepararConfiguracion() {
     (
       await sb
         .from("settings")
-        .update({ facturacion_receptor_v2_enabled: true, facturacion_legacy_writer_enabled: false })
+        .update({
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: true,
+        })
         .eq("id", true)
     ).error,
     "No se pudieron activar los flags E2E",
   );
   await cambiarCapacidadFiscal(empleado.id, true);
+  await cambiarCapacidadNcPeriodo(empleado.id, true);
   errorDe(
     (
       await sb
@@ -978,6 +1008,8 @@ async function guardarYPrepararConfiguracion() {
           arca_key_enc: credencial.arca_key_enc ?? "T13_TEST_ONLY_NO_NETWORK",
           arca_cert_enc: credencial.arca_cert_enc ?? "T13_TEST_ONLY_NO_NETWORK",
           habilitada: true,
+          padron_validacion_activa: true,
+          padron_probado_at: "2026-08-29T12:00:00.000Z",
         })
         .eq("id", credencial.id)
     : await sb.from("credenciales_arca").insert({
@@ -987,6 +1019,8 @@ async function guardarYPrepararConfiguracion() {
         arca_key_enc: "T13_TEST_ONLY_NO_NETWORK",
         arca_cert_enc: "T13_TEST_ONLY_NO_NETWORK",
         habilitada: true,
+        padron_validacion_activa: true,
+        padron_probado_at: "2026-08-29T12:00:00.000Z",
       });
   errorDe(credencialPreparada.error, "No se pudo preparar la credencial mock local");
 
@@ -1020,6 +1054,18 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
     const fechas = construirFechasFixtureArgentina();
     const hoy = fechas.hoy;
 
+    // El writer fiscal corre la transición privilegiada sin JWT y, por diseño,
+    // no puede autoabrir una caja atribuyéndosela a un usuario. El recorrido de
+    // reintegro necesita una sesión real previa, igual que la operación diaria.
+    await conexionPostgresLocal()`
+      INSERT INTO public.caja_sesiones(sucursal_id,estado,abierta_por,fondo_inicial)
+      SELECT ${principal.id}::uuid,'ABIERTA',${adminUser.id}::uuid,0
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.caja_sesiones
+          WHERE sucursal_id=${principal.id}::uuid AND estado='ABIERTA'
+       )
+    `;
+
     errorDe(
       (
         await sb.from("clientes").insert([
@@ -1029,18 +1075,37 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
             tipo: "CONSUMIDOR_FINAL",
             cuit_dni: null,
             direccion: "Domicilio comprador",
+            condicion_cta_cte: false,
           },
           {
             id: CLIENTE_OTRO_ID,
             razon_social: `${PREFIJO_FISCAL_E2E} OTRO COMPRADOR`,
             tipo: "CONSUMIDOR_FINAL",
             cuit_dni: null,
+            condicion_cta_cte: false,
           },
           {
             id: CLIENTE_COLA_ID,
             razon_social: `${PREFIJO_FISCAL_E2E} COMPRADOR PAGINACIÓN`,
             tipo: "CONSUMIDOR_FINAL",
             cuit_dni: DOCUMENTO_COLA_DIGITOS,
+            condicion_cta_cte: false,
+          },
+          {
+            id: CLIENTE_PERIODO_ID,
+            razon_social: `${PREFIJO_FISCAL_E2E} CLIENTE PERIODO RI`,
+            tipo: "RESPONSABLE_INSCRIPTO",
+            cuit_dni: "30714199664",
+            direccion: "Domicilio cliente período",
+            condicion_cta_cte: true,
+          },
+          {
+            id: CLIENTE_AJUSTE_ID,
+            razon_social: `${PREFIJO_FISCAL_E2E} CLIENTE AJUSTE`,
+            tipo: "CONSUMIDOR_FINAL",
+            cuit_dni: null,
+            direccion: "Domicilio cliente ajuste",
+            condicion_cta_cte: true,
           },
         ])
       ).error,
@@ -1298,7 +1363,88 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
         ENABLE TRIGGER trg_ventas_fiscales_legacy_retirado
       `;
     });
-    const hashReconciliar = "b".repeat(64);
+    const itemReconciliarId = "e2130000-0000-4000-8000-000000000018";
+    const snapshotReconciliar = crearSnapshotFiscalV2({
+      venta: {
+        id: uuidVenta(30),
+        numeroComercial: "V-T13-E2E-RECONCILIAR",
+        tipoComprobante: "VENTA",
+        condicionVenta: "CONTADO",
+        fechaComercial: fechas.instante("13:30"),
+      },
+      items: [
+        {
+          id: itemReconciliarId,
+          productoId: null,
+          codigo: "T13-RECONCILIAR",
+          descripcion: "Producto congelado en incertidumbre E2E",
+          cantidad: "1.00",
+          precioUnitarioSinIva: "100.00",
+          descuentoPorcentaje: "0.00",
+          ivaPorcentaje: "21.00",
+          subtotalNeto: "100.00",
+          importeIva: "21.00",
+          subtotalTotal: "121.00",
+        },
+      ],
+      emisor: {
+        id: emisor.id,
+        razonSocial: emisor.razon_social,
+        nombreFantasia: emisor.nombre_fantasia,
+        cuit: emisor.cuit!,
+        domicilioFiscal: emisor.domicilio_fiscal!,
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+        ingresosBrutos: emisor.ingresos_brutos,
+        inicioActividades: emisor.inicio_actividades!,
+        telefono: principal.telefono,
+      },
+      sucursal: {
+        id: principal.id,
+        nombre: principal.nombre,
+        direccion: principal.direccion || "Domicilio sucursal local",
+        telefono: principal.telefono,
+      },
+      receptor: {
+        razonSocial: `${PREFIJO_FISCAL_E2E} RECEPTOR EN CONCILIACIÓN`,
+        domicilio: null,
+        tipoDocumento: "SIN_IDENTIFICAR",
+        numeroDocumento: null,
+        docTipoArca: 99,
+        docNroArca: "0",
+        condicionIva: "CONSUMIDOR_FINAL",
+        origen: "CLIENTE_COMERCIAL",
+        origenId: CLIENTE_COMPRADOR_ID,
+        verificadoArcaAt: null,
+        condicionIvaReceptorId: 5,
+      },
+      identidad: {
+        numero: 913000,
+        emisorCuit: emisor.cuit!,
+        puntoVenta: pv.numero,
+        cbteTipo: 6,
+        modo: "HOMOLOGACION",
+        simulado: true,
+        validez: "SIMULADA",
+      },
+      letra: "B",
+      concepto: 1,
+      fechaComprobante: hoy,
+      importeNeto: "100.00",
+      importeExento: "0.00",
+      importeNoGravado: "0.00",
+      importeIva: "21.00",
+      importeTributos: "0.00",
+      importeTotal: "121.00",
+      alicuotasIva: [{ id: 5, baseImponible: "100.00", importe: "21.00" }],
+      tributos: [],
+      moneda: "PES",
+      cotizacion: "1.000000",
+      ivaContenido: "21.00",
+      otrosImpuestosNacionalesIndirectos: "0.00",
+      origen: "VENTA",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+    });
     errorDe(
       (
         await sb.from("ventas").insert({
@@ -1325,23 +1471,31 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
           afip_validez: "SIMULADA",
           afip_fecha_comprobante: hoy,
           afip_imp_total: 121,
-          afip_snapshot_hash: hashReconciliar,
-          afip_snapshot: {
-            version: 2,
-            hash: hashReconciliar,
-            fechaComprobante: hoy,
-            identidad: {
-              numero: 913000,
-              emisorCuit: emisor.cuit,
-              puntoVenta: pv.numero,
-              cbteTipo: 6,
-              modo: "HOMOLOGACION",
-              simulado: true,
-            },
-          },
+          afip_snapshot_hash: snapshotReconciliar.hash,
+          afip_snapshot: snapshotReconciliar as unknown as Json,
         })
       ).error,
       "No se pudo crear la incertidumbre fiscal E2E",
+    );
+    errorDe(
+      (
+        await sb.from("venta_items").insert({
+          id: itemReconciliarId,
+          venta_id: uuidVenta(30),
+          producto_id: null,
+          codigo: "T13-RECONCILIAR",
+          descripcion: "Producto congelado en incertidumbre E2E",
+          cantidad: 1,
+          precio_unitario_sin_iva: 100,
+          precio_lista_sin_iva: 100,
+          descuento_porcentaje: 0,
+          iva_porcentaje: 21,
+          subtotal_sin_iva: 100,
+          iva_monto: 21,
+          subtotal_con_iva: 121,
+        })
+      ).error,
+      "No se pudo crear el ítem de la incertidumbre fiscal E2E",
     );
 
     const snapshot = crearSnapshotFiscalV2({
@@ -1461,26 +1615,16 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       ).error,
       "No se pudo crear el comprobante aprobado E2E",
     );
-    errorDe(
-      (
-        await sb.from("venta_items").insert({
-          id: ITEM_APROBADO_ID,
-          venta_id: VENTA_APROBADA_ID,
-          producto_id: null,
-          codigo: "T13-PDF",
-          descripcion: "Producto congelado al emitir",
-          cantidad: 1,
-          precio_unitario_sin_iva: 100,
-          precio_lista_sin_iva: 100,
-          descuento_porcentaje: 0,
-          iva_porcentaje: 21,
-          subtotal_sin_iva: 100,
-          iva_monto: 21,
-          subtotal_con_iva: 121,
-        })
-      ).error,
-      "No se pudo crear el ítem aprobado E2E",
-    );
+    await sqlLocal`
+      INSERT INTO public.venta_items(
+        id,venta_id,producto_id,codigo,descripcion,cantidad,
+        precio_unitario_sin_iva,precio_lista_sin_iva,descuento_porcentaje,
+        iva_porcentaje,subtotal_sin_iva,iva_monto,subtotal_con_iva
+      ) VALUES (
+        ${ITEM_APROBADO_ID}::uuid,${VENTA_APROBADA_ID}::uuid,NULL,'T13-PDF',
+        'Producto congelado al emitir',1,100,100,0,21,100,21,121
+      )
+    `;
     errorDe(
       (
         await sb.from("ventas").insert({
@@ -1504,6 +1648,11 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       ).error,
       "No se pudo crear la NC pendiente E2E",
     );
+    await sqlLocal`
+      UPDATE public.ventas
+         SET estado='ANULADA', venta_anulada_por=${VENTA_NC_ID}::uuid
+       WHERE id=${VENTA_APROBADA_ID}::uuid
+    `;
     errorDe(
       (
         await sb.from("venta_items").insert({
@@ -1627,26 +1776,17 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       ).error,
       "No se pudo crear la VENTA original para NC manual E2E",
     );
-    errorDe(
-      (
-        await sb.from("venta_items").insert({
-          id: ITEM_NC_MANUAL_ORIGINAL_ID,
-          venta_id: VENTA_NC_MANUAL_ORIGINAL_ID,
-          producto_id: PRODUCTO_ID,
-          codigo: "T13-E2E-PROD",
-          descripcion: `${PREFIJO_FISCAL_E2E} Producto fiscal`,
-          cantidad: 1,
-          precio_unitario_sin_iva: 100,
-          precio_lista_sin_iva: 100,
-          descuento_porcentaje: 0,
-          iva_porcentaje: 21,
-          subtotal_sin_iva: 100,
-          iva_monto: 21,
-          subtotal_con_iva: 121,
-        })
-      ).error,
-      "No se pudo crear el ítem de la VENTA original para NC manual E2E",
-    );
+    await sqlLocal`
+      INSERT INTO public.venta_items(
+        id,venta_id,producto_id,codigo,descripcion,cantidad,
+        precio_unitario_sin_iva,precio_lista_sin_iva,descuento_porcentaje,
+        iva_porcentaje,subtotal_sin_iva,iva_monto,subtotal_con_iva
+      ) VALUES (
+        ${ITEM_NC_MANUAL_ORIGINAL_ID}::uuid,${VENTA_NC_MANUAL_ORIGINAL_ID}::uuid,
+        ${PRODUCTO_ID}::uuid,'T13-E2E-PROD',${`${PREFIJO_FISCAL_E2E} Producto fiscal`},
+        1,100,100,0,21,100,21,121
+      )
+    `;
     errorDe(
       (
         await sb.from("receptores_fiscales").insert({
@@ -1675,6 +1815,8 @@ export async function prepararFixturesFiscales(): Promise<FixtureFiscal> {
       fechaFiscal: fechas.hoy,
       fechaFiscalVisible: fechas.visible,
       clienteCompradorId: CLIENTE_COMPRADOR_ID,
+      clientePeriodoId: CLIENTE_PERIODO_ID,
+      clienteAjusteId: CLIENTE_AJUSTE_ID,
       documentoCola: DOCUMENTO_COLA,
       productoId: PRODUCTO_ID,
       presupuestoId: PRESUPUESTO_ID,
@@ -1861,6 +2003,122 @@ export async function configurarFlagsFacturacionFixture(input: {
       .eq("id", true),
     "No se pudieron alternar los flags fiscales de la fixture",
   );
+}
+
+export async function configurarFlagNcPeriodoFixture(habilitado: boolean): Promise<void> {
+  await exigirOperacion(
+    admin().from("settings").update({ nota_credito_periodo_enabled: habilitado }).eq("id", true),
+    "No se pudo alternar el flag de NC por período de la fixture",
+  );
+}
+
+export async function intentarNcPeriodoSinPermisoFixture(fixture: FixtureFiscal): Promise<{
+  code: string | null;
+  message: string;
+}> {
+  const { url, anonKey } = cargarVariablesLocales();
+  const autenticado = createClient<Database>(url, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    realtime: { transport: WebSocket },
+  });
+  try {
+    errorDe(
+      (
+        await autenticado.auth.signInWithPassword({
+          email: fixture.usuarioSinCapacidad.email,
+          password: fixture.usuarioSinCapacidad.password,
+        })
+      ).error,
+      "No se pudo autenticar el usuario sin permiso E2E",
+    );
+    const { error } = await autenticado.rpc("crear_nota_credito_periodo_fiscal", {
+      p_sucursal_id: fixture.sucursalPrincipalId,
+      p_cliente_id: fixture.clienteAjusteId,
+      p_modalidad: "BONIFICACION_AJUSTE",
+      p_periodo_desde: fixture.fechaFiscal,
+      p_periodo_hasta: fixture.fechaFiscal,
+      p_motivo: "Intento directo sin permiso E2E",
+      p_resolucion: "SALDO_FAVOR",
+      p_items: [
+        {
+          producto_id: null,
+          descripcion: "Ajuste rechazado",
+          cantidad: 1,
+          precio_unitario_sin_iva: 10,
+          iva_porcentaje: 21,
+        },
+      ],
+      p_reintegros: [],
+      p_idempotency_key: "e2135000-0000-4000-8000-000000000001",
+    });
+    if (!error) throw new Error("La RPC permitió crear una NC por período sin capacidad.");
+    return { code: error.code ?? null, message: error.message };
+  } finally {
+    await autenticado.auth.signOut();
+  }
+}
+
+export async function leerNotaCreditoPeriodoFixture(ventaId: string) {
+  const sb = admin();
+  const [venta, items, reintegros, pagos, stock, deuda, intentos] = await Promise.all([
+    sb
+      .from("ventas")
+      .select(
+        "id,cliente_id,afip_estado,afip_fase,afip_error_clase,afip_error_codigo,afip_error_fase,cae,afip_numero,afip_snapshot,nc_periodo_modalidad,nc_resolucion,nc_efectos_aplicados_at,total",
+      )
+      .eq("id", ventaId)
+      .single(),
+    sb
+      .from("venta_items")
+      .select("producto_id,descripcion,cantidad,subtotal_con_iva")
+      .eq("venta_id", ventaId)
+      .order("created_at"),
+    sb
+      .from("nota_credito_periodo_reintegros")
+      .select("forma_pago,monto,orden")
+      .eq("venta_id", ventaId)
+      .order("orden"),
+    sb.from("venta_pagos").select("forma_pago,monto").eq("venta_id", ventaId).order("forma_pago"),
+    sb.from("stock_movimientos").select("producto_id,tipo,cantidad").eq("referencia_id", ventaId),
+    sb.from("cuenta_corriente_movimientos").select("cliente_id,tipo,monto").eq("venta_id", ventaId),
+    sb
+      .from("emision_fiscal_intentos")
+      .select("fase,resultado,numero_reservado,payload_hash,respuesta_resumen")
+      .eq("venta_id", ventaId)
+      .order("created_at"),
+  ]);
+  for (const [resultado, contexto] of [
+    [venta, "cabecera de NC por período"],
+    [items, "ítems de NC por período"],
+    [reintegros, "intención de reintegros de NC por período"],
+    [pagos, "pagos de NC por período"],
+    [stock, "stock de NC por período"],
+    [deuda, "cuenta corriente de NC por período"],
+    [intentos, "intentos fiscales de NC por período"],
+  ] as const) {
+    errorDe(resultado.error, `No se pudo leer ${contexto} E2E`);
+  }
+  return {
+    venta: venta.data,
+    items: items.data ?? [],
+    reintegros: reintegros.data ?? [],
+    pagos: pagos.data ?? [],
+    stock: stock.data ?? [],
+    deuda: deuda.data ?? [],
+    intentos: intentos.data ?? [],
+  };
+}
+
+export async function leerCabeceraFiscalFixture(ventaId: string) {
+  const { data, error } = await admin()
+    .from("ventas")
+    .select(
+      "id,afip_estado,afip_fase,afip_numero,afip_cbte_tipo,afip_snapshot,afip_cbte_asoc_id,periodo_asoc_desde,periodo_asoc_hasta,cae,afip_error_clase,afip_error_codigo,afip_error_fase",
+    )
+    .eq("id", ventaId)
+    .single();
+  errorDe(error, "No se pudo leer la cabecera fiscal E2E");
+  return data;
 }
 
 export async function leerHuellaComercialFixture(): Promise<Record<string, string>> {

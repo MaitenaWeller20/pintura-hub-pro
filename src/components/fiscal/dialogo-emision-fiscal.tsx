@@ -254,6 +254,7 @@ export function DialogoEmisionFiscal({
   const [confirmaPeriodo, setConfirmaPeriodo] = useState(false);
   const [previsualizando, setPrevisualizando] = useState(false);
   const [emitiendo, setEmitiendo] = useState(false);
+  const [requiereConciliacion, setRequiereConciliacion] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [erroresReceptor, setErroresReceptor] = useState<
     Partial<Record<CampoReceptorFiscal, string>>
@@ -316,6 +317,7 @@ export function DialogoEmisionFiscal({
     setPreview(null);
     setConfirmaVentaAntigua(false);
     setPrevisualizando(false);
+    setRequiereConciliacion(false);
     setError(null);
     setErroresReceptor({});
     invalidarSolicitudPreview(previewControlRef.current);
@@ -403,6 +405,7 @@ export function DialogoEmisionFiscal({
             ? onPrevisualizar({ receptor: selector, letraSolicitada })
             : Promise.reject(new Error("Falta la letra fiscal."))),
         esNota || typeof letraSolicitada !== "string" ? undefined : letraSolicitada,
+        esNcPeriodo ? { asociacionNota: "PERIODO" } : undefined,
       );
       if (!esSolicitudPreviewActual(previewControlRef.current, token)) return;
       setPreview(resultado);
@@ -458,41 +461,52 @@ export function DialogoEmisionFiscal({
               huellaConfirmacion: confirmacion.huellaConfirmacion,
             })
           : Promise.reject(new Error("Falta la letra fiscal.")));
-      despacharRespuestaConfirmacionFiscal(respuesta, {
-        onReconfirmacion(resultado) {
-          setPreview(
-            reconfirmarPreviewEmisionFiscal(
-              preview,
-              resultado,
-              esNota || typeof letraSolicitada !== "string" ? undefined : letraSolicitada,
-            ),
-          );
-          setConfirmacion((actual) =>
-            registrarReconfirmacion(actual, resultado.huella_confirmacion),
-          );
-          setConfirmaVentaAntigua(false);
-          setError(mensajeErrorFiscal(crearErrorFiscalUsuario("RECONFIRMACION"), "EMISION"));
+      despacharRespuestaConfirmacionFiscal(
+        respuesta,
+        {
+          onReconfirmacion(resultado) {
+            setPreview(
+              reconfirmarPreviewEmisionFiscal(
+                preview,
+                resultado,
+                esNota || typeof letraSolicitada !== "string" ? undefined : letraSolicitada,
+                esNcPeriodo ? { asociacionNota: "PERIODO" } : undefined,
+              ),
+            );
+            setConfirmacion((actual) =>
+              registrarReconfirmacion(actual, resultado.huella_confirmacion),
+            );
+            setConfirmaVentaAntigua(false);
+            setError(mensajeErrorFiscal(crearErrorFiscalUsuario("RECONFIRMACION"), "EMISION"));
+          },
+          onErrorCorregible(resultado) {
+            manejarErrorCorregibleDialogo(resultado, {
+              invalidarPreview: () => invalidarSolicitudPreview(previewControlRef.current),
+              limpiarPreview: () => setPreview(null),
+              limpiarHuella: () =>
+                setConfirmacion((actual) => ({
+                  ...actual,
+                  huellaConfirmacion: null,
+                  requiereSegundaConfirmacion: false,
+                })),
+              limpiarConfirmacionVentaAntigua: () => setConfirmaVentaAntigua(false),
+              mostrarError: setError,
+            });
+          },
+          onCompletada(resultado) {
+            if (resultado.estado === "RECONCILIAR") {
+              setRequiereConciliacion(true);
+              setError(resultado.mensaje);
+              onCompletada?.(resultado);
+              return;
+            }
+            onCompletada?.(resultado);
+            reiniciar();
+            onOpenChange(false);
+          },
         },
-        onErrorCorregible(resultado) {
-          manejarErrorCorregibleDialogo(resultado, {
-            invalidarPreview: () => invalidarSolicitudPreview(previewControlRef.current),
-            limpiarPreview: () => setPreview(null),
-            limpiarHuella: () =>
-              setConfirmacion((actual) => ({
-                ...actual,
-                huellaConfirmacion: null,
-                requiereSegundaConfirmacion: false,
-              })),
-            limpiarConfirmacionVentaAntigua: () => setConfirmaVentaAntigua(false),
-            mostrarError: setError,
-          });
-        },
-        onCompletada(resultado) {
-          onCompletada?.(resultado);
-          reiniciar();
-          onOpenChange(false);
-        },
-      });
+        esNcPeriodo ? { asociacionNota: "PERIODO" } : undefined,
+      );
     } catch (cause) {
       setError(mensajeErrorFiscal(cause, "EMISION"));
     } finally {
@@ -781,7 +795,11 @@ export function DialogoEmisionFiscal({
           ) : null}
 
           <div aria-live="polite" aria-atomic="true">
-            {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm font-medium text-destructive">
+                {error}
+              </p>
+            ) : null}
             {emitiendo ? (
               <p className="flex items-center gap-2 text-sm font-semibold text-primary">
                 <Loader2 className="h-4 w-4 animate-spin" /> Emitiendo en ARCA…
@@ -800,7 +818,7 @@ export function DialogoEmisionFiscal({
           >
             Cancelar
           </Button>
-          {preview ? (
+          {requiereConciliacion ? null : preview ? (
             <Button
               type="button"
               className="min-h-11 w-full sm:w-auto"

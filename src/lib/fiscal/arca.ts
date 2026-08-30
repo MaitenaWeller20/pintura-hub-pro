@@ -3,7 +3,11 @@ import { fmtFechaAfip, parseFechaAfip } from "./fecha";
 import { TIPOS_C, CONCEPTO_PRODUCTOS } from "./codigos";
 import { SupabaseTicketStorage } from "./ticket-storage";
 import type { AlicuotaAfip } from "./iva";
-import { validarSnapshotFiscalV3, type SnapshotFiscalPersistido } from "./snapshot";
+import {
+  validarSnapshotFiscalPersistido,
+  validarSnapshotFiscalV3,
+  type SnapshotFiscalPersistido,
+} from "./snapshot";
 import { proyectarSnapshotParaArca } from "./proyeccion-arca";
 import { crearErrorFiscalUsuario } from "./error-usuario";
 import {
@@ -84,6 +88,24 @@ function aplicarEscenarioSolicitudMock(): void {
       "El escenario de prueba simuló un timeout después de iniciar la solicitud fiscal.",
     );
   }
+}
+
+function crearCaeMock(
+  emisorCuit: string,
+  puntoVenta: number,
+  cbteTipo: number,
+  numero: number,
+): string {
+  const semilla = `${emisorCuit}${puntoVenta}${cbteTipo}${numero}`;
+  let hash = 0;
+  for (const caracter of semilla) hash = (hash * 31 + caracter.charCodeAt(0)) >>> 0;
+  return String(hash).padStart(14, "7").slice(0, 14);
+}
+
+function vencimientoMockDesdeFecha(fecha: string): Date {
+  const vencimiento = new Date(`${fecha}T00:00:00.000Z`);
+  vencimiento.setUTCDate(vencimiento.getUTCDate() + 10);
+  return vencimiento;
 }
 
 export class ArcaRechazoDefinitivo extends Error {
@@ -683,7 +705,14 @@ export async function ultimoAutorizado(
   cbteTipo: number,
   supabaseAdmin: unknown,
 ): Promise<number> {
-  if (MOCK) return 0;
+  if (MOCK) {
+    if (escenarioMockFiscalActual() === "CAIDA_PRE_REQUEST") {
+      throw new AfipTimeout(
+        "El escenario de prueba simuló una caída antes de iniciar la solicitud fiscal.",
+      );
+    }
+    return 0;
+  }
   const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
   const r = await conTimeoutArca(
     arca.electronicBillingService.getLastVoucher(pv.numero, cbteTipo),
@@ -730,7 +759,106 @@ export async function consultarComprobanteCompleto(
   numero: number,
   supabaseAdmin: unknown,
 ): Promise<ComprobanteArcaConsultado | null> {
-  if (MOCK) return null;
+  if (MOCK) {
+    if (escenarioMockFiscalActual() !== "TIMEOUT_POST_REQUEST") return null;
+    type ResultadoSnapshotMock = {
+      data: { afip_snapshot: unknown } | null;
+      error: unknown;
+    };
+    type ConsultaSnapshotMock = {
+      eq(campo: string, valor: unknown): ConsultaSnapshotMock;
+      maybeSingle(): Promise<ResultadoSnapshotMock>;
+    };
+    type ClienteSnapshotMock = {
+      from(tabla: string): { select(columnas: string): ConsultaSnapshotMock };
+    };
+    const cliente = supabaseAdmin as ClienteSnapshotMock;
+    if (!cliente || typeof cliente.from !== "function") {
+      throw new ArcaRespuestaIncierta("La recuperación mock no pudo consultar el snapshot fiscal.");
+    }
+    const consulta = cliente
+      .from("ventas")
+      .select("afip_snapshot")
+      .eq("afip_emisor_cuit", emisor.cuit.replace(/\D/g, ""))
+      .eq("afip_punto_venta", pv.numero)
+      .eq("afip_cbte_tipo", cbteTipo)
+      .eq("afip_numero", numero)
+      .eq("afip_modo", pv.modo)
+      .eq("afip_simulado", true);
+    const { data, error } = await consulta.maybeSingle();
+    if (error || !data) {
+      throw new ArcaRespuestaIncierta("La recuperación mock no encontró el snapshot fiscal.");
+    }
+    let snapshot: SnapshotFiscalPersistido;
+    try {
+      snapshot = validarSnapshotFiscalPersistido(data.afip_snapshot);
+    } catch {
+      throw new ArcaRespuestaIncierta("La recuperación mock encontró un snapshot fiscal inválido.");
+    }
+    if (
+      snapshot.identidad.emisorCuit !== emisor.cuit.replace(/\D/g, "") ||
+      snapshot.identidad.puntoVenta !== pv.numero ||
+      snapshot.identidad.cbteTipo !== cbteTipo ||
+      snapshot.identidad.numero !== numero ||
+      snapshot.identidad.modo !== pv.modo ||
+      !snapshot.identidad.simulado
+    ) {
+      throw new ArcaRespuestaIncierta(
+        "La recuperación mock encontró una identidad fiscal distinta.",
+      );
+    }
+    const proyeccion = proyectarSnapshotParaArca(snapshot);
+    return {
+      puntoVenta: snapshot.identidad.puntoVenta,
+      cbteTipo: snapshot.identidad.cbteTipo,
+      numero: snapshot.identidad.numero,
+      cae: crearCaeMock(
+        snapshot.emisor.cuit,
+        snapshot.identidad.puntoVenta,
+        snapshot.identidad.cbteTipo,
+        snapshot.identidad.numero,
+      ),
+      caeVencimiento: vencimientoMockDesdeFecha(snapshot.fechaComprobante)
+        .toISOString()
+        .slice(0, 10),
+      concepto: snapshot.concepto,
+      docTipo: snapshot.receptor.docTipoArca,
+      docNro: snapshot.receptor.docNroArca,
+      condicionIvaReceptorId: snapshot.receptor.condicionIvaReceptorId,
+      fecha: snapshot.fechaComprobante,
+      total: proyeccion.importeTotal,
+      neto: proyeccion.importeNeto,
+      exento: proyeccion.importeExento,
+      noGravado: proyeccion.importeNoGravado,
+      iva: proyeccion.importeIva,
+      tributosTotal: proyeccion.importeTributos,
+      moneda: snapshot.moneda,
+      cotizacion: snapshot.cotizacion,
+      periodoAsoc: snapshot.version === 3 ? { ...snapshot.periodoAsoc } : null,
+      alicuotas: proyeccion.alicuotasIva.map((row) => ({
+        id: row.id,
+        base: row.baseImponible,
+        importe: row.importe,
+      })),
+      tributos: proyeccion.tributos.map((row) => ({
+        id: row.id,
+        descripcion: row.descripcion,
+        base: row.baseImponible,
+        alicuota: row.alicuota,
+        importe: row.importe,
+      })),
+      asociados:
+        snapshot.version === 2
+          ? snapshot.cbtesAsoc.map((row) => ({
+              tipo: row.tipo,
+              puntoVenta: row.puntoVenta,
+              numero: row.numero,
+              cuit: row.cuit,
+              fecha: row.fecha,
+            }))
+          : [],
+    };
+  }
   const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
   let raw: unknown;
   try {
@@ -791,13 +919,11 @@ export async function solicitarCae(
     // CAE simulado, determinístico, de 14 dígitos. Permite operar y demostrar el
     // flujo completo mientras el trámite del certificado con AFIP está en curso.
     // NO tiene validez legal.
-    const semilla = `${emisor.cuit}${pv.numero}${d.cbteTipo}${d.numero}`;
-    let h = 0;
-    for (const c of semilla) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    const cae = String(h).padStart(14, "7").slice(0, 14);
-    const venc = new Date();
-    venc.setDate(venc.getDate() + 10);
-    return { cae, vencimiento: venc, modo: pv.modo };
+    return {
+      cae: crearCaeMock(emisor.cuit, pv.numero, d.cbteTipo, d.numero),
+      vencimiento: vencimientoMockDesdeFecha(d.fecha.toISOString().slice(0, 10)),
+      modo: pv.modo,
+    };
   }
 
   const arca = await crearClienteArca(emisor, pv.modo, supabaseAdmin);
@@ -887,13 +1013,15 @@ export async function solicitarCaeConPayload(
 ): Promise<RespuestaCae> {
   if (MOCK) {
     aplicarEscenarioSolicitudMock();
-    const semilla = `${emisor.cuit}${pv.numero}${String(payload.CbteTipo)}${numero}`;
-    let hash = 0;
-    for (const caracter of semilla) hash = (hash * 31 + caracter.charCodeAt(0)) >>> 0;
-    const cae = String(hash).padStart(14, "7").slice(0, 14);
-    const vencimiento = new Date();
-    vencimiento.setUTCDate(vencimiento.getUTCDate() + 10);
-    return { cae, vencimiento, modo: pv.modo };
+    const fechaCompacta = String(payload.CbteFch ?? "");
+    const fecha = /^\d{8}$/.test(fechaCompacta)
+      ? `${fechaCompacta.slice(0, 4)}-${fechaCompacta.slice(4, 6)}-${fechaCompacta.slice(6, 8)}`
+      : new Date().toISOString().slice(0, 10);
+    return {
+      cae: crearCaeMock(emisor.cuit, pv.numero, Number(payload.CbteTipo), numero),
+      vencimiento: vencimientoMockDesdeFecha(fecha),
+      modo: pv.modo,
+    };
   }
 
   const identidadDetalle = identidadDetalleDesdePayload(payload);

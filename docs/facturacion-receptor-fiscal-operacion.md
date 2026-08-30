@@ -1,6 +1,6 @@
 # Venta y facturación con receptor fiscal
 
-**Actualizado:** 2026-08-23
+**Actualizado:** 2026-08-29
 
 **Uso:** operación diaria de ventas y cola fiscal.
 
@@ -227,3 +227,74 @@ manuales y sólo las aplica el usuario autorizado; no habilitar v2 ni desplegar 
 
 El checklist controlado está en
 [Task 14: checklist de rollout](./facturacion-receptor-fiscal-rollout-checklist.md).
+
+## 10. Gate de notas de crédito fiscales asociadas por período
+
+La instalación de esta capacidad es compatible hacia adelante únicamente con
+`nota_credito_periodo_enabled=false`. Aplicar las migraciones no autoriza activar la función ni
+emitir en producción. Antes de una homologación manual deben pasar los smoke checks de una venta
+ordinaria v2 y de una NC vinculada a su factura original; esta última debe seguir emitiendo
+`CbtesAsoc`.
+
+La homologación requiere, para cada emisor y punto de venta aplicable:
+
+1. emitir una devolución de productos y una bonificación/ajuste por período;
+2. cubrir letras A y B cuando el emisor es Responsable Inscripto, y C solamente si existe un
+   emisor monotributista realmente configurado;
+3. consultar cada comprobante con `FECompConsultar` y comparar punto de venta, número, CAE,
+   vencimiento, receptor, neto, IVA, total y ambas fechas de `PeriodoAsoc` contra request, consulta,
+   detalle y PDF;
+4. simular un timeout posterior a `REQUEST_INICIADO`, comprobar que no existe reintento ciego y
+   recuperar el mismo CAE mediante `FECompConsultar`; caja, stock o cuenta corriente deben aplicarse
+   exactamente una vez;
+5. registrar la evidencia y obtener una aprobación de producción explícita y separada.
+
+`PeriodoAsoc` usa el mismo certificado WSFE y el mismo punto de venta que los demás comprobantes
+del emisor. No se crea un certificado distinto para este modo. Antes de cada ambiente se verifican
+titularidad, autorización WSFE, vencimiento, ambiente y punto de venta del certificado existente.
+Una credencial vencida o no autorizada bloquea el gate.
+
+### Monitoreo durante homologación y primer corte
+
+Estas consultas son para una consola PostgreSQL administrativa autorizada; no se ejecutan desde el
+navegador ni requieren abrir `SELECT` de `ventas` a `authenticated`:
+
+```sql
+SELECT afip_estado, afip_fase, count(*) AS cantidad
+  FROM public.ventas
+ WHERE nc_periodo_modalidad IS NOT NULL
+   AND afip_estado IN ('SIN_FACTURAR','EMITIENDO','RECONCILIAR','BLOQUEADO')
+ GROUP BY afip_estado, afip_fase
+ ORDER BY afip_estado, afip_fase;
+
+SELECT id, afip_estado, afip_fase, cae, nc_efectos_aplicados_at
+  FROM public.ventas
+ WHERE nc_periodo_modalidad IS NOT NULL
+   AND (
+     (afip_estado='APROBADO' AND nc_efectos_aplicados_at IS NULL)
+     OR (afip_estado<>'APROBADO' AND nc_efectos_aplicados_at IS NOT NULL)
+   )
+ ORDER BY fecha, id;
+```
+
+También se controlan intentos en conciliación/bloqueo, diferencias de identidad y cualquier
+duplicación de pagos, movimientos de stock o créditos de cuenta corriente. Una inconsistencia
+detiene el rollout.
+
+### Activación y rollback
+
+El siguiente comando queda documentado para una ventana aprobada. **NO EJECUTAR DURANTE LA
+IMPLEMENTACIÓN**:
+
+```sql
+UPDATE public.settings
+   SET nota_credito_periodo_enabled=true
+ WHERE id=true;
+```
+
+El rollback de esta capacidad consiste únicamente en volver
+`nota_credito_periodo_enabled=false`. Esto impide nuevas NC por período sin interrumpir la venta
+ordinaria ni la NC vinculada. Nunca borrar una NC aprobada, quitar un CAE, alterar sus efectos,
+renumerar, reemitir un caso incierto ni reescribir el historial. La primera activación productiva
+sólo ocurre después de homologación completa y aprobación humana separada; este documento no la
+autoriza.

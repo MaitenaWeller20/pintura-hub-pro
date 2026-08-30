@@ -32,7 +32,9 @@ import { decryptString, encryptString } from "./crypto";
 import { MOCK, ultimoAutorizado } from "./arca";
 import { autorizarAdministradorFiscal } from "./permiso.server";
 import { crearErrorFiscalUsuario, parsearEntradaFiscal } from "./error-usuario";
-import { consultarPadronArcaDesdeContexto } from "./padron-arca.server";
+
+type ConsultarPadronArcaDesdeContexto =
+  typeof import("./padron-arca.server").consultarPadronArcaDesdeContexto;
 
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -69,8 +71,8 @@ type DependenciasPruebaPadronAdministrativa = {
   exigirAdmin(supabase: SupabaseClient<Database>, userId: string): Promise<void>;
   crearClientePrivilegiado(): Promise<SupabaseClient<Database>>;
   consultarPadron(
-    input: Parameters<typeof consultarPadronArcaDesdeContexto>[0],
-  ): ReturnType<typeof consultarPadronArcaDesdeContexto>;
+    input: Parameters<ConsultarPadronArcaDesdeContexto>[0],
+  ): ReturnType<ConsultarPadronArcaDesdeContexto>;
 };
 
 const dependenciasPruebaPadronAdministrativa: DependenciasPruebaPadronAdministrativa = {
@@ -78,7 +80,10 @@ const dependenciasPruebaPadronAdministrativa: DependenciasPruebaPadronAdministra
   ahora: () => new Date(),
   exigirAdmin,
   crearClientePrivilegiado: admin,
-  consultarPadron: consultarPadronArcaDesdeContexto,
+  async consultarPadron(input) {
+    const { consultarPadronArcaDesdeContexto } = await import("./padron-arca.server");
+    return consultarPadronArcaDesdeContexto(input);
+  },
 };
 
 function errorConfiguracionPadron(): never {

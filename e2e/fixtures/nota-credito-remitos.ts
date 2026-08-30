@@ -58,6 +58,13 @@ export type RegistroFixtureE2E = {
   numero: string;
 };
 
+export type RegistroNotaCreditoInternaE2E = RegistroFixtureE2E & {
+  afipCbteAsocId: string | null;
+  periodoAsocDesde: string | null;
+  periodoAsocHasta: string | null;
+  modalidadPeriodo: string | null;
+};
+
 let postgresLocal: Sql | null = null;
 
 function conexionPostgresLocal(): Sql {
@@ -508,9 +515,14 @@ export async function limpiarFixtureNotasRemitosE2E(): Promise<void> {
   }
 }
 
-export async function leerVentaNotaCreditoE2E(): Promise<RegistroFixtureE2E> {
-  const filas = await conexionPostgresLocal()<RegistroFixtureE2E[]>`
-    SELECT v.id::text, v.numero_comprobante AS numero
+export async function leerVentaNotaCreditoE2E(): Promise<RegistroNotaCreditoInternaE2E> {
+  const filas = await conexionPostgresLocal()<RegistroNotaCreditoInternaE2E[]>`
+    SELECT v.id::text,
+           v.numero_comprobante AS numero,
+           v.afip_cbte_asoc_id::text AS "afipCbteAsocId",
+           v.periodo_asoc_desde::text AS "periodoAsocDesde",
+           v.periodo_asoc_hasta::text AS "periodoAsocHasta",
+           v.nc_periodo_modalidad::text AS "modalidadPeriodo"
       FROM public.ventas AS v
      WHERE v.cliente_id=${CLIENTE_ID}::uuid
        AND v.observaciones=${MARCA_VENTA_NC_E2E}

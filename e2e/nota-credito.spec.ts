@@ -74,6 +74,10 @@ test("la nota de crédito ofrece la opción de ir sin factura", async ({ page })
     page.getByText(/documento interno/i).first(),
     "la pantalla no avisa que sin factura queda como documento interno",
   ).toBeVisible();
+  await expect(
+    page.getByText("Sin factura puntual — asociar por período", { exact: true }),
+    "el rollout deshabilitado no debe exponer la NC fiscal por período",
+  ).toHaveCount(0);
 });
 
 test("el aviso explica que sin factura no va a AFIP, y no miente sobre la norma", async ({

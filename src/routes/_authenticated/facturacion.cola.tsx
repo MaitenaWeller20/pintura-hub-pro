@@ -27,7 +27,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DialogoDetalleVenta, type VentaDetalle } from "@/components/ventas/dialogo-detalle-venta";
-import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
 import { supabase } from "@/integrations/supabase/client";
 import {
   listarColaFiscal,
@@ -58,6 +57,7 @@ import {
 import {
   emitirComprobante,
   consultarIncidenteFiscal,
+  detalleVentaFiscalSegura,
   liberarClaimFiscal,
   previsualizarEmisionFiscal,
   reconciliarComprobante,
@@ -281,6 +281,7 @@ function ColaFiscalPage() {
   const reconciliar = useServerFn(reconciliarComprobante);
   const liberar = useServerFn(liberarClaimFiscal);
   const consultarIncidente = useServerFn(consultarIncidenteFiscal);
+  const leerVentaDetalle = useServerFn(detalleVentaFiscalSegura);
   const [seleccion, setSeleccion] = useState<SeleccionColaFiscal<ColaFiscalFila> | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [mensajeAccion, setMensajeAccion] = useState<string | null>(null);
@@ -400,16 +401,9 @@ function ColaFiscalPage() {
     enabled: detalleSeleccionado !== null,
     queryFn: async () => {
       if (!detalleSeleccionado) throw new Error("No hay una venta seleccionada para ver.");
-      const { data, error } = await supabase
-        .from("ventas")
-        .select(
-          `${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)`,
-        )
-        .eq("id", detalleSeleccionado.ventaId)
-        .single();
-      if (error) throw new Error(error.message || "No se pudo cargar el detalle de la venta.");
-      if (!data) throw new Error("No se pudo cargar el detalle de la venta.");
-      return data as unknown as VentaDetalle;
+      return (await leerVentaDetalle({
+        data: { venta_id: detalleSeleccionado.ventaId },
+      })) as unknown as VentaDetalle;
     },
   });
   const incidente = useQuery({
@@ -741,7 +735,9 @@ function ColaFiscalPage() {
               },
             }).then((respuesta) => {
               if (esMantenimiento(respuesta)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
-              return parsePreviewEmisionFiscalAutoritativa(respuesta);
+              return parsePreviewEmisionFiscalAutoritativa(respuesta, undefined, {
+                asociacionNota: "PERIODO",
+              });
             })
           }
           onConfirmar={async ({
@@ -778,7 +774,9 @@ function ColaFiscalPage() {
               },
             });
             if (esMantenimiento(resultado)) throw crearErrorFiscalUsuario("MANTENIMIENTO");
-            const respuesta = parseRespuestaConfirmacionFiscal(resultado);
+            const respuesta = parseRespuestaConfirmacionFiscal(resultado, {
+              asociacionNota: "PERIODO",
+            });
             if (respuesta.estado === "ERROR_CORREGIBLE") {
               setSeleccion(retenerSeleccionColaFiscalHastaCerrar);
               void queryClient.invalidateQueries({ queryKey: ["cola-fiscal"] });
@@ -788,7 +786,11 @@ function ColaFiscalPage() {
           onCompletada={(resultado) => {
             const resultadoUrl = resultadoDespuesDeEmitir(resultado);
             const ventaId = seleccionada.venta_id;
-            setSeleccion(null);
+            if (resultado.estado === "RECONCILIAR") {
+              setSeleccion(retenerSeleccionColaFiscalHastaCerrar);
+            } else {
+              setSeleccion(null);
+            }
             if (resultado.estado === "APROBADO") {
               setDetalleSeleccionado({ ventaId, permitirDescarga: true });
             }

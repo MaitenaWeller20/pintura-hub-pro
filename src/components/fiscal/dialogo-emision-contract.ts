@@ -235,8 +235,12 @@ export function manejarErrorCorregibleDialogo(
 type PreviewAutoritativa = z.infer<typeof previewAutoritativaSchema>;
 type PreviewProvisional = z.infer<typeof previewProvisionalSchema>;
 type ConfirmacionEstructural = z.infer<typeof confirmacionAutoritativaSchema>;
+export type OpcionesAsociacionNotaFiscal = { asociacionNota?: "PERIODO" };
 
-function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): void {
+function validarConfirmacionSemantica(
+  confirmacion: ConfirmacionEstructural,
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): void {
   validarFechaIsoCalendario(confirmacion.fechaFiscal, "La fecha fiscal");
   if (!cuitValido(confirmacion.emisorCuit)) {
     throw new Error("El CUIT emisor no es canónico o no tiene dígito verificador válido.");
@@ -244,10 +248,13 @@ function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): vo
   validarReceptorFiscalConfirmado(confirmacion.receptor, Number(confirmacion.importe));
   const esNota = [2, 3, 7, 8, 12, 13].includes(confirmacion.cbteTipo);
   if (esNota) {
-    if (!confirmacion.cbteAsoc) {
+    if (!confirmacion.cbteAsoc && opciones.asociacionNota !== "PERIODO") {
       throw new Error("La nota fiscal no conserva el comprobante asociado.");
     }
-    if (confirmacion.letra !== confirmacion.cbteAsoc.letra) {
+    if (opciones.asociacionNota === "PERIODO" && confirmacion.cbteAsoc) {
+      throw new Error("La nota por período no puede conservar un comprobante puntual asociado.");
+    }
+    if (confirmacion.cbteAsoc && confirmacion.letra !== confirmacion.cbteAsoc.letra) {
       throw new Error("La nota fiscal no hereda la letra del comprobante asociado.");
     }
   } else {
@@ -361,7 +368,10 @@ function confirmacionProvisional(preview: PreviewProvisional): ConfirmacionFisca
   };
 }
 
-function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
+function validarPreviewSemantica(
+  preview: PreviewEmisionFiscal,
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): void {
   const validezEsperada = preview.afip_validez === "SIMULADA" ? "SIMULADA" : preview.modo;
   if (preview.afip_validez !== validezEsperada) {
     throw new Error("El ambiente y la validez fiscal de la preview son incoherentes.");
@@ -374,7 +384,7 @@ function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
   }
   if (preview.autoritativo) {
     const visible = confirmacionVisibleAutoritativa(preview);
-    validarConfirmacionSemantica(preview.confirmacion_autoritativa);
+    validarConfirmacionSemantica(preview.confirmacion_autoritativa, opciones);
     if (!confirmacionesFiscalesIguales(visible, preview.confirmacion_autoritativa)) {
       throw new Error("La preview visible difiere de su confirmación autoritativa.");
     }
@@ -391,7 +401,7 @@ function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
 
   const visible = confirmacionVisibleProvisional(preview);
   const confirmacion = confirmacionProvisional(preview);
-  validarConfirmacionSemantica(confirmacion);
+  validarConfirmacionSemantica(confirmacion, opciones);
   if (!confirmacionesFiscalesIguales(visible, confirmacion)) {
     throw new Error("La preview visible difiere de su confirmación provisional.");
   }
@@ -418,6 +428,7 @@ function validarLetraSolicitada(
 export function parsePreviewEmisionFiscal(
   value: unknown,
   letraSolicitada?: LetraSolicitada,
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): PreviewEmisionFiscal {
   const preview = parsear(
     previewEmisionFiscalSchema,
@@ -425,7 +436,7 @@ export function parsePreviewEmisionFiscal(
     "ARCA no devolvió una previsualización fiscal completa y válida.",
   );
   try {
-    validarPreviewSemantica(preview);
+    validarPreviewSemantica(preview, opciones);
   } catch {
     throw new Error("ARCA no devolvió una previsualización fiscal completa y válida.");
   }
@@ -436,6 +447,7 @@ export function parsePreviewEmisionFiscal(
 export function parsePreviewEmisionFiscalAutoritativa(
   value: unknown,
   letraSolicitada?: LetraSolicitada,
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): z.infer<typeof previewAutoritativaSchema> {
   const preview = parsear(
     previewAutoritativaSchema,
@@ -443,7 +455,7 @@ export function parsePreviewEmisionFiscalAutoritativa(
     "ARCA no devolvió una previsualización fiscal autoritativa completa y válida.",
   );
   try {
-    validarPreviewSemantica(preview);
+    validarPreviewSemantica(preview, opciones);
   } catch {
     throw new Error("ARCA no devolvió una previsualización fiscal autoritativa completa y válida.");
   }
@@ -451,7 +463,10 @@ export function parsePreviewEmisionFiscalAutoritativa(
   return preview;
 }
 
-export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfirmacionFiscal {
+export function parseRespuestaConfirmacionFiscal(
+  value: unknown,
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): RespuestaConfirmacionFiscal {
   const respuesta = parsear(
     respuestaConfirmacionSchema,
     value,
@@ -465,8 +480,8 @@ export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfi
   }
   if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") return respuesta;
   try {
-    validarPreviewSemantica(respuesta.preview_autoritativa);
-    validarConfirmacionSemantica(respuesta.confirmacion_autoritativa);
+    validarPreviewSemantica(respuesta.preview_autoritativa, opciones);
+    validarConfirmacionSemantica(respuesta.confirmacion_autoritativa, opciones);
     const validezEsperada =
       respuesta.afip_validez === "SIMULADA" ? "SIMULADA" : respuesta.confirmacion_autoritativa.modo;
     if (respuesta.afip_validez !== validezEsperada) {
@@ -501,8 +516,13 @@ export function reconfirmarPreviewEmisionFiscal(
   _anterior: PreviewEmisionFiscal,
   respuesta: RespuestaReconfirmacion,
   letraSolicitada?: LetraSolicitada,
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): PreviewEmisionFiscal {
-  return parsePreviewEmisionFiscalAutoritativa(respuesta.preview_autoritativa, letraSolicitada);
+  return parsePreviewEmisionFiscalAutoritativa(
+    respuesta.preview_autoritativa,
+    letraSolicitada,
+    opciones,
+  );
 }
 
 export function despacharRespuestaConfirmacionFiscal(
@@ -514,8 +534,9 @@ export function despacharRespuestaConfirmacionFiscal(
     ): void;
     onCompletada(result: ResultadoEmisionFiscalUi): void;
   },
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): "RECONFIRMACION" | "ERROR_CORREGIBLE" | "COMPLETADA" {
-  const resultado = parseRespuestaConfirmacionFiscal(value);
+  const resultado = parseRespuestaConfirmacionFiscal(value, opciones);
   if (resultado.estado === "RECONFIRMACION_REQUERIDA") {
     handlers.onReconfirmacion(resultado);
     return "RECONFIRMACION";

@@ -968,6 +968,132 @@ export type Database = {
         }
         Relationships: []
       }
+      ingreso_mercaderia_correccion_items: {
+        Row: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+          codigo: string | null
+          correccion_id: string
+          created_at: string
+          descripcion: string
+          diferencia: number
+          id: string
+          ingreso_item_id: string
+          producto_id: string
+          stock_movimiento_id: string
+        }
+        Insert: {
+          cantidad_anterior: number
+          cantidad_nueva: number
+          codigo?: string | null
+          correccion_id: string
+          created_at?: string
+          descripcion: string
+          diferencia: number
+          id?: string
+          ingreso_item_id: string
+          producto_id: string
+          stock_movimiento_id: string
+        }
+        Update: {
+          cantidad_anterior?: number
+          cantidad_nueva?: number
+          codigo?: string | null
+          correccion_id?: string
+          created_at?: string
+          descripcion?: string
+          diferencia?: number
+          id?: string
+          ingreso_item_id?: string
+          producto_id?: string
+          stock_movimiento_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingreso_mercaderia_correccion_items_correccion_id_fkey"
+            columns: ["correccion_id"]
+            isOneToOne: false
+            referencedRelation: "ingreso_mercaderia_correcciones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_correccion_items_ingreso_item_id_fkey"
+            columns: ["ingreso_item_id"]
+            isOneToOne: false
+            referencedRelation: "ingreso_mercaderia_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_correccion_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "productos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_correccion_items_producto_id_fkey"
+            columns: ["producto_id"]
+            isOneToOne: false
+            referencedRelation: "stock_inventario"
+            referencedColumns: ["producto_id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_correccion_items_stock_movimiento_id_fkey"
+            columns: ["stock_movimiento_id"]
+            isOneToOne: false
+            referencedRelation: "seguimiento_producto"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingreso_mercaderia_correccion_items_stock_movimiento_id_fkey"
+            columns: ["stock_movimiento_id"]
+            isOneToOne: false
+            referencedRelation: "stock_movimientos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingreso_mercaderia_correcciones: {
+        Row: {
+          created_at: string
+          id: string
+          idempotency_key: string
+          ingreso_id: string
+          motivo: string
+          request_payload: Json
+          usuario_id: string
+          usuario_nombre: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          ingreso_id: string
+          motivo: string
+          request_payload: Json
+          usuario_id: string
+          usuario_nombre: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          ingreso_id?: string
+          motivo?: string
+          request_payload?: Json
+          usuario_id?: string
+          usuario_nombre?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingreso_mercaderia_correcciones_ingreso_id_fkey"
+            columns: ["ingreso_id"]
+            isOneToOne: false
+            referencedRelation: "ingresos_mercaderia"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ingreso_mercaderia_items: {
         Row: {
           advertencia: string | null
@@ -1168,6 +1294,51 @@ export type Database = {
           nombre?: string
         }
         Relationships: []
+      }
+      nota_credito_periodo_reintegros: {
+        Row: {
+          created_at: string
+          detalle: Json
+          forma_pago: Database["public"]["Enums"]["forma_pago"]
+          id: string
+          monto: number
+          orden: number
+          venta_id: string
+        }
+        Insert: {
+          created_at?: string
+          detalle?: Json
+          forma_pago: Database["public"]["Enums"]["forma_pago"]
+          id?: string
+          monto: number
+          orden: number
+          venta_id: string
+        }
+        Update: {
+          created_at?: string
+          detalle?: Json
+          forma_pago?: Database["public"]["Enums"]["forma_pago"]
+          id?: string
+          monto?: number
+          orden?: number
+          venta_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nota_credito_periodo_reintegros_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nota_credito_periodo_reintegros_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
+        ]
       }
       precio_operaciones: {
         Row: {
@@ -1582,6 +1753,7 @@ export type Database = {
           id: string
           nombre_completo: string | null
           permite_venta_sin_stock: boolean
+          puede_emitir_nc_periodo: boolean
           puede_facturar: boolean
           puede_gestionar_credito_clientes: boolean
           secciones: string[] | null
@@ -1595,6 +1767,7 @@ export type Database = {
           id: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          puede_emitir_nc_periodo?: boolean
           puede_facturar?: boolean
           puede_gestionar_credito_clientes?: boolean
           secciones?: string[] | null
@@ -1608,6 +1781,7 @@ export type Database = {
           id?: string
           nombre_completo?: string | null
           permite_venta_sin_stock?: boolean
+          puede_emitir_nc_periodo?: boolean
           puede_facturar?: boolean
           puede_gestionar_credito_clientes?: boolean
           secciones?: string[] | null
@@ -2208,6 +2382,7 @@ export type Database = {
           facturacion_receptor_v2_enabled: boolean
           id: boolean
           markup_default_porcentaje: number
+          nota_credito_periodo_enabled: boolean
           permitir_stock_negativo: boolean
           updated_at: string
         }
@@ -2217,6 +2392,7 @@ export type Database = {
           facturacion_receptor_v2_enabled?: boolean
           id?: boolean
           markup_default_porcentaje?: number
+          nota_credito_periodo_enabled?: boolean
           permitir_stock_negativo?: boolean
           updated_at?: string
         }
@@ -2226,6 +2402,7 @@ export type Database = {
           facturacion_receptor_v2_enabled?: boolean
           id?: boolean
           markup_default_porcentaje?: number
+          nota_credito_periodo_enabled?: boolean
           permitir_stock_negativo?: boolean
           updated_at?: string
         }
@@ -2929,11 +3106,15 @@ export type Database = {
           idempotency_payload_hash: string | null
           iva_total: number
           motivo_nota_credito: string | null
-          nombre_obra: string | null
           nc_efectos_aplicados_at: string | null
-          nc_periodo_modalidad: string | null
+          nc_periodo_modalidad:
+            | Database["public"]["Enums"]["modalidad_nc_periodo"]
+            | null
           nc_periodo_payload_hash: string | null
-          nc_resolucion: string | null
+          nc_resolucion:
+            | Database["public"]["Enums"]["resolucion_nc_periodo"]
+            | null
+          nombre_obra: string | null
           numero_comprobante: string
           observaciones: string | null
           percepciones: number
@@ -2990,11 +3171,15 @@ export type Database = {
           idempotency_payload_hash?: string | null
           iva_total?: number
           motivo_nota_credito?: string | null
-          nombre_obra?: string | null
           nc_efectos_aplicados_at?: string | null
-          nc_periodo_modalidad?: string | null
+          nc_periodo_modalidad?:
+            | Database["public"]["Enums"]["modalidad_nc_periodo"]
+            | null
           nc_periodo_payload_hash?: string | null
-          nc_resolucion?: string | null
+          nc_resolucion?:
+            | Database["public"]["Enums"]["resolucion_nc_periodo"]
+            | null
+          nombre_obra?: string | null
           numero_comprobante: string
           observaciones?: string | null
           percepciones?: number
@@ -3051,11 +3236,15 @@ export type Database = {
           idempotency_payload_hash?: string | null
           iva_total?: number
           motivo_nota_credito?: string | null
-          nombre_obra?: string | null
           nc_efectos_aplicados_at?: string | null
-          nc_periodo_modalidad?: string | null
+          nc_periodo_modalidad?:
+            | Database["public"]["Enums"]["modalidad_nc_periodo"]
+            | null
           nc_periodo_payload_hash?: string | null
-          nc_resolucion?: string | null
+          nc_resolucion?:
+            | Database["public"]["Enums"]["resolucion_nc_periodo"]
+            | null
+          nombre_obra?: string | null
           numero_comprobante?: string
           observaciones?: string | null
           percepciones?: number
@@ -3343,6 +3532,44 @@ export type Database = {
           nc_numero: string
         }[]
       }
+      _crear_nc_periodo_core_pre_hash_fix1: {
+        Args: {
+          p_cliente_id: string
+          p_idempotency_key: string
+          p_items: Json
+          p_modalidad: Database["public"]["Enums"]["modalidad_nc_periodo"]
+          p_motivo: string
+          p_periodo_desde: string
+          p_periodo_hasta: string
+          p_reintegros: Json
+          p_resolucion: Database["public"]["Enums"]["resolucion_nc_periodo"]
+          p_sucursal_id: string
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
+      _crear_nota_credito_periodo_fiscal_core_20260828: {
+        Args: {
+          p_cliente_id: string
+          p_idempotency_key: string
+          p_items: Json
+          p_modalidad: Database["public"]["Enums"]["modalidad_nc_periodo"]
+          p_motivo: string
+          p_periodo_desde: string
+          p_periodo_hasta: string
+          p_reintegros: Json
+          p_resolucion: Database["public"]["Enums"]["resolucion_nc_periodo"]
+          p_sucursal_id: string
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
       _crear_venta_core_20260823: {
         Args: {
           p_cbte_asoc_id?: string
@@ -3364,6 +3591,26 @@ export type Database = {
           venta_id: string
         }[]
       }
+      _transicionar_emision_fiscal_core_task8_fix1: {
+        Args: {
+          p_accion: string
+          p_claim_token: string
+          p_payload?: Json
+          p_venta_id: string
+        }
+        Returns: {
+          afip_claim_token: string
+          afip_estado: string
+          afip_fase: string
+          afip_numero: number
+          afip_version: number
+          venta_id: string
+        }[]
+      }
+      _validar_snapshot_fiscal_v3_con_condicion_legacy_20260829: {
+        Args: { p_snapshot: Json }
+        Returns: undefined
+      }
       abrir_caja: {
         Args: { p_fondo_inicial?: number; p_sucursal_id: string }
         Returns: string
@@ -3371,6 +3618,10 @@ export type Database = {
       activar_productos: { Args: { p_ids: string[] }; Returns: Json }
       actualizar_items_borrador: {
         Args: { p_ingreso_id: string; p_items: Json }
+        Returns: undefined
+      }
+      administrar_puede_emitir_nc_periodo: {
+        Args: { p_habilitado: boolean; p_profile_id: string }
         Returns: undefined
       }
       administrar_puede_facturar: {
@@ -3420,6 +3671,10 @@ export type Database = {
           nc_numero: string
         }[]
       }
+      aplicar_efectos_nc_periodo: {
+        Args: { p_venta_id: string }
+        Returns: undefined
+      }
       aprobar_remito: { Args: { p_remito_id: string }; Returns: undefined }
       backfill_cola_fiscal: {
         Args: { p_aplicar?: boolean }
@@ -3429,7 +3684,12 @@ export type Database = {
         }[]
       }
       buscar_productos_similares: {
-        Args: { p_codigo?: string; p_limite?: number; p_proveedor_id?: string; p_texto: string }
+        Args: {
+          p_codigo?: string
+          p_limite?: number
+          p_proveedor_id?: string
+          p_texto: string
+        }
         Returns: {
           activo: boolean
           codigo: string
@@ -3475,23 +3735,6 @@ export type Database = {
           p_sesion_id: string
         }
         Returns: {
-          total_contado: number
-          total_diferencia: number
-          total_esperado: number
-        }[]
-      }
-      corregir_cierre_caja: {
-        Args: {
-          p_efectivo_contado: number
-          p_efectivo_dejado: number
-          p_motivo: string
-          p_notas: string
-          p_sesion_id: string
-          p_version_esperada: number
-        }
-        Returns: {
-          correccion_version: number
-          efectivo_retirado: number
           total_contado: number
           total_diferencia: number
           total_esperado: number
@@ -3550,21 +3793,6 @@ export type Database = {
         }
         Returns: string
       }
-      convertir_presupuesto_en_venta: {
-        Args: {
-          p_cliente_id: string
-          p_condicion_venta: Database["public"]["Enums"]["condicion_venta"]
-          p_idempotency_key?: string
-          p_pagos?: Json
-          p_presupuesto_id: string
-          p_tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"]
-        }
-        Returns: {
-          es_cta_cte: boolean
-          numero: string
-          venta_id: string
-        }[]
-      }
       convertir_presupuesto_en_venta_neutral: {
         Args: {
           p_cliente_id: string
@@ -3578,6 +3806,32 @@ export type Database = {
           numero: string
           venta_id: string
         }[]
+      }
+      corregir_cierre_caja: {
+        Args: {
+          p_efectivo_contado: number
+          p_efectivo_dejado: number
+          p_motivo: string
+          p_notas: string
+          p_sesion_id: string
+          p_version_esperada: number
+        }
+        Returns: {
+          correccion_version: number
+          efectivo_retirado: number
+          total_contado: number
+          total_diferencia: number
+          total_esperado: number
+        }[]
+      }
+      corregir_ingreso_mercaderia: {
+        Args: {
+          p_idempotency_key: string
+          p_ingreso_id: string
+          p_items: Json
+          p_motivo: string
+        }
+        Returns: string
       }
       crear_borrador_ingreso: {
         Args: {
@@ -3625,6 +3879,25 @@ export type Database = {
               compra_id: string
             }[]
           }
+      crear_nota_credito_periodo_fiscal: {
+        Args: {
+          p_cliente_id: string
+          p_idempotency_key: string
+          p_items: Json
+          p_modalidad: Database["public"]["Enums"]["modalidad_nc_periodo"]
+          p_motivo: string
+          p_periodo_desde: string
+          p_periodo_hasta: string
+          p_reintegros: Json
+          p_resolucion: Database["public"]["Enums"]["resolucion_nc_periodo"]
+          p_sucursal_id: string
+        }
+        Returns: {
+          es_cta_cte: boolean
+          numero: string
+          venta_id: string
+        }[]
+      }
       crear_presupuesto: {
         Args: {
           p_cliente_id?: string
@@ -3795,6 +4068,14 @@ export type Database = {
       }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       leer_venta_fiscal_exacta: { Args: { p_venta_id: string }; Returns: Json }
+      materializar_intencion_nc_periodo: {
+        Args: { p_venta_id: string }
+        Returns: {
+          payload: Json
+          payload_hash: string
+          reintegros_vector: Json
+        }[]
+      }
       next_comprobante_numero: {
         Args: {
           _sucursal_id: string
@@ -3813,6 +4094,7 @@ export type Database = {
         Returns: boolean
       }
       proveedor_saldo: { Args: { _proveedor_id: string }; Returns: number }
+      puede_emitir_nc_periodo: { Args: { _uid?: string }; Returns: boolean }
       puede_facturar: { Args: { _uid?: string }; Returns: boolean }
       puede_gestionar_credito_clientes: {
         Args: { _uid?: string }
@@ -3894,8 +4176,30 @@ export type Database = {
           venta_id: string
         }[]
       }
+      validar_evidencia_cae_fiscal: {
+        Args: {
+          p_cae: Json
+          p_cae_vencimiento: Json
+          p_emitido_at: Json
+          p_evidencia: Json
+          p_origen: string
+        }
+        Returns: {
+          cae: string
+          cae_vencimiento: string
+          emitido_at: string
+        }[]
+      }
       validar_perfil_activo_postgrest: { Args: never; Returns: undefined }
+      validar_snapshot_fiscal_persistido: {
+        Args: { p_snapshot: Json }
+        Returns: number
+      }
       validar_snapshot_fiscal_v2: {
+        Args: { p_snapshot: Json }
+        Returns: undefined
+      }
+      validar_snapshot_fiscal_v3: {
         Args: { p_snapshot: Json }
         Returns: undefined
       }
@@ -3909,7 +4213,7 @@ export type Database = {
       condicion_venta: "CONTADO" | "CTA_CTE"
       estado_pago: "PAGADO" | "PARCIAL" | "PENDIENTE"
       estado_remito: "PENDIENTE" | "APROBADO" | "RECHAZADO"
-      estado_venta: "ACTIVA" | "ANULADA"
+      estado_venta: "ACTIVA" | "ANULADA" | "PENDIENTE_FISCAL"
       forma_pago:
         | "EFECTIVO"
         | "TRANSFERENCIA"
@@ -3918,7 +4222,9 @@ export type Database = {
         | "MERCADO_PAGO"
         | "CHEQUE"
         | "CTA_CTE"
+      modalidad_nc_periodo: "DEVOLUCION_PRODUCTOS" | "BONIFICACION_AJUSTE"
       proveedor_cc_tipo: "DEBITO" | "CREDITO"
+      resolucion_nc_periodo: "REINTEGRO" | "SALDO_FAVOR"
       sucursal_codigo: "OHIGGINS" | "GENERALPAZ"
       tipo_cliente:
         | "CONSUMIDOR_FINAL"
@@ -3947,6 +4253,7 @@ export type Database = {
         | "DEVOLUCION"
         | "INGRESO_MERCADERIA"
         | "ANULACION_INGRESO_MERCADERIA"
+        | "CORRECCION_INGRESO_MERCADERIA"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4085,7 +4392,7 @@ export const Constants = {
       condicion_venta: ["CONTADO", "CTA_CTE"],
       estado_pago: ["PAGADO", "PARCIAL", "PENDIENTE"],
       estado_remito: ["PENDIENTE", "APROBADO", "RECHAZADO"],
-      estado_venta: ["ACTIVA", "ANULADA"],
+      estado_venta: ["ACTIVA", "ANULADA", "PENDIENTE_FISCAL"],
       forma_pago: [
         "EFECTIVO",
         "TRANSFERENCIA",
@@ -4095,7 +4402,9 @@ export const Constants = {
         "CHEQUE",
         "CTA_CTE",
       ],
+      modalidad_nc_periodo: ["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"],
       proveedor_cc_tipo: ["DEBITO", "CREDITO"],
+      resolucion_nc_periodo: ["REINTEGRO", "SALDO_FAVOR"],
       sucursal_codigo: ["OHIGGINS", "GENERALPAZ"],
       tipo_cliente: [
         "CONSUMIDOR_FINAL",
@@ -4126,6 +4435,7 @@ export const Constants = {
         "DEVOLUCION",
         "INGRESO_MERCADERIA",
         "ANULACION_INGRESO_MERCADERIA",
+        "CORRECCION_INGRESO_MERCADERIA",
       ],
     },
   },

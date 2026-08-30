@@ -41,6 +41,7 @@ import {
   type FilaEvidenciaAutorizacionSegura,
   type FilaVentaEvidenciaAutorizacionSegura,
 } from "./fiscal/evidencia-auditoria";
+import { COLUMNAS_VENTA_SEGURAS } from "./ventas-proyeccion";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -815,6 +816,92 @@ export const evidenciaAutorizacionNotaCreditoPeriodo = createServerFn({ method: 
         };
       },
     });
+  });
+
+/** Proyección exacta del detalle fiscal después de revocar SELECT browser sobre ventas. */
+export const detalleVentaFiscalSegura = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
+  .handler(async ({ data, context }) => {
+    await autorizarVenta(context, {
+      ventaId: data.venta_id,
+      accion: "PREVISUALIZAR",
+      confirmaVentaAntigua: false,
+    });
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: venta, error } = await supabaseAdmin
+      .from("ventas")
+      .select(
+        `${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)`,
+      )
+      .eq("id", data.venta_id)
+      .maybeSingle();
+    if (error || !venta) throw new Error("No se pudo cargar el detalle fiscal autorizado.");
+    return venta;
+  });
+
+/**
+ * Fuentes auditadas exactas. La autorización se resuelve user-bound antes de
+ * abrir las lecturas admin; el navegador no obtiene acceso directo a las tablas.
+ */
+export const fuentesAuditoriaNotaCreditoPeriodo = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
+  .handler(async ({ data, context }) => {
+    await autorizarVenta(context, {
+      ventaId: data.venta_id,
+      accion: "PREVISUALIZAR",
+      confirmaVentaAntigua: false,
+    });
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: cabecera, error: cabeceraError } = await supabaseAdmin
+      .from("ventas")
+      .select("usuario_id,nc_periodo_modalidad")
+      .eq("id", data.venta_id)
+      .maybeSingle();
+    if (cabeceraError || !cabecera?.usuario_id || !cabecera.nc_periodo_modalidad) {
+      throw new Error("No se pudo reconstruir la auditoría de la nota de crédito.");
+    }
+    const [operador, reintegros, stock, cuentaCorriente] = await Promise.all([
+      supabaseAdmin
+        .from("profiles")
+        .select("nombre_completo,username")
+        .eq("id", cabecera.usuario_id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("nota_credito_periodo_reintegros")
+        .select("id,forma_pago,monto,orden")
+        .eq("venta_id", data.venta_id)
+        .order("orden", { ascending: true }),
+      supabaseAdmin
+        .from("stock_movimientos")
+        .select(
+          "id,producto_id,cantidad,cantidad_anterior,cantidad_nueva,created_at,producto:productos(codigo,nombre)",
+        )
+        .eq("referencia_id", data.venta_id)
+        .eq("tipo", "DEVOLUCION")
+        .order("created_at", { ascending: true }),
+      supabaseAdmin
+        .from("cuenta_corriente_movimientos")
+        .select("id,tipo,estado,monto,descripcion,created_at")
+        .eq("venta_id", data.venta_id)
+        .order("created_at", { ascending: true }),
+    ]);
+    if (
+      operador.error ||
+      !operador.data ||
+      reintegros.error ||
+      stock.error ||
+      cuentaCorriente.error
+    ) {
+      throw new Error("No se pudo reconstruir la auditoría de la nota de crédito.");
+    }
+    return {
+      operador: operador.data,
+      reintegros: reintegros.data ?? [],
+      stock: stock.data ?? [],
+      cuentaCorriente: cuentaCorriente.data ?? [],
+    };
   });
 
 /** Lectura user-bound y fail-closed para PDF fiscal. No participa del writer v2. */

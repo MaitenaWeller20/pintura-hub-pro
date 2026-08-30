@@ -9,7 +9,7 @@ if [[ "${NODE_ENV:-}" != "test" || \
 fi
 
 case "${INVOICING_MOCK_SCENARIO:-}" in
-  OK|RECHAZO_DEFINITIVO|TIMEOUT_POST_REQUEST|QR_ERROR) ;;
+  OK|CAIDA_PRE_REQUEST|RECHAZO_DEFINITIVO|TIMEOUT_POST_REQUEST|QR_ERROR) ;;
   *) echo "El entrypoint E2E recibió un escenario fiscal inválido." >&2; exit 1 ;;
 esac
 

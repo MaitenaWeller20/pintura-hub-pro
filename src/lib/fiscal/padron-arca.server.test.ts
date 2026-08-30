@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { codigoErrorFiscalUsuario } from "./error-usuario";
 
 const sdk = vi.hoisted(() => ({
@@ -22,6 +22,20 @@ const emisor = {
   arca_key_enc: "clave-cifrada",
   arca_cert_enc: "certificado-cifrado",
 };
+
+const entornoOriginal = {
+  NODE_ENV: process.env.NODE_ENV,
+  VITEST: process.env.VITEST,
+  INVOICING_MOCK_TEST_RUNNER: process.env.INVOICING_MOCK_TEST_RUNNER,
+  INVOICING_MOCK_MODE: process.env.INVOICING_MOCK_MODE,
+  INVOICING_MOCK_SCENARIO: process.env.INVOICING_MOCK_SCENARIO,
+};
+
+function restaurarEntorno(nombre: keyof typeof entornoOriginal): void {
+  const valor = entornoOriginal[nombre];
+  if (valor === undefined) delete process.env[nombre];
+  else process.env[nombre] = valor;
+}
 
 function respuestaJuridica(): unknown {
   return {
@@ -63,8 +77,62 @@ async function errorDeConsulta(cause: unknown) {
 
 describe("adaptador server-only del padrón ARCA", () => {
   beforeEach(() => {
+    process.env.NODE_ENV = "test";
+    process.env.VITEST = "true";
+    delete process.env.INVOICING_MOCK_MODE;
     sdk.crearClienteArca.mockReset();
     sdk.conTimeoutArca.mockClear();
+  });
+
+  afterEach(() => {
+    restaurarEntorno("NODE_ENV");
+    restaurarEntorno("VITEST");
+    restaurarEntorno("INVOICING_MOCK_TEST_RUNNER");
+    restaurarEntorno("INVOICING_MOCK_MODE");
+    restaurarEntorno("INVOICING_MOCK_SCENARIO");
+    vi.restoreAllMocks();
+  });
+
+  it("en mock Playwright valida el CUIT con una respuesta local y no abre SDK ni red", async () => {
+    process.env.INVOICING_MOCK_TEST_RUNNER = "playwright";
+    process.env.INVOICING_MOCK_MODE = "true";
+    process.env.INVOICING_MOCK_SCENARIO = "OK";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      consultarPadronArcaDesdeContexto({
+        cuit: "30-71419966-4",
+        emisor: { cuit: "30714199664", arca_key_enc: null, arca_cert_enc: null },
+        ambiente: "HOMOLOGACION",
+        admin: {},
+      }),
+    ).resolves.toMatchObject({
+      cuit: "30714199664",
+      razonSocial: "T13-E2E RECEPTOR PADRÓN MOCK",
+      condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+      domicilioFiscal: "Domicilio fiscal mock local",
+    });
+
+    expect(sdk.crearClienteArca).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("en mock Playwright conserva la misma verificación entre preview y confirmación", async () => {
+    process.env.INVOICING_MOCK_TEST_RUNNER = "playwright";
+    process.env.INVOICING_MOCK_MODE = "true";
+    process.env.INVOICING_MOCK_SCENARIO = "OK";
+    const entrada = {
+      cuit: "30-71419966-4",
+      emisor: { cuit: "30714199664", arca_key_enc: null, arca_cert_enc: null },
+      ambiente: "HOMOLOGACION" as const,
+      admin: {},
+    };
+
+    const primera = await consultarPadronArcaDesdeContexto(entrada);
+    const segunda = await consultarPadronArcaDesdeContexto(entrada);
+
+    expect(primera.verificadoArcaAt).toBe("2026-08-29T12:00:00.000Z");
+    expect(segunda).toEqual(primera);
   });
 
   it("consulta getPersona_v2 mediante getTaxpayerDetails y registra el éxito sin datos fiscales", async () => {

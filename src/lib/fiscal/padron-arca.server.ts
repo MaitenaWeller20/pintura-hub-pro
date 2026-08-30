@@ -8,8 +8,10 @@ import {
   type CodigoErrorPadronArca,
   type ReceptorPadronArca,
 } from "./padron-arca";
+import { entornoHabilitaMockFiscal, entornoMockFiscalDelProceso } from "./mock-scenario.server";
 
 const SERVICIO_PADRON = "ws_sr_constancia_inscripcion" as const;
+const INSTANTE_PADRON_MOCK = "2026-08-29T12:00:00.000Z";
 
 type AmbienteArca = "HOMOLOGACION" | "PRODUCCION";
 
@@ -30,6 +32,24 @@ type EntradaConsultaPadronArca = {
   registrarEvento?: (evento: EventoPadronArca) => void;
   ahoraMs?: () => number;
 };
+
+function contribuyenteMockLocal(cuit: string): unknown {
+  const monotributo = cuit === "30621146315";
+  return {
+    idPersona: Number(cuit),
+    tipoPersona: "JURIDICA",
+    estadoClave: "ACTIVO",
+    datosGenerales: {
+      razonSocial: monotributo
+        ? "T13-E2E OTRO RECEPTOR PADRÓN MOCK"
+        : "T13-E2E RECEPTOR PADRÓN MOCK",
+      domicilioFiscal: { direccion: "Domicilio fiscal mock local" },
+    },
+    ...(monotributo
+      ? { datosMonotributo: { impuesto: [{ idImpuesto: 20, estadoImpuesto: "AC" }] } }
+      : { datosRegimenGeneral: { impuesto: [{ idImpuesto: 30, estadoImpuesto: "AC" }] } }),
+  };
+}
 
 function valorPropio(value: unknown, campo: string): unknown {
   if (typeof value !== "object" || value === null || tiposNode.isProxy(value)) return undefined;
@@ -169,8 +189,10 @@ export async function consultarPadronArcaDesdeContexto({
 }: EntradaConsultaPadronArca): Promise<ReceptorPadronArca> {
   const inicio = ahoraMs();
   try {
+    const mockLocal = entornoHabilitaMockFiscal(entornoMockFiscalDelProceso());
     const resultado = await consultarPadronArcaInterno(cuit, {
       obtenerContribuyente: async (id) => {
+        if (mockLocal) return contribuyenteMockLocal(String(id));
         try {
           const arca = await crearClienteArca(emisor, ambiente, admin);
           return await conTimeoutArca(
@@ -181,7 +203,7 @@ export async function consultarPadronArcaDesdeContexto({
           throw crearErrorTransportePadron(cause);
         }
       },
-      ahora: () => new Date(),
+      ahora: () => (mockLocal ? new Date(INSTANTE_PADRON_MOCK) : new Date()),
     });
     registrarSinFiltrar(registrarEvento, {
       resultado: "OK",

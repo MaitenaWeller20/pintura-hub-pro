@@ -14,6 +14,7 @@ type OpcionesFixtureV3 = {
   sucursalId?: string;
   numero?: number;
   puntoVenta?: number;
+  simulado?: boolean;
 };
 
 export function crearSnapshotFiscalV3Fixture(opciones: OpcionesFixtureV3 = {}): SnapshotFiscalV3 {
@@ -67,6 +68,8 @@ export function crearSnapshotFiscalV3Fixture(opciones: OpcionesFixtureV3 = {}): 
     emisorCuit: opciones.emisorCuit ?? input.identidad.emisorCuit,
     puntoVenta: opciones.puntoVenta ?? input.identidad.puntoVenta,
     cbteTipo: letra === "A" ? 3 : letra === "B" ? 8 : 13,
+    simulado: opciones.simulado ?? input.identidad.simulado,
+    validez: opciones.simulado ? "SIMULADA" : input.identidad.validez,
   };
   input.letra = letra;
   input.ivaContenido = letra === "C" ? "0.00" : input.ivaContenido;

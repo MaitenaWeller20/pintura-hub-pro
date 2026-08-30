@@ -77,3 +77,35 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
 - Task 1 complete (`80cb0ba..b775acd`). Independent re-review: `Spec: PASS`,
   `Quality: PASS`; no Critical, Important or Minor findings. Unicode parity is
   fixed and transactionally tested, and Task 2 remains untouched.
+- Task 2 — implementación completa; revisión independiente pendiente.
+  - Se inspeccionaron las definiciones efectivas de
+    `convertir_presupuesto_en_venta_neutral`, `crear_venta`,
+    `_crear_venta_core_20260823`, `caja_sesion_actual`, `cerrar_caja`, sus
+    triggers, locks, RLS y grants antes de copiar la lineage vigente.
+  - RED observado: `bash scripts/test-presupuesto-consumidor-final-caja.sh`
+    salió 3 en la primera conversión anónima con
+    `Para convertir un presupuesto hay que elegir el cliente`.
+  - La migración agrega la unicidad parcial exacta del Consumidor Final global,
+    `presupuestos.conversion_payload_hash` y recrea sólo la RPC v2 con receptor
+    efectivo, autorización BOLA opaca, caja preexistente y descripción
+    congelada. El escritor legacy sigue retirado y el core/normalizador siguen
+    owner-only.
+  - Primer GREEN detectó una diferencia real entre la serialización JSONB de
+    `121` y `121.00`; la huella ahora aplica `trim_scale` al monto y la regresión
+    confirma que ambos son el mismo replay canónico.
+  - `npx supabase db reset --local` aplicó desde cero toda la historia hasta
+    `20260830154723`; `supabase migration list --local` quedó alineado.
+  - GREEN focal: candidato exacto/ausente/ambiguo, anónimo contado, rechazo de
+    CTA_CTE anónima y UUID genérico, preservación de cliente NULL y descripción,
+    sucursal/caja para admin y empleado real `authenticated`, replay/conflictos,
+    BOLA, grants/owner/search_path y cleanup sin residuos.
+  - La carrera real cierre-vs-conversión confirma que, si el cierre gana
+    `FOR UPDATE`, la conversión espera, falla por caja cerrada y no autoabre otra
+    sesión ni deja venta/presupuesto mutados.
+  - Regresiones GREEN: `scripts/test-venta-fiscal-atomica.sh`, descripción
+    personalizada y edición de presupuesto (19/19). Bash parse, TypeScript y
+    `git diff --check` también pasan.
+  - `supabase db lint` conserva únicamente el error histórico de
+    `cambiar_precios_masivo` sobre `_objetivo`; advisors conserva los avisos
+    históricos de RLS/vistas/funciones y no señala objetos de Task 2.
+  - No se usaron proyecto remoto, `--linked`, `db push`, certificados ni ARCA.

@@ -411,7 +411,7 @@ SELECT pg_temp.assert_true(
 CREATE TEMP TABLE t_budget AS
 SELECT * FROM public.crear_presupuesto(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":2}]'::jsonb,
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":2,"descripcion":"Producto fiscal (Código T4)"}]'::jsonb,
   'b4000000-0000-0000-0000-000000000001','T4 CLIENTE',NULL,'T4-PRESUPUESTO'
 );
 SELECT pg_temp.capture_effects('before_budget_conversion');
@@ -425,12 +425,21 @@ SELECT pg_temp.capture_effects('after_budget_conversion');
 SELECT pg_temp.assert_true(
   (SELECT v.tipo_comprobante='VENTA' AND v.afip_estado='SIN_FACTURAR'
        AND p.estado='CONVERTIDO' AND p.venta_id=v.id
+       AND p.cliente_id='b4000000-0000-0000-0000-000000000001'
+       AND p.conversion_payload_hash~'^[0-9a-f]{64}$'
+       AND bs.cliente_id=v.cliente_id
        AND v.idempotency_key=
            pg_catalog.md5('presupuesto:'||p.id::text)::uuid
      FROM t_budget_sale bs
      JOIN public.ventas v ON v.id=bs.venta_id
      JOIN public.presupuestos p ON p.id=(SELECT presupuesto_id FROM t_budget)),
   'la conversión crea una venta neutral y marca el presupuesto una vez'
+);
+SELECT pg_temp.assert_true(
+  (SELECT i.descripcion='Producto fiscal (Código T4)'
+     FROM public.venta_items AS i
+    WHERE i.venta_id=(SELECT venta_id FROM t_budget_sale)),
+  'la conversión neutral conserva la descripción congelada del presupuesto'
 );
 SELECT pg_temp.assert_true(
   (SELECT a.ventas_count=b.ventas_count+1
@@ -451,8 +460,9 @@ SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
 );
 SELECT pg_temp.capture_effects('after_budget_replay');
 SELECT pg_temp.assert_true(
-  (SELECT r.venta_id=s.venta_id FROM t_budget_replay r CROSS JOIN t_budget_sale s),
-  'reintentar la conversión devuelve la misma venta'
+  (SELECT r.venta_id=s.venta_id AND r.cliente_id=s.cliente_id
+     FROM t_budget_replay r CROSS JOIN t_budget_sale s),
+  'reintentar la conversión devuelve la misma venta y receptor efectivo'
 );
 SELECT pg_temp.assert_effects_equal(
   'after_budget_conversion','after_budget_replay',
@@ -1703,6 +1713,8 @@ SELECT pg_temp.assert_true(
   (SELECT count(*)=1 AND bool_and(p.prosecdef)
           AND bool_and(pg_get_function_identity_arguments(p.oid)=
             'p_presupuesto_id uuid, p_cliente_id uuid, p_condicion_venta condicion_venta, p_pagos jsonb, p_idempotency_key uuid')
+          AND bool_and(pg_get_function_result(p.oid)=
+            'TABLE(venta_id uuid, numero text, es_cta_cte boolean, cliente_id uuid)')
      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND p.proname='convertir_presupuesto_en_venta_neutral'
   ),

@@ -74,3 +74,6 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     `cambiar_precios_masivo` sobre `_objetivo`; advisors conserva deuda histórica,
     incluidos los errores de vistas SECURITY DEFINER `fiscal_config_publica` y
     `cuenta_corriente_saldos`, sin hallazgos sobre el helper de Task 1.
+- Task 1 complete (`80cb0ba..b775acd`). Independent re-review: `Spec: PASS`,
+  `Quality: PASS`; no Critical, Important or Minor findings. Unicode parity is
+  fixed and transactionally tested, and Task 2 remains untouched.

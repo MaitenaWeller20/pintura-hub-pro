@@ -225,3 +225,7 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
     ESLint conserva las 49 violaciones `any` históricas y build los warnings
     históricos ya documentados; los nuevos tests usan prefijo `-` y no agregan
     warnings de rutas. No se usaron remoto, `db reset`, `db push` ni ARCA.
+- Task 4 complete (`c16fa81..3441fc9`). Independent re-review: `Spec: PASS`,
+  `Quality: PASS`; no Critical, Important or Minor findings. Preview/create use
+  one payload, mounted budget flows preserve descriptions, and duplicate rows
+  have stable UI-only identities excluded from commercial payloads.

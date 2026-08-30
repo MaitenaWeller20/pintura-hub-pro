@@ -14,3 +14,53 @@ export function normalizarDescripcionItem(value: string): string {
   }
   return normalizada;
 }
+
+export type EstadoDescripcionItem = {
+  personalizada: boolean;
+  valida: boolean;
+  caracteres: number;
+  mensaje: string | null;
+};
+
+/**
+ * El browser sólo es autoritativo cuando el operador cambia el texto. Una
+ * coincidencia byte a byte conserva el fallback/snapshot del servidor, incluso
+ * si ese texto histórico antecede al límite actual.
+ */
+export function descripcionItemParaPayload(
+  descripcion: string,
+  descripcionBase: string,
+): { descripcion?: string } {
+  if (descripcion === descripcionBase) return {};
+  return { descripcion: normalizarDescripcionItem(descripcion) };
+}
+
+export function estadoDescripcionItem(
+  descripcion: string,
+  descripcionBase: string,
+): EstadoDescripcionItem {
+  if (descripcion === descripcionBase) {
+    return {
+      personalizada: false,
+      valida: true,
+      caracteres: [...descripcion].length,
+      mensaje: null,
+    };
+  }
+  try {
+    const normalizada = normalizarDescripcionItem(descripcion);
+    return {
+      personalizada: true,
+      valida: true,
+      caracteres: [...normalizada].length,
+      mensaje: null,
+    };
+  } catch (cause) {
+    return {
+      personalizada: true,
+      valida: false,
+      caracteres: [...descripcion].length,
+      mensaje: cause instanceof Error ? cause.message : "La descripción de la línea es inválida.",
+    };
+  }
+}

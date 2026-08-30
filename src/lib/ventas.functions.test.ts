@@ -5,6 +5,7 @@ import {
   conversionPresupuestoInputSchema,
   ejecutarCreacionNotaSegunFlags,
   ejecutarConversionPresupuestoSegunFlags,
+  ejecutarConversionPresupuestoCerrada,
   ejecutarListadoComprobantesOriginalesSeguro,
   ejecutarListadoVentasSeguro,
   ejecutarLecturaOriginalFiscalAutorizada,
@@ -27,6 +28,15 @@ const VENTA_BASE = {
   pagos: [{ forma_pago: "EFECTIVO", monto: 121, detalle: {} }],
   idempotency_key: "74000000-0000-4000-8000-000000000001",
 } as const;
+
+function textoProfundo(value: unknown, vistos = new Set<unknown>()): string {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null || vistos.has(value)) return "";
+  vistos.add(value);
+  return Reflect.ownKeys(value)
+    .flatMap((key) => [String(key), textoProfundo(Reflect.get(value, key), vistos)])
+    .join(" ");
+}
 
 describe("entrada de venta neutral", () => {
   it("acepta VENTA de forma explícita sin abrir la enum a valores desconocidos", () => {
@@ -69,6 +79,17 @@ describe("entrada de venta neutral", () => {
         }),
       ).toThrow();
     }
+  });
+
+  it("deja pasar el texto histórico de una NC vinculada para que V2 lo ignore", () => {
+    const historica = `Factura histórica ${"x".repeat(180)}`;
+    const parsed = ventaInputSchema.parse({
+      ...VENTA_BASE,
+      tipo_comprobante: "NOTA_CREDITO",
+      cbte_asoc_id: "78000000-0000-4000-8000-000000000001",
+      items: [{ ...VENTA_BASE.items[0], descripcion: historica }],
+    });
+    expect(parsed.items[0]?.descripcion).toBe(historica);
   });
 });
 
@@ -167,6 +188,38 @@ describe("cerco comercial de NC/ND", () => {
       "78000000-0000-4000-8000-000000000001",
       VENTA_BASE.idempotency_key,
     );
+    expect(crearRegular).not.toHaveBeenCalled();
+  });
+
+  it("en v2 ignora una descripción histórica larga y llega a la reversión autoritativa", async () => {
+    const crearRegular = vi.fn();
+    const crearNotaCreditoTotal = vi.fn(async () => ({
+      id: "79000000-0000-4000-8000-000000000001",
+      numero: "NCV-00000001",
+      cta_cte: false,
+    }));
+    const input = ventaInputSchema.parse({
+      ...VENTA_BASE,
+      tipo_comprobante: "NOTA_CREDITO",
+      cbte_asoc_id: "78000000-0000-4000-8000-000000000001",
+      items: [
+        {
+          ...VENTA_BASE.items[0],
+          descripcion: `Descripción congelada ${"x".repeat(180)}`,
+        },
+      ],
+    }) as ReturnType<typeof ventaInputSchema.parse> & { tipo_comprobante: "NOTA_CREDITO" };
+
+    await ejecutarCreacionNotaSegunFlags(input, {
+      cargarFlags: async () => ({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: false,
+      }),
+      crearRegular,
+      crearNotaCreditoTotal,
+    });
+    expect(crearNotaCreditoTotal).toHaveBeenCalledOnce();
     expect(crearRegular).not.toHaveBeenCalled();
   });
 
@@ -539,5 +592,65 @@ describe("fence del conversor de presupuesto", () => {
     );
     expect(deps.convertirNeutral).not.toHaveBeenCalled();
     expect(deps.convertirLegacy).not.toHaveBeenCalled();
+  });
+
+  it("la fachada server-facing devuelve sólo código/mensaje cerrados ante un error RPC crudo", async () => {
+    const causa = {
+      message: 'duplicate key violates constraint "ventas_idempotency_key_key"',
+      code: "23505",
+      details: "public.ventas",
+      hint: "function convertir_presupuesto_en_venta_neutral",
+      cause: new Error("token=secreto"),
+    };
+    const registrar = vi.fn();
+    const resultado = await ejecutarConversionPresupuestoCerrada(
+      inputV2,
+      {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
+        }),
+        convertirNeutral: async () => {
+          throw causa;
+        },
+        convertirLegacy: vi.fn(),
+      },
+      registrar,
+    );
+
+    expect(registrar).toHaveBeenCalledWith("CONVERTIR_PRESUPUESTO", causa);
+    expect(resultado).toMatchObject({ ok: false, error: { codigo: "ERROR_INTERNO" } });
+    const salida = textoProfundo(resultado).toLowerCase();
+    for (const token of [
+      "constraint",
+      "ventas_idempotency_key_key",
+      "public.ventas",
+      "convertir_presupuesto_en_venta_neutral",
+      "23505",
+      "secreto",
+    ]) {
+      expect(salida).not.toContain(token);
+    }
+  });
+
+  it("la fachada server-facing representa mantenimiento con el mismo código cerrado", async () => {
+    const convertirNeutral = vi.fn();
+    const resultado = await ejecutarConversionPresupuestoCerrada(
+      inputV2,
+      {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: false,
+          facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
+        }),
+        convertirNeutral,
+        convertirLegacy: vi.fn(),
+      },
+      vi.fn(),
+    );
+
+    expect(resultado).toMatchObject({ ok: false, error: { codigo: "MANTENIMIENTO" } });
+    expect(convertirNeutral).not.toHaveBeenCalled();
   });
 });

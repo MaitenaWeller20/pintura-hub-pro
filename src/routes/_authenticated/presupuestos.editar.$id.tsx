@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { ClientePicker } from "@/components/cliente-picker";
 import { PageHeader } from "@/components/app/page-header";
@@ -27,7 +28,8 @@ import {
 } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
-import { MAX_DESCRIPCION_ITEM } from "@/lib/item-descripcion";
+import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
+import { editarPresupuesto } from "@/lib/presupuestos.functions";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/editar/$id")({
   component: EditarPresupuesto,
@@ -47,6 +49,7 @@ type Fila = {
   producto_id: string;
   codigo: string;
   descripcion: string;
+  descripcionBase: string;
   /** El precio con el que se presupuestó. null = línea agregada recién. */
   precio_snapshot: number | null;
   iva_snapshot: number | null;
@@ -66,6 +69,7 @@ const ivaDe = (f: Fila, repreciar: boolean) =>
 function EditarPresupuesto() {
   const { id } = useParams({ from: "/_authenticated/presupuestos/editar/$id" });
   const navigate = useNavigate();
+  const editar = useServerFn(editarPresupuesto);
   const qc = useQueryClient();
 
   const [clienteId, setClienteId] = useState("");
@@ -117,6 +121,7 @@ function EditarPresupuesto() {
         producto_id: i.producto_id,
         codigo: i.codigo,
         descripcion: i.descripcion,
+        descripcionBase: i.descripcion,
         precio_snapshot: Number(i.precio_lista_sin_iva),
         iva_snapshot: Number(i.iva_porcentaje),
         // Si el producto ya no está en el catálogo (borrado), lo de hoy es lo
@@ -166,6 +171,7 @@ function EditarPresupuesto() {
         producto_id: p.id,
         codigo: p.codigo,
         descripcion: p.nombre,
+        descripcionBase: p.nombre,
         precio_snapshot: null, // línea nueva: va al precio de hoy
         iva_snapshot: null,
         precio_hoy: Number(p.precio_sin_iva),
@@ -205,22 +211,24 @@ function EditarPresupuesto() {
         throw new Error("Dejá al menos un producto. Si no querés ninguno, anulá el presupuesto.");
       if (filas.some((f) => !(Number(f.cantidad) > 0)))
         throw new Error("Hay productos sin cantidad.");
-      const { data: r, error: e } = await supabase.rpc("editar_presupuesto", {
-        p_presupuesto_id: id,
-        p_items: filas.map((f) => ({
-          producto_id: f.producto_id,
-          cantidad: Number(f.cantidad),
-          descuento_porcentaje: Number(f.descuento || 0),
-          descripcion: f.descripcion,
-        })) as any,
-        p_cliente_id: clienteId || undefined,
-        p_nombre_cliente: nombreCliente.trim() || undefined,
-        p_validez_hasta: validez || undefined,
-        p_observaciones: observaciones.trim() || undefined,
-        p_repreciar: repreciar,
+      const resultado = await editar({
+        data: {
+          p_presupuesto_id: id,
+          p_items: filas.map((f) => ({
+            producto_id: f.producto_id,
+            cantidad: Number(f.cantidad),
+            descuento_porcentaje: Number(f.descuento || 0),
+            ...descripcionItemParaPayload(f.descripcion, f.descripcionBase),
+          })),
+          p_cliente_id: clienteId || undefined,
+          p_nombre_cliente: nombreCliente.trim() || undefined,
+          p_validez_hasta: validez || undefined,
+          p_observaciones: observaciones.trim() || undefined,
+          p_repreciar: repreciar,
+        },
       });
-      if (e) throw new Error(e.message);
-      return (Array.isArray(r) ? r[0] : r) as any;
+      if (!resultado.ok) throw new Error(resultado.error.mensaje);
+      return resultado.valor;
     },
     onSuccess: (r: any) => {
       toast.success(`Presupuesto ${r?.numero ?? ""} actualizado.`);
@@ -414,6 +422,7 @@ function EditarPresupuesto() {
                 </TableRow>
               ) : (
                 filas.map((f) => {
+                  const estadoDescripcion = estadoDescripcionItem(f.descripcion, f.descripcionBase);
                   const base = precioDe(f, repreciar);
                   const precio = +(base * (1 - Number(f.descuento || 0) / 100)).toFixed(2);
                   // Sólo si el precio que se está mostrando NO es el de hoy.
@@ -430,17 +439,27 @@ function EditarPresupuesto() {
                         <Input
                           aria-label={`Descripción de ${f.codigo}`}
                           aria-describedby={`descripcion-ayuda-${f.producto_id}`}
+                          aria-invalid={!estadoDescripcion.valida}
                           value={f.descripcion}
-                          maxLength={MAX_DESCRIPCION_ITEM}
                           onChange={(event) =>
                             upd(f.producto_id, { descripcion: event.target.value })
                           }
                         />
                         <p
                           id={`descripcion-ayuda-${f.producto_id}`}
-                          className="mt-1 text-xs text-muted-foreground"
+                          role={estadoDescripcion.valida ? undefined : "alert"}
+                          className={`mt-1 text-xs ${estadoDescripcion.valida ? "text-muted-foreground" : "text-destructive"}`}
                         >
-                          Sólo cambia esta línea; no modifica el catálogo
+                          {estadoDescripcion.mensaje ??
+                            (!estadoDescripcion.personalizada &&
+                            estadoDescripcion.caracteres > 160 ? (
+                              "Descripción histórica sin cambios; se conservará completa"
+                            ) : (
+                              <>
+                                <span>Sólo cambia esta línea; no modifica el catálogo</span>
+                                <span> · {estadoDescripcion.caracteres}/160 caracteres</span>
+                              </>
+                            ))}
                         </p>
                         {f.precio_snapshot === null && (
                           <span className="ml-2 text-[10px] text-muted-foreground">(nuevo)</span>

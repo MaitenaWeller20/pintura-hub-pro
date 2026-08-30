@@ -197,7 +197,11 @@ SELECT pg_temp.assert_true(
   'crear_presupuesto no renombra ni repricia el catálogo'
 );
 
--- Compatibilidad: omitir el campo conserva el nombre del catálogo.
+-- Compatibilidad: omitir el campo conserva incluso un nombre histórico del
+-- catálogo que excede el límite vigente para texto nuevo.
+UPDATE public.productos
+   SET nombre=E'  Catálogo histórico B\t' || pg_catalog.repeat('😀',161) || E'\n'
+ WHERE id='c5100000-0000-4000-8000-000000000002';
 CREATE TEMP TABLE t_presupuesto_fallback ON COMMIT DROP AS
 SELECT * FROM public.crear_presupuesto(
   (SELECT sucursal_id FROM t_context),
@@ -205,10 +209,11 @@ SELECT * FROM public.crear_presupuesto(
   NULL,NULL,NULL,'T1 presupuesto fallback'
 );
 SELECT pg_temp.assert_true(
-  (SELECT i.descripcion='Producto T1 Color B'
+  (SELECT i.descripcion=p.nombre
      FROM public.presupuesto_items AS i
-     JOIN t_presupuesto_fallback AS t ON t.presupuesto_id=i.presupuesto_id),
-  'crear_presupuesto usa el catálogo cuando descripción está ausente'
+     JOIN t_presupuesto_fallback AS t ON t.presupuesto_id=i.presupuesto_id
+     JOIN public.productos AS p ON p.id=i.producto_id),
+  'crear_presupuesto preserva byte a byte el catálogo largo cuando descripción está ausente'
 );
 
 -- Vacío y 161 caracteres se rechazan sin encabezado, ítem ni renumeración durable.
@@ -264,7 +269,7 @@ SELECT pg_temp.assert_true(
 
 -- Edición: la ausencia conserva el snapshot; el reprecio no cambia esa decisión.
 UPDATE public.presupuesto_items AS i
-   SET descripcion='Descripción histórica 4321'
+   SET descripcion=E'  Descripción histórica\t' || pg_catalog.repeat('😀',161) || E'\n'
   FROM t_presupuesto_personalizado AS t
  WHERE i.presupuesto_id=t.presupuesto_id
    AND i.producto_id='c5100000-0000-4000-8000-000000000001';
@@ -274,7 +279,7 @@ SELECT * FROM public.editar_presupuesto(
   NULL,NULL,NULL,'T1 edición conserva descripción',false
 );
 SELECT pg_temp.assert_true(
-  (SELECT i.descripcion='Descripción histórica 4321'
+  (SELECT i.descripcion=E'  Descripción histórica\t' || pg_catalog.repeat('😀',161) || E'\n'
      FROM public.presupuesto_items AS i
      JOIN t_presupuesto_personalizado AS t ON t.presupuesto_id=i.presupuesto_id),
   'editar_presupuesto conserva la descripción histórica cuando el campo se omite'
@@ -298,7 +303,7 @@ SELECT * FROM public.editar_presupuesto(
   NULL,NULL,NULL,'T1 edición repricia sin redescribir',true
 );
 SELECT pg_temp.assert_true(
-  (SELECT i.descripcion='Descripción histórica 4321'
+  (SELECT i.descripcion=E'  Descripción histórica\t' || pg_catalog.repeat('😀',161) || E'\n'
        AND i.precio_lista_sin_iva=1250
        AND i.iva_porcentaje=10.5
      FROM public.presupuesto_items AS i
@@ -307,9 +312,10 @@ SELECT pg_temp.assert_true(
   'p_repreciar=true actualiza precio e IVA pero conserva la descripción histórica'
 );
 SELECT pg_temp.assert_true(
-  (SELECT i.descripcion='Producto T1 Color B'
+  (SELECT i.descripcion=p.nombre
      FROM public.presupuesto_items AS i
      JOIN t_presupuesto_personalizado AS t ON t.presupuesto_id=i.presupuesto_id
+     JOIN public.productos AS p ON p.id=i.producto_id
     WHERE i.producto_id='c5100000-0000-4000-8000-000000000002'),
   'una línea nueva editada sin descripción usa el catálogo'
 );
@@ -439,6 +445,9 @@ SELECT pg_temp.assert_true(
   'la descripción de venta no cambia catálogo, totales ni efecto de stock'
 );
 
+UPDATE public.productos
+   SET nombre=E'  Catálogo histórico A\t' || pg_catalog.repeat('😀',161) || E'\n'
+ WHERE id='c5100000-0000-4000-8000-000000000001';
 CREATE TEMP TABLE t_venta_fallback ON COMMIT DROP AS
 SELECT * FROM public.crear_venta(
   (SELECT sucursal_id FROM t_context),
@@ -448,10 +457,11 @@ SELECT * FROM public.crear_venta(
   'e5100000-0000-4000-8000-000000000002'
 );
 SELECT pg_temp.assert_true(
-  (SELECT i.descripcion='Producto T1 Color A'
+  (SELECT i.descripcion=p.nombre
      FROM public.venta_items AS i
-     JOIN t_venta_fallback AS t ON t.venta_id=i.venta_id),
-  'crear_venta usa el catálogo cuando descripción está ausente'
+     JOIN t_venta_fallback AS t ON t.venta_id=i.venta_id
+     JOIN public.productos AS p ON p.id=i.producto_id),
+  'crear_venta preserva byte a byte el catálogo largo cuando descripción está ausente'
 );
 
 CREATE TEMP TABLE t_venta_invalida_antes ON COMMIT DROP AS

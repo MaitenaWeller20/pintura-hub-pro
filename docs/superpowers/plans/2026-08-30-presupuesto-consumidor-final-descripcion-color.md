@@ -60,7 +60,7 @@ describe("descripción de una línea", () => {
 
 - [ ] **Step 2: comprobar RED**
 
-Run: `npx vitest run src/lib/item-descripcion.test.ts`  
+Run: `npx vitest run src/lib/item-descripcion.test.ts`
 Expected: FAIL porque el módulo todavía no existe.
 
 - [ ] **Step 3: implementar el contrato puro**
@@ -107,7 +107,7 @@ Agregar casos que demuestren:
 
 - [ ] **Step 5: comprobar RED SQL**
 
-Run: `bash scripts/test-descripcion-personalizada-items.sh`  
+Run: `bash scripts/test-descripcion-personalizada-items.sh`
 Expected: FAIL porque los escritores actuales fuerzan `productos.nombre`.
 
 - [ ] **Step 6: implementar helper SQL owner-only**
@@ -220,7 +220,7 @@ Probar replay exacto y conflictos al cambiar cliente/condición/pagos. Probar qu
 
 - [ ] **Step 4: comprobar RED**
 
-Run: `bash scripts/test-presupuesto-consumidor-final-caja.sh`  
+Run: `bash scripts/test-presupuesto-consumidor-final-caja.sh`
 Expected: FAIL porque la RPC actual exige cliente, omite descripción y el trigger puede autoabrir caja.
 
 - [ ] **Step 5: implementar esquema e invariante global**
@@ -573,7 +573,7 @@ Agregar historia sin caja: botones deshabilitados y DB sin mutaciones. Agregar p
 
 - [ ] **Step 4: ejecutar E2E RED y luego GREEN**
 
-Run: `npm run e2e -- e2e/presupuestos-facturacion.spec.ts`  
+Run: `npm run e2e -- e2e/presupuestos-facturacion.spec.ts`
 Expected RED inicial por UI ausente; después de implementar, todas las historias PASS con cleanup.
 
 - [ ] **Step 5: documentar operación**

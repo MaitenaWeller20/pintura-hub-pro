@@ -58,7 +58,7 @@ import {
 } from "@/lib/ventas-ui";
 import { EditorNotaCreditoPeriodo } from "@/components/ventas/editor-nota-credito-periodo";
 import { puedeIniciarNcPeriodo, type CaminoNotaCredito } from "@/lib/nota-credito-periodo-ui";
-import { MAX_DESCRIPCION_ITEM } from "@/lib/item-descripcion";
+import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
@@ -69,6 +69,7 @@ interface ItemRow {
   producto_id: string;
   codigo: string;
   descripcion: string;
+  descripcionBase: string;
   cantidad: number;
   // null = "usá el precio de lista". Vacío en el input NO es 0.
   precio_unitario_sin_iva: number | null;
@@ -245,6 +246,7 @@ function NuevaVenta() {
         producto_id: p.id,
         codigo: p.codigo,
         descripcion: p.nombre,
+        descripcionBase: p.nombre,
         cantidad: 1,
         precio_unitario_sin_iva: Number(p.precio_sin_iva),
         precio_lista: Number(p.precio_sin_iva),
@@ -313,6 +315,7 @@ function NuevaVenta() {
         producto_id: it.producto_id,
         codigo: it.codigo,
         descripcion: it.descripcion,
+        descripcionBase: it.descripcion,
         cantidad: Number(it.cantidad),
         precio_unitario_sin_iva: Number(it.precio_unitario_sin_iva),
         precio_lista: Number(it.precio_unitario_sin_iva),
@@ -568,7 +571,7 @@ function NuevaVenta() {
           producto_id: item.producto_id,
           cantidad: Number(item.cantidad || 0),
           descuento_porcentaje: Number(item.descuento_porcentaje || 0),
-          descripcion: item.descripcion,
+          ...descripcionItemParaPayload(item.descripcion, item.descripcionBase),
           ...(precioPisado ? { precio_unitario_sin_iva: precioTipeado } : {}),
         };
       });
@@ -1286,6 +1289,10 @@ function NuevaVenta() {
                 </TableHeader>
                 <TableBody>
                   {items.map((it, i) => {
+                    const estadoDescripcion = estadoDescripcionItem(
+                      it.descripcion,
+                      it.descripcionBase,
+                    );
                     const precioEfectivo = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
                     const sub =
                       precioEfectivo *
@@ -1305,16 +1312,31 @@ function NuevaVenta() {
                           <Input
                             aria-label={`Descripción de ${it.codigo}`}
                             aria-describedby={`descripcion-ayuda-${i}`}
+                            aria-invalid={!estadoDescripcion.valida}
                             value={it.descripcion}
-                            maxLength={MAX_DESCRIPCION_ITEM}
                             readOnly={it.desde_factura === true}
                             onChange={(event) => updateItem(i, "descripcion", event.target.value)}
                           />
                           <p
                             id={`descripcion-ayuda-${i}`}
-                            className="mt-1 text-xs text-muted-foreground"
+                            role={estadoDescripcion.valida ? undefined : "alert"}
+                            className={`mt-1 text-xs ${estadoDescripcion.valida ? "text-muted-foreground" : "text-destructive"}`}
                           >
-                            Sólo cambia esta línea; no modifica el catálogo
+                            {estadoDescripcion.mensaje ??
+                              (!it.desde_factura &&
+                              !estadoDescripcion.personalizada &&
+                              estadoDescripcion.caracteres > 160 ? (
+                                "Descripción histórica sin cambios; se conservará completa"
+                              ) : (
+                                <>
+                                  <span>Sólo cambia esta línea; no modifica el catálogo</span>
+                                  <span>
+                                    {it.desde_factura
+                                      ? " · La reversión usa el original guardado"
+                                      : ` · ${estadoDescripcion.caracteres}/160 caracteres`}
+                                  </span>
+                                </>
+                              ))}
                           </p>
                           {stockWarn && (
                             <Badge

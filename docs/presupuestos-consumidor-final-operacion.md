@@ -75,11 +75,59 @@ El estado habilitado esperado es V2 `true`, legacy `false`, firma legacy ausente
 
 ## Rollout
 
+Este release exige un corte de mantenimiento. No existe un orden de despliegue
+zero-downtime seguro sin un puente de compatibilidad adicional: la aplicación
+anterior lee campos de snapshot/hash cuyo acceso revoca
+`20260830154723_cerrar_acl_ventas_y_proyeccion_cola_fiscal.sql`, mientras la
+aplicación nueva requiere los contratos finales de conversión y proyección de
+cola que todavía no existen antes de las migraciones. Aplicar base primero
+rompe instancias anteriores; promover aplicación primero rompe instancias
+nuevas. Este release no incorpora ni presume ese puente.
+
+La secuencia operativa es:
+
 1. Ejecutar la matriz SQL y de aplicación en una instancia local reiniciada.
-2. Repetir las historias en homologación con caja abierta por el circuito normal y ARCA en modo de prueba; no usar certificados ni endpoints reales para la prueba automatizada.
-3. Confirmar un único candidato global y revisar las cajas de las sucursales que participarán.
-4. Desplegar aplicación y migraciones compatibles.
-5. Habilitar exclusivamente V2 dentro de una transacción y verificar el resultado:
+   Repetir las historias en homologación con caja abierta por el circuito
+   normal y ARCA en modo de prueba; no usar certificados ni endpoints reales
+   para la prueba automatizada.
+2. En producción y todavía sin mutar esquema, ejecutar los preflight de este
+   documento: confirmar exactamente un Consumidor Final global elegible,
+   revisar la cardinalidad de cajas de cada sucursal candidata y registrar el
+   estado de flags, cola, versión de aplicación y migraciones pendientes.
+3. Construir el artefacto final como deployment de producción sin asignarle el
+   dominio, guardar su URL inmutable y SHA, y probar su healthcheck aislado:
+
+   ```bash
+   vercel deploy --prod --skip-domain
+   ```
+
+   No promover todavía ese deployment.
+
+4. Activar un mantenimiento real que impida **todas** las nuevas escrituras
+   comerciales, no sólo los botones fiscales. Poner ambos escritores en
+   `false`, registrar la duración máxima de requests/functions/transacciones y
+   esperar al menos ese período. Verificar que no queden requests,
+   transacciones ni instancias anteriores atendiendo trabajo. Los flags son
+   defensa fail-closed, no sustituyen el bloqueo de tráfico ni el drenaje.
+5. Con mantenimiento activo, aplicar **todas** las migraciones pendientes en
+   orden y verificar esquema y ledger después de cada una. El lote debe incluir
+   `20260830154723_cerrar_acl_ventas_y_proyeccion_cola_fiscal.sql` y
+   `20260830220345_preservar_descripciones_historicas_conversion.sql`, además de
+   cualquier versión anterior pendiente. Un hash, postcondición o ledger
+   inesperado aborta el corte; nunca se salta ni se marca manualmente una
+   migración sin comprobar su SQL efectivo.
+6. Promover exactamente la URL inmutable preparada en el paso 3, sin hacer un
+   build nuevo durante el corte:
+
+   ```bash
+   vercel promote <deployment-production-url>
+   ```
+
+   Mantener el bloqueo mientras arrancan las instancias nuevas y comprobar de
+   nuevo que ninguna instancia anterior sigue sirviendo requests.
+
+7. Habilitar exclusivamente V2 dentro de una transacción y verificar el
+   resultado:
 
 ```sql
 BEGIN;
@@ -101,7 +149,19 @@ SELECT facturacion_receptor_v2_enabled,
 COMMIT;
 ```
 
-6. Convertir primero un presupuesto controlado por sucursal y revisar presupuesto, venta, pago, stock, caja y PDF.
+8. Todavía en mantenimiento, ejecutar smoke controlado de: listado de ventas,
+   proyección/cola fiscal, conversión de presupuesto, NC total vinculada y PDF.
+   En la conversión revisar presupuesto, venta, pago, stock, caja, receptor y
+   descripción congelada. No reintentar a ciegas una respuesta incierta.
+9. Volver a leer flags y exigir `v2=true`, `legacy=false`; revisar errores y
+   cola, confirmar el drenaje final y recién entonces reabrir el tráfico.
+
+Si cualquier paso falla después de aplicar las migraciones, no promover la
+aplicación anterior: ya no es compatible con el esquema post-corte. Mantener el
+mantenimiento y ambos flags en `false`, preservar ventas, snapshots, hashes,
+cola e idempotency keys, y corregir hacia adelante. Sólo se puede promover otro
+artefacto si se demuestra compatible con el esquema ya instalado. Un resultado
+comercial o fiscal ambiguo se concilia antes de repetirlo.
 
 ## Verificación de una conversión
 

@@ -171,6 +171,35 @@ SELECT * FROM public.crear_presupuesto(
   NULL,NULL,NULL,'T2-BOLA'
 );
 
+-- Compatibilidad pre-release: este snapshot antecede el límite actual. La
+-- conversión debe resolver importes/productos autoritativamente y copiar estos
+-- bytes congelados antes de confirmar la transacción.
+CREATE TEMP TABLE t_historico_largo AS
+SELECT * FROM public.crear_presupuesto(
+  (SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'),
+  '[{"producto_id":"c5200000-0000-4000-8000-000000000001","cantidad":1}]'::jsonb,
+  NULL,NULL,NULL,'T2-HISTORICO-LARGO'
+);
+UPDATE public.presupuesto_items AS i
+   SET descripcion='  Histórico  sin normalizar  '||pg_catalog.repeat('😀',170)||E'\t'
+  FROM t_historico_largo AS h
+ WHERE i.presupuesto_id=h.presupuesto_id;
+CREATE TEMP TABLE t_historico_largo_sale AS
+SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
+  (SELECT presupuesto_id FROM t_historico_largo),
+  'b5200000-0000-4000-8000-000000000001','CTA_CTE','[]'::jsonb,
+  'e5200000-0000-4000-8000-000000000090'
+);
+SELECT pg_temp.assert_true(
+  (SELECT vi.descripcion IS NOT DISTINCT FROM pi.descripcion
+     FROM t_historico_largo_sale AS s
+     JOIN public.venta_items AS vi ON vi.venta_id=s.venta_id
+     JOIN public.presupuesto_items AS pi
+       ON pi.presupuesto_id=(SELECT presupuesto_id FROM t_historico_largo)
+      AND pi.producto_id=vi.producto_id),
+  'la conversión copia byte a byte una descripción histórica mayor a 160'
+);
+
 -- RED principal: el escritor vigente todavía rechaza cliente NULL.
 CREATE TEMP TABLE t_anon_sale AS
 SELECT * FROM public.convertir_presupuesto_en_venta_neutral(

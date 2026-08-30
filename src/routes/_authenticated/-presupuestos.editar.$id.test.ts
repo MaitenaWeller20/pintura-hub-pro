@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const PRESUPUESTO_ID = "10000000-0000-4000-8000-000000000001";
 const PRODUCTO_ID = "20000000-0000-4000-8000-000000000001";
-const DESCRIPCION = "Base 10 L (Código 1234)";
+const DESCRIPCION = `Descripción histórica ${"😀".repeat(170)}`;
 
-const dobles = vi.hoisted(() => ({ navigate: vi.fn(), rpc: vi.fn(), invalidateQueries: vi.fn() }));
+const dobles = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  rpc: vi.fn(),
+  editarPresupuesto: vi.fn(),
+  invalidateQueries: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: Record<string, unknown>) => ({
@@ -17,6 +22,15 @@ vi.mock("@tanstack/react-router", () => ({
   }),
   useNavigate: () => dobles.navigate,
   useParams: () => ({ id: PRESUPUESTO_ID }),
+}));
+
+vi.mock("@tanstack/react-start", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-start")>()),
+  useServerFn: (serverFn: unknown) => serverFn,
+}));
+vi.mock("@/lib/presupuestos.functions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/presupuestos.functions")>()),
+  editarPresupuesto: dobles.editarPresupuesto,
 }));
 
 vi.mock("@/hooks/use-current-user", () => ({
@@ -103,6 +117,10 @@ beforeEach(() => {
   dobles.navigate.mockReset();
   dobles.invalidateQueries.mockReset();
   dobles.rpc.mockReset().mockResolvedValue({ data: [{ numero: "P-00001" }], error: null });
+  dobles.editarPresupuesto.mockReset().mockResolvedValue({
+    ok: true,
+    valor: { presupuestoId: PRESUPUESTO_ID, numero: "P-00001", total: 242 },
+  });
 });
 
 afterEach(cleanup);
@@ -113,6 +131,8 @@ describe("rutas reales de edición y detalle de presupuesto", () => {
 
     const descripcion = (await screen.findByLabelText("Descripción de P-1")) as HTMLInputElement;
     expect(descripcion.value).toBe(DESCRIPCION);
+    expect(descripcion.hasAttribute("maxlength")).toBe(false);
+    expect(descripcion.getAttribute("aria-invalid")).not.toBe("true");
 
     const fila = screen.getByTestId("fila-presupuesto");
     const [, cantidad] = within(fila).getAllByRole("textbox") as HTMLInputElement[];
@@ -124,14 +144,31 @@ describe("rutas reales de edición y detalle de presupuesto", () => {
     );
     fireEvent.click(screen.getByTestId("guardar-edicion"));
 
-    await waitFor(() => expect(dobles.rpc).toHaveBeenCalledOnce());
-    expect(dobles.rpc).toHaveBeenCalledWith(
-      "editar_presupuesto",
+    await waitFor(() => expect(dobles.editarPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.editarPresupuesto).toHaveBeenCalledWith(
       expect.objectContaining({
-        p_items: [expect.objectContaining({ descripcion: DESCRIPCION, cantidad: 2 })],
-        p_repreciar: true,
+        data: expect.objectContaining({
+          p_items: [expect.objectContaining({ cantidad: 2 })],
+          p_repreciar: true,
+        }),
       }),
     );
+    expect(dobles.editarPresupuesto.mock.calls[0]?.[0].data.p_items[0]).not.toHaveProperty(
+      "descripcion",
+    );
+    expect(dobles.rpc).not.toHaveBeenCalled();
+  });
+
+  it("envía una edición personalizada y no el snapshot base", async () => {
+    render(createElement(componente(RutaEditar)));
+    const descripcion = (await screen.findByLabelText("Descripción de P-1")) as HTMLInputElement;
+    fireEvent.change(descripcion, { target: { value: "  Base nueva  10 L " } });
+    fireEvent.click(screen.getByTestId("guardar-edicion"));
+
+    await waitFor(() => expect(dobles.editarPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.editarPresupuesto.mock.calls[0]?.[0].data.p_items[0]).toMatchObject({
+      descripcion: "Base nueva 10 L",
+    });
   });
 
   it("muestra la descripción congelada en el detalle", () => {

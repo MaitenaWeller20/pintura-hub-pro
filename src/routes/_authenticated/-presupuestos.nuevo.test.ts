@@ -7,12 +7,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const SUCURSAL_ID = "10000000-0000-4000-8000-000000000001";
 const PRODUCTO_ID = "40000000-0000-4000-8000-000000000001";
 
-const dobles = vi.hoisted(() => ({ navigate: vi.fn(), rpc: vi.fn() }));
+const dobles = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  rpc: vi.fn(),
+  crearPresupuesto: vi.fn(),
+  catalogoNombre: "Producto Uno",
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: Record<string, unknown>) => ({ options }),
   useNavigate: () => dobles.navigate,
 }));
+
+vi.mock("@tanstack/react-start", () => ({ useServerFn: (serverFn: unknown) => serverFn }));
+vi.mock("@/lib/presupuestos.functions", () => ({ crearPresupuesto: dobles.crearPresupuesto }));
 
 vi.mock("@/hooks/use-current-user", () => ({
   useCurrentUser: () => ({
@@ -28,7 +36,7 @@ vi.mock("@tanstack/react-query", () => ({
           {
             id: PRODUCTO_ID,
             codigo: "P-1",
-            nombre: "Producto Uno",
+            nombre: dobles.catalogoNombre,
             precio_sin_iva: 100,
             iva_porcentaje: 21,
           },
@@ -63,6 +71,11 @@ function paginaNuevaPresupuesto(): ComponentType {
 beforeEach(() => {
   dobles.navigate.mockReset();
   dobles.rpc.mockReset().mockResolvedValue({ data: [{ numero: "P-1" }], error: null });
+  dobles.crearPresupuesto.mockReset().mockResolvedValue({
+    ok: true,
+    valor: { presupuestoId: "50000000-0000-4000-8000-000000000001", numero: "P-1" },
+  });
+  dobles.catalogoNombre = "Producto Uno";
 });
 
 afterEach(cleanup);
@@ -77,21 +90,44 @@ describe("ruta real de nuevo presupuesto", () => {
     const descripcion = screen.getByLabelText("Descripción de P-1") as HTMLInputElement;
     fireEvent.change(descripcion, { target: { value: "Base 10 L (Código 1234)" } });
 
-    expect(descripcion.maxLength).toBe(160);
+    fireEvent.change(descripcion, { target: { value: "😀".repeat(160) } });
+    expect(descripcion.value).toBe("😀".repeat(160));
+    fireEvent.change(descripcion, { target: { value: "Base 10 L (Código 1234)" } });
+    expect(descripcion.hasAttribute("maxlength")).toBe(false);
     expect(screen.getByText("Sólo cambia esta línea; no modifica el catálogo")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
-    await waitFor(() => expect(dobles.rpc).toHaveBeenCalledOnce());
-    expect(dobles.rpc).toHaveBeenCalledWith(
-      "crear_presupuesto",
+    await waitFor(() => expect(dobles.crearPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.crearPresupuesto).toHaveBeenCalledWith(
       expect.objectContaining({
-        p_items: [
-          expect.objectContaining({
-            producto_id: PRODUCTO_ID,
-            descripcion: "Base 10 L (Código 1234)",
-          }),
-        ],
+        data: expect.objectContaining({
+          p_items: [
+            expect.objectContaining({
+              producto_id: PRODUCTO_ID,
+              descripcion: "Base 10 L (Código 1234)",
+            }),
+          ],
+        }),
       }),
     );
+    expect(dobles.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["largo", `Catálogo histórico ${"😀".repeat(170)}`],
+    ["vacío al normalizar", "\uFEFF\u00A0 \t"],
+  ])("omite el fallback de catálogo %s al crear", async (_caso, nombre) => {
+    dobles.catalogoNombre = nombre;
+    render(createElement(paginaNuevaPresupuesto()));
+
+    fireEvent.change(screen.getByTestId("buscar-producto-presup"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(dobles.crearPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.crearPresupuesto.mock.calls[0]?.[0].data.p_items[0]).not.toHaveProperty(
+      "descripcion",
+    );
+    expect(dobles.rpc).not.toHaveBeenCalled();
   });
 });

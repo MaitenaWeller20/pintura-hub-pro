@@ -31,6 +31,8 @@ const dobles = vi.hoisted(() => ({
   previsualizar: vi.fn(),
   emitir: vi.fn(),
   listarFavoritos: vi.fn(),
+  catalogoNombre: "Producto Uno",
+  facturaDescripcion: "Producto Uno",
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -113,7 +115,7 @@ vi.mock("@tanstack/react-query", async () => {
             {
               id: PRODUCTO_ID,
               codigo: "P-1",
-              nombre: "Producto Uno",
+              nombre: dobles.catalogoNombre,
               precio_sin_iva: 100,
               iva_porcentaje: 21,
               stock_sucursal: [{ sucursal_id: SUCURSAL_ID, cantidad: 10 }],
@@ -175,7 +177,7 @@ vi.mock("@/integrations/supabase/client", () => {
             {
               producto_id: PRODUCTO_ID,
               codigo: "P-1",
-              descripcion: "Producto Uno",
+              descripcion: dobles.facturaDescripcion,
               cantidad: 1,
               precio_unitario_sin_iva: 100,
               iva_porcentaje: 21,
@@ -282,6 +284,8 @@ beforeEach(() => {
   dobles.previsualizar.mockReset();
   dobles.emitir.mockReset();
   dobles.listarFavoritos.mockReset().mockResolvedValue([]);
+  dobles.catalogoNombre = "Producto Uno";
+  dobles.facturaDescripcion = "Producto Uno";
 });
 
 afterEach(cleanup);
@@ -296,7 +300,7 @@ describe("ruta real de Nueva venta para NC por período", () => {
     const descripcion = screen.getByLabelText("Descripción de P-1") as HTMLInputElement;
     fireEvent.change(descripcion, { target: { value: "Base 10 L (Código 1234)" } });
 
-    expect(descripcion.maxLength).toBe(160);
+    expect(descripcion.hasAttribute("maxlength")).toBe(false);
     expect(screen.getByText("Sólo cambia esta línea; no modifica el catálogo")).toBeTruthy();
     expect(descripcion.value).toBe("Base 10 L (Código 1234)");
 
@@ -332,6 +336,34 @@ describe("ruta real de Nueva venta para NC por período", () => {
       },
     });
   });
+
+  it.each([
+    ["largo", `Catálogo histórico ${"😀".repeat(170)}`],
+    ["vacío al normalizar", "\uFEFF\u00A0 \t"],
+  ])(
+    "omite el fallback de catálogo %s tanto en preview como en venta directa",
+    async (_caso, nombre) => {
+      dobles.catalogoNombre = nombre;
+      renderRuta();
+
+      fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+      fireEvent.click(await screen.findByRole("button", { name: /P-1/ }));
+      await elegirCliente();
+      fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+      fireEvent.click(screen.getByTestId("registrar-y-facturar"));
+      fireEvent.click(screen.getByRole("button", { name: "Previsualizar datos fiscales" }));
+
+      await waitFor(() => expect(dobles.previsualizar).toHaveBeenCalledOnce());
+      expect(dobles.previsualizar.mock.calls[0]?.[0].data.items[0]).not.toHaveProperty(
+        "descripcion",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+      fireEvent.click(screen.getByTestId("registrar-sin-facturar"));
+      await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+      expect(dobles.crearVenta.mock.calls[0]?.[0].data.items[0]).not.toHaveProperty("descripcion");
+    },
+  );
 
   it("mantiene la descripción de cada línea cuando se repite el mismo producto", async () => {
     renderRuta();
@@ -397,6 +429,7 @@ describe("ruta real de Nueva venta para NC por período", () => {
   });
 
   it("usa sólo crearVenta para una reversa vinculada", async () => {
+    dobles.facturaDescripcion = `Descripción congelada ${"x".repeat(180)}`;
     renderRuta();
     await elegirNotaCredito();
     await elegirCliente();
@@ -411,6 +444,7 @@ describe("ruta real de Nueva venta para NC por período", () => {
 
     await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
     expect(dobles.crearPeriodo).not.toHaveBeenCalled();
+    expect(dobles.crearVenta.mock.calls[0]?.[0].data.items[0]).not.toHaveProperty("descripcion");
   });
 
   it("usa sólo crearNotaCreditoPeriodoFiscal para una NC por período", async () => {

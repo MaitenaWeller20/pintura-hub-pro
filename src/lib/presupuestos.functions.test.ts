@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { ejecutarPreflightConversionPresupuesto } from "./presupuestos.functions";
+import {
+  crearPresupuestoInputSchema,
+  editarPresupuestoInputSchema,
+  ejecutarCreacionPresupuestoCerrada,
+  ejecutarEdicionPresupuestoCerrada,
+  ejecutarPreflightConversionPresupuesto,
+} from "./presupuestos.functions";
 
 const presupuestoId = "81000000-0000-4000-8000-000000000001";
 const sucursalId = "82000000-0000-4000-8000-000000000001";
@@ -156,5 +162,117 @@ describe("preflight user-bound de conversión de presupuesto", () => {
       ),
     ).rejects.toThrow("El presupuesto no tiene una sucursal válida.");
     expect(cargarCajasUsuario).not.toHaveBeenCalled();
+  });
+});
+
+const ALTA_BASE = {
+  p_sucursal_id: sucursalId,
+  p_items: [
+    {
+      producto_id: "84000000-0000-4000-8000-000000000001",
+      cantidad: 1,
+      descuento_porcentaje: 0,
+    },
+  ],
+};
+
+function textoProfundo(value: unknown, vistos = new Set<unknown>()): string {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null || vistos.has(value)) return "";
+  vistos.add(value);
+  return Reflect.ownKeys(value)
+    .flatMap((key) => [String(key), textoProfundo(Reflect.get(value, key), vistos)])
+    .join(" ");
+}
+
+describe("writers server-side cerrados de presupuesto", () => {
+  it("valida entradas estrictas, permite omitir fallback y rechaza custom de 161", () => {
+    expect(crearPresupuestoInputSchema.parse(ALTA_BASE).p_items[0]).not.toHaveProperty(
+      "descripcion",
+    );
+    expect(() =>
+      crearPresupuestoInputSchema.parse({
+        ...ALTA_BASE,
+        p_items: [{ ...ALTA_BASE.p_items[0], descripcion: "😀".repeat(161) }],
+      }),
+    ).toThrow(/160/);
+    expect(() => crearPresupuestoInputSchema.parse({ ...ALTA_BASE, inesperado: true })).toThrow();
+    const { p_sucursal_id: _sucursal, ...itemsYCabecera } = ALTA_BASE;
+    expect(
+      editarPresupuestoInputSchema.parse({
+        ...itemsYCabecera,
+        p_presupuesto_id: presupuestoId,
+        p_repreciar: false,
+      }),
+    ).toMatchObject({ p_presupuesto_id: presupuestoId, p_repreciar: false });
+  });
+
+  it.each([
+    ["crear", ejecutarCreacionPresupuestoCerrada, ALTA_BASE],
+    [
+      "editar",
+      ejecutarEdicionPresupuestoCerrada,
+      {
+        p_items: ALTA_BASE.p_items,
+        p_presupuesto_id: presupuestoId,
+        p_repreciar: false,
+      },
+    ],
+  ] as const)("%s no expone el rechazo Supabase real", async (_caso, ejecutar, input) => {
+    const causa = {
+      message: 'duplicate key violates constraint "presupuesto_items_pkey"',
+      code: "23505",
+      details: "public.presupuesto_items",
+      hint: "function editar_presupuesto",
+      cause: new Error("secreto"),
+    };
+    const registrar = vi.fn();
+    const resultado = await ejecutar(input as never, {
+      ejecutarRpc: async () => ({ data: null, error: causa }),
+      registrar,
+    });
+
+    expect(registrar).toHaveBeenCalledWith(expect.stringContaining("PRESUPUESTO"), causa);
+    expect(resultado).toMatchObject({ ok: false, error: { codigo: "ERROR_INTERNO" } });
+    const salida = textoProfundo(resultado).toLowerCase();
+    for (const token of [
+      "constraint",
+      "presupuesto_items",
+      "editar_presupuesto",
+      "23505",
+      "cause",
+      "secreto",
+    ]) {
+      expect(salida).not.toContain(token);
+    }
+  });
+
+  it("rechaza una salida RPC abierta o no numérica sin devolver su contenido", async () => {
+    const resultados = await Promise.all([
+      ejecutarCreacionPresupuestoCerrada(ALTA_BASE, {
+        ejecutarRpc: async () => ({
+          data: [{ presupuesto_id: presupuestoId, numero: "P-1", tabla_interna: "secreto" }],
+          error: null,
+        }),
+        registrar: vi.fn(),
+      }),
+      ejecutarEdicionPresupuestoCerrada(
+        { p_items: ALTA_BASE.p_items, p_presupuesto_id: presupuestoId, p_repreciar: false },
+        {
+          ejecutarRpc: async () => ({
+            data: [{ presupuesto_id: presupuestoId, numero: "P-1", total: "no-numérico" }],
+            error: null,
+          }),
+          registrar: vi.fn(),
+        },
+      ),
+    ]);
+
+    for (const resultado of resultados) {
+      expect(resultado).toMatchObject({ ok: false, error: { codigo: "ERROR_INTERNO" } });
+      expect(textoProfundo(resultado).toLowerCase()).not.toMatch(
+        /tabla_interna|secreto|no-numérico/,
+      );
+    }
   });
 });

@@ -33,6 +33,8 @@ import {
   convertirPresupuestoEnVenta,
   type ConversionPresupuestoInput,
 } from "@/lib/ventas.functions";
+import { esFalloTransporteAmbiguo } from "@/lib/transport-ambiguity";
+import type { CodigoErrorOperacion } from "@/lib/operacion-comercial-segura";
 
 type PresupuestoConvertible = {
   id: string;
@@ -56,39 +58,39 @@ function mensajeErrorPreflight(): string {
   return "No se pudo confirmar la sucursal y su caja. Cerrá el diálogo y volvé a intentar.";
 }
 
-function esErrorAmbiguo(cause: unknown): boolean {
-  const detalle = cause instanceof Error ? cause.message : "";
-  return /failed to fetch|network|conexi|timeout|tiempo de espera/i.test(detalle);
+class ErrorConversionSegura extends Error {
+  constructor(readonly codigo: CodigoErrorOperacion) {
+    super("Error de conversión clasificado por el servidor.");
+    this.name = "ErrorConversionSegura";
+  }
 }
 
 function mensajeErrorConversion(cause: unknown): string {
-  const detalle = cause instanceof Error ? cause.message : "";
-  if (esErrorAmbiguo(cause)) {
+  if (esFalloTransporteAmbiguo(cause)) {
     return "No se pudo confirmar si la venta se creó. Reintentá: se usará la misma operación y no se duplicará.";
   }
-  if (/caja/i.test(detalle)) {
-    return "La caja de esta sucursal ya no está abierta. Abrila y volvé a intentar.";
-  }
-  if (/presupuesto inexistente|sin acceso/i.test(detalle)) {
-    return "No se pudo leer el presupuesto o no tenés acceso.";
-  }
-  if (/consumidor final|candidato|gen[eé]rico/i.test(detalle)) {
-    return "No se pudo configurar Consumidor Final. Pedile a un administrador que revise el cliente genérico.";
-  }
-  if (/mantenimiento/i.test(detalle)) {
-    return "La facturación está en mantenimiento. No se convirtió el presupuesto ni se registró ningún cobro.";
+  if (cause instanceof ErrorConversionSegura) {
+    switch (cause.codigo) {
+      case "CAJA_NO_DISPONIBLE":
+        return "La caja de esta sucursal ya no está abierta. Abrila y volvé a intentar.";
+      case "PRESUPUESTO_SIN_ACCESO":
+        return "No se pudo leer el presupuesto o no tenés acceso.";
+      case "CONSUMIDOR_FINAL_INVALIDO":
+        return "No se pudo configurar Consumidor Final. Pedile a un administrador que revise el cliente genérico.";
+      case "CLIENTE_INVALIDO":
+        return "El cliente no existe, está inactivo o no es válido para esta venta.";
+      case "PRESUPUESTO_NO_EDITABLE":
+        return "El presupuesto ya no está abierto. Actualizá la pantalla antes de continuar.";
+      case "CONFLICTO_REINTENTO":
+        return "El presupuesto ya fue convertido con otros datos. Actualizá la pantalla antes de continuar.";
+      case "MANTENIMIENTO":
+        return "La facturación está en mantenimiento. No se convirtió el presupuesto ni se registró ningún cobro.";
+      case "DATOS_INVALIDOS":
+      case "ERROR_INTERNO":
+        break;
+    }
   }
   return "No se pudo convertir el presupuesto. Revisá los datos y volvé a intentar.";
-}
-
-function esMantenimiento(value: unknown): value is { estado: "MANTENIMIENTO"; mensaje: string } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    (value as Record<string, unknown>).estado === "MANTENIMIENTO" &&
-    typeof (value as Record<string, unknown>).mensaje === "string"
-  );
 }
 
 export function DialogoConvertirPresupuesto({
@@ -226,8 +228,9 @@ export function DialogoConvertirPresupuesto({
         entradaEstableRef.current = entrada;
         facturarAhoraEstableRef.current = facturarAhora;
       }
-      const resultado = await convertir({ data: entrada });
-      if (esMantenimiento(resultado)) throw new Error(resultado.mensaje);
+      const respuesta = await convertir({ data: entrada });
+      if (!respuesta.ok) throw new ErrorConversionSegura(respuesta.error.codigo);
+      const resultado = respuesta.valor;
       return {
         ciclo,
         conversion: {
@@ -246,7 +249,7 @@ export function DialogoConvertirPresupuesto({
       onConvertida(resultado.conversion);
     },
     onError: (cause) => {
-      if (esErrorAmbiguo(cause)) {
+      if (esFalloTransporteAmbiguo(cause)) {
         setIntentoAmbiguo(true);
       } else {
         entradaEstableRef.current = null;

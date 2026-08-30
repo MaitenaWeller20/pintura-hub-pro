@@ -330,3 +330,60 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
   Evidencia fresca del review: focal 16/16, suite completa 1783 tests,
   TypeScript y `git diff --check` GREEN; árbol limpio. Task 5 lista para la
   revisión integral del release.
+- Final review fix wave (`086def0..HEAD`) — implementación y matriz completas;
+  commit final pendiente al momento de escribir este ledger.
+  - Se verificaron técnicamente los cuatro hallazgos Important y los dos Minor.
+    La compatibilidad no se resuelve relajando el contrato nuevo: cada renglón
+    conserva su baseline autoritativo y omite `descripcion` sólo cuando los
+    bytes siguen idénticos. Una edición real normaliza y valida 1..160 puntos de
+    código Unicode. Esto cubre venta/preview, alta y edición de presupuesto y
+    NC vinculada, incluso nombres históricos de más de 160 o que normalizan a
+    vacío.
+  - RED de primitivas: 3 archivos fallaron, con 4 tests fallidos y 10 verdes,
+    por ausencia de baseline/provenance y clasificador de transporte. RED
+    montado inicial: 2 archivos, 9 fallos y 36 pases. GREEN final de estas
+    capas: los casos focales quedaron incluidos en 9 archivos/119 tests.
+  - RED de rutas: 3 archivos fallaron, con 7 aserciones fallidas y 10 pases,
+    además de la costura de import de edición. GREEN: 3 archivos/20 tests; las
+    rutas ya no escriben presupuestos por RPC de browser y usan server functions
+    autenticadas, esquemas estrictos y resultados cerrados.
+  - RED de frontera cerrada: 2 archivos, 4 fallos y 29 pases. El diálogo agregó
+    otro RED de 4/23 por resultados aún abiertos. GREEN: conversión, alta y
+    edición sólo retornan código/mensaje del conjunto seguro; la causa cruda se
+    registra exclusivamente en servidor y las pruebas inspeccionan
+    recursivamente el resultado real. Un RED posterior de mapeo fue 2/11 y el
+    caso mantenimiento fue 1/25; ambos quedaron GREEN sin ramas basadas en
+    substrings SQL en el diálogo.
+  - El clasificador ambiguo es acotado y tipado: reconoce Chrome, Safari,
+    undici, AbortError, TimeoutError, causas/códigos anidados y proxy
+    502/503/504 por campos exactos. Errores de negocio/DB determinísticos no
+    clasifican como transporte y siguen descartando payload/key/acción; sólo
+    una pérdida de respuesta congela y repite exactamente los tres.
+  - RED SQL: convertir un snapshot de presupuesto de más de 160 bytes alcanzó
+    `_normalizar_descripcion_item_20260830` y abortó. La migración
+    `20260830220345` crea desde productos autoritativos y, en la misma
+    transacción y antes de confirmar presupuesto/venta, copia exactamente las
+    descripciones congeladas owner-side. Conserva locks, caja, idempotencia y
+    timing fiscal; cualquier cardinalidad inesperada revierte todos los
+    efectos. La NC V2 vinculada ignora el texto histórico del browser y llega a
+    `anular_venta`, que copia verdad de DB.
+  - Clarificación arquitectónica de release: no existe un orden app-first o
+    DB-first seguro sin bridge, porque la app anterior lee snapshot/hash que
+    revoca `20260830154723` y la nueva exige los contratos finales de
+    conversión/cola. El runbook documenta el cutover real: preflight, staging
+    `--prod --skip-domain`, mantenimiento y drain, todas las migraciones,
+    promoción, smoke, flags y reapertura, con rollback forward-only/fail-closed.
+  - El `maxLength` HTML se retiró porque cuenta unidades UTF-16. La ayuda y
+    validación accesibles cuentan puntos de código; 160 astrales se aceptan,
+    161 editados se rechazan y un snapshot largo sin cambios no queda atrapado.
+    También se limpió el whitespace final de spec y plan.
+  - Matriz fresca tras `supabase db reset --local`: descripciones, conversión/
+    caja/concurrencia, edición 19/19, venta fiscal atómica y NC vinculada GREEN;
+    focal 9 archivos/119 tests; Vitest completo 87 archivos/1834 tests GREEN,
+    con 2 archivos/22 tests omitidos; TypeScript, build Vercel mock y E2E 6/6
+    GREEN. El build sólo conserva warnings históricos ya inventariados.
+  - Auditoría final local: cero presupuestos/productos/clientes/usuarios/
+    perfiles/cajas/credenciales de fixture, secuencias VENTA 0/0, flags
+    `false/false/false`, sin listener E2E en 8080. El stack local
+    `gagrdirwlcunygtztiuk` se detuvo conservando su backup. No se usaron remoto,
+    linked, deploy, push, ARCA, certificados ni flags externos.

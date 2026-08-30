@@ -108,6 +108,15 @@ const PREFLIGHT_ABIERTO = {
   caja: { id: CAJA_ID, abiertaDesde: "2026-08-30T14:35:00.000Z" },
 };
 
+type ConversionExitosa = {
+  id: string;
+  numero: string;
+  cta_cte: boolean;
+  clienteId: string;
+};
+
+const resultadoConversion = (valor: ConversionExitosa) => ({ ok: true as const, valor });
+
 function renderDialogo(
   cambios: Partial<React.ComponentProps<typeof DialogoConvertirPresupuesto>> = {},
   strict = false,
@@ -143,12 +152,14 @@ beforeEach(() => {
   dobles.preflight.mockReset();
   dobles.convertir.mockReset();
   dobles.preflight.mockResolvedValue(PREFLIGHT_ABIERTO);
-  dobles.convertir.mockResolvedValue({
-    id: "50000000-0000-4000-8000-000000000001",
-    numero: "GPZ-VTA-0001",
-    cta_cte: false,
-    clienteId: CLIENTE_EFECTIVO_ID,
-  });
+  dobles.convertir.mockResolvedValue(
+    resultadoConversion({
+      id: "50000000-0000-4000-8000-000000000001",
+      numero: "GPZ-VTA-0001",
+      cta_cte: false,
+      clienteId: CLIENTE_EFECTIVO_ID,
+    }),
+  );
 });
 
 afterEach(() => cleanup());
@@ -246,12 +257,7 @@ describe("diálogo de conversión de presupuesto", () => {
   });
 
   it("congela cierre y controles durante la mutación", async () => {
-    const pendiente = diferida<{
-      id: string;
-      numero: string;
-      cta_cte: boolean;
-      clienteId: string;
-    }>();
+    const pendiente = diferida<ReturnType<typeof resultadoConversion>>();
     dobles.convertir.mockReturnValue(pendiente.promise);
     const props = renderDialogo();
     await prepararPago();
@@ -278,12 +284,7 @@ describe("diálogo de conversión de presupuesto", () => {
   });
 
   it("ignora un resultado tardío después de desmontar el diálogo", async () => {
-    const pendiente = diferida<{
-      id: string;
-      numero: string;
-      cta_cte: boolean;
-      clienteId: string;
-    }>();
+    const pendiente = diferida<ReturnType<typeof resultadoConversion>>();
     dobles.convertir.mockReturnValue(pendiente.promise);
     const props = renderDialogo();
     await prepararPago();
@@ -292,12 +293,14 @@ describe("diálogo de conversión de presupuesto", () => {
     await waitFor(() => expect(dobles.convertir).toHaveBeenCalledTimes(1));
     cleanup();
     await act(async () => {
-      pendiente.resolver({
-        id: "50000000-0000-4000-8000-000000000001",
-        numero: "GPZ-VTA-0001",
-        cta_cte: false,
-        clienteId: CLIENTE_EFECTIVO_ID,
-      });
+      pendiente.resolver(
+        resultadoConversion({
+          id: "50000000-0000-4000-8000-000000000001",
+          numero: "GPZ-VTA-0001",
+          cta_cte: false,
+          clienteId: CLIENTE_EFECTIVO_ID,
+        }),
+      );
       await pendiente.promise;
     });
 
@@ -305,7 +308,7 @@ describe("diálogo de conversión de presupuesto", () => {
   });
 
   it("mantiene receptor, cliente, condición, pagos y cierre congelados tras un error ambiguo", async () => {
-    dobles.convertir.mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"));
+    dobles.convertir.mockRejectedValueOnce(new Error("Failed to fetch"));
     const props = renderDialogo({
       presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
     });
@@ -340,14 +343,14 @@ describe("diálogo de conversión de presupuesto", () => {
   });
 
   it("reutiliza bytes y clave del intento ambiguo aunque se intenten editar cliente y pagos", async () => {
-    dobles.convertir
-      .mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"))
-      .mockResolvedValueOnce({
+    dobles.convertir.mockRejectedValueOnce(new Error("Failed to fetch")).mockResolvedValueOnce(
+      resultadoConversion({
         id: "50000000-0000-4000-8000-000000000001",
         numero: "GPZ-VTA-0001",
         cta_cte: false,
         clienteId: CLIENTE_EFECTIVO_ID,
-      });
+      }),
+    );
     renderDialogo({
       presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
     });
@@ -376,12 +379,14 @@ describe("diálogo de conversión de presupuesto", () => {
   it("descarta un primer fallo determinístico y crea otro intento V2 con pagos, clave y acción nuevos", async () => {
     dobles.convertir
       .mockRejectedValueOnce(new Error("validación determinística"))
-      .mockResolvedValueOnce({
-        id: "50000000-0000-4000-8000-000000000001",
-        numero: "GPZ-VTA-0001",
-        cta_cte: false,
-        clienteId: CLIENTE_EFECTIVO_ID,
-      });
+      .mockResolvedValueOnce(
+        resultadoConversion({
+          id: "50000000-0000-4000-8000-000000000001",
+          numero: "GPZ-VTA-0001",
+          cta_cte: false,
+          clienteId: CLIENTE_EFECTIVO_ID,
+        }),
+      );
     const props = renderDialogo({
       presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
     });
@@ -415,12 +420,14 @@ describe("diálogo de conversión de presupuesto", () => {
   it("descarta un fallo determinístico legacy y usa comprobante y forma de pago corregidos", async () => {
     dobles.convertir
       .mockRejectedValueOnce(new Error("validación determinística"))
-      .mockResolvedValueOnce({
-        id: "50000000-0000-4000-8000-000000000001",
-        numero: "GPZ-VTA-0001",
-        cta_cte: false,
-        clienteId: CLIENTE_EFECTIVO_ID,
-      });
+      .mockResolvedValueOnce(
+        resultadoConversion({
+          id: "50000000-0000-4000-8000-000000000001",
+          numero: "GPZ-VTA-0001",
+          cta_cte: false,
+          clienteId: CLIENTE_EFECTIVO_ID,
+        }),
+      );
     renderDialogo({
       presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
       facturacionV2Habilitada: false,
@@ -451,14 +458,16 @@ describe("diálogo de conversión de presupuesto", () => {
 
   it("desbloquea tras un replay determinístico y el siguiente intento rota payload, clave y acción", async () => {
     dobles.convertir
-      .mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"))
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
       .mockRejectedValueOnce(new Error("validación determinística"))
-      .mockResolvedValueOnce({
-        id: "50000000-0000-4000-8000-000000000001",
-        numero: "GPZ-VTA-0001",
-        cta_cte: false,
-        clienteId: CLIENTE_EFECTIVO_ID,
-      });
+      .mockResolvedValueOnce(
+        resultadoConversion({
+          id: "50000000-0000-4000-8000-000000000001",
+          numero: "GPZ-VTA-0001",
+          cta_cte: false,
+          clienteId: CLIENTE_EFECTIVO_ID,
+        }),
+      );
     const props = renderDialogo({
       presupuesto: { id: PRESUPUESTO_ID, total: 121, cliente_id: CLIENTE_EFECTIVO_ID },
     });
@@ -505,14 +514,16 @@ describe("diálogo de conversión de presupuesto", () => {
 
   it("mantiene exacto y congelado cada replay ambiguo aunque el preflight pierda la caja", async () => {
     dobles.convertir
-      .mockRejectedValueOnce(new Error("Failed to fetch: conexión interrumpida"))
-      .mockRejectedValueOnce(new Error("timeout al confirmar"))
-      .mockResolvedValueOnce({
-        id: "50000000-0000-4000-8000-000000000001",
-        numero: "GPZ-VTA-0001",
-        cta_cte: false,
-        clienteId: CLIENTE_EFECTIVO_ID,
-      });
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
+      .mockRejectedValueOnce(Object.assign(new Error("agotado"), { name: "TimeoutError" }))
+      .mockResolvedValueOnce(
+        resultadoConversion({
+          id: "50000000-0000-4000-8000-000000000001",
+          numero: "GPZ-VTA-0001",
+          cta_cte: false,
+          clienteId: CLIENTE_EFECTIVO_ID,
+        }),
+      );
     const props = renderDialogo();
     await prepararPago();
 
@@ -557,5 +568,59 @@ describe("diálogo de conversión de presupuesto", () => {
     const alerta = await screen.findByRole("alert");
     expect(alerta.textContent).toContain("No se pudo convertir el presupuesto");
     expect(alerta.textContent).not.toContain("constraint");
+  });
+
+  it.each([
+    ["caja", "CAJA_NO_DISPONIBLE", "La caja de esta sucursal ya no está abierta"],
+    [
+      "mantenimiento",
+      "MANTENIMIENTO",
+      "La facturación está en mantenimiento. No se convirtió el presupuesto",
+    ],
+  ] as const)(
+    "decide %s sólo por el código cerrado devuelto por servidor",
+    async (_caso, codigo, esperado) => {
+      dobles.convertir.mockResolvedValue({
+        ok: false,
+        error: {
+          codigo,
+          mensaje: 'duplicate key violates constraint "caja_sesiones_pkey"',
+        },
+      });
+      renderDialogo();
+      await prepararPago();
+
+      fireEvent.click(screen.getByTestId("conv-confirmar"));
+
+      const alerta = await screen.findByRole("alert");
+      expect(alerta.textContent).toContain(esperado);
+      expect(alerta.textContent).not.toContain("constraint");
+      expect((screen.getByRole("button", { name: "Cancelar" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([
+    ["Safari", new TypeError("Load failed")],
+    ["undici", new TypeError("fetch failed")],
+    ["AbortError", Object.assign(new Error("cancelada"), { name: "AbortError" })],
+    ["TimeoutError", Object.assign(new Error("agotada"), { name: "TimeoutError" })],
+    ["código anidado", Object.assign(new Error("envoltura"), { cause: { code: "ECONNRESET" } })],
+    ["proxy 503", Object.assign(new Error("gateway"), { status: 503 })],
+  ])("congela el intento montado ante %s", async (_caso, cause) => {
+    dobles.convertir.mockRejectedValueOnce(cause);
+    renderDialogo();
+    await prepararPago();
+
+    fireEvent.click(screen.getByTestId("conv-confirmar"));
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain("No se pudo confirmar si la venta se creó");
+    expect((screen.getByRole("button", { name: "Cancelar" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByTestId("conv-y-facturar") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("conv-confirmar") as HTMLButtonElement).disabled).toBe(false);
   });
 });

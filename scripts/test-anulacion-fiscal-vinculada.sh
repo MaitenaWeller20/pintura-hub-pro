@@ -142,6 +142,12 @@ SELECT * FROM public.crear_venta(
   'e2410000-0000-4000-8000-000000000001'
 );
 
+-- Simula una descripción congelada antes del límite vigente. La reversión V2
+-- debe ignorar cualquier texto del navegador y copiar la verdad persistida.
+UPDATE public.venta_items
+   SET descripcion=E'  Venta histórica vinculada\t' || pg_catalog.repeat('😀',161) || E'\n'
+ WHERE venta_id=(SELECT venta_id FROM t_original);
+
 UPDATE public.ventas
    SET afip_estado='APROBADO',afip_fase='PERSISTIDO',afip_version=2,
        afip_emisor_cuit='30714199664',afip_punto_venta=997,afip_cbte_tipo=6,
@@ -193,6 +199,18 @@ SELECT pg_temp.assert_true(
     WHERE producto_id='c2410000-0000-4000-8000-000000000001'
       AND sucursal_id=(SELECT id FROM public.sucursales WHERE activa ORDER BY numero LIMIT 1)),
   'la reversión vinculada repone el stock una sola vez'
+);
+SELECT pg_temp.assert_true(
+  (SELECT nc.descripcion=o.descripcion
+     FROM public.ventas AS v
+     JOIN public.venta_items AS nc ON nc.venta_id=v.venta_anulada_por
+     JOIN public.venta_items AS o
+       ON o.venta_id=v.id AND o.producto_id=nc.producto_id
+    WHERE v.id=(SELECT venta_id FROM t_original))
+  AND (SELECT pg_catalog.length(descripcion)>160
+         FROM public.venta_items
+        WHERE venta_id=(SELECT venta_id FROM t_original)),
+  'la NC vinculada copia byte a byte la descripción histórica larga desde la venta'
 );
 
 ROLLBACK;

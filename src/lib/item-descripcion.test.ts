@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { MAX_DESCRIPCION_ITEM, normalizarDescripcionItem } from "./item-descripcion";
+import {
+  MAX_DESCRIPCION_ITEM,
+  descripcionItemParaPayload,
+  estadoDescripcionItem,
+  normalizarDescripcionItem,
+} from "./item-descripcion";
 
 const WHITESPACE_UNICODE = [
   ["BOM U+FEFF", "\uFEFF"],
@@ -39,5 +44,36 @@ describe("descripción de una línea", () => {
 
   it("rechaza 161 emoji medidos como code points", () => {
     expect(() => normalizarDescripcionItem("😀".repeat(MAX_DESCRIPCION_ITEM + 1))).toThrow(/160/);
+  });
+
+  it.each([
+    ["catálogo largo", "Catálogo ".repeat(24)],
+    ["catálogo vacío al normalizar", "\uFEFF\u00A0 \t"],
+  ])("omite el texto de %s sin validarlo cuando coincide byte a byte", (_caso, historica) => {
+    expect(descripcionItemParaPayload(historica, historica)).toEqual({});
+    expect(estadoDescripcionItem(historica, historica)).toMatchObject({
+      personalizada: false,
+      valida: true,
+    });
+  });
+
+  it("normaliza y envía sólo una edición personalizada", () => {
+    expect(descripcionItemParaPayload("  Base  10 L ", "Producto de catálogo")).toEqual({
+      descripcion: "Base 10 L",
+    });
+    expect(estadoDescripcionItem("  Base  10 L ", "Producto de catálogo")).toMatchObject({
+      personalizada: true,
+      valida: true,
+      caracteres: 9,
+    });
+  });
+
+  it("admite 160 astrales personalizados y rechaza 161 sin atrapar un histórico largo", () => {
+    const astrales160 = "😀".repeat(160);
+    expect(descripcionItemParaPayload(astrales160, "Base")).toEqual({
+      descripcion: astrales160,
+    });
+    expect(() => descripcionItemParaPayload(`${astrales160}😀`, "Base")).toThrow(/160/);
+    expect(descripcionItemParaPayload(`${astrales160}😀`, `${astrales160}😀`)).toEqual({});
   });
 });

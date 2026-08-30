@@ -27,21 +27,15 @@ import {
   type ContextoVentas,
 } from "./fiscal/permiso.server";
 import { normalizarDescripcionItem } from "./item-descripcion";
+import {
+  ejecutarOperacionComercialSegura,
+  mensajeErrorOperacion,
+  type AmbitoOperacionComercial,
+  type ResultadoOperacionSegura,
+} from "./operacion-comercial-segura";
 import { COLUMNAS_VENTA_SEGURAS, proyectarListadoVentasSeguro } from "./ventas-proyeccion";
 
-const descripcionItemSchema = z.string().transform((value, context) => {
-  try {
-    return normalizarDescripcionItem(value);
-  } catch (cause) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: cause instanceof Error ? cause.message : "La descripción de la línea es inválida.",
-    });
-    return z.NEVER;
-  }
-});
-
-const itemSchema = z
+const itemEntradaSchema = z
   .object({
     // R5: producto_id puede faltar en una línea de CONCEPTO LIBRE (recargo/interés
     // de una Nota de Débito). En ese caso se exige descripción y precio. La RPC sólo
@@ -55,7 +49,7 @@ const itemSchema = z
     precio_unitario_sin_iva: z.number().nonnegative().optional(),
     // En productos congela el texto de la línea; en conceptos libres además
     // identifica el concepto porque no existe un producto de catálogo.
-    descripcion: descripcionItemSchema.optional(),
+    descripcion: z.string().optional(),
     iva_porcentaje: z.number().min(0).max(100).optional(),
   })
   .refine((it) => !!it.producto_id || (!!it.descripcion && it.precio_unitario_sin_iva != null), {
@@ -76,7 +70,7 @@ const pagoSchema = z.object({
   detalle: z.record(z.string(), z.any()).default({}),
 });
 
-export const ventaInputSchema = z.object({
+const ventaInputBaseSchema = z.object({
   sucursal_id: z.string().uuid(),
   // Nulo sólo en un remito de obra: ahí la obra ES el cliente y `crear_venta`
   // resuelve (o crea) su ficha a partir de `nombre_obra`. Para cualquier otro
@@ -107,8 +101,36 @@ export const ventaInputSchema = z.object({
   // Clave de idempotencia generada al montar el formulario. Un doble-submit con la
   // misma key devuelve la venta ya creada en vez de duplicarla (defensa server-side).
   idempotency_key: z.string().uuid().optional(),
-  items: z.array(itemSchema).min(0),
+  items: z.array(itemEntradaSchema).min(0),
   pagos: z.array(pagoSchema).default([]),
+});
+
+export const ventaInputSchema = ventaInputBaseSchema.transform((venta, context) => {
+  // Una NC vinculada V2 no crea sus líneas desde el browser: anular_venta copia
+  // la verdad persistida. El parser deja pasar descripciones históricas para no
+  // bloquear clientes viejos; el branch V2 las ignora y el legacy las vuelve a
+  // validar justo antes de usar crear_venta.
+  const notaCreditoVinculada =
+    venta.tipo_comprobante === "NOTA_CREDITO" && typeof venta.cbte_asoc_id === "string";
+  if (notaCreditoVinculada) return venta;
+
+  return {
+    ...venta,
+    items: venta.items.map((item, indice) => {
+      if (item.descripcion === undefined) return item;
+      try {
+        return { ...item, descripcion: normalizarDescripcionItem(item.descripcion) };
+      } catch (cause) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            cause instanceof Error ? cause.message : "La descripción de la línea es inválida.",
+          path: ["items", indice, "descripcion"],
+        });
+        return item;
+      }
+    }),
+  };
 });
 
 export type VentaInput = z.infer<typeof ventaInputSchema>;
@@ -429,27 +451,39 @@ function normalizarVentaCreada(value: unknown): ResultadoCreacionVenta {
   return { id, numero, cta_cte: valueRow.es_cta_cte === true };
 }
 
+function normalizarVentaParaEscritorRegular(input: VentaInput): VentaInput {
+  return {
+    ...input,
+    items: input.items.map((item) =>
+      item.descripcion === undefined
+        ? item
+        : { ...item, descripcion: normalizarDescripcionItem(item.descripcion) },
+    ),
+  };
+}
+
 export const crearVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => ventaInputSchema.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const crearRegular = async (input: VentaInput) => {
+      const inputNormalizado = normalizarVentaParaEscritorRegular(input);
       const { data: result, error } = await supabase.rpc("crear_venta", {
-        p_sucursal_id: input.sucursal_id,
+        p_sucursal_id: inputNormalizado.sucursal_id,
         // El cast es por los tipos generados, no por la base: un parámetro `uuid`
         // admite NULL, pero el generador de tipos de Supabase lo declara `string`.
-        p_cliente_id: (input.cliente_id ?? null) as unknown as string,
-        p_tipo_comprobante: input.tipo_comprobante,
-        p_condicion_venta: input.condicion_venta,
-        p_items: input.items,
-        p_pagos: input.pagos,
-        p_percepciones: input.percepciones ?? 0,
-        p_observaciones: input.observaciones ?? undefined,
-        p_nombre_obra: input.nombre_obra ?? undefined,
-        p_fecha: input.fecha ?? undefined,
-        p_cbte_asoc_id: input.cbte_asoc_id ?? undefined,
-        p_idempotency_key: input.idempotency_key ?? undefined,
+        p_cliente_id: (inputNormalizado.cliente_id ?? null) as unknown as string,
+        p_tipo_comprobante: inputNormalizado.tipo_comprobante,
+        p_condicion_venta: inputNormalizado.condicion_venta,
+        p_items: inputNormalizado.items,
+        p_pagos: inputNormalizado.pagos,
+        p_percepciones: inputNormalizado.percepciones ?? 0,
+        p_observaciones: inputNormalizado.observaciones ?? undefined,
+        p_nombre_obra: inputNormalizado.nombre_obra ?? undefined,
+        p_fecha: inputNormalizado.fecha ?? undefined,
+        p_cbte_asoc_id: inputNormalizado.cbte_asoc_id ?? undefined,
+        p_idempotency_key: inputNormalizado.idempotency_key ?? undefined,
       });
       if (error) throw new Error(error.message);
       return normalizarVentaCreada(result);
@@ -541,27 +575,53 @@ export type ConversionPresupuestoResultado = {
   clienteId: string;
 };
 
+type DependenciasConversionPresupuesto = {
+  cargarFlags(): Promise<FlagsFacturacion>;
+  convertirNeutral(
+    input: Extract<ConversionPresupuestoInput, { entrada: "V2" }>,
+  ): Promise<ConversionPresupuestoResultado>;
+  convertirLegacy(
+    input: Extract<ConversionPresupuestoInput, { entrada: "LEGACY" }>,
+  ): Promise<ConversionPresupuestoResultado>;
+};
+
 const mantenimientoConversion = () => ({
   estado: "MANTENIMIENTO" as const,
   mensaje: "La facturación está temporalmente en mantenimiento. No se convirtió el presupuesto.",
 });
 
+function esMantenimientoConversion(
+  resultado: ConversionPresupuestoResultado | ReturnType<typeof mantenimientoConversion>,
+): resultado is ReturnType<typeof mantenimientoConversion> {
+  return "estado" in resultado && resultado.estado === "MANTENIMIENTO";
+}
+
 export async function ejecutarConversionPresupuestoSegunFlags(
   input: ConversionPresupuestoInput,
-  deps: {
-    cargarFlags(): Promise<FlagsFacturacion>;
-    convertirNeutral(
-      input: Extract<ConversionPresupuestoInput, { entrada: "V2" }>,
-    ): Promise<ConversionPresupuestoResultado>;
-    convertirLegacy(
-      input: Extract<ConversionPresupuestoInput, { entrada: "LEGACY" }>,
-    ): Promise<ConversionPresupuestoResultado>;
-  },
+  deps: DependenciasConversionPresupuesto,
 ): Promise<ConversionPresupuestoResultado | ReturnType<typeof mantenimientoConversion>> {
   const escritor = decidirEscritorFiscal(await deps.cargarFlags(), input.entrada);
   if (escritor === "MANTENIMIENTO") return mantenimientoConversion();
   if (input.entrada === "V2") return deps.convertirNeutral(input);
   return deps.convertirLegacy(input);
+}
+
+export async function ejecutarConversionPresupuestoCerrada(
+  input: ConversionPresupuestoInput,
+  deps: DependenciasConversionPresupuesto,
+  registrar?: (ambito: AmbitoOperacionComercial, cause: unknown) => void,
+): Promise<ResultadoOperacionSegura<ConversionPresupuestoResultado>> {
+  return ejecutarOperacionComercialSegura(
+    "CONVERTIR_PRESUPUESTO",
+    async () => {
+      const resultado = await ejecutarConversionPresupuestoSegunFlags(input, deps);
+      if (esMantenimientoConversion(resultado)) {
+        throw new Error(mensajeErrorOperacion("MANTENIMIENTO"));
+      }
+      return resultado;
+    },
+    registrar,
+  );
 }
 
 export function normalizarConversion(value: unknown): ConversionPresupuestoResultado {
@@ -591,7 +651,7 @@ export const convertirPresupuestoEnVenta = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => conversionPresupuestoInputSchema.parse(value))
   .handler(async ({ data, context }) =>
-    ejecutarConversionPresupuestoSegunFlags(data, {
+    ejecutarConversionPresupuestoCerrada(data, {
       cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
       async convertirNeutral(input) {
         const { data: result, error } = await context.supabase.rpc(

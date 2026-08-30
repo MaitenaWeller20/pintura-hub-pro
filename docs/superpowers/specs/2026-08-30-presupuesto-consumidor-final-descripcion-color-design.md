@@ -1,7 +1,7 @@
 # Diseño — presupuesto sin cliente y descripción personalizada por línea
 
-**Fecha:** 2026-08-30  
-**Estado:** aprobado para implementación  
+**Fecha:** 2026-08-30
+**Estado:** aprobado para implementación
 **Base:** `1fea73d78506970afee431febe0391e0a9a3bef8`
 
 ## Objetivo

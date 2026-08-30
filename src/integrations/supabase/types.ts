@@ -1440,6 +1440,7 @@ export type Database = {
       presupuestos: {
         Row: {
           cliente_id: string | null
+          conversion_payload_hash: string | null
           created_at: string
           estado: string
           fecha: string
@@ -1458,6 +1459,7 @@ export type Database = {
         }
         Insert: {
           cliente_id?: string | null
+          conversion_payload_hash?: string | null
           created_at?: string
           estado?: string
           fecha?: string
@@ -1476,6 +1478,7 @@ export type Database = {
         }
         Update: {
           cliente_id?: string | null
+          conversion_payload_hash?: string | null
           created_at?: string
           estado?: string
           fecha?: string
@@ -3591,6 +3594,10 @@ export type Database = {
           venta_id: string
         }[]
       }
+      _normalizar_descripcion_item_20260830: {
+        Args: { p_fallback: string; p_presente: boolean; p_valor: string }
+        Returns: string
+      }
       _transicionar_emision_fiscal_core_task8_fix1: {
         Args: {
           p_accion: string
@@ -3802,6 +3809,7 @@ export type Database = {
           p_presupuesto_id: string
         }
         Returns: {
+          cliente_id: string
           es_cta_cte: boolean
           numero: string
           venta_id: string

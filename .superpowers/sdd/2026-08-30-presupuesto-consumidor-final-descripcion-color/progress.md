@@ -160,3 +160,30 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
   number-generating workers assert inside their transactions and roll back;
   the full numbering snapshot remains unchanged and the production migration
   is ready for the server-contract layer.
+- Task 3 — implementación completa; revisión independiente pendiente.
+  - RED de contratos observado: V2 rechazaba `cliente_id: null`, la descripción
+    de venta quedaba cruda y se aceptaban vacío/161 caracteres. Tras el primer
+    GREEN, el RED de resultado mostró que `normalizarConversion` descartaba el
+    `cliente_id` efectivo; el RED fiscal rechazó `descripcion` como clave no
+    reconocida y el preflight aún no existía.
+  - V2 exige la propiedad `cliente_id` y admite `null`; legacy exige UUID. El
+    resultado exige el `cliente_id` autoritativo de PostgreSQL y lo proyecta
+    como `clienteId`. Venta directa y borrador fiscal normalizan sólo una
+    descripción presente con el contrato común de 160 code points, sin tocar
+    cantidad, descuento, precio ni IVA; omitirla conserva compatibilidad.
+  - El preflight usa exclusivamente el cliente Supabase autenticado y RLS:
+    presupuesto primero, luego hasta dos cajas de su sucursal. Inexistente y
+    fuera de alcance comparten error opaco, no hay fallback privilegiado, dos
+    cajas fallan cerrado y la salida omite saldos, movimientos y otros campos.
+    Cero cajas se representa como `caja: null` para que la UI informe y bloquee.
+  - `npx supabase db reset --local` reaplicó la historia completa hasta
+    `20260830154723`. Los tipos se regeneraron una vez desde local y coinciden
+    byte a byte con el CLI tras la única normalización permitida de EOF.
+  - GREEN: focal de Task 3 y fiscal (71/71), suite Vitest completa (82 archivos
+    pasaron, 2 omitidos; 1760 tests pasaron, 22 omitidos), TypeScript, ESLint
+    focal, Prettier focal y `git diff --check`.
+  - Regresiones SQL GREEN: conversión anónima/caja/concurrencia, descripción
+    personalizada y venta fiscal atómica. `supabase migration list --local`
+    quedó alineado; `db lint` conserva sólo `_objetivo` histórico y advisors
+    conserva deuda histórica de RLS/vistas sin hallazgos sobre Task 3.
+  - No se usaron proyecto remoto, `--linked`, `db push`, ARCA ni certificados.

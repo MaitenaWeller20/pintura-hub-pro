@@ -26,7 +26,20 @@ import {
   autorizarOperacionFiscal,
   type ContextoVentas,
 } from "./fiscal/permiso.server";
+import { normalizarDescripcionItem } from "./item-descripcion";
 import { COLUMNAS_VENTA_SEGURAS, proyectarListadoVentasSeguro } from "./ventas-proyeccion";
+
+const descripcionItemSchema = z.string().transform((value, context) => {
+  try {
+    return normalizarDescripcionItem(value);
+  } catch (cause) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: cause instanceof Error ? cause.message : "La descripción de la línea es inválida.",
+    });
+    return z.NEVER;
+  }
+});
 
 const itemSchema = z
   .object({
@@ -40,8 +53,9 @@ const itemSchema = z
     // mostrador, se negocia en el momento). Si no viene, la base usa el del catálogo.
     // Si viene, se guardan los dos y la diferencia queda auditada.
     precio_unitario_sin_iva: z.number().nonnegative().optional(),
-    // Sólo para líneas de concepto libre (sin producto).
-    descripcion: z.string().optional(),
+    // En productos congela el texto de la línea; en conceptos libres además
+    // identifica el concepto porque no existe un producto de catálogo.
+    descripcion: descripcionItemSchema.optional(),
     iva_porcentaje: z.number().min(0).max(100).optional(),
   })
   .refine((it) => !!it.producto_id || (!!it.descripcion && it.precio_unitario_sin_iva != null), {
@@ -501,17 +515,19 @@ export const crearVenta = createServerFn({ method: "POST" })
 
 const conversionBaseSchema = z.object({
   presupuesto_id: z.string().uuid(),
-  cliente_id: z.string().uuid(),
   condicion_venta: z.enum(["CONTADO", "CTA_CTE"]),
   pagos: z.array(pagoSchema).default([]),
   idempotency_key: z.string().uuid(),
 });
 
 export const conversionPresupuestoInputSchema = z.discriminatedUnion("entrada", [
-  conversionBaseSchema.extend({ entrada: z.literal("V2") }).strict(),
+  conversionBaseSchema
+    .extend({ entrada: z.literal("V2"), cliente_id: z.string().uuid().nullable() })
+    .strict(),
   conversionBaseSchema
     .extend({
       entrada: z.literal("LEGACY"),
+      cliente_id: z.string().uuid(),
       tipo_comprobante: z.enum(["FACTURA_A", "FACTURA_B"]),
     })
     .strict(),
@@ -522,6 +538,7 @@ export type ConversionPresupuestoResultado = {
   id: string;
   numero: string;
   cta_cte: boolean;
+  clienteId: string;
 };
 
 const mantenimientoConversion = () => ({
@@ -547,7 +564,7 @@ export async function ejecutarConversionPresupuestoSegunFlags(
   return deps.convertirLegacy(input);
 }
 
-function normalizarConversion(value: unknown): ConversionPresupuestoResultado {
+export function normalizarConversion(value: unknown): ConversionPresupuestoResultado {
   const row = Array.isArray(value) ? value[0] : value;
   if (typeof row !== "object" || row === null || Array.isArray(row)) {
     throw new Error("El servidor no devolvió la venta convertida.");
@@ -556,11 +573,17 @@ function normalizarConversion(value: unknown): ConversionPresupuestoResultado {
   if (
     typeof record.venta_id !== "string" ||
     typeof record.numero !== "string" ||
-    typeof record.es_cta_cte !== "boolean"
+    typeof record.es_cta_cte !== "boolean" ||
+    typeof record.cliente_id !== "string"
   ) {
     throw new Error("El servidor devolvió una conversión incompleta.");
   }
-  return { id: record.venta_id, numero: record.numero, cta_cte: record.es_cta_cte };
+  return {
+    id: record.venta_id,
+    numero: record.numero,
+    cta_cte: record.es_cta_cte,
+    clienteId: record.cliente_id,
+  };
 }
 
 /** Fence server-side: flags autoritativos antes de cualquier RPC comercial. */
@@ -575,7 +598,9 @@ export const convertirPresupuestoEnVenta = createServerFn({ method: "POST" })
           "convertir_presupuesto_en_venta_neutral",
           {
             p_presupuesto_id: input.presupuesto_id,
-            p_cliente_id: input.cliente_id,
+            // Postgres admite NULL en este parámetro aunque el generador de
+            // tipos lo represente como string; NULL activa Consumidor Final.
+            p_cliente_id: input.cliente_id as unknown as string,
             p_condicion_venta: input.condicion_venta,
             p_pagos: input.pagos,
             p_idempotency_key: input.idempotency_key,

@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import { previewInputSchema } from "./fiscal.functions";
 import {
   anulacionVentaInputSchema,
+  conversionPresupuestoInputSchema,
   ejecutarCreacionNotaSegunFlags,
   ejecutarConversionPresupuestoSegunFlags,
   ejecutarListadoComprobantesOriginalesSeguro,
   ejecutarListadoVentasSeguro,
   ejecutarLecturaOriginalFiscalAutorizada,
+  normalizarConversion,
   ventaInputSchema,
 } from "./ventas.functions";
 
@@ -31,6 +34,87 @@ describe("entrada de venta neutral", () => {
     expect(() =>
       ventaInputSchema.parse({ ...VENTA_BASE, tipo_comprobante: "FACTURA_LIBRE" }),
     ).toThrow();
+  });
+
+  it("normaliza sólo la descripción presente sin alterar los datos comerciales", () => {
+    const parsed = ventaInputSchema.parse({
+      ...VENTA_BASE,
+      items: [
+        {
+          ...VENTA_BASE.items[0],
+          descripcion: "  Base 10 L\t(Código 1234)  ",
+          precio_unitario_sin_iva: 98.75,
+          iva_porcentaje: 21,
+        },
+      ],
+    });
+
+    expect(parsed.items[0]).toEqual({
+      producto_id: VENTA_BASE.items[0].producto_id,
+      cantidad: 1,
+      descuento_porcentaje: 0,
+      descripcion: "Base 10 L (Código 1234)",
+      precio_unitario_sin_iva: 98.75,
+      iva_porcentaje: 21,
+    });
+    expect(ventaInputSchema.parse(VENTA_BASE).items[0]).not.toHaveProperty("descripcion");
+  });
+
+  it("rechaza una descripción presente vacía o mayor a 160 caracteres", () => {
+    for (const descripcion of [" \t ", "x".repeat(161)]) {
+      expect(() =>
+        ventaInputSchema.parse({
+          ...VENTA_BASE,
+          items: [{ ...VENTA_BASE.items[0], descripcion }],
+        }),
+      ).toThrow();
+    }
+  });
+});
+
+describe("borrador fiscal con descripción congelable", () => {
+  const borrador = {
+    origen: "BORRADOR" as const,
+    sucursal_id: "71000000-0000-4000-8000-000000000001",
+    cliente_id: "72000000-0000-4000-8000-000000000001",
+    fecha_comercial: "2026-08-30T12:00:00.000Z",
+    items: [
+      {
+        producto_id: "73000000-0000-4000-8000-000000000001",
+        cantidad: 2,
+        descuento_porcentaje: 5,
+        precio_unitario_sin_iva: 98.75,
+      },
+    ],
+    pagos: [],
+    percepciones: 0,
+    receptor: { origen: "CLIENTE_COMERCIAL" as const },
+    letra_solicitada: "B" as const,
+  };
+
+  it("conserva normalizada la descripción presente sin usarla para los importes", () => {
+    const parsed = previewInputSchema.parse({
+      ...borrador,
+      items: [{ ...borrador.items[0], descripcion: "  Base 10 L\n(Código 1234) " }],
+    });
+    if (parsed.origen !== "BORRADOR") throw new Error("fixture fiscal incorrecto");
+
+    expect(parsed.items[0]).toEqual({
+      ...borrador.items[0],
+      descripcion: "Base 10 L (Código 1234)",
+    });
+    expect(previewInputSchema.parse(borrador)).toMatchObject({ items: borrador.items });
+  });
+
+  it("rechaza la descripción fiscal presente vacía o mayor a 160 caracteres", () => {
+    for (const descripcion of ["\t ", "😀".repeat(161)]) {
+      expect(() =>
+        previewInputSchema.parse({
+          ...borrador,
+          items: [{ ...borrador.items[0], descripcion }],
+        }),
+      ).toThrow();
+    }
   });
 });
 
@@ -297,6 +381,7 @@ describe("fachadas cerradas de lectura de ventas", () => {
 });
 
 describe("fence del conversor de presupuesto", () => {
+  const clienteEfectivo = "72000000-0000-4000-8000-000000000099";
   const inputV2 = {
     entrada: "V2" as const,
     presupuesto_id: "75000000-0000-4000-8000-000000000001",
@@ -315,11 +400,61 @@ describe("fence del conversor de presupuesto", () => {
     idempotency_key: "76000000-0000-4000-8000-000000000001",
   };
 
+  it("exige cliente_id en ambas entradas y sólo V2 admite null", () => {
+    expect(conversionPresupuestoInputSchema.parse({ ...inputV2, cliente_id: null })).toMatchObject({
+      entrada: "V2",
+      cliente_id: null,
+    });
+    expect(() =>
+      conversionPresupuestoInputSchema.parse({
+        entrada: inputV2.entrada,
+        presupuesto_id: inputV2.presupuesto_id,
+        condicion_venta: inputV2.condicion_venta,
+        pagos: inputV2.pagos,
+        idempotency_key: inputV2.idempotency_key,
+      }),
+    ).toThrow();
+    expect(() =>
+      conversionPresupuestoInputSchema.parse({ ...inputLegacy, cliente_id: null }),
+    ).toThrow();
+    expect(() => {
+      const { cliente_id: _omitido, ...sinCliente } = inputLegacy;
+      return conversionPresupuestoInputSchema.parse(sinCliente);
+    }).toThrow();
+  });
+
+  it("exige y mapea el cliente efectivo devuelto por PostgreSQL", () => {
+    expect(
+      normalizarConversion([
+        {
+          venta_id: "77000000-0000-4000-8000-000000000001",
+          numero: "GPZ-VTA-0001",
+          es_cta_cte: false,
+          cliente_id: clienteEfectivo,
+        },
+      ]),
+    ).toEqual({
+      id: "77000000-0000-4000-8000-000000000001",
+      numero: "GPZ-VTA-0001",
+      cta_cte: false,
+      clienteId: clienteEfectivo,
+    });
+
+    expect(() =>
+      normalizarConversion({
+        venta_id: "77000000-0000-4000-8000-000000000001",
+        numero: "GPZ-VTA-0001",
+        es_cta_cte: false,
+      }),
+    ).toThrow(/conversión incompleta/i);
+  });
+
   it("v2 llama sólo al conversor neutral y conserva el ID devuelto", async () => {
     const convertirNeutral = vi.fn(async () => ({
       id: "77000000-0000-4000-8000-000000000001",
       numero: "VTA-00000001",
       cta_cte: false,
+      clienteId: clienteEfectivo,
     }));
     const convertirLegacy = vi.fn();
 
@@ -337,6 +472,7 @@ describe("fence del conversor de presupuesto", () => {
       id: "77000000-0000-4000-8000-000000000001",
       numero: "VTA-00000001",
       cta_cte: false,
+      clienteId: clienteEfectivo,
     });
     expect(convertirNeutral).toHaveBeenCalledTimes(1);
     expect(convertirLegacy).not.toHaveBeenCalled();
@@ -348,6 +484,7 @@ describe("fence del conversor de presupuesto", () => {
       id: "77000000-0000-4000-8000-000000000002",
       numero: "FB-00000001",
       cta_cte: false,
+      clienteId: inputLegacy.cliente_id,
     }));
 
     await ejecutarConversionPresupuestoSegunFlags(inputLegacy, {

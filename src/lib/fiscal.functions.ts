@@ -49,6 +49,7 @@ import {
   ejecutarDetalleVentaFiscalPresentacion,
   type DetalleVentaFiscalServidor,
 } from "./fiscal/detalle-venta-presentacion";
+import { normalizarDescripcionItem } from "./item-descripcion";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -134,6 +135,21 @@ const itemBorradorSchema = z
     cantidad: z.number().finite().nonnegative(),
     descuento_porcentaje: z.number().finite().min(0).max(100).default(0),
     precio_unitario_sin_iva: z.number().finite().nonnegative().optional(),
+    descripcion: z
+      .string()
+      .transform((value, context) => {
+        try {
+          return normalizarDescripcionItem(value);
+        } catch (cause) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              cause instanceof Error ? cause.message : "La descripción de la línea es inválida.",
+          });
+          return z.NEVER;
+        }
+      })
+      .optional(),
   })
   .strict();
 

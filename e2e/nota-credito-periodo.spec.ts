@@ -3,8 +3,10 @@ import type { Locator, Page } from "@playwright/test";
 
 import { test, expect, ingresar, vigilarConsola } from "./apoyo";
 import {
+  cantidadVentasDelProductoE2E,
   configurarFlagNcPeriodoFixture,
   intentarNcPeriodoSinPermisoFixture,
+  leerEfectosVentaFixture,
   leerNotaCreditoPeriodoFixture,
   limpiarFixturesFiscales,
   prepararFixturesFiscales,
@@ -14,6 +16,31 @@ import {
 const ESCENARIO = process.env.INVOICING_MOCK_SCENARIO ?? "OK";
 let fixture: FixtureFiscal;
 let erroresConsola: string[];
+
+function desplazarFechaIso(fecha: string, dias: number): string {
+  const valor = new Date(`${fecha}T12:00:00.000Z`);
+  valor.setUTCDate(valor.getUTCDate() + dias);
+  return valor.toISOString().slice(0, 10);
+}
+
+function fechaVisible(fecha: string): string {
+  return fecha.split("-").reverse().join("/");
+}
+
+function textoPdf(bytes: Buffer): string {
+  const decodificado = bytes
+    .toString("latin1")
+    .replace(/\\(\d{3})/g, (_match, octal: string) =>
+      String.fromCharCode(Number.parseInt(octal, 8)),
+    )
+    .replace(/\\([()\\])/g, "$1")
+    .replace(/\u00a0/g, " ")
+    .replace(/\x97/g, "—");
+  return [...decodificado.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)]
+    .map((match) => match[1].replace(/\\([()\\])/g, "$1"))
+    .join(" ")
+    .replace(/\s+/g, " ");
+}
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
@@ -144,13 +171,22 @@ test("fechas, motivo y liquidación inválidos quedan inline y no disparan un PO
   expect(posts).toEqual([]);
 
   await page.locator("#nc-periodo-desde").fill(fixture.fechaFiscal);
+  await page.locator("#nc-periodo-hasta").fill(desplazarFechaIso(fixture.fechaFiscal, -1));
+  await page.locator("#nc-periodo-motivo").fill("Motivo válido para aislar el rango");
+  await agregarProducto(page);
+  await page.getByRole("button", { name: "Crear nota pendiente" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Indicá una fecha final válida y posterior o igual a la inicial.",
+  );
+  expect(posts).toEqual([]);
+
   await page.locator("#nc-periodo-hasta").fill(fixture.fechaFiscal);
+  await page.locator("#nc-periodo-motivo").fill("");
   await page.getByRole("button", { name: "Crear nota pendiente" }).click();
   await expect(page.getByRole("alert")).toHaveText("Indicá el motivo de la nota de crédito.");
   expect(posts).toEqual([]);
 
   await page.locator("#nc-periodo-motivo").fill("Motivo válido E2E");
-  await agregarProducto(page);
   await page.getByRole("button", { name: "Agregar medio" }).click();
   await page.getByLabel("Monto de reintegro 1").fill("120");
   await page.getByRole("button", { name: "Crear nota pendiente" }).click();
@@ -167,6 +203,8 @@ test("admin devuelve producto, valida CUIT comercial, recibe CAE y materializa e
   await ingresar(page, "fiscalAdmin");
   await abrirEditorPeriodo(page, "T13-E2E CLIENTE PERIODO RI");
   await completarBasePeriodo(page, "Devolución E2E del período");
+  const periodoDesde = desplazarFechaIso(fixture.fechaFiscal, -1);
+  await page.locator("#nc-periodo-desde").fill(periodoDesde);
   await agregarProducto(page);
   await page.getByRole("button", { name: "Agregar medio" }).click();
   await page.getByLabel("Forma de reintegro 1").click();
@@ -239,7 +277,7 @@ test("admin devuelve producto, valida CUIT comercial, recibe CAE y materializa e
   expect(estado.venta.afip_snapshot).toMatchObject({
     version: 3,
     origen: "PERIODO_ASOCIADO",
-    periodoAsoc: { desde: fixture.fechaFiscal, hasta: fixture.fechaFiscal },
+    periodoAsoc: { desde: periodoDesde, hasta: fixture.fechaFiscal },
     cbtesAsoc: [],
   });
 
@@ -248,9 +286,14 @@ test("admin devuelve producto, valida CUIT comercial, recibe CAE y materializa e
   const archivo = await descarga;
   const ruta = testInfo.outputPath("nota-credito-periodo.pdf");
   await archivo.saveAs(ruta);
-  const bytes = await readFile(ruta, "latin1");
-  expect(bytes).toContain("T13-E2E RECEPTOR PADR");
-  expect(bytes).toContain("odo asociado");
+  const contenidoPdf = textoPdf(await readFile(ruta));
+  expect(contenidoPdf).toContain("T13-E2E RECEPTOR PADRÓN MOCK");
+  expect(contenidoPdf).toContain(estado.venta.cae!);
+  expect(contenidoPdf).toContain("Motivo: Devolución E2E del período");
+  expect(contenidoPdf).toContain("Modalidad: Devolución de productos");
+  expect(contenidoPdf).toContain(
+    `Período asociado: ${fechaVisible(periodoDesde)} a ${fechaVisible(fixture.fechaFiscal)}`,
+  );
 
   await page.reload();
   await expect
@@ -315,6 +358,7 @@ test("flag apagado oculta sólo el camino por período y conserva la venta ordin
   page,
 }) => {
   test.skip(ESCENARIO !== "OK", "El gate de rollout pertenece al escenario OK.");
+  const ventasAntes = await cantidadVentasDelProductoE2E();
   await configurarFlagNcPeriodoFixture(false);
   try {
     await ingresar(page, "fiscalAdmin");
@@ -328,6 +372,31 @@ test("flag apagado oculta sólo el camino por período y conserva la venta ordin
     await page.getByRole("option", { name: "Venta" }).click();
     await expect(page.getByTestId("registrar-y-facturar")).toBeVisible();
     await expect(page.getByTestId("registrar-sin-facturar")).toBeVisible();
+    await elegirCliente(page, "T13-E2E COMPRADOR COMERCIAL");
+    await page.getByTestId("venta-buscar-producto").fill("T13-E2E-PROD");
+    await page.getByRole("button", { name: /T13-E2E-PROD.*Producto fiscal/ }).click();
+    const editorPagos = page.getByTestId("editor-pagos");
+    await editorPagos.getByRole("button", { name: /agregar pago/i }).click();
+    await editorPagos.getByLabel("Monto").fill("121");
+    await page.getByTestId("registrar-sin-facturar").click();
+    await expect(page).toHaveURL(
+      /\/facturacion\/cola\?venta=[0-9a-f-]+&resultado=venta_creada_factura_pendiente/,
+      { timeout: 20_000 },
+    );
+    const ventaId = new URL(page.url()).searchParams.get("venta");
+    if (!ventaId) throw new Error("La venta ordinaria no devolvió su identidad persistida.");
+    await expect.poll(() => cantidadVentasDelProductoE2E()).toBe(ventasAntes + 1);
+    await expect
+      .poll(() => leerEfectosVentaFixture(ventaId))
+      .toMatchObject({
+        estadoFiscal: "SIN_FACTURAR",
+        ventas: 1,
+        items: 1,
+        pagos: 1,
+        stock: 1,
+        deuda: 0,
+        intentos: 0,
+      });
   } finally {
     await configurarFlagNcPeriodoFixture(true);
   }

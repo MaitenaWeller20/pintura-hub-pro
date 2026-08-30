@@ -32,7 +32,7 @@ import { Plus, Eye, Ban, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } f
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { anularVenta } from "@/lib/ventas.functions";
-import { emitirComprobante } from "@/lib/fiscal.functions";
+import { detalleVentaFiscalSegura, emitirComprobante } from "@/lib/fiscal.functions";
 import { obtenerEstadoFiscalPublico } from "@/lib/fiscal/config.functions";
 import { QUERY_KEY_ESTADO_FISCAL_PUBLICO } from "@/lib/fiscal/config";
 import { esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
@@ -144,6 +144,12 @@ function VentasList() {
   const anulandoRef = useRef(false);
   const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
+  const detalleVentaFn = useServerFn(detalleVentaFiscalSegura);
+  const cargarDetalle = useMutation({
+    mutationFn: (ventaId: string) => detalleVentaFn({ data: { venta_id: ventaId } }),
+    onSuccess: (venta) => setVerVenta(venta),
+    onError: (error) => toast.error(mensajeErrorFiscal(error, "CONSULTA"), { duration: 12000 }),
+  });
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -463,9 +469,14 @@ function VentasList() {
                 className="min-h-11 min-w-11"
                 aria-label={`Ver detalle de ${v.numero_comprobante}`}
                 title="Ver detalle"
-                onClick={() => setVerVenta(v)}
+                onClick={() => cargarDetalle.mutate(v.id)}
+                disabled={cargarDetalle.isPending && cargarDetalle.variables === v.id}
               >
-                <Eye className="h-3.5 w-3.5" />
+                {cargarDetalle.isPending && cargarDetalle.variables === v.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
               </Button>
               {/* Sólo se factura lo que es un comprobante fiscal. Los remitos, la
                   factura interna y las notas que revierten algo nunca declarado

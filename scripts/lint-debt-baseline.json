@@ -1,0 +1,3465 @@
+{
+  "formato": 1,
+  "alcance": "eslint . con src/integrations/supabase/types.ts excluido por ser generado",
+  "total": 986,
+  "entradas": [
+    {
+      "archivo": "e2e/cuentas-corrientes.spec.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `s.replace(/[^\\d,-]/g,·\"\").replace(/\\./g,·\"\").replace(\",\",·\".\")` with `⏎······s⏎········.replace(/[^\\d,-]/g,·\"\")⏎········.replace(/\\./g,·\"\")⏎········.replace(\",\",·\".\"),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "e2e/multi-sucursal.spec.ts",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "scripts/test-ingreso-manual-e2e.mjs",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "scripts/test-ingreso-manual-e2e.mjs",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"no·queda·el·selector·de·archivo\",·(await·page.locator(\"input[type=file]\").count())·===·0` with `⏎····\"no·queda·el·selector·de·archivo\",⏎····(await·page.locator(\"input[type=file]\").count())·===·0,⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "scripts/test-ingreso-manual-e2e.mjs",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `fallos.length·===·0·?·\"\\n✅·Todo·verde.\\n\"·:·`\\n❌·${fallos.length}·fallo(s):\\n${fallos.map((f)·=>·`···-·${f}`).join(\"\\n\")}\\n`` with `⏎··fallos.length·===·0⏎····?·\"\\n✅·Todo·verde.\\n\"⏎····:·`\\n❌·${fallos.length}·fallo(s):\\n${fallos.map((f)·=>·`···-·${f}`).join(\"\\n\")}\\n`,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "scripts/test-precios-sugerido-e2e.mjs",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"celda·vacía:·queda·sin·sugerido·y·va·por·costo\",·vacio?.sugerido·===·\"-\",·vacio?.sugerido` with `⏎····\"celda·vacía:·queda·sin·sugerido·y·va·por·costo\",⏎····vacio?.sugerido·===·\"-\",⏎····vacio?.sugerido,⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "scripts/test-precios-sugerido-e2e.mjs",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"no·borra·el·stock·mínimo\",·b?.stockMin·===·antes?.stockMin,·`${antes?.stockMin}·→·${b?.stockMin}`` with `⏎····\"no·borra·el·stock·mínimo\",⏎····b?.stockMin·===·antes?.stockMin,⏎····`${antes?.stockMin}·→·${b?.stockMin}`,⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "scripts/test-precios-sugerido-e2e.mjs",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"no·borra·el·tamaño·de·envase\",·b?.envase·===·antes?.envase,·`${antes?.envase}·→·${b?.envase}`` with `⏎····\"no·borra·el·tamaño·de·envase\",⏎····b?.envase·===·antes?.envase,⏎····`${antes?.envase}·→·${b?.envase}`,⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/app/data-table.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div·className=\"flex·justify-center·mb-2·text-muted-foreground/60\">{empty.icon}</div>` with `(⏎··············<div·className=\"flex·justify-center·mb-2·text-muted-foreground/60\">{empty.icon}</div>⏎············)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/app/emisores-config.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 10
+    },
+    {
+      "archivo": "src/components/app/period-filters.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·type=\"date\"·value={from}·onChange={(e)·=>·onFrom(e.target.value)}·className=\"w-auto\"` with `⏎··········type=\"date\"⏎··········value={from}⏎··········onChange={(e)·=>·onFrom(e.target.value)}⏎··········className=\"w-auto\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/app/period-filters.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={sucursalId·||·\"__all__\"}·onValueChange={(v)·=>·onSucursal(v·===·\"__all__\"·?·\"\"·:·v)}` with `⏎············value={sucursalId·||·\"__all__\"}⏎············onValueChange={(v)·=>·onSucursal(v·===·\"__all__\"·?·\"\"·:·v)}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/app/sparkline.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·width={width}·height={height}·viewBox={`0·0·${width}·${height}`}·fill=\"none\"·className=\"opacity-80\"` with `⏎······width={width}⏎······height={height}⏎······viewBox={`0·0·${width}·${height}`}⏎······fill=\"none\"⏎······className=\"opacity-80\"⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/app/sparkline.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/cliente-picker.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/components/ui/badge.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/ui/button.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/ui/form.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/ui/navigation-menu.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/ui/sidebar.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/components/ui/toggle.tsx",
+      "regla": "react-refresh/only-export-components",
+      "severidad": 1,
+      "mensaje": "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-attacher.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `;`",
+      "cantidad": 4
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-attacher.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'./client'` with `\"./client\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-attacher.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@tanstack/react-start'` with `\"@tanstack/react-start\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-attacher.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'function'` with `\"function\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `··`",
+      "cantidad": 9
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········` with `········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··}⏎····` with `}`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `',·'` with `\",·\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'.'` with `\".\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'./types'⏎⏎` with `\"./types\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@/lib/ws-polyfill'` with `\"@/lib/ws-polyfill\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@supabase/supabase-js'` with `\"@supabase/supabase-js\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@tanstack/react-start'` with `\"@tanstack/react-start\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@tanstack/react-start/server'` with `\"@tanstack/react-start/server\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'apikey'` with `\"apikey\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'authorization'` with `\"authorization\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Authorization'` with `\"Authorization\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Bearer·',·''` with `\"Bearer·\",·\"\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Bearer·'` with `\"Bearer·\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'function'` with `\"function\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'sb_publishable_')·||·value.startsWith('sb_secret_'` with `\"sb_publishable_\")·||·value.startsWith(\"sb_secret_\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'SUPABASE_PUBLISHABLE_KEY'` with `\"SUPABASE_PUBLISHABLE_KEY\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'SUPABASE_URL'` with `\"SUPABASE_URL\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Unauthorized:·Invalid·token'` with `\"Unauthorized:·Invalid·token\"`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Unauthorized:·No·authorization·header·provided'` with `\"Unauthorized:·No·authorization·header·provided\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Unauthorized:·No·request·headers·available'` with `\"Unauthorized:·No·request·headers·available\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Unauthorized:·No·token·provided'` with `\"Unauthorized:·No·token·provided\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Unauthorized:·No·user·ID·found·in·token'` with `\"Unauthorized:·No·user·ID·found·in·token\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Unauthorized:·Only·Bearer·tokens·are·supported'` with `\"Unauthorized:·Only·Bearer·tokens·are·supported\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'undefined'` with `\"undefined\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎······SUPABASE_URL!,⏎······SUPABASE_PUBLISHABLE_KEY!,⏎·····` with `SUPABASE_URL!,·SUPABASE_PUBLISHABLE_KEY!,`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/auth-middleware.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `isNewSupabaseApiKey(supabaseKey)·&&·headers.get('Authorization')·===·`Bearer·${supabaseKey}`` with `⏎······isNewSupabaseApiKey(supabaseKey)·&&⏎······headers.get(\"Authorization\")·===·`Bearer·${supabaseKey}`⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `,`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `',·'` with `\",·\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'./types'` with `\"./types\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@/lib/ws-polyfill'` with `\"@/lib/ws-polyfill\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@supabase/supabase-js'` with `\"@supabase/supabase-js\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'apikey'` with `\"apikey\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Authorization'` with `\"Authorization\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'sb_publishable_')·||·value.startsWith('sb_secret_'` with `\"sb_publishable_\")·||·value.startsWith(\"sb_secret_\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'SUPABASE_SERVICE_ROLE_KEY'` with `\"SUPABASE_SERVICE_ROLE_KEY\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'SUPABASE_URL'` with `\"SUPABASE_URL\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'undefined'` with `\"undefined\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.server.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `isNewSupabaseApiKey(supabaseKey)·&&·headers.get('Authorization')·===·`Bearer·${supabaseKey}`` with `⏎······isNewSupabaseApiKey(supabaseKey)·&&⏎······headers.get(\"Authorization\")·===·`Bearer·${supabaseKey}`⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `⏎`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `,`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `',·'` with `\",·\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'./types'` with `\"./types\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'@supabase/supabase-js'` with `\"@supabase/supabase-js\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'apikey'` with `\"apikey\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'Authorization'` with `\"Authorization\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'sb_publishable_')·||·value.startsWith('sb_secret_'` with `\"sb_publishable_\")·||·value.startsWith(\"sb_secret_\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'SUPABASE_PUBLISHABLE_KEY'` with `\"SUPABASE_PUBLISHABLE_KEY\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'SUPABASE_URL'` with `\"SUPABASE_URL\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `'undefined'` with `\"undefined\"`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/integrations/supabase/client.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `isNewSupabaseApiKey(supabaseKey)·&&·headers.get('Authorization')·===·`Bearer·${supabaseKey}`` with `⏎······isNewSupabaseApiKey(supabaseKey)·&&⏎······headers.get(\"Authorization\")·===·`Bearer·${supabaseKey}`⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/cobranzas.functions.ts",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/compras-importe.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·...ok,·importe:·pasado,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·1000000000·}]` with `⏎········...ok,⏎········importe:·pasado,⏎········pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·1000000000·}],⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/compras-importe.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `faltanteCompra({·...ok,·importe:·justo,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·999999999·}]·})` with `⏎······faltanteCompra({⏎········...ok,⏎········importe:·justo,⏎········pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·999999999·}],⏎······}),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/compras-importe.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `faltanteCompra({·...ok,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·119999.98·}]·})` with `⏎······faltanteCompra({·...ok,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·119999.98·}]·}),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/compras-importe.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `faltanteCompra({·...ok,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·119999.99·}]·})` with `⏎······faltanteCompra({·...ok,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·119999.99·}]·}),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/compras-importe.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `faltanteCompra({·...ok,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·120000.01·}]·})` with `⏎······faltanteCompra({·...ok,·pagos:·[{·forma_pago:·\"EFECTIVO\",·monto:·120000.01·}]·}),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/compras-importe.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎······?·\"Cargá·con·qué·se·pagó·la·compra.\"⏎·····` with `·?·\"Cargá·con·qué·se·pagó·la·compra.\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/fiscal/crypto.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·process.env.ARCA_ENCRYPTION_KEY·=·KEY_A;·delete·process.env.ARCA_ENCRYPTION_KEY_PREVIOUS;` with `⏎····process.env.ARCA_ENCRYPTION_KEY·=·KEY_A;⏎····delete·process.env.ARCA_ENCRYPTION_KEY_PREVIOUS;⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/fiscal/crypto.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·process.env·=·{·...orig·};` with `⏎····process.env·=·{·...orig·};⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/fiscal/snapshot.test.ts",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 64
+    },
+    {
+      "archivo": "src/lib/fiscal/ticket-storage.ts",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `·}`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·partes.push(actual);·actual·=·\"\";·}` with `⏎··········partes.push(actual);⏎··········actual·=·\"\";`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"deposito\",·\"fecha_snapshot\",·\"codigo\",·\"descripcion\",·\"existencia\"` with `⏎······\"deposito\",⏎······\"fecha_snapshot\",⏎······\"codigo\",⏎······\"descripcion\",⏎······\"existencia\",⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `[{·codigo:·\"1001-00100\",·existencia:·\"0,5\"·}],·cols(),·CAT,·opciones()` with `⏎······[{·codigo:·\"1001-00100\",·existencia:·\"0,5\"·}],⏎······cols(),⏎······CAT,⏎······opciones(),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{·codigo:·\"1001-00100\",·existencia:·\"5\",·deposito:·\"O'HIGGINS\",·fecha:·\"2026-08-03T17:33:02\"·}` with `⏎········{⏎··········codigo:·\"1001-00100\",⏎··········existencia:·\"5\",⏎··········deposito:·\"O'HIGGINS\",⏎··········fecha:·\"2026-08-03T17:33:02\",⏎········},⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎······detectarColumnas([\"deposito\",·\"codigo\",·\"descripcion\",·\"existencia\"]).descripcion,⏎····).toBe(\"descripcion\"` with `detectarColumnas([\"deposito\",·\"codigo\",·\"descripcion\",·\"existencia\"]).descripcion).toBe(⏎······\"descripcion\",⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `r.aVolcar.filter((i)·=>·i.cantidad·===·0).map((i)·=>·i.producto_id).sort()).toEqual([⏎······\"p2\",⏎······\"p3\",⏎····` with `⏎······r.aVolcar⏎········.filter((i)·=>·i.cantidad·===·0)⏎········.map((i)·=>·i.producto_id)⏎········.sort(),⏎····).toEqual([\"p2\",·\"p3\"`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/importar-conteo.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·String(s·??·\"\").trim()` with `⏎··String(s·??·\"\")⏎····.trim()⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/impresos/encabezado.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·...generalPaz,·emisor:·{·...generalPaz.emisor,·email:·\"info@casa-forma.com\"·}` with `⏎······...generalPaz,⏎······emisor:·{·...generalPaz.emisor,·email:·\"info@casa-forma.com\"·},⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/impresos/encabezado.ts",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/impresos/encabezado.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.from(\"emisores\").select(\"logo\").eq(\"id\",·emisorId)` with `⏎······.from(\"emisores\")⏎······.select(\"logo\")⏎······.eq(\"id\",·emisorId)⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/pagos.test.ts",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 10
+    },
+    {
+      "archivo": "src/lib/pagos.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `...new·Set([...cobros].sort((a,·b)·=>·(a.fecha·<·b.fecha·?·-1·:·1)).map((c)·=>·fmtDate(c.fecha)))` with `⏎····...new·Set(⏎······[...cobros].sort((a,·b)·=>·(a.fecha·<·b.fecha·?·-1·:·1)).map((c)·=>·fmtDate(c.fecha)),⏎····),⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/precios.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `descuentoEfectivo({·descuento_porcentaje:·0·},·{·descuento_porcentaje:·35·},·GLOBAL)` with `⏎······descuentoEfectivo({·descuento_porcentaje:·0·},·{·descuento_porcentaje:·35·},·GLOBAL),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/stock.functions.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎················.number()⏎················.min(0.01)⏎················.max(999_999_999_999.99)⏎················.multipleOf(0.01)⏎················` with `.number().min(0.01).max(999_999_999_999.99).multipleOf(0.01)`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `0`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·precio_unitario_sin_iva:·100,·precio_lista:·100,·cantidad:·1,·descuento_porcentaje:·0,·iva_porcentaje:·21` with `⏎········precio_unitario_sin_iva:·100,⏎········precio_lista:·100,⏎········cantidad:·1,⏎········descuento_porcentaje:·0,⏎········iva_porcentaje:·21,⏎·····`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·precio_unitario_sin_iva:·1000,·precio_lista:·1000,·cantidad:·1,·descuento_porcentaje:·0,·iva_porcentaje:·0` with `⏎········precio_unitario_sin_iva:·1000,⏎········precio_lista:·1000,⏎········cantidad:·1,⏎········descuento_porcentaje:·0,⏎········iva_porcentaje:·0,⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·precio_unitario_sin_iva:·1000,·precio_lista:·1000,·cantidad:·1,·descuento_porcentaje:·10,·iva_porcentaje:·21` with `⏎········precio_unitario_sin_iva:·1000,⏎········precio_lista:·1000,⏎········cantidad:·1,⏎········descuento_porcentaje:·10,⏎········iva_porcentaje:·21,⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·precio_unitario_sin_iva:·120490.35,·precio_lista:·120490.35,·cantidad:·1,·descuento_porcentaje:·0,·iva_porcentaje:·21` with `⏎········precio_unitario_sin_iva:·120490.35,⏎········precio_lista:·120490.35,⏎········cantidad:·1,⏎········descuento_porcentaje:·0,⏎········iva_porcentaje:·21,⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·precio_unitario_sin_iva:·6165.06,·precio_lista:·6165.06,·cantidad:·1,·descuento_porcentaje:·0,·iva_porcentaje:·21` with `⏎········precio_unitario_sin_iva:·6165.06,⏎········precio_lista:·6165.06,⏎········cantidad:·1,⏎········descuento_porcentaje:·0,⏎········iva_porcentaje:·21,⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·precio_unitario_sin_iva:·null,·precio_lista:·200,·cantidad:·2,·descuento_porcentaje:·0,·iva_porcentaje:·21` with `⏎········precio_unitario_sin_iva:·null,⏎········precio_lista:·200,⏎········cantidad:·2,⏎········descuento_porcentaje:·0,⏎········iva_porcentaje:·21,⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/lib/ventas-totales.test.ts",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{·precio_unitario_sin_iva:·recargoNeto,·precio_lista:·recargoNeto,·cantidad:·1,·descuento_porcentaje:·0,·iva_porcentaje:·21·}` with `⏎········{⏎··········precio_unitario_sin_iva:·recargoNeto,⏎··········precio_lista:·recargoNeto,⏎··········cantidad:·1,⏎··········descuento_porcentaje:·0,⏎··········iva_porcentaje:·21,⏎········},⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·href=\"/\"·className=\"mt-6·inline-flex·items-center·justify-center·rounded-md·bg-primary·px-4·py-2·text-sm·font-medium·text-primary-foreground·hover:opacity-90\"` with `⏎··········href=\"/\"⏎··········className=\"mt-6·inline-flex·items-center·justify-center·rounded-md·bg-primary·px-4·py-2·text-sm·font-medium·text-primary-foreground·hover:opacity-90\"⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·name:·\"description\",·content:·\"Sistema·de·gestión·para·CasaForma:·ventas,·stock,·transferencias·y·rendición·de·caja.\"` with `⏎········name:·\"description\",⏎········content:⏎··········\"Sistema·de·gestión·para·CasaForma:·ventas,·stock,·transferencias·y·rendición·de·caja.\",⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·name:·\"twitter:description\",·content:·\"Sistema·de·gestión·para·CasaForma:·ventas,·stock,·transferencias·y·rendición·de·caja.\"` with `⏎········name:·\"twitter:description\",⏎········content:⏎··········\"Sistema·de·gestión·para·CasaForma:·ventas,·stock,·transferencias·y·rendición·de·caja.\",⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·name:·\"twitter:image\",·content:·\"https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ef99dd40-97ac-478c-ae69-ae26b6b87949/id-preview-6113653d--231f6df3-3885-4611-901c-6f4580b554f1.lovable.app-1782786078291.png\"` with `⏎········name:·\"twitter:image\",⏎········content:⏎··········\"https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ef99dd40-97ac-478c-ae69-ae26b6b87949/id-preview-6113653d--231f6df3-3885-4611-901c-6f4580b554f1.lovable.app-1782786078291.png\",⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·property:·\"og:description\",·content:·\"Sistema·de·gestión·para·CasaForma:·ventas,·stock,·transferencias·y·rendición·de·caja.\"` with `⏎········property:·\"og:description\",⏎········content:⏎··········\"Sistema·de·gestión·para·CasaForma:·ventas,·stock,·transferencias·y·rendición·de·caja.\",⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·property:·\"og:image\",·content:·\"https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ef99dd40-97ac-478c-ae69-ae26b6b87949/id-preview-6113653d--231f6df3-3885-4611-901c-6f4580b554f1.lovable.app-1782786078291.png\"` with `⏎········property:·\"og:image\",⏎········content:⏎··········\"https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ef99dd40-97ac-478c-ae69-ae26b6b87949/id-preview-6113653d--231f6df3-3885-4611-901c-6f4580b554f1.lovable.app-1782786078291.png\",⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·router.invalidate();·reset();` with `⏎··············router.invalidate();⏎··············reset();⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<HeadContent·/>` with `⏎········<HeadContent·/>⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Inicio` with `⏎············Inicio⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/__root.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Reintentar` with `⏎············Reintentar⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 11
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `·venta,`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `··`",
+      "cantidad": 22
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·························`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎······················`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·················`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎······`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎···`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.limit(1)` with `⏎········.limit(1)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.select(\"*\").eq(\"caja_sesion_id\",·sesion.id).order(\"created_at\")` with `····.select(\"*\")⏎··········.eq(\"caja_sesion_id\",·sesion.id)⏎··········.order(\"created_at\")⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.select(\"*\").eq(\"sucursal_id\",·sucId)` with `····.select(\"*\")⏎··········.eq(\"sucursal_id\",·sucId)⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `······.order(\"cerrada_en\",·{·ascending:·false·}).limit(20)` with `··········.order(\"cerrada_en\",·{·ascending:·false·})⏎··········.limit(20)⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············:·<StatusPill·tone=\"neutral\"·icon={<Lock·className=\"h-3·w-3\"·/>}>Sin·movimientos·hoy</StatusPill>` with `)·:·(⏎············<StatusPill·tone=\"neutral\"·icon={<Lock·className=\"h-3·w-3\"·/>}>⏎··············Sin·movimientos·hoy⏎············</StatusPill>⏎··········)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··············<TableHead>Movimiento</TableHead>` with `················<TableHead>Movimiento</TableHead>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············` with `··············`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············<SelectContent>{sucs.map((s)·=>·<SelectItem·key={s.id}·value={s.id}>{s.nombre}</SelectItem>)}` with `··············<SelectContent>⏎················{sucs.map((s)·=>·(⏎··················<SelectItem·key={s.id}·value={s.id}>⏎····················{s.nombre}⏎··················</SelectItem>⏎················))}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············<TableHead>Abierta</TableHead>` with `··············<TableHead>Abierta</TableHead>⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········</TableRow>` with `············</TableRow>⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `········)` with `··········)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·((await·supabase` with `⏎······((⏎········await·supabase⏎··········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·{·sesion:·any;·esperado:·Record<string,·CajaForma>;·onClose:·()·=>·void;·onClosed:·()·=>·void·` with `·sesion:·any;⏎··esperado:·Record<string,·CajaForma>;⏎··onClose:·()·=>·void;⏎··onClosed:·()·=>·void;⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`mt-2·text-sm·${resumenEfectivo.dejadoValido·?·\"text-foreground\"·:·\"text-destructive\"}`}` with `⏎··············className={`mt-2·text-sm·${resumenEfectivo.dejadoValido·?·\"text-foreground\"·:·\"text-destructive\"}`}⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`text-right·font-mono·tabular-nums·${sale·?·\"text-destructive\"·:·\"\"}`}` with `⏎······················className={`text-right·font-mono·tabular-nums·${sale·?·\"text-destructive\"·:·\"\"}`}⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·DialogContent,·DialogHeader,·DialogTitle,` with `⏎··DialogContent,⏎··DialogHeader,⏎··DialogTitle,⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·History,·LockOpen,·Lock,·Pencil,·Plus,·Wallet,·TrendingUp,·TrendingDown,·Printer·` with `⏎··History,⏎··LockOpen,⏎··Lock,⏎··Pencil,⏎··Plus,⏎··Wallet,⏎··TrendingUp,⏎··TrendingDown,⏎··Printer,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·if·(esEfectivo)·setContado((c)·=>·({·...c,·[f]:·v·}));` with `⏎······················if·(esEfectivo)·setContado((c)·=>·({·...c,·[f]:·v·}));⏎···················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·INGRESO:·\"Ingreso\",·GASTO:·\"Gasto\",·RETIRO:·\"Retiro\",·INICIAL:·\"Fondo·inicial\"·` with `⏎··INGRESO:·\"Ingreso\",⏎··GASTO:·\"Gasto\",⏎··RETIRO:·\"Retiro\",⏎··INICIAL:·\"Fondo·inicial\",⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·las·formas·ya·viene·con·el·monto⏎··········esperado·por·el·sistema·(lo·que·entró·menos·lo·que·salió:` with `⏎··········las·formas·ya·viene·con·el·monto·esperado·por·el·sistema·(lo·que·entró·menos·lo·que·salió:⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·onClick={()·=>·cerrar.mutate()}` with `⏎············onClick={()·=>·cerrar.mutate()}⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·p_contado:·payload,` with `⏎········p_contado:·payload,⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·p_tipo:·tipo·as·any,` with `⏎········p_tipo:·tipo·as·any,⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·pdfCierre(s,·sucNombre).catch((e)·=>·toast.error(\"No·se·pudo·generar·el·PDF:·\"·+·e.message));` with `⏎························pdfCierre(s,·sucNombre).catch((e)·=>⏎··························toast.error(\"No·se·pudo·generar·el·PDF:·\"·+·e.message),⏎························);⏎·····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Select,·SelectContent,·SelectItem,·SelectTrigger,·SelectValue·` with `⏎··Select,⏎··SelectContent,⏎··SelectItem,⏎··SelectTrigger,⏎··SelectValue,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·sesion,·esperado,·onClose,·onClosed·}:` with `⏎··sesion,⏎··esperado,⏎··onClose,⏎··onClosed,⏎}:·{`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·sesion,·sucId,·onChange·}:·{·sesion:·any;·sucId:·string;·onChange:·()·=>·void·` with `⏎··sesion,⏎··sucId,⏎··onChange,⏎}:·{⏎··sesion:·any;⏎··sucId:·string;⏎··onChange:·()·=>·void;⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·sesion={sesion}·sucId={effSucId}` with `⏎··········sesion={sesion}⏎··········sucId={effSucId}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·sesionId,·onClose,·onSaved·}:·{·sesionId:·string;·onClose:·()·=>·void;·onSaved:·()·=>·void·` with `⏎··sesionId,⏎··onClose,⏎··onSaved,⏎}:·{⏎··sesionId:·string;⏎··onClose:·()·=>·void;⏎··onSaved:·()·=>·void;⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·variant=\"ghost\"` with `⏎························size=\"sm\"⏎························variant=\"ghost\"⏎·······················`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"` with `⏎······················size=\"sm\"⏎·····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·sucId,·sucNombre,·esAdmin,·haySesionAbierta·` with `⏎··sucId,⏎··sucNombre,⏎··esAdmin,⏎··haySesionAbierta,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·sucNombre:·string;·esAdmin:·boolean;` with `⏎··sucNombre:·string;⏎··esAdmin:·boolean;⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Table,·TableHeader,·TableRow,·TableHead,·TableBody,·TableCell·` with `⏎··Table,⏎··TableHeader,⏎··TableRow,⏎··TableHead,⏎··TableBody,⏎··TableCell,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·toast.success(\"Caja·cerrada\");·onClosed();` with `⏎······toast.success(\"Caja·cerrada\");⏎······onClosed();⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·toast.success(\"Movimiento·registrado\");·onSaved();` with `⏎······toast.success(\"Movimiento·registrado\");⏎······onSaved();⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={desc}·onChange={(e)·=>·setDesc(e.target.value)}·placeholder=\"Ej:·flete,·pago·proveedor,·retiro·al·banco\"·className=\"mt-1\"` with `⏎··············value={desc}⏎··············onChange={(e)·=>·setDesc(e.target.value)}⏎··············placeholder=\"Ej:·flete,·pago·proveedor,·retiro·al·banco\"⏎··············className=\"mt-1\"⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={efectivoDejado·??·null}·onValueChange={setEfectivoDejado}·className=\"h-9·w-40·text-right\"` with `⏎··············value={efectivoDejado·??·null}⏎··············onValueChange={setEfectivoDejado}⏎··············className=\"h-9·w-40·text-right\"⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={notas}·onChange={(e)·=>·setNotas(e.target.value)}·rows={2}` with `⏎············value={notas}⏎············onChange={(e)·=>·setNotas(e.target.value)}⏎············rows={2}⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"EFECTIVO\",·\"TRANSFERENCIA\",·\"TARJETA_DEBITO\",·\"TARJETA_CREDITO\",·\"MERCADO_PAGO\",·\"CHEQUE\"` with `⏎··\"EFECTIVO\",⏎··\"TRANSFERENCIA\",⏎··\"TARJETA_DEBITO\",⏎··\"TARJETA_CREDITO\",⏎··\"MERCADO_PAGO\",⏎··\"CHEQUE\",⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"El·efectivo·dejado·no·puede·superar·al·contado·ni·contener·valores·negativos.\"` with `⏎··········\"El·efectivo·dejado·no·puede·superar·al·contado·ni·contener·valores·negativos.\",⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"numero_comprobante,tipo_comprobante,total,condicion_venta,cliente:clientes(razon_social),pagos:venta_pagos(forma_pago,monto)\"` with `⏎········\"numero_comprobante,tipo_comprobante,total,condicion_venta,cliente:clientes(razon_social),pagos:venta_pagos(forma_pago,monto)\",⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `()·=>·sucs.find((s:·any)·=>·s.id·===·effSucId)?.nombre·??·\"\",·[sucs,·effSucId]` with `⏎····()·=>·sucs.find((s:·any)·=>·s.id·===·effSucId)?.nombre·??·\"\",⏎····[sucs,·effSucId],⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `(f)·=>·neto(esperado[f])·!==·0·||·Number(esperado[f]?.sale·??·0)·!==·0·||·f·===·\"EFECTIVO\"` with `⏎··········(f)·=>⏎············neto(esperado[f])·!==·0·||·Number(esperado[f]?.sale·??·0)·!==·0·||·f·===·\"EFECTIVO\",⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(esp)}` with `⏎··················{fmtMoney(esp)}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(s.efectivo_dejado·??·0)}` with `⏎··················{fmtMoney(s.efectivo_dejado·??·0)}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(s.total_contado)}` with `⏎··················{fmtMoney(s.total_contado)}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(s.total_esperado)}` with `⏎··················{fmtMoney(s.total_esperado)}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{FORMAS.map((f)·=>·<SelectItem·key={f}·value={f}>{formaPagoLabel[f]}</SelectItem>)}` with `⏎··················{FORMAS.map((f)·=>·(⏎····················<SelectItem·key={f}·value={f}>⏎······················{formaPagoLabel[f]}⏎····················</SelectItem>⏎··················))}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `})}` with `··})⏎························}⏎······················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `}}` with `··}}⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `}` with `··}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `}`}` with `··}`}⏎················`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `</TableRow>` with `··</TableRow>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<CerrarDialog·sesion={sesion}·esperado={esperado}·onClose={()·=>·setCerrarOpen(false)}·onClosed={()·=>·{·setCerrarOpen(false);·invalidate();·}}·/>` with `(⏎········<CerrarDialog⏎··········sesion={sesion}⏎··········esperado={esperado}⏎··········onClose={()·=>·setCerrarOpen(false)}⏎··········onClosed={()·=>·{⏎············setCerrarOpen(false);⏎············invalidate();⏎··········}}⏎········/>⏎······)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<DialogTitle>Registrar·movimiento·de·caja</DialogTitle>` with `⏎··········<DialogTitle>Registrar·movimiento·de·caja</DialogTitle>⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<MovimientoDialog·sesionId={sesion.id}·onClose={()·=>·setMovOpen(false)}·onSaved={()·=>·{·setMovOpen(false);·invalidate();·}}·/>` with `(⏎········<MovimientoDialog⏎··········sesionId={sesion.id}⏎··········onClose={()·=>·setMovOpen(false)}⏎··········onSaved={()·=>·{⏎············setMovOpen(false);⏎············invalidate();⏎··········}}⏎········/>⏎······)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<p·className=\"text-sm·text-muted-foreground\">Cargando…</p>` with `⏎··········<p·className=\"text-sm·text-muted-foreground\">Cargando…</p>⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectTrigger·className=\"w-52\"><SelectValue·placeholder=\"Mi·sucursal\"·/>` with `··<SelectTrigger·className=\"w-52\">⏎················<SelectValue·placeholder=\"Mi·sucursal\"·/>⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectValue·/>` with `⏎··················<SelectValue·/>⏎················`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"w-24·text-right\">Esperado</span><span·className=\"w-28·text-right\">Contado</span>` with `⏎············<span·className=\"w-24·text-right\">Esperado</span>⏎············<span·className=\"w-28·text-right\">Contado</span>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<TrendingDown·className=\"h-3.5·w-3.5·text-destructive\"·/>·:·<TrendingUp·className=\"h-3.5·w-3.5·text-success\"·/>` with `(⏎··························<TrendingDown·className=\"h-3.5·w-3.5·text-destructive\"·/>⏎························)·:·(⏎··························<TrendingUp·className=\"h-3.5·w-3.5·text-success\"·/>⏎························)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Cancelar` with `⏎············Cancelar⏎··········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `cobranza·o·pago;·el·fondo·inicial·es·el·efectivo·que·dejaste·en·el·cierre` with `venta,·cobranza·o·pago;·el·fondo·inicial·es·el·efectivo·que·dejaste·en·el·cierre⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `dif·==·null·?·\"text-muted-foreground\"·:·dif·===·0·?·\"text-success\"` with `··dif·==·null⏎······················?·\"text-muted-foreground\"⏎······················:·dif·===·0⏎························?·\"text-success\"⏎·······················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Registrar` with `⏎············Registrar⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/arqueo.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `sesion·?·<StatusPill·tone=\"success\"·icon={<LockOpen·className=\"h-3·w-3\"·/>}>Caja·abierta` with `⏎··········sesion·?·(⏎············<StatusPill·tone=\"success\"·icon={<LockOpen·className=\"h-3·w-3\"·/>}>⏎··············Caja·abierta⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/clientes.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 19
+    },
+    {
+      "archivo": "src/routes/_authenticated/clientes.tsx",
+      "regla": "react-hooks/exhaustive-deps",
+      "severidad": 1,
+      "mensaje": "The 'clientes' logical expression could make the dependencies of useMemo Hook (at line 85) change on every render. To fix this, wrap the initialization of 'clientes' in its own useMemo() Hook.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/compras.index.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 4
+    },
+    {
+      "archivo": "src/routes/_authenticated/compras.nueva.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 11
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 42
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "@typescript-eslint/no-unused-expressions",
+      "severidad": 2,
+      "mensaje": "Expected an assignment or function call and instead saw an expression.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `··`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `·se`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `····`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `··`",
+      "cantidad": 18
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `·se`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎················`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎··············`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·······`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·····`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎···`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.filter(([k])·=>·k·!==·\"CTA_CTE\").map(([k,·l])·=>·(<SelectItem·key={k}·value={k}>{l}</SelectItem>` with `⏎····················.filter(([k])·=>·k·!==·\"CTA_CTE\")⏎····················.map(([k,·l])·=>·(⏎······················<SelectItem·key={k}·value={k}>⏎························{l}⏎······················</SelectItem>⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.filter((m:·any)·=>·m.tipo·===·\"CREDITO\")` with `⏎····.filter((m:·any)·=>·m.tipo·===·\"CREDITO\")⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.filter((m:·any)·=>·m.tipo·===·\"DEBITO\")` with `⏎····.filter((m:·any)·=>·m.tipo·===·\"DEBITO\")⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.from(\"clientes\").select(\"id,·razon_social,·cuit_dni\").eq(\"id\",·clienteParam)` with `⏎······.from(\"clientes\")⏎······.select(\"id,·razon_social,·cuit_dni\")⏎······.eq(\"id\",·clienteParam)⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.select(\"id,·created_at,·tipo,·monto,·estado,·forma_pago,·descripcion,·venta_id,·sucursal:sucursales(nombre)\"` with `····.select(⏎············\"id,·created_at,·tipo,·monto,·estado,·forma_pago,·descripcion,·venta_id,·sucursal:sucursales(nombre)\",⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `······.eq(\"venta_id\",·ventaId)` with `··········.eq(\"venta_id\",·ventaId)⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `······.order(\"created_at\",·{·ascending:·false·})` with `··········.order(\"created_at\",·{·ascending:·false·})⏎······`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··················),⏎················` with `················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `················{Object.entries(formaPagoLabel).filter(([k])·=>·k·!==·\"CTA_CTE\").map(([k,·l])·=>·(<SelectItem·key={k}·value={k}>{l}</SelectItem>` with `··················{Object.entries(formaPagoLabel)⏎····················.filter(([k])·=>·k·!==·\"CTA_CTE\")⏎····················.map(([k,·l])·=>·(⏎······················<SelectItem·key={k}·value={k}>⏎························{l}⏎······················</SelectItem>⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··············<SelectTrigger><SelectValue·/>` with `················<SelectTrigger>⏎··················<SelectValue·/>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············` with `··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············<div·className=\"col-span-2\">` with `··············<div·className=\"col-span-2\">⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `············<div><Label>Banco</Label><Input·value={detalle.banco·??·\"\"}·onChange={(e)·=>·setDetalle(d·=>·({·...d,·banco:·e.target.value·}))}·/>` with `················<div>⏎··················<Label>Banco</Label>⏎··················<Input⏎····················value={detalle.banco·??·\"\"}⏎····················onChange={(e)·=>·setDetalle((d)·=>·({·...d,·banco:·e.target.value·}))}⏎··················/>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········{forma·===·\"CHEQUE\"·&&·(` with `············{forma·===·\"CHEQUE\"·&&·(⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········` with `············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········<div·className=\"col-span-2\">` with `············<div·className=\"col-span-2\">⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········<div>` with `············<div>⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `········cliente_id:·cliente.id,` with `··········cliente_id:·cliente.id,⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `········monto:·Number(monto·||·0),` with `··········monto:·Number(monto·||·0),⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `········onSaved={()·=>·{·qc.invalidateQueries({·queryKey:·[\"prov-cc-saldos\"]·});·qc.invalidateQueries({·queryKey:·[\"prov-cc-mov\",·sel.id]·});·setOpenPago(false);·}}·/>` with `··········onSaved={()·=>·{⏎············qc.invalidateQueries({·queryKey:·[\"prov-cc-saldos\"]·});⏎············qc.invalidateQueries({·queryKey:·[\"prov-cc-mov\",·sel.id]·});⏎············setOpenPago(false);⏎··········}}⏎········/>⏎······)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `······` with `··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··` with `].map(`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·((await·supabase.from(\"cuenta_corriente_saldos\")⏎······.select(\"*\").order(\"razon_social\")).data·??` with `⏎······((await·supabase.from(\"cuenta_corriente_saldos\").select(\"*\").order(\"razon_social\")).data·??⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·((await·supabase.from(\"proveedor_cc_saldos\")⏎······.select(\"*\").order(\"razon_social\")).data·??·[]` with `⏎······(⏎········(await·supabase.from(\"proveedor_cc_saldos\").select(\"*\").order(\"razon_social\")).data·??·[]⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·((await·supabase` with `⏎······((⏎········await·supabase⏎··········`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·cancel·=·true;` with `⏎······cancel·=·true;⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className=\"inline-flex·items-center·gap-1·hover:text-primary\"·onClick={()·=>·toggle(m.id)}` with `⏎························className=\"inline-flex·items-center·gap-1·hover:text-primary\"⏎························onClick={()·=>·toggle(m.id)}⏎······················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`font-mono·font-bold·text-lg·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"\"}`}` with `⏎················className={`font-mono·font-bold·text-lg·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"\"}`}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`font-mono·font-bold·text-lg·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"\"}`}>{fmtMoney(saldo)}{saldo·<·-0.01·&&·\"·a·favor\"}` with `⏎················className={`font-mono·font-bold·text-lg·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"\"}`}⏎··············>⏎················{fmtMoney(saldo)}⏎················{saldo·<·-0.01·&&·\"·a·favor\"}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`h-3.5·w-3.5·transition-transform·${abierto·?·\"rotate-90\"·:·\"\"}`}` with `⏎··························className={`h-3.5·w-3.5·transition-transform·${abierto·?·\"rotate-90\"·:·\"\"}`}⏎·······················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`text-right·font-mono·font-semibold·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"text-muted-foreground\"}`}` with `⏎····················className={`text-right·font-mono·font-semibold·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"text-muted-foreground\"}`}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`text-right·font-mono·font-semibold·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"text-muted-foreground\"}`}` with `⏎················className={`text-right·font-mono·font-semibold·${saldo·>·0.01·?·\"text-destructive\"·:·saldo·<·-0.01·?·\"text-success\"·:·\"text-muted-foreground\"}`}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·cliente={sel}` with `⏎··········cliente={sel}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·columns={[\"Fecha\",·\"Detalle\",·\"Compra\",·\"Pago\",·\"\"]}·isEmpty={movs.length·===·0}·empty={{·text:·\"Sin·movimientos\"·}}` with `⏎··········columns={[\"Fecha\",·\"Detalle\",·\"Compra\",·\"Pago\",·\"\"]}⏎··········isEmpty={movs.length·===·0}⏎··········empty={{·text:·\"Sin·movimientos\"·}}⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Dialog,·DialogContent,·DialogHeader,·DialogTitle,·DialogFooter·` with `⏎··Dialog,⏎··DialogContent,⏎··DialogHeader,⏎··DialogTitle,⏎··DialogFooter,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·if·(!cancel·&&·data)·setSel({·id:·data.id,·razon_social:·data.razon_social,·cuit_dni:·data.cuit_dni·});` with `⏎········if·(!cancel·&&·data)⏎··········setSel({·id:·data.id,·razon_social:·data.razon_social,·cuit_dni:·data.cuit_dni·});⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·onClick={()·=>·m.mutate()}·disabled={!effSuc·||·!monto·||·monto·<=·0·||·m.isPending}>Registrar·cobro` with `⏎············onClick={()·=>·m.mutate()}⏎············disabled={!effSuc·||·!monto·||·monto·<=·0·||·m.isPending}⏎··········>⏎············Registrar·cobro⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·onClick={()·=>·m.mutate()}·disabled={!effSuc·||·!monto·||·monto·<=·0·||·m.isPending}>Registrar·pago` with `⏎············onClick={()·=>·m.mutate()}⏎············disabled={!effSuc·||·!monto·||·monto·<=·0·||·m.isPending}⏎··········>⏎············Registrar·pago⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·open={openPago}·onClose={()·=>·setOpenPago(false)}` with `⏎··········open={openPago}⏎··········onClose={()·=>·setOpenPago(false)}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·p_forma_pago:·forma,` with `⏎········p_forma_pago:·forma,⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·placeholder=\"Buscar·cliente…\"·value={q}·onChange={(e)·=>·setQ(e.target.value)}·className=\"max-w-sm\"` with `⏎················placeholder=\"Buscar·cliente…\"⏎················value={q}⏎················onChange={(e)·=>·setQ(e.target.value)}⏎················className=\"max-w-sm\"⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·placeholder=\"Buscar·proveedor…\"·value={q}·onChange={(e)·=>·setQ(e.target.value)}·className=\"max-w-sm\"` with `⏎··········placeholder=\"Buscar·proveedor…\"⏎··········value={q}⏎··········onChange={(e)·=>·setQ(e.target.value)}⏎··········className=\"max-w-sm\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·qc.invalidateQueries({·queryKey:·[\"ctacte-saldos\"]·});·qc.invalidateQueries({·queryKey:·[\"ctacte-cliente\",·sel.id]·});·qc.invalidateQueries({·queryKey:·[\"ctacte-resumen\",·sel.id]·});·setOpenPago(false);·}}` with `⏎············qc.invalidateQueries({·queryKey:·[\"ctacte-saldos\"]·});⏎············qc.invalidateQueries({·queryKey:·[\"ctacte-cliente\",·sel.id]·});⏎············qc.invalidateQueries({·queryKey:·[\"ctacte-resumen\",·sel.id]·});⏎············setOpenPago(false);⏎··········}}⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·razon_social:·p.razon_social,` with `⏎········razon_social:·p.razon_social,⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Select,·SelectContent,·SelectItem,·SelectTrigger,·SelectValue·` with `⏎··Select,⏎··SelectContent,⏎··SelectItem,⏎··SelectTrigger,⏎··SelectValue,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·setMonto(null);·setObs(\"\");` with `⏎······setMonto(null);⏎······setObs(\"\");⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·onClick={()·=>·setCobrando(f)}·data-testid={`cobrar-${f.numero_comprobante}`}` with `⏎················size=\"sm\"⏎················onClick={()·=>·setCobrando(f)}⏎················data-testid={`cobrar-${f.numero_comprobante}`}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·variant=\"ghost\"·onClick={()·=>·anularPago.mutate(m.pago_id)}·title=\"Anular·pago\">×` with `⏎······················size=\"sm\"⏎······················variant=\"ghost\"⏎······················onClick={()·=>·anularPago.mutate(m.pago_id)}⏎······················title=\"Anular·pago\"⏎····················>⏎······················×⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·variant=\"outline\"·onClick={()·=>·setSel({·id:·c.cliente_id,·razon_social:·c.razon_social,·cuit_dni:·c.cuit_dni·})}` with `⏎······················size=\"sm\"⏎······················variant=\"outline\"⏎······················onClick={()·=>⏎························setSel({⏎··························id:·c.cliente_id,⏎··························razon_social:·c.razon_social,⏎··························cuit_dni:·c.cuit_dni,⏎························})⏎······················}⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·variant=\"outline\"·onClick={()·=>·setSel({·id:·p.proveedor_id,·razon_social:·p.razon_social·})}` with `⏎··················size=\"sm\"⏎··················variant=\"outline\"⏎··················onClick={()·=>·setSel({·id:·p.proveedor_id,·razon_social:·p.razon_social·})}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·text:·\"No·hay·proveedores·con·cuenta·corriente.\",·icon:·<Wallet·className=\"h-7·w-7\"·/>` with `⏎··········text:·\"No·hay·proveedores·con·cuenta·corriente.\",⏎··········icon:·<Wallet·className=\"h-7·w-7\"·/>,⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·toast.success(\"Pago·anulado\");·qc.invalidateQueries({·queryKey:·[\"prov-cc-mov\",·proveedor.id]·});·qc.invalidateQueries({·queryKey:·[\"prov-cc-saldos\"]·});` with `⏎······toast.success(\"Pago·anulado\");⏎······qc.invalidateQueries({·queryKey:·[\"prov-cc-mov\",·proveedor.id]·});⏎······qc.invalidateQueries({·queryKey:·[\"prov-cc-saldos\"]·});⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·toast.success(\"Pago·registrado·(sale·de·la·caja)\");·onSaved();·setMonto(null);` with `⏎······toast.success(\"Pago·registrado·(sale·de·la·caja)\");⏎······onSaved();⏎······setMonto(null);⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·total_debe:·number;·total_pagado:·number;·saldo:·number` with `⏎········total_debe:·number;⏎········total_pagado:·number;⏎········saldo:·number;⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={saldoFiltro}·onValueChange={(v)·=>·setSaldoFiltro(v·as·typeof·saldoFiltro)}` with `⏎················value={saldoFiltro}⏎················onValueChange={(v)·=>·setSaldoFiltro(v·as·typeof·saldoFiltro)}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"EFECTIVO\",·\"TRANSFERENCIA\",·\"TARJETA_DEBITO\",·\"TARJETA_CREDITO\",·\"MERCADO_PAGO\",·\"CHEQUE\"].map(` with `⏎··················\"EFECTIVO\",⏎··················\"TRANSFERENCIA\",⏎··················\"TARJETA_DEBITO\",⏎··················\"TARJETA_CREDITO\",⏎··················\"MERCADO_PAGO\",⏎··················\"CHEQUE\",`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(c.total_pagado)}` with `⏎····················{fmtMoney(c.total_pagado)}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(f.cobrado)}` with `⏎··············{fmtMoney(f.cobrado)}⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(it.subtotal_con_iva)}` with `⏎··············{fmtMoney(it.subtotal_con_iva)}⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(p.pagado)}` with `⏎················{fmtMoney(p.pagado)}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(totalPagado)}` with `⏎················{fmtMoney(totalPagado)}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.sucursal?.nombre}` with `⏎····················{m.sucursal?.nombre}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.tipo·===·\"CREDITO\"·?·fmtMoney(m.monto)·:·\"—\"}` with `⏎····················{m.tipo·===·\"CREDITO\"·?·fmtMoney(m.monto)·:·\"—\"}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.tipo·===·\"CREDITO\"·?·fmtMoney(m.monto)·:·\"—\"}` with `⏎··················{m.tipo·===·\"CREDITO\"·?·fmtMoney(m.monto)·:·\"—\"}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.tipo·===·\"DEBITO\"·?·fmtMoney(m.monto)·:·\"—\"}` with `⏎····················{m.tipo·===·\"DEBITO\"·?·fmtMoney(m.monto)·:·\"—\"}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.tipo·===·\"DEBITO\"·?·fmtMoney(m.monto)·:·\"—\"}` with `⏎··················{m.tipo·===·\"DEBITO\"·?·fmtMoney(m.monto)·:·\"—\"}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{sucs.map((s:·any)·=>·(<SelectItem·key={s.id}·value={s.id}>{s.nombre}</SelectItem>))}` with `⏎····················{sucs.map((s:·any)·=>·(⏎······················<SelectItem·key={s.id}·value={s.id}>⏎························{s.nombre}⏎······················</SelectItem>⏎····················))}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `</>` with `····</>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<Button·variant=\"outline\"·onClick={onClose}>Cerrar</Button>` with `⏎··········<Button·variant=\"outline\"·onClick={onClose}>⏎············Cerrar⏎··········</Button>⏎········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<DetalleProveedor·proveedor={sel}·onClose={()·=>·setSel(null)}·onPagar={()·=>·setOpenPago(true)}·/>` with `(⏎········<DetalleProveedor⏎··········proveedor={sel}⏎··········onClose={()·=>·setSel(null)}⏎··········onPagar={()·=>·setOpenPago(true)}⏎········/>⏎······)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<DialogTitle>Pagar·a·proveedor···{proveedor.razon_social}</DialogTitle>` with `⏎··········<DialogTitle>Pagar·a·proveedor···{proveedor.razon_social}</DialogTitle>⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<DialogTitle>Registrar·cobro···{cliente.razon_social}</DialogTitle>` with `⏎··········<DialogTitle>Registrar·cobro···{cliente.razon_social}</DialogTitle>⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div·className=\"col-span-2\"><Label>Banco·/·Cuenta</Label><Input·value={detalle.banco·??·\"\"}·onChange={(e)·=>·setDetalle(d·=>·({·...d,·banco:·e.target.value·}))}·/>` with `··<div·className=\"col-span-2\">⏎················<Label>Banco·/·Cuenta</Label>⏎················<Input⏎··················value={detalle.banco·??·\"\"}⏎··················onChange={(e)·=>·setDetalle((d)·=>·({·...d,·banco:·e.target.value·}))}⏎················/>⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div·className=\"text-xs·text-muted-foreground\">Comprado</div><div·className=\"font-mono·font-bold·text-lg\">{fmtMoney(debe)}</div>` with `⏎··············<div·className=\"text-xs·text-muted-foreground\">Comprado</div>⏎··············<div·className=\"font-mono·font-bold·text-lg\">{fmtMoney(debe)}</div>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div·className=\"text-xs·text-muted-foreground\">Pagado</div><div·className=\"font-mono·font-bold·text-lg·text-success\">{fmtMoney(pagado)}</div>` with `⏎··············<div·className=\"text-xs·text-muted-foreground\">Pagado</div>⏎··············<div·className=\"font-mono·font-bold·text-lg·text-success\">{fmtMoney(pagado)}</div>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div><Label>Fecha·cobro</Label><Input·type=\"date\"·value={detalle.fecha_cobro·??·\"\"}·onChange={(e)·=>·setDetalle(d·=>·({·...d,·fecha_cobro:·e.target.value·}))}·/>` with `····<div>⏎··················<Label>Fecha·cobro</Label>⏎··················<Input⏎····················type=\"date\"⏎····················value={detalle.fecha_cobro·??·\"\"}⏎····················onChange={(e)·=>·setDetalle((d)·=>·({·...d,·fecha_cobro:·e.target.value·}))}⏎··················/>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div><Label>Firmante</Label><Input·value={detalle.firmante·??·\"\"}·onChange={(e)·=>·setDetalle(d·=>·({·...d,·firmante:·e.target.value·}))}·/>` with `····<div>⏎··················<Label>Firmante</Label>⏎··················<Input⏎····················value={detalle.firmante·??·\"\"}⏎····················onChange={(e)·=>·setDetalle((d)·=>·({·...d,·firmante:·e.target.value·}))}⏎··················/>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div><Label>Monto·*</Label><NumberInput·value={monto}·onValueChange={setMonto}·/>` with `··<div>⏎··············<Label>Monto·*</Label>⏎··············<NumberInput·value={monto}·onValueChange={setMonto}·/>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<div><Label>Nro·cheque</Label><Input·value={detalle.numero·??·\"\"}·onChange={(e)·=>·setDetalle(d·=>·({·...d,·numero:·e.target.value·}))}·/>` with `····<div>⏎··················<Label>Nro·cheque</Label>⏎··················<Input⏎····················value={detalle.numero·??·\"\"}⏎····················onChange={(e)·=>·setDetalle((d)·=>·({·...d,·numero:·e.target.value·}))}⏎··················/>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<Label>Monto·*</Label><NumberInput·value={monto}·onValueChange={setMonto}·/>` with `⏎··············<Label>Monto·*</Label>⏎··············<NumberInput·value={monto}·onValueChange={setMonto}·/>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<PagoProveedorDialog·open={openPago}·onClose={()·=>·setOpenPago(false)}` with `(⏎········<PagoProveedorDialog⏎··········open={openPago}⏎··········onClose={()·=>·setOpenPago(false)}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectContent>{sucs.map((s:·any)·=>·(<SelectItem·key={s.id}·value={s.id}>{s.nombre}</SelectItem>))}` with `··<SelectContent>⏎····················{sucs.map((s:·any)·=>·(⏎······················<SelectItem·key={s.id}·value={s.id}>⏎························{s.nombre}⏎······················</SelectItem>⏎····················))}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectTrigger><SelectValue·placeholder=\"Seleccionar…\"·/>` with `··<SelectTrigger>⏎····················<SelectValue·placeholder=\"Seleccionar…\"·/>⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectValue·/>` with `⏎··················<SelectValue·/>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectValue·placeholder=\"Seleccionar…\"·/>` with `⏎····················<SelectValue·placeholder=\"Seleccionar…\"·/>⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"font-mono\">{it.cantidad}×</span>·{it.descripcion}` with `⏎··············<span·className=\"font-mono\">{it.cantidad}×</span>·{it.descripcion}⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"ml-2\"><StatusPill·tone=\"neutral\">anulado</StatusPill></span>` with `(⏎······················<span·className=\"ml-2\">⏎························<StatusPill·tone=\"neutral\">anulado</StatusPill>⏎······················</span>⏎····················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"ml-2\"><StatusPill·tone=\"neutral\">anulado</StatusPill></span>` with `(⏎····················<span·className=\"ml-2\">⏎······················<StatusPill·tone=\"neutral\">anulado</StatusPill>⏎····················</span>⏎··················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"text-xs·text-muted-foreground\">···{formaPagoLabel[m.forma_pago]·??·m.forma_pago}</span>` with `(⏎······················<span·className=\"text-xs·text-muted-foreground\">⏎························{\"·\"}⏎··························{formaPagoLabel[m.forma_pago]·??·m.forma_pago}⏎······················</span>⏎····················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"text-xs·text-muted-foreground\">···{formaPagoLabel[m.forma_pago]·??·m.forma_pago}</span>` with `(⏎····················<span·className=\"text-xs·text-muted-foreground\">⏎······················{\"·\"}⏎························{formaPagoLabel[m.forma_pago]·??·m.forma_pago}⏎····················</span>⏎··················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<Wallet·className=\"h-4·w-4·mr-1\"·/>·Registrar·pago` with `⏎··············<Wallet·className=\"h-4·w-4·mr-1\"·/>·Registrar·pago⏎············`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎····coincideDocumento(p,·q)⏎··` with `·coincideDocumento(p,·q)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `await·supabase.from(\"ventas_saldo_pendiente\").select(\"*\").order(\"fecha\",·{·ascending:·false·})).data·??⏎·······` with `⏎········await·supabase⏎··········.from(\"ventas_saldo_pendiente\")⏎··········.select(\"*\")⏎··········.order(\"fecha\",·{·ascending:·false·})⏎······).data·??`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Cancelar` with `⏎············Cancelar⏎··········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `const·n·=·new·Set(s);·n.has(id)·?·n.delete(id)·:·n.add(id);` with `··const·n·=·new·Set(s);⏎······n.has(id)·?·n.delete(id)·:·n.add(id);⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `detalle,` with `··detalle,⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `m.descripcion` with `(⏎······················m.descripcion⏎····················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Necesitás·la·caja·abierta:·el·pago·sale·de·la·caja.` with `⏎············Necesitás·la·caja·abierta:·el·pago·sale·de·la·caja.⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/cuentas-corrientes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Productos·que·llevó` with `⏎········Productos·que·llevó⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 6
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `··`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎··········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.eq(\"caja_sesion_id\",·ses.id)` with `⏎········.eq(\"caja_sesion_id\",·ses.id)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.eq(\"sucursal_id\",·effSucId)` with `⏎········.eq(\"sucursal_id\",·effSucId)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.limit(1)` with `⏎········.limit(1)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··············<TableHead>Hora</TableHead>` with `················<TableHead>Hora</TableHead>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `··········<span·className=\"text-sm\">Total:·<span·className=\"font-bold·font-mono·tabular-nums·text-destructive\">−{fmtMoney(totalDia)}</span>` with `············<span·className=\"text-sm\">⏎··············Total:{\"·\"}⏎··············<span·className=\"font-bold·font-mono·tabular-nums·text-destructive\">⏎················−{fmtMoney(totalDia)}⏎··············</span>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·if·(e.key·===·\"Enter\"·&&·puedeGuardar)·registrar.mutate();·}}·className=\"mt-1\"` with `⏎················if·(e.key·===·\"Enter\"·&&·puedeGuardar)·registrar.mutate();⏎··············}}⏎··············className=\"mt-1\"⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Select,·SelectContent,·SelectItem,·SelectTrigger,·SelectValue·` with `⏎··Select,⏎··SelectContent,⏎··SelectItem,⏎··SelectTrigger,⏎··SelectValue,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·setMonto(null);` with `⏎······setMonto(null);⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Table,·TableHeader,·TableRow,·TableHead,·TableBody,·TableCell·` with `⏎··Table,⏎··TableHeader,⏎··TableRow,⏎··TableHead,⏎··TableBody,⏎··TableCell,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={descripcion}·onChange={(e)·=>·setDescripcion(e.target.value)}` with `⏎··············value={descripcion}⏎··············onChange={(e)·=>·setDescripcion(e.target.value)}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"EFECTIVO\",·\"TRANSFERENCIA\",·\"TARJETA_DEBITO\",·\"TARJETA_CREDITO\",·\"MERCADO_PAGO\",·\"CHEQUE\"` with `⏎··\"EFECTIVO\",⏎··\"TRANSFERENCIA\",⏎··\"TARJETA_DEBITO\",⏎··\"TARJETA_CREDITO\",⏎··\"MERCADO_PAGO\",⏎··\"CHEQUE\",⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `)` with `··)⏎········`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{FORMAS.map((f)·=>·<SelectItem·key={f}·value={f}>{formaPagoLabel[f]}</SelectItem>)}` with `⏎················{FORMAS.map((f)·=>·(⏎··················<SelectItem·key={f}·value={f}>⏎····················{formaPagoLabel[f]}⏎··················</SelectItem>⏎················))}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `</TableRow>` with `··</TableRow>⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectContent>{sucs.map((s)·=>·<SelectItem·key={s.id}·value={s.id}>{s.nombre}</SelectItem>)}` with `··<SelectContent>⏎················{sucs.map((s)·=>·(⏎··················<SelectItem·key={s.id}·value={s.id}>⏎····················{s.nombre}⏎··················</SelectItem>⏎················))}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectTrigger·className=\"w-52\"><SelectValue·placeholder=\"Mi·sucursal\"·/>` with `··<SelectTrigger·className=\"w-52\">⏎················<SelectValue·placeholder=\"Mi·sucursal\"·/>⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectValue·/>` with `⏎················<SelectValue·/>⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"inline-flex·items-center·gap-1.5\"><Wallet·className=\"h-3.5·w-3.5·text-muted-foreground\"·/>{g.descripcion}</span>` with `⏎····················<span·className=\"inline-flex·items-center·gap-1.5\">⏎······················<Wallet·className=\"h-3.5·w-3.5·text-muted-foreground\"·/>⏎······················{g.descripcion}⏎····················</span>⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<TableHead>Forma</TableHead>` with `··<TableHead>Forma</TableHead>⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `−{fmtMoney(g.monto)}` with `⏎····················−{fmtMoney(g.monto)}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Registrar` with `⏎············Registrar⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/gastos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Todavía·no·cargaste·gastos·hoy.` with `⏎············Todavía·no·cargaste·gastos·hoy.⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/index.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 8
+    },
+    {
+      "archivo": "src/routes/_authenticated/index.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·to=\"/cuentas-corrientes\"·icon={Receipt}·label=\"Cuentas·ctes\"·tone=\"warning\"` with `⏎············to=\"/cuentas-corrientes\"⏎············icon={Receipt}⏎············label=\"Cuentas·ctes\"⏎············tone=\"warning\"⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/ingresos-mercaderia.index.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 8
+    },
+    {
+      "archivo": "src/routes/_authenticated/ingresos-mercaderia.nuevo.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 8
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos-proveedores.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 12
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 4
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.filter((k)·=>·k·!==·\"CTA_CTE\")` with `⏎················.filter((k)·=>·k·!==·\"CTA_CTE\")⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `················<SelectItem·key={k}·value={k}>{formaPagoLabel[k]}` with `··················<SelectItem·key={k}·value={k}>⏎····················{formaPagoLabel[k]}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·((await·supabase.from(\"sucursales\").select(\"id,·nombre\")).data·??·[])·as·Array<{·id:·string;·nombre:·string` with `⏎······((await·supabase.from(\"sucursales\").select(\"id,·nombre\")).data·??·[])·as·Array<{⏎········id:·string;⏎········nombre:·string;⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·<span·className=\"text-xs·text-muted-foreground/70\">({((d.total·/·totalPos)·*·100).toFixed(1)}%)` with `{\"·\"}⏎····················<span·className=\"text-xs·text-muted-foreground/70\">⏎······················({((d.total·/·totalPos)·*·100).toFixed(1)}%)⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·background:·\"var(--card)\",·border:·\"1px·solid·var(--border)\",·borderRadius:·12` with `⏎··················background:·\"var(--card)\",⏎··················border:·\"1px·solid·var(--border)\",⏎··················borderRadius:·12,⏎···············`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className=\"w-2·h-2·rounded-full\"·style={{·background:·medioColor(c.formaPago)·}}` with `⏎··················className=\"w-2·h-2·rounded-full\"⏎··················style={{·background:·medioColor(c.formaPago)·}}⏎···············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className=\"w-3·h-3·rounded-full\"·style={{·background:·medioColor(d.formaPago)·}}` with `⏎······················className=\"w-3·h-3·rounded-full\"⏎······················style={{·background:·medioColor(d.formaPago)·}}⏎···················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·cobrosRaw.filter((c)·=>·(!medio·||·c.formaPago·===·medio)·&&·(!origen·||·c.origen·===·origen)` with `⏎······cobrosRaw.filter(⏎········(c)·=>·(!medio·||·c.formaPago·===·medio)·&&·(!origen·||·c.origen·===·origen),⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·data={donut}·dataKey=\"total\"·nameKey=\"formaPago\"·innerRadius=\"60%\"·outerRadius=\"88%\"·paddingAngle={3}·strokeWidth={0}` with `⏎················data={donut}⏎················dataKey=\"total\"⏎················nameKey=\"formaPago\"⏎················innerRadius=\"60%\"⏎················outerRadius=\"88%\"⏎················paddingAngle={3}⏎················strokeWidth={0}⏎··············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·dataKey=\"fecha\"·stroke=\"var(--muted-foreground)\"·fontSize={11}·tickLine={false}·axisLine={false}` with `⏎················dataKey=\"fecha\"⏎················stroke=\"var(--muted-foreground)\"⏎················fontSize={11}⏎················tickLine={false}⏎················axisLine={false}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·dataKey=\"total\"·fill=\"var(--color-primary)\"·radius={[6,·6,·0,·0]}·maxBarSize={48}` with `⏎················dataKey=\"total\"⏎················fill=\"var(--color-primary)\"⏎················radius={[6,·6,·0,·0]}⏎················maxBarSize={48}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·hint=\"cobrado·en·efectivo\"` with `⏎··········hint=\"cobrado·en·efectivo\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·hint=\"notas·de·crédito·del·período\"` with `⏎··········hint=\"notas·de·crédito·del·período\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·hint=\"transf.·+·tarjetas·+·MP·+·cheque\"` with `⏎··········hint=\"transf.·+·tarjetas·+·MP·+·cheque\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Devoluciones\"·value={fmtMoney(resumen.devoluciones)}·icon={Receipt}` with `⏎··········label=\"Devoluciones\"⏎··········value={fmtMoney(resumen.devoluciones)}⏎··········icon={Receipt}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Efectivo\"·value={fmtMoney(resumen.efectivoBruto)}·icon={Coins}` with `⏎··········label=\"Efectivo\"⏎··········value={fmtMoney(resumen.efectivoBruto)}⏎··········icon={Coins}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Electrónico\"·value={fmtMoney(resumen.electronicoBruto)}·icon={CreditCard}` with `⏎··········label=\"Electrónico\"⏎··········value={fmtMoney(resumen.electronicoBruto)}⏎··········icon={CreditCard}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Total·neto·cobrado\"·value={fmtMoney(resumen.totalNeto)}·icon={Wallet}` with `⏎··········label=\"Total·neto·cobrado\"⏎··········value={fmtMoney(resumen.totalNeto)}⏎··········icon={Wallet}⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Pie,·Cell,·BarChart,·Bar,·XAxis,·YAxis,·CartesianGrid,` with `⏎··Pie,⏎··Cell,⏎··BarChart,⏎··Bar,⏎··XAxis,⏎··YAxis,⏎··CartesianGrid,⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·resumenPagos,·totalesPorMedio,` with `⏎··resumenPagos,⏎··totalesPorMedio,⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Select,·SelectContent,·SelectItem,·SelectTrigger,·SelectValue·` with `⏎··Select,⏎··SelectContent,⏎··SelectItem,⏎··SelectTrigger,⏎··SelectValue,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·setFrom(v);·setPage(1);` with `⏎··········setFrom(v);⏎··········setPage(1);⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·setTo(v);·setPage(1);` with `⏎··········setTo(v);⏎··········setPage(1);⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·variant=\"outline\"·disabled={pageSafe·===·1}·onClick={()·=>·setPage((p)·=>·Math.max(1,·p·-·1))}>Anterior` with `⏎··············size=\"sm\"⏎··············variant=\"outline\"⏎··············disabled={pageSafe·===·1}⏎··············onClick={()·=>·setPage((p)·=>·Math.max(1,·p·-·1))}⏎············>⏎··············Anterior⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·size=\"sm\"·variant=\"outline\"·disabled={pageSafe·===·pageCount}·onClick={()·=>·setPage((p)·=>·Math.min(pageCount,·p·+·1))}>Siguiente` with `⏎··············size=\"sm\"⏎··············variant=\"outline\"⏎··············disabled={pageSafe·===·pageCount}⏎··············onClick={()·=>·setPage((p)·=>·Math.min(pageCount,·p·+·1))}⏎············>⏎··············Siguiente⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·stroke=\"var(--muted-foreground)\"·fontSize={11}·tickLine={false}·axisLine={false}·tickFormatter={(v)·=>·`$${(v·/·1000).toFixed(0)}k`}` with `⏎················stroke=\"var(--muted-foreground)\"⏎················fontSize={11}⏎················tickLine={false}⏎················axisLine={false}⏎················tickFormatter={(v)·=>·`$${(v·/·1000).toFixed(0)}k`}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·title=\"Cobrado·por·día\"·subtitle=\"Neto·diario·del·período\"·height={300}·config={{}}` with `⏎············title=\"Cobrado·por·día\"⏎············subtitle=\"Neto·diario·del·período\"⏎············height={300}⏎············config={{}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·title=\"Cobrado·por·medio·de·pago\"·subtitle=\"Distribución·(montos·positivos)\"·height={260}·config={{}}` with `⏎············title=\"Cobrado·por·medio·de·pago\"⏎············subtitle=\"Distribución·(montos·positivos)\"⏎············height={260}⏎············config={{}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·trend={trend(resumen.totalNeto,·resumenPrev.totalNeto)}·hint=\"cobrado·−·devoluciones\"` with `⏎··········trend={trend(resumen.totalNeto,·resumenPrev.totalNeto)}⏎··········hint=\"cobrado·−·devoluciones\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·type·VentaRow,` with `⏎··type·VentaRow,⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={medio·||·\"__all__\"}·onValueChange={(v)·=>·{·setMedio(v·===·\"__all__\"·?·\"\"·:·v);·setPage(1);·}}` with `⏎············value={medio·||·\"__all__\"}⏎············onValueChange={(v)·=>·{⏎··············setMedio(v·===·\"__all__\"·?·\"\"·:·v);⏎··············setPage(1);⏎············}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·value={origen·||·\"__all__\"}·onValueChange={(v)·=>·{·setOrigen(v·===·\"__all__\"·?·\"\"·:·v);·setPage(1);·}}` with `⏎············value={origen·||·\"__all__\"}⏎············onValueChange={(v)·=>·{⏎··············setOrigen(v·===·\"__all__\"·?·\"\"·:·v);⏎··············setPage(1);⏎············}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `\"fecha,·numero_comprobante,·sucursal_id,·cliente:clientes(razon_social),·pagos:venta_pagos(forma_pago,·monto)\"` with `⏎······\"fecha,·numero_comprobante,·sucursal_id,·cliente:clientes(razon_social),·pagos:venta_pagos(forma_pago,·monto)\",⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `(sucId·||·null)` with `sucId·||·null`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `(ventas·??·[])·as·unknown·as·VentaRow[],·(cobranzas·??·[])·as·unknown·as·CobranzaRow[]` with `⏎····(ventas·??·[])·as·unknown·as·VentaRow[],⏎····(cobranzas·??·[])·as·unknown·as·CobranzaRow[],⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{sucNombre(c.sucursalId)}` with `⏎··············{sucNombre(c.sucursalId)}⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<Cell·key={d.formaPago}·fill={medioColor(d.formaPago)}·/>` with `(⏎··················<Cell·key={d.formaPago}·fill={medioColor(d.formaPago)}·/>⏎················)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<p·className=\"text-sm·text-muted-foreground\">Sin·cobros·en·el·período.</p>` with `(⏎··············<p·className=\"text-sm·text-muted-foreground\">Sin·cobros·en·el·período.</p>⏎············)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<SelectValue·/>` with `⏎··············<SelectValue·/>⏎············`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<span·className=\"ml-1\"><StatusPill·tone=\"danger\">Devol.</StatusPill></span>` with `(⏎················<span·className=\"ml-1\">⏎··················<StatusPill·tone=\"danger\">Devol.</StatusPill>⏎················</span>⏎··············)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎··from:·string,⏎··to:·string,⏎··sucursalId:·string·|·null,⏎` with `from:·string,·to:·string,·sucursalId:·string·|·null`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `cu?.isAdmin·?·(v)·=>·{·setSucId(v);·setPage(1);·}·:·undefined` with `⏎··········cu?.isAdmin⏎············?·(v)·=>·{⏎················setSucId(v);⏎················setPage(1);⏎··············}⏎············:·undefined⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `fmtMoney(Number(v)),·medioLabel(p?.payload?.formaPago·??·\"\")` with `⏎··················fmtMoney(Number(v)),⏎··················medioLabel(p?.payload?.formaPago·??·\"\"),⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Página·{pageSafe}·de·{pageCount}···{cobros.length}·cobros` with `⏎············Página·{pageSafe}·de·{pageCount}···{cobros.length}·cobros⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/pagos.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `Pedile·a·un·administrador·que·te·asigne·una·para·ver·los·cobros.` with `⏎············Pedile·a·un·administrador·que·te·asigne·una·para·ver·los·cobros.⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/presupuestos.$id.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 4
+    },
+    {
+      "archivo": "src/routes/_authenticated/presupuestos.editar.$id.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 14
+    },
+    {
+      "archivo": "src/routes/_authenticated/presupuestos.index.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/presupuestos.nuevo.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 10
+    },
+    {
+      "archivo": "src/routes/_authenticated/productos.$id.seguimiento.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 5
+    },
+    {
+      "archivo": "src/routes/_authenticated/productos.$id.seguimiento.tsx",
+      "regla": "react-hooks/exhaustive-deps",
+      "severidad": 1,
+      "mensaje": "The 'filas' logical expression could make the dependencies of useMemo Hook (at line 130) change on every render. To fix this, wrap the initialization of 'filas' in its own useMemo() Hook.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/productos.importar.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 10
+    },
+    {
+      "archivo": "src/routes/_authenticated/productos.index.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 43
+    },
+    {
+      "archivo": "src/routes/_authenticated/productos.index.tsx",
+      "regla": "@typescript-eslint/no-unused-expressions",
+      "severidad": 2,
+      "mensaje": "Expected an assignment or function call and instead saw an expression.",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/proveedores.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 9
+    },
+    {
+      "archivo": "src/routes/_authenticated/remitos.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 25
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 13
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `··`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎····················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·····`",
+      "cantidad": 2
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `⏎·`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.from(\"cobranzas_cta_cte\").select(\"monto,·forma_pago,·sucursal_id,·fecha\").gte(\"fecha\",·gte)` with `⏎········.from(\"cobranzas_cta_cte\")⏎········.select(\"monto,·forma_pago,·sucursal_id,·fecha\")⏎········.gte(\"fecha\",·gte)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.from(\"stock_movimientos\").select(` with `⏎········.from(\"stock_movimientos\")⏎········.select(⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.from(\"ventas\").select(` with `⏎········.from(\"ventas\")⏎········.select(⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.order(\"saldo\",·{·ascending:·false·})` with `····.order(\"saldo\",·{·ascending:·false·})⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `.sort((a,·b)·=>·(a.fecha·<·b.fecha·?·-1·:·1))` with `⏎······.sort((a,·b)·=>·(a.fecha·<·b.fecha·?·-1·:·1))⏎······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `······const·k·=·new·Date(v.fecha).toLocaleDateString(\"es-AR\",·{·timeZone:·\"America/Argentina/Buenos_Aires\",·day:·\"2-digit\",·month:·\"2-digit\"` with `········const·k·=·new·Date(v.fecha).toLocaleDateString(\"es-AR\",·{⏎··········timeZone:·\"America/Argentina/Buenos_Aires\",⏎··········day:·\"2-digit\",⏎··········month:·\"2-digit\",⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·((await·supabase` with `⏎······((⏎········await·supabase⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`text-right·font-mono·${Number(m.cantidad)·>=·0·?·\"text-success\"·:·\"text-destructive\"}`}>{Number(m.cantidad)}` with `⏎··················className={`text-right·font-mono·${Number(m.cantidad)·>=·0·?·\"text-success\"·:·\"text-destructive\"}`}⏎················>⏎··················{Number(m.cantidad)}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`text-right·font-mono·${Number(v.total)·<·0·?·\"text-destructive\"·:·\"\"}`}>{fmtMoney(v.total)}` with `⏎··················className={`text-right·font-mono·${Number(v.total)·<·0·?·\"text-destructive\"·:·\"\"}`}⏎················>⏎··················{fmtMoney(v.total)}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·className={`text-right·font-mono·font-semibold·${saldo·>·0.01·?·\"text-destructive\"·:·\"text-success\"}`}` with `⏎····················className={`text-right·font-mono·font-semibold·${saldo·>·0.01·?·\"text-destructive\"·:·\"text-success\"}`}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·columns={[\"Comprob.\",·\"Fecha\",·\"Sucursal\",·\"Cliente\",·\"Total\"]}` with `⏎············columns={[\"Comprob.\",·\"Fecha\",·\"Sucursal\",·\"Cliente\",·\"Total\"]}⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·columns={[\"Fecha\",·\"Tipo\",·\"Producto\",·\"Sucursal\",·\"Cantidad\",·\"Motivo\"]}` with `⏎············columns={[\"Fecha\",·\"Tipo\",·\"Producto\",·\"Sucursal\",·\"Cantidad\",·\"Motivo\"]}⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·contentStyle={{·background:·\"var(--card)\",·border:·\"1px·solid·var(--border)\",·borderRadius:·12·}}·formatter={(v:·any,·_n:·any,·p:·any)·=>·[fmtMoney(Number(v)),·formaPagoLabel[p?.payload?.formaPago]·??·p?.payload?.formaPago]}` with `⏎··············contentStyle={{⏎················background:·\"var(--card)\",⏎················border:·\"1px·solid·var(--border)\",⏎················borderRadius:·12,⏎··············}}⏎··············formatter={(v:·any,·_n:·any,·p:·any)·=>·[⏎················fmtMoney(Number(v)),⏎················formaPagoLabel[p?.payload?.formaPago]·??·p?.payload?.formaPago,⏎··············]}⏎···········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·contentStyle={{·background:·\"var(--card)\",·border:·\"1px·solid·var(--border)\",·borderRadius:·12·}}·formatter={(v:·any)·=>·fmtMoney(Number(v))}·cursor={{·fill:·\"color-mix(in·oklch,·var(--muted)·50%,·transparent)\"·}}` with `⏎················contentStyle={{⏎··················background:·\"var(--card)\",⏎··················border:·\"1px·solid·var(--border)\",⏎··················borderRadius:·12,⏎················}}⏎················formatter={(v:·any)·=>·fmtMoney(Number(v))}⏎················cursor={{·fill:·\"color-mix(in·oklch,·var(--muted)·50%,·transparent)\"·}}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·data={donut}·dataKey=\"total\"·nameKey=\"formaPago\"·innerRadius=\"58%\"·outerRadius=\"86%\"·paddingAngle={3}·strokeWidth={0}` with `⏎··············data={donut}⏎··············dataKey=\"total\"⏎··············nameKey=\"formaPago\"⏎··············innerRadius=\"58%\"⏎··············outerRadius=\"86%\"⏎··············paddingAngle={3}⏎··············strokeWidth={0}⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·dataKey=\"fecha\"·stroke=\"var(--muted-foreground)\"·fontSize={11}·tickLine={false}·axisLine={false}` with `⏎················dataKey=\"fecha\"⏎················stroke=\"var(--muted-foreground)\"⏎················fontSize={11}⏎················tickLine={false}⏎················axisLine={false}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·dataKey=\"total\"·fill=\"var(--color-primary)\"·radius={[6,·6,·0,·0]}·maxBarSize={44}` with `⏎················dataKey=\"total\"⏎················fill=\"var(--color-primary)\"⏎················radius={[6,·6,·0,·0]}⏎················maxBarSize={44}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·empty={{·text:·\"Ningún·cliente·con·saldo·pendiente.\"·}}` with `⏎············empty={{·text:·\"Ningún·cliente·con·saldo·pendiente.\"·}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·empty={{·text:·\"Sin·movimientos·de·stock·en·el·período.\"·}}` with `⏎············empty={{·text:·\"Sin·movimientos·de·stock·en·el·período.\"·}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·empty={{·text:·\"Sin·ventas·en·el·período.\"·}}` with `⏎············empty={{·text:·\"Sin·ventas·en·el·período.\"·}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Fecha:·fmtDateTime(v.fecha),` with `⏎······Fecha:·fmtDateTime(v.fecha),⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·FileSpreadsheet,·FileText,·TrendingUp,·Wallet,·Receipt,·CircleDollarSign,·Hash,·Undo2·` with `⏎··FileSpreadsheet,⏎··FileText,⏎··TrendingUp,⏎··Wallet,⏎··Receipt,⏎··CircleDollarSign,⏎··Hash,⏎··Undo2,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·fmtDateTime(v.fecha),·v.sucursal?.nombre,` with `⏎··········fmtDateTime(v.fecha),⏎··········v.sucursal?.nombre,⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·fmtMoney(v.iva_total),` with `⏎··········fmtMoney(v.iva_total),⏎·········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Cobrado\"·value={fmtMoney(resumen.cobrado)}·icon={Wallet}·tone=\"success\"·hint=\"ventas·+·cta·cte\"` with `⏎··········label=\"Cobrado\"⏎··········value={fmtMoney(resumen.cobrado)}⏎··········icon={Wallet}⏎··········tone=\"success\"⏎··········hint=\"ventas·+·cta·cte\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Devoluciones·(NC)\"·value={fmtMoney(notasCredito)}·icon={Undo2}·tone=\"destructive\"` with `⏎··········label=\"Devoluciones·(NC)\"⏎··········value={fmtMoney(notasCredito)}⏎··········icon={Undo2}⏎··········tone=\"destructive\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Facturado\"·value={fmtMoney(resumen.facturado)}·icon={TrendingUp}·tone=\"primary\"·hint=\"ventas·(sin·NC)\"` with `⏎··········label=\"Facturado\"⏎··········value={fmtMoney(resumen.facturado)}⏎··········icon={TrendingUp}⏎··········tone=\"primary\"⏎··········hint=\"ventas·(sin·NC)\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Pendiente·cta·cte\"·value={fmtMoney(resumen.pendienteCtaCte)}·icon={CircleDollarSign}·tone=\"warning\"` with `⏎··········label=\"Pendiente·cta·cte\"⏎··········value={fmtMoney(resumen.pendienteCtaCte)}⏎··········icon={CircleDollarSign}⏎··········tone=\"warning\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·label=\"Ticket·promedio\"·value={fmtMoney(resumen.ticket)}·icon={Receipt}·tone=\"info\"` with `⏎··········label=\"Ticket·promedio\"⏎··········value={fmtMoney(resumen.ticket)}⏎··········icon={Receipt}⏎··········tone=\"info\"⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Object.entries(resumen.porPago).map(([formaPago,·total])·=>·({·formaPago,·total:·Number(total)·})).filter((x)·=>·x.total·>·0)` with `⏎······Object.entries(resumen.porPago)⏎········.map(([formaPago,·total])·=>·({·formaPago,·total:·Number(total)·}))⏎········.filter((x)·=>·x.total·>·0)⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·onSucursal={setSucId}` with `⏎········onSucursal={setSucId}⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Pie,·Cell,·BarChart,·Bar,·XAxis,·YAxis,·CartesianGrid,` with `⏎··Pie,⏎··Cell,⏎··BarChart,⏎··Bar,⏎··XAxis,⏎··YAxis,⏎··CartesianGrid,⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·porPago[c.forma_pago]·=·(porPago[c.forma_pago]·??·0)·+·Number(c.monto);` with `⏎······porPago[c.forma_pago]·=·(porPago[c.forma_pago]·??·0)·+·Number(c.monto);⏎···`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·queryKey:·[\"sucs\"],·queryFn:·async·()·=>·((await·supabase.from(\"sucursales\").select(\"*\")).data·??·[])·as·any[]` with `⏎····queryKey:·[\"sucs\"],⏎····queryFn:·async·()·=>·((await·supabase.from(\"sucursales\").select(\"*\")).data·??·[])·as·any[],⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·stroke=\"var(--muted-foreground)\"·fontSize={11}·tickLine={false}·axisLine={false}·tickFormatter={(v)·=>·`$${(v·/·1000).toFixed(0)}k`}` with `⏎················stroke=\"var(--muted-foreground)\"⏎················fontSize={11}⏎················tickLine={false}⏎················axisLine={false}⏎················tickFormatter={(v)·=>·`$${(v·/·1000).toFixed(0)}k`}⏎·············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Subtotal:·v.subtotal_sin_iva,·IVA:·v.iva_total,` with `⏎······Subtotal:·v.subtotal_sin_iva,⏎······IVA:·v.iva_total,⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·title=\"Cobrado·por·medio\"·subtitle=\"Distribución·del·período\"·height={260}·config={{}}` with `⏎··········title=\"Cobrado·por·medio\"⏎··········subtitle=\"Distribución·del·período\"⏎··········height={260}⏎··········config={{}}⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·title=\"Ventas·por·día\"·subtitle=\"Total·facturado·diario\"·height={260}·config={{}}` with `⏎············title=\"Ventas·por·día\"⏎············subtitle=\"Total·facturado·diario\"⏎············height={260}⏎············config={{}}⏎··········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·to={hasta}·onFrom={setDesde}` with `⏎········to={hasta}⏎········onFrom={setDesde}⏎·······`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·v.pagos?.forEach((p:·any)·=>·{·porPago[p.forma_pago]·=·(porPago[p.forma_pago]·??·0)·+·Number(p.monto);·})` with `⏎······v.pagos?.forEach((p:·any)·=>·{⏎········porPago[p.forma_pago]·=·(porPago[p.forma_pago]·??·0)·+·Number(p.monto);⏎······}),⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·ventas.filter((v)·=>·v.tipo_comprobante·===·\"NOTA_CREDITO\")` with `⏎······ventas⏎········.filter((v)·=>·v.tipo_comprobante·===·\"NOTA_CREDITO\")⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `()·=>·ventas.filter((v)·=>·v.tipo_comprobante·!==·\"NOTA_CREDITO\"),·[ventas]` with `⏎····()·=>·ventas.filter((v)·=>·v.tipo_comprobante·!==·\"NOTA_CREDITO\"),⏎····[ventas],⏎··`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `(a:·number,·c:·any)·=>·a·+·Math.max(0,·Number(c.saldo)),·0` with `⏎······(a:·number,·c:·any)·=>·a·+·Math.max(0,·Number(c.saldo)),⏎······0,⏎····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `(await·q).data)` with `await·q).data`",
+      "cantidad": 3
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `).gte(\"created_at\",·gte).lt(\"created_at\",·lt).order(\"created_at\",·{·ascending:·false·})` with `,⏎········)⏎········.gte(\"created_at\",·gte)⏎········.lt(\"created_at\",·lt)⏎········.order(\"created_at\",·{·ascending:·false·})⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `).gte(\"fecha\",·gte).lt(\"fecha\",·lt).eq(\"estado\",·\"ACTIVA\")` with `,⏎········)⏎········.gte(\"fecha\",·gte)⏎········.lt(\"fecha\",·lt)⏎········.eq(\"estado\",·\"ACTIVA\")⏎········`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{fmtMoney(c.total_pagado)}` with `⏎····················{fmtMoney(c.total_pagado)}⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.producto?.codigo}·—·{m.producto?.nombre}` with `⏎··················{m.producto?.codigo}·—·{m.producto?.nombre}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{m.sucursal?.nombre}` with `⏎··················{m.sucursal?.nombre}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `{v.sucursal?.nombre}` with `⏎··················{v.sucursal?.nombre}⏎················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<Cell·key={d.formaPago}·fill={medioColor(d.formaPago)}·/>` with `(⏎················<Cell·key={d.formaPago}·fill={medioColor(d.formaPago)}·/>⏎··············)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<FileSpreadsheet·className=\"h-4·w-4·mr-1\"·/>·Excel` with `⏎··············<FileSpreadsheet·className=\"h-4·w-4·mr-1\"·/>·Excel⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/reportes.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `<FileText·className=\"h-4·w-4·mr-1\"·/>·PDF` with `⏎··············<FileText·className=\"h-4·w-4·mr-1\"·/>·PDF⏎············`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 14
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `·Si`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Delete `⏎·····`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Insert `·Si`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·<strong>foto·del·{res.fechaSnapshot.replace(\"T\",·\"·\")}</strong>⏎····················` with `{\"·\"}⏎····················<strong>foto·del·{res.fechaSnapshot.replace(\"T\",·\"·\")}</strong>`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·bajarCsv(\"repetidos.csv\",·res.repetidos.map((c)·=>·({·codigo:·c·})))` with `⏎····················bajarCsv(⏎······················\"repetidos.csv\",⏎······················res.repetidos.map((c)·=>·({·codigo:·c·})),⏎····················)⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·data:·movsPosteriores,·isFetching:·contandoMovs,·isError:·fallaMovs` with `⏎····data:·movsPosteriores,⏎····isFetching:·contandoMovs,⏎····isError:·fallaMovs,⏎·`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `·Pencil,·Printer,·ClipboardList,·Upload,·Loader2,·AlertTriangle,·Download·` with `⏎··Pencil,⏎··Printer,⏎··ClipboardList,⏎··Upload,⏎··Loader2,⏎··AlertTriangle,⏎··Download,⏎`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎····?·res.aVolcar.filter((i)·=>·yaCargados.get(i.producto_id)·!=·null).length⏎···` with `·?·res.aVolcar.filter((i)·=>·yaCargados.get(i.producto_id)·!=·null).length`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `⏎····················bajarCsv(\"no-encontrados.csv\",·res.noEncontrados·as·any)⏎··················` with `·bajarCsv(\"no-encontrados.csv\",·res.noEncontrados·as·any)`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/stock.tsx",
+      "regla": "prettier/prettier",
+      "severidad": 2,
+      "mensaje": "Replace `sucId·?·\"Cargar·las·cantidades·desde·un·Excel·o·CSV\"·:·\"Elegí·primero·una·sucursal\"` with `⏎····················sucId⏎······················?·\"Cargar·las·cantidades·desde·un·Excel·o·CSV\"⏎······················:·\"Elegí·primero·una·sucursal\"⏎··················`",
+      "cantidad": 1
+    },
+    {
+      "archivo": "src/routes/_authenticated/usuarios.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 18
+    },
+    {
+      "archivo": "src/routes/_authenticated/ventas.index.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 13
+    },
+    {
+      "archivo": "src/routes/_authenticated/ventas.nueva.tsx",
+      "regla": "@typescript-eslint/no-explicit-any",
+      "severidad": 2,
+      "mensaje": "Unexpected any. Specify a different type.",
+      "cantidad": 22
+    }
+  ]
+}

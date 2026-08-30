@@ -21,11 +21,7 @@ import { TableCell, TableRow } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { fmtDocumento } from "@/lib/documento";
-import {
-  datosFiscalesComprobante,
-  evidenciaAutorizacionNotaCreditoPeriodo,
-  fuentesAuditoriaNotaCreditoPeriodo,
-} from "@/lib/fiscal.functions";
+import { datosFiscalesComprobante } from "@/lib/fiscal.functions";
 import { CBTE_INFO } from "@/lib/fiscal/codigos";
 import {
   generarComprobantePdf,
@@ -35,19 +31,13 @@ import {
 import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import type { DatosFiscalesPreparados } from "@/lib/fiscal/impresion";
 import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
-import { leerComprobanteAsociadoFiscal, leerReceptorFiscalCongelado } from "@/lib/ventas-ui";
-import type { VentaSeguraOperador } from "@/lib/ventas-proyeccion";
+import type { DetalleVentaFiscalPresentacion } from "@/lib/fiscal/detalle-venta-presentacion";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
 import {
-  cargarAuditoriaNotaCreditoPeriodo,
   type AuditoriaPersistidaNotaCreditoPeriodo,
-  type CuentaAuditoriaRow,
   type ErrorLecturaSegura,
-  type OperadorAuditoriaRow,
-  type ReintegroAuditoriaRow,
-  type StockAuditoriaRow,
 } from "./dialogo-detalle-venta-auditoria";
 
 type ItemVenta = Database["public"]["Tables"]["venta_items"]["Row"];
@@ -58,10 +48,7 @@ type PagoVenta = Pick<
 > &
   Partial<Pick<PagoVentaRow, "detalle">>;
 
-export type VentaDetalle = VentaSeguraOperador & {
-  cliente?: { razon_social: string | null; cuit_dni: string | null } | null;
-  sucursal?: { nombre: string | null; telefono?: string | null } | null;
-};
+export type VentaDetalle = DetalleVentaFiscalPresentacion;
 
 type PagoAplicadoAuditado = {
   id: string;
@@ -378,65 +365,6 @@ export function DialogoDetalleVenta({
   });
   const detalle = detalleQuery.data;
   const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
-  const evidenciaAutorizacionFn = useServerFn(evidenciaAutorizacionNotaCreditoPeriodo);
-  const fuentesAuditoriaFn = useServerFn(fuentesAuditoriaNotaCreditoPeriodo);
-  const auditoriaNcPeriodoQuery = useQuery({
-    queryKey: ["venta-auditoria-nc-periodo", venta?.id],
-    enabled: Boolean(venta && esNcPeriodo),
-    queryFn: async () => {
-      if (!venta) throw new Error("No hay una nota seleccionada para auditar.");
-      const fuentes = await fuentesAuditoriaFn({ data: { venta_id: venta.id } });
-      return cargarAuditoriaNotaCreditoPeriodo({
-        venta: {
-          id: venta.id,
-          estado: venta.estado,
-          afipEstado: venta.afip_estado,
-          afipFase: venta.afip_fase,
-          afipVersion: venta.afip_version,
-          afipIntentos: venta.afip_intentos,
-          afipSnapshot: venta.afip_snapshot,
-          afipSnapshotHash: venta.afip_snapshot_hash,
-          cae: venta.cae,
-          caeVencimiento: venta.cae_vencimiento,
-          afipEmisorCuit: venta.afip_emisor_cuit,
-          afipPuntoVenta: venta.afip_punto_venta,
-          afipCbteTipo: venta.afip_cbte_tipo,
-          afipNumero: venta.afip_numero,
-          afipModo: venta.afip_modo,
-          afipValidez: venta.afip_validez,
-          afipFechaComprobante: venta.afip_fecha_comprobante,
-          afipEmitidoAt: venta.afip_emitido_at,
-          afipImpTotal: venta.afip_imp_total,
-          afipSimulado: venta.afip_simulado,
-          afipCbteAsocId: venta.afip_cbte_asoc_id,
-          ncEfectosAplicadosAt: venta.nc_efectos_aplicados_at,
-          periodoDesde: venta.periodo_asoc_desde,
-          periodoHasta: venta.periodo_asoc_hasta,
-          modalidad: venta.nc_periodo_modalidad,
-          motivo: venta.motivo_nota_credito,
-        },
-        cargarOperador: async () => ({
-          data: fuentes.operador as OperadorAuditoriaRow,
-          error: null,
-        }),
-        cargarReintegros: async () => ({
-          data: fuentes.reintegros as ReintegroAuditoriaRow[],
-          error: null,
-        }),
-        cargarStock: async () => ({
-          data: fuentes.stock as unknown as StockAuditoriaRow[],
-          error: null,
-        }),
-        cargarCuentaCorriente: async () => ({
-          data: fuentes.cuentaCorriente as CuentaAuditoriaRow[],
-          error: null,
-        }),
-        async cargarEvidenciaAutorizacion() {
-          return evidenciaAutorizacionFn({ data: { venta_id: venta.id } });
-        },
-      });
-    },
-  });
 
   const imprimir = async () => {
     if (!venta || !detalle || imprimiendo) return;
@@ -470,13 +398,13 @@ export function DialogoDetalleVenta({
     }
   };
 
-  const receptor = venta ? leerReceptorFiscalCongelado(venta.afip_snapshot) : null;
-  const comprobanteAsociado = venta ? leerComprobanteAsociadoFiscal(venta.afip_snapshot) : null;
+  const receptor = venta?.fiscalPresentacion.receptor ?? null;
+  const comprobanteAsociado = venta?.fiscalPresentacion.comprobanteAsociado ?? null;
   const fiscal = venta ? descripcionFiscal(venta) : null;
   const datosAuditoriaNcPeriodo: DatosAuditoriaNotaCreditoPeriodo | null =
-    venta && auditoriaNcPeriodoQuery.data && detalle
+    venta?.auditoriaPeriodo && detalle
       ? {
-          ...auditoriaNcPeriodoQuery.data,
+          ...venta.auditoriaPeriodo,
           pagosAplicados: detalle.pagos.map((pago) => ({
             id: pago.id,
             formaPago: pago.forma_pago,
@@ -610,14 +538,14 @@ export function DialogoDetalleVenta({
             </div>
 
             {esNcPeriodo ? (
-              auditoriaNcPeriodoQuery.isPending || detalleQuery.isPending ? (
+              detalleQuery.isPending ? (
                 <div className="flex min-h-16 items-center justify-center gap-2" role="status">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   <span className="text-sm text-muted-foreground">
                     Reconstruyendo auditoría de la nota…
                   </span>
                 </div>
-              ) : auditoriaNcPeriodoQuery.error || detalleQuery.error ? (
+              ) : detalleQuery.error || !venta.auditoriaPeriodo ? (
                 <div
                   className="rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
                   role="alert"

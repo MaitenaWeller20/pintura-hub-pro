@@ -39,6 +39,7 @@ import {
 import {
   cargarEvidenciaAutorizacionFiscal,
   type FilaEvidenciaAutorizacionSegura,
+  type FilaVentaEvidenciaAutorizacionSegura,
 } from "./fiscal/evidencia-auditoria";
 
 const receptorSchema = z.discriminatedUnion("origen", [
@@ -784,9 +785,20 @@ export const evidenciaAutorizacionNotaCreditoPeriodo = createServerFn({ method: 
       accion: "PREVISUALIZAR",
       confirmaVentaAntigua: false,
     });
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     return cargarEvidenciaAutorizacionFiscal(data.venta_id, {
-      async cargar({ ventaId, columnas }) {
+      async cargarVenta({ ventaId, columnas }) {
+        const respuesta = await context.supabase
+          .from("ventas")
+          .select(columnas)
+          .eq("id", ventaId)
+          .maybeSingle();
+        return respuesta as unknown as {
+          data: FilaVentaEvidenciaAutorizacionSegura | null;
+          error: { message: string } | null;
+        };
+      },
+      async cargarIntento({ ventaId, columnas }) {
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
         const respuesta = await supabaseAdmin
           .from("emision_fiscal_intentos")
           .select(columnas)

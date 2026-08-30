@@ -3,12 +3,17 @@ export type EvidenciaAutorizacionFiscal = {
   confirmadoAt: string;
 };
 
+export const COLUMNAS_VENTA_EVIDENCIA_AUTORIZACION_SEGURA = "afip_emitido_at" as const;
+
 export const COLUMNAS_EVIDENCIA_AUTORIZACION_SEGURA =
-  "resultado,updated_at,emision_tipo:respuesta_resumen->evidencia_externa->respuesta_emision->>tipo,emision_resultado:respuesta_resumen->evidencia_externa->respuesta_emision->>resultado,emision_fuente:respuesta_resumen->evidencia_externa->respuesta_emision->>fuente,emision_emitido_at:respuesta_resumen->evidencia_externa->respuesta_emision->>emitido_at,recuperacion_tipo:respuesta_resumen->evidencia_externa->consulta_recuperacion->>tipo,recuperacion_resultado:respuesta_resumen->evidencia_externa->consulta_recuperacion->>resultado,recuperacion_fuente:respuesta_resumen->evidencia_externa->consulta_recuperacion->>fuente,recuperacion_coincidencia:respuesta_resumen->evidencia_externa->consulta_recuperacion->>coincidencia_completa" as const;
+  "resultado,emision_tipo:respuesta_resumen->evidencia_externa->respuesta_emision->>tipo,emision_resultado:respuesta_resumen->evidencia_externa->respuesta_emision->>resultado,emision_fuente:respuesta_resumen->evidencia_externa->respuesta_emision->>fuente,emision_emitido_at:respuesta_resumen->evidencia_externa->respuesta_emision->>emitido_at,recuperacion_tipo:respuesta_resumen->evidencia_externa->consulta_recuperacion->>tipo,recuperacion_resultado:respuesta_resumen->evidencia_externa->consulta_recuperacion->>resultado,recuperacion_fuente:respuesta_resumen->evidencia_externa->consulta_recuperacion->>fuente,recuperacion_coincidencia:respuesta_resumen->evidencia_externa->consulta_recuperacion->>coincidencia_completa" as const;
+
+export type FilaVentaEvidenciaAutorizacionSegura = {
+  afip_emitido_at: string | null;
+};
 
 export type FilaEvidenciaAutorizacionSegura = {
   resultado: string | null;
-  updated_at: string;
   emision_tipo: string | null;
   emision_resultado: string | null;
   emision_fuente: string | null;
@@ -24,6 +29,11 @@ type RespuestaLecturaEvidencia = {
   error: { message: string } | null;
 };
 
+type RespuestaLecturaVenta = {
+  data: FilaVentaEvidenciaAutorizacionSegura | null;
+  error: { message: string } | null;
+};
+
 function timestampSeguro(value: unknown): value is string {
   if (
     typeof value !== "string" ||
@@ -34,7 +44,10 @@ function timestampSeguro(value: unknown): value is string {
   return Number.isFinite(new Date(value).getTime());
 }
 
-function proyectarFila(row: FilaEvidenciaAutorizacionSegura): EvidenciaAutorizacionFiscal {
+function proyectarFila(
+  row: FilaEvidenciaAutorizacionSegura,
+  afipEmitidoAt: string,
+): EvidenciaAutorizacionFiscal {
   if (
     row.resultado === "APROBADO" &&
     row.emision_tipo === "EMISION" &&
@@ -50,9 +63,9 @@ function proyectarFila(row: FilaEvidenciaAutorizacionSegura): EvidenciaAutorizac
     row.recuperacion_resultado === "COINCIDE" &&
     row.recuperacion_fuente === "FECompConsultar" &&
     row.recuperacion_coincidencia === "true" &&
-    timestampSeguro(row.updated_at)
+    timestampSeguro(afipEmitidoAt)
   ) {
-    return { origen: "RECUPERACION", confirmadoAt: row.updated_at };
+    return { origen: "RECUPERACION", confirmadoAt: afipEmitidoAt };
   }
   throw new Error("No se pudo validar la evidencia de autorización fiscal.");
 }
@@ -60,18 +73,33 @@ function proyectarFila(row: FilaEvidenciaAutorizacionSegura): EvidenciaAutorizac
 export async function cargarEvidenciaAutorizacionFiscal(
   ventaId: string,
   deps: {
-    cargar(input: {
+    cargarVenta(input: {
+      ventaId: string;
+      columnas: typeof COLUMNAS_VENTA_EVIDENCIA_AUTORIZACION_SEGURA;
+    }): Promise<RespuestaLecturaVenta>;
+    cargarIntento(input: {
       ventaId: string;
       columnas: typeof COLUMNAS_EVIDENCIA_AUTORIZACION_SEGURA;
     }): Promise<RespuestaLecturaEvidencia>;
   },
 ): Promise<EvidenciaAutorizacionFiscal | null> {
-  const respuesta = await deps.cargar({
+  // Esta lectura user-bound ocurre antes de abrir la frontera admin. Para una
+  // recuperación, afip_emitido_at es el reloj canónico persistido por la venta:
+  // updated_at del intento usa now() y puede quedar legítimamente antes.
+  const venta = await deps.cargarVenta({
+    ventaId,
+    columnas: COLUMNAS_VENTA_EVIDENCIA_AUTORIZACION_SEGURA,
+  });
+  if (venta.error || !venta.data || !timestampSeguro(venta.data.afip_emitido_at)) {
+    throw new Error("No se pudo validar la emisión fiscal autorizada.");
+  }
+
+  const respuesta = await deps.cargarIntento({
     ventaId,
     columnas: COLUMNAS_EVIDENCIA_AUTORIZACION_SEGURA,
   });
   if (respuesta.error) {
     throw new Error("No se pudo leer la evidencia de autorización fiscal.");
   }
-  return respuesta.data ? proyectarFila(respuesta.data) : null;
+  return respuesta.data ? proyectarFila(respuesta.data, venta.data.afip_emitido_at) : null;
 }

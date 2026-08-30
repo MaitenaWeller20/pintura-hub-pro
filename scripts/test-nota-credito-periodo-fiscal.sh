@@ -1664,6 +1664,65 @@ if [[ "$effects_state" != "APROBADO|PERSISTIDO|true|1|0|1|1|1" ]]; then
 fi
 echo "✓ dos RECUPERAR_CAE y una mutación concurrentes conservan un solo vector inmutable"
 
+# El test de integración de auditoría consume este fixture opcional. Sale de una
+# recuperación v3 real recién ejecutada; updated_at se conserva sólo para probar
+# el desfase de relojes SQL y nunca forma parte de la proyección segura del loader.
+if [[ -n "${T11_AUDIT_FIXTURE_OUTPUT:-}" ]]; then
+  "${PSQL[@]}" -qAtc "
+    SELECT pg_catalog.jsonb_build_object(
+      'ventaId',v.id,
+      'ventaConfirmacion',pg_catalog.jsonb_build_object(
+        'afip_emitido_at',v.afip_emitido_at
+      ),
+      'ventaAuditada',pg_catalog.jsonb_build_object(
+        'id',v.id,
+        'estado',v.estado,
+        'afipEstado',v.afip_estado,
+        'afipFase',v.afip_fase,
+        'afipVersion',v.afip_version,
+        'afipIntentos',v.afip_intentos,
+        'afipSnapshot',v.afip_snapshot,
+        'afipSnapshotHash',v.afip_snapshot_hash,
+        'cae',v.cae,
+        'caeVencimiento',v.cae_vencimiento,
+        'afipEmisorCuit',v.afip_emisor_cuit,
+        'afipPuntoVenta',v.afip_punto_venta,
+        'afipCbteTipo',v.afip_cbte_tipo,
+        'afipNumero',v.afip_numero,
+        'afipModo',v.afip_modo,
+        'afipValidez',v.afip_validez,
+        'afipFechaComprobante',v.afip_fecha_comprobante,
+        'afipEmitidoAt',v.afip_emitido_at,
+        'afipImpTotal',v.afip_imp_total,
+        'afipSimulado',v.afip_simulado,
+        'afipCbteAsocId',v.afip_cbte_asoc_id,
+        'ncEfectosAplicadosAt',v.nc_efectos_aplicados_at,
+        'periodoDesde',v.periodo_asoc_desde,
+        'periodoHasta',v.periodo_asoc_hasta,
+        'modalidad',v.nc_periodo_modalidad,
+        'motivo',v.motivo_nota_credito
+      ),
+      'intentoUpdatedAt',i.updated_at,
+      'intentoSeguro',pg_catalog.jsonb_build_object(
+        'resultado',i.resultado,
+        'emision_tipo',i.respuesta_resumen#>>'{evidencia_externa,respuesta_emision,tipo}',
+        'emision_resultado',i.respuesta_resumen#>>'{evidencia_externa,respuesta_emision,resultado}',
+        'emision_fuente',i.respuesta_resumen#>>'{evidencia_externa,respuesta_emision,fuente}',
+        'emision_emitido_at',i.respuesta_resumen#>>'{evidencia_externa,respuesta_emision,emitido_at}',
+        'recuperacion_tipo',i.respuesta_resumen#>>'{evidencia_externa,consulta_recuperacion,tipo}',
+        'recuperacion_resultado',i.respuesta_resumen#>>'{evidencia_externa,consulta_recuperacion,resultado}',
+        'recuperacion_fuente',i.respuesta_resumen#>>'{evidencia_externa,consulta_recuperacion,fuente}',
+        'recuperacion_coincidencia',i.respuesta_resumen#>>'{evidencia_externa,consulta_recuperacion,coincidencia_completa}'
+      )
+    )
+      FROM public.ventas AS v
+      JOIN public.emision_fiscal_intentos AS i
+        ON i.venta_id=v.id
+       AND i.claim_token='f2400000-0000-4000-8000-000000000099'
+     WHERE v.id='$id1';
+  " >"$T11_AUDIT_FIXTURE_OUTPUT"
+fi
+
 # La reversión total fiscal vinculada vive en
 # test-anulacion-fiscal-vinculada.sh para no depender del orden de la suite
 # legacy. La NC interna conserva además su contrato en su script específico.

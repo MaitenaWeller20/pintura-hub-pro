@@ -6,7 +6,7 @@ describe("tabla de productos del PDF de presupuesto", () => {
     const tabla = tablaDeItemsPresupuesto([
       {
         codigo: "113.01.037",
-        descripcion: "CASASECA FIBRADO/POLIURET. BLANCO X20 KG",
+        descripcion: "Base 10 L (Código 1234)",
         cantidad: 2,
         precio_lista_sin_iva: 200,
         descuento_porcentaje: 30,
@@ -20,15 +20,7 @@ describe("tabla de productos del PDF de presupuesto", () => {
       ["Código", "Producto", "Cant.", "Precio de lista", "Desc.", "Precio final", "Subtotal"],
     ]);
     expect(tabla.body).toEqual([
-      [
-        "113.01.037",
-        "CASASECA FIBRADO/POLIURET. BLANCO X20 KG",
-        "2",
-        "$ 242,00",
-        "30%",
-        "$ 169,40",
-        "$ 338,80",
-      ],
+      ["113.01.037", "Base 10 L (Código 1234)", "2", "$ 242,00", "30%", "$ 169,40", "$ 338,80"],
     ]);
   });
 

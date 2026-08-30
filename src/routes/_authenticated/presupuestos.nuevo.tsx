@@ -35,6 +35,7 @@ import {
 import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
+import { MAX_DESCRIPCION_ITEM } from "@/lib/item-descripcion";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
   component: NuevoPresupuesto,
@@ -47,7 +48,7 @@ export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
 type Fila = {
   producto_id: string;
   codigo: string;
-  nombre: string;
+  descripcion: string;
   precio_lista: number;
   iva: number;
   cantidad: number | null;
@@ -110,7 +111,7 @@ function NuevoPresupuesto() {
       {
         producto_id: p.id,
         codigo: p.codigo,
-        nombre: p.nombre,
+        descripcion: p.nombre,
         precio_lista: Number(p.precio_sin_iva),
         iva: Number(p.iva_porcentaje),
         cantidad: 1,
@@ -150,6 +151,7 @@ function NuevoPresupuesto() {
           producto_id: f.producto_id,
           cantidad: Number(f.cantidad),
           descuento_porcentaje: Number(f.descuento || 0),
+          descripcion: f.descripcion,
         })) as any,
         p_cliente_id: clienteId || undefined,
         p_nombre_cliente: nombreCliente.trim() || undefined,
@@ -306,7 +308,7 @@ function NuevoPresupuesto() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Producto</TableHead>
+                <TableHead>Descripción</TableHead>
                 <TableHead className="text-right">Precio</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
@@ -332,7 +334,23 @@ function NuevoPresupuesto() {
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
-                      <TableCell>{f.nombre}</TableCell>
+                      <TableCell className="min-w-64">
+                        <Input
+                          aria-label={`Descripción de ${f.codigo}`}
+                          aria-describedby={`descripcion-ayuda-${f.producto_id}`}
+                          value={f.descripcion}
+                          maxLength={MAX_DESCRIPCION_ITEM}
+                          onChange={(event) =>
+                            upd(f.producto_id, { descripcion: event.target.value })
+                          }
+                        />
+                        <p
+                          id={`descripcion-ayuda-${f.producto_id}`}
+                          className="mt-1 text-xs text-muted-foreground"
+                        >
+                          Sólo cambia esta línea; no modifica el catálogo
+                        </p>
+                      </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {fmtMoney(precioFinal)}
                         {Number(f.descuento || 0) > 0 && (

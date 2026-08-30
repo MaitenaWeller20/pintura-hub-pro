@@ -27,6 +27,7 @@ import {
 } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
+import { MAX_DESCRIPCION_ITEM } from "@/lib/item-descripcion";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/editar/$id")({
   component: EditarPresupuesto,
@@ -45,7 +46,7 @@ export const Route = createFileRoute("/_authenticated/presupuestos/editar/$id")(
 type Fila = {
   producto_id: string;
   codigo: string;
-  nombre: string;
+  descripcion: string;
   /** El precio con el que se presupuestó. null = línea agregada recién. */
   precio_snapshot: number | null;
   iva_snapshot: number | null;
@@ -115,7 +116,7 @@ function EditarPresupuesto() {
       (p.items ?? []).map((i: any) => ({
         producto_id: i.producto_id,
         codigo: i.codigo,
-        nombre: i.descripcion,
+        descripcion: i.descripcion,
         precio_snapshot: Number(i.precio_lista_sin_iva),
         iva_snapshot: Number(i.iva_porcentaje),
         // Si el producto ya no está en el catálogo (borrado), lo de hoy es lo
@@ -164,7 +165,7 @@ function EditarPresupuesto() {
       {
         producto_id: p.id,
         codigo: p.codigo,
-        nombre: p.nombre,
+        descripcion: p.nombre,
         precio_snapshot: null, // línea nueva: va al precio de hoy
         iva_snapshot: null,
         precio_hoy: Number(p.precio_sin_iva),
@@ -210,6 +211,7 @@ function EditarPresupuesto() {
           producto_id: f.producto_id,
           cantidad: Number(f.cantidad),
           descuento_porcentaje: Number(f.descuento || 0),
+          descripcion: f.descripcion,
         })) as any,
         p_cliente_id: clienteId || undefined,
         p_nombre_cliente: nombreCliente.trim() || undefined,
@@ -395,7 +397,7 @@ function EditarPresupuesto() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Producto</TableHead>
+                <TableHead>Descripción</TableHead>
                 <TableHead className="text-right">Precio</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
@@ -424,8 +426,22 @@ function EditarPresupuesto() {
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
-                      <TableCell>
-                        {f.nombre}
+                      <TableCell className="min-w-64">
+                        <Input
+                          aria-label={`Descripción de ${f.codigo}`}
+                          aria-describedby={`descripcion-ayuda-${f.producto_id}`}
+                          value={f.descripcion}
+                          maxLength={MAX_DESCRIPCION_ITEM}
+                          onChange={(event) =>
+                            upd(f.producto_id, { descripcion: event.target.value })
+                          }
+                        />
+                        <p
+                          id={`descripcion-ayuda-${f.producto_id}`}
+                          className="mt-1 text-xs text-muted-foreground"
+                        >
+                          Sólo cambia esta línea; no modifica el catálogo
+                        </p>
                         {f.precio_snapshot === null && (
                           <span className="ml-2 text-[10px] text-muted-foreground">(nuevo)</span>
                         )}

@@ -15,6 +15,7 @@ type OpcionesFixtureV3 = {
   numero?: number;
   puntoVenta?: number;
   simulado?: boolean;
+  descripcion?: string;
 };
 
 export function crearSnapshotFiscalV3Fixture(opciones: OpcionesFixtureV3 = {}): SnapshotFiscalV3 {
@@ -39,6 +40,7 @@ export function crearSnapshotFiscalV3Fixture(opciones: OpcionesFixtureV3 = {}): 
   };
   input.items = input.items.map((item, index) => ({
     ...item,
+    descripcion: opciones.descripcion ?? item.descripcion,
     productoId:
       item.productoId ?? `71000000-0000-4000-8000-${String(199 + index).padStart(12, "0")}`,
   }));

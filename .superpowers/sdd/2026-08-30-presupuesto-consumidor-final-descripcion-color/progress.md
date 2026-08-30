@@ -191,3 +191,20 @@ Pre-flight result: no unresolved contradiction. Decisions locked: global generic
   `Quality: PASS`; no Critical, Important or Minor findings. The authenticated
   preflight, closed DTO, effective receiver result, shared description contract
   and regenerated local types are approved for the UI tasks.
+- Task 4 — implementación completa; revisión independiente pendiente.
+  - RED UI observado: la ruta montada de venta directa agregó P-1 pero no
+    exponía `Descripción de P-1`; el focal falló por ese selector ausente.
+  - GREEN: venta directa usa el contrato común de 160 caracteres, ayuda visible
+    asociada y un único adaptador que persiste la descripción; NC heredada queda
+    readonly. Alta/edición de presupuesto inicializan y conservan `descripcion`
+    desde catálogo/snapshot, y la grilla/detalle muestran ese texto sin tocar
+    precio, IVA, descuento, cantidad, stock, catálogo ni límites fiscales.
+  - Las regresiones de PDF de presupuesto, comprobante/snapshot, ticket y NC
+    usan `Base 10 L (Código 1234)`. La reimpresión fiscal afirma que el snapshot
+    gana sobre la línea viva.
+  - GREEN focal: 4 archivos / 98 tests; TypeScript, build y `git diff --check`
+    verdes. No se usaron remoto, `db reset`, `db push` ni ARCA.
+  - ESLint focal conserva 49 `no-explicit-any` preexistentes en rutas ya
+    modificadas; el build conserva advertencias históricas de rutas-test,
+    `inputValidator()` y módulos Node externalizados. Sin warnings nuevos de
+    esta tarea.

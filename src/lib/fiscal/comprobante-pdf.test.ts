@@ -345,7 +345,7 @@ describe("nota de crédito", () => {
 });
 
 describe("nota de crédito por período desde snapshot v3", () => {
-  const snapshot = crearSnapshotFiscalV3Fixture();
+  const snapshot = crearSnapshotFiscalV3Fixture({ descripcion: "Base 10 L (Código 1234)" });
   const fiscal = {
     ...prepararDatosFiscalesImpresos({
       id: snapshot.venta.id,
@@ -388,7 +388,7 @@ describe("nota de crédito por período desde snapshot v3", () => {
     expect(texto).toContain("Modalidad: Devolución de productos");
     expect(texto).toContain("Motivo: Devolución de productos del período");
     expect(texto).toContain(snapshot.receptor.razonSocial);
-    expect(texto).toContain(snapshot.items[0].descripcion);
+    expect(texto).toContain("Base 10 L (Código 1234)");
     expect(texto).toContain("Neto gravado");
     expect(texto).toContain("IVA");
     expect(texto).toContain("TOTAL");
@@ -558,7 +558,7 @@ describe("líneas congeladas al emitir", () => {
   const otrasLineas = [
     {
       codigo: "CONGELADO-1",
-      descripcion: "Lo que se declaró a AFIP",
+      descripcion: "Base 10 L (Código 1234)",
       cantidad: 1,
       precio_unitario_sin_iva: 1000,
       descuento_porcentaje: 0,
@@ -571,7 +571,9 @@ describe("líneas congeladas al emitir", () => {
 
   it("el snapshot le gana a venta_items", () => {
     expect(texto).toContain("CONGELADO-1");
+    expect(texto).toContain("Base 10 L (Código 1234)");
     expect(texto).not.toContain("LX-001");
+    expect(texto).not.toContain("Látex interior 20L");
   });
 });
 

@@ -72,6 +72,16 @@ const QR_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAklEQVR4AewaftIAAAMaSURBVOXBW6qlWBQAwUxx/lPOrgUtbET7eB9FfxghED9QMVQ+qXhKZVR8ovJdGy+38XI7i4qnVFYVQ+VQcUVlVHyHyqhYVTylMjZebueCyp2KKypnKquKlcqh4orKV6ncqVhtvNzOL6k4UxkVT6msKv6mjZfb+WUqd1TuqIyKlcqo+Bs2Xm7j5XYuVHyVyqg4qAyVVcVQOVQMlZ+qeGrj5XYWKn9DxVB5qmKonKmMipXKV2283F7xGyq+quKg8l9U7lR818bL7SqHiqEyKu6orCruqIyKoTIqPqk4U7miMirOVEbFUBkbLycQJxVD5aziisqouKMyKu6ojIqVyqFipbKquKOy2ni5jZfbeaDioPKUyqpiqPyEylMqq4qhMjZebq84qKwqhsqh4orKJyqjYqgcKobKJxVDZVQMlaFyVrGqGBsvt/NFKquKOxVPqTylMiqGyqriE5Wx8XI7F1RGxVnFSmWl8n+p+ERltfFyu8pZxScqo2KlcqgYKqNiqIyKg8qoGCqj4qziuyqGyth4uY2XE4hvqBgqq4qDypWKoXKoGCqjYqjcqRgqq4qnNl5u54GKg8pQGRVD5axiqDxVcaXioHKl4imVsfFy9gc3VO5UfKIyKobKJxVDZVQMlbOKobKqOFO5svFyAvFBxZnKqmKoHCquqIyKg8qqYqVyqBgqo+KOyqhYqYyNl7M/+EDlrOKnVA4VV1Q+qRgqo+KpjZfbeDmBOKkYKr+pYqjcqbii8hMVQ2VUjI2Xsz/4BSqfVAyVUXFQWVUMlVFxUBkVV1TuVAyVsfFyu8pPVKwqzlSGyqi4UzFUnlIZFWcV/2Xj5XYWFU+prCqGylnFSmVUnKmMiqEyVO5UPKUyKsbGy+1cULlT8VTFSuVOxZWKoXKm8onKqLiy8XIbL7fzF6mMilFxR2VUrFRGxUFlVTFU7qiMiqEyNl5u55eojIqDylC5UvEdFVcqhsqhYqWy2ng5gfhXxVMqo2KlcqgYKqPijsqq4o7KqFip3Km4svFyOwuV71IZFXdU7lQMlZXKHZVVxVA5VFxRGRsv9w+XWOO73oYUWAAAAABJRU5ErkJggg==";
 
 describe("preparación fiscal v2 para impresión", () => {
+  it("conserva la descripción personalizada congelada para el ticket", () => {
+    const snapshot = crearSnapshot((input) => {
+      input.items[0]!.descripcion = "Base 10 L (Código 1234)";
+    });
+
+    const preparado = prepararDatosFiscalesImpresos(filaAprobada(snapshot));
+
+    expect(preparado.lineas[0]?.descripcion).toBe("Base 10 L (Código 1234)");
+  });
+
   it("usa sólo el receptor y la fecha fiscal congelados, no el comprador ni la fecha comercial", () => {
     const snapshot = crearSnapshot((input) => {
       input.venta.fechaComercial = "2024-01-02T15:00:00.000Z";

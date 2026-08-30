@@ -276,7 +276,7 @@ function DetallePresupuesto() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Producto</TableHead>
+                <TableHead>Descripción</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Precio de lista</TableHead>
                 <TableHead className="text-right">Desc.</TableHead>

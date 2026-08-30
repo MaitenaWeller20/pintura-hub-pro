@@ -58,6 +58,7 @@ import {
 } from "@/lib/ventas-ui";
 import { EditorNotaCreditoPeriodo } from "@/components/ventas/editor-nota-credito-periodo";
 import { puedeIniciarNcPeriodo, type CaminoNotaCredito } from "@/lib/nota-credito-periodo-ui";
+import { MAX_DESCRIPCION_ITEM } from "@/lib/item-descripcion";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
@@ -564,6 +565,7 @@ function NuevaVenta() {
           producto_id: item.producto_id,
           cantidad: Number(item.cantidad || 0),
           descuento_porcentaje: Number(item.descuento_porcentaje || 0),
+          descripcion: item.descripcion,
           ...(precioPisado ? { precio_unitario_sin_iva: precioTipeado } : {}),
         };
       });
@@ -1297,7 +1299,20 @@ function NuevaVenta() {
                       <TableRow key={i}>
                         <TableCell className="font-mono text-xs">{it.codigo}</TableCell>
                         <TableCell className="max-w-xs">
-                          <div className="text-sm">{it.descripcion}</div>
+                          <Input
+                            aria-label={`Descripción de ${it.codigo}`}
+                            aria-describedby={`descripcion-ayuda-${i}`}
+                            value={it.descripcion}
+                            maxLength={MAX_DESCRIPCION_ITEM}
+                            readOnly={it.desde_factura === true}
+                            onChange={(event) => updateItem(i, "descripcion", event.target.value)}
+                          />
+                          <p
+                            id={`descripcion-ayuda-${i}`}
+                            className="mt-1 text-xs text-muted-foreground"
+                          >
+                            Sólo cambia esta línea; no modifica el catálogo
+                          </p>
                           {stockWarn && (
                             <Badge
                               variant="outline"

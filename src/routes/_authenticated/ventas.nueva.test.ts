@@ -261,6 +261,36 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ruta real de Nueva venta para NC por período", () => {
+  it("conserva la descripción personalizada de una venta directa en el payload de creación", async () => {
+    renderRuta();
+
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+
+    const descripcion = screen.getByLabelText("Descripción de P-1") as HTMLInputElement;
+    fireEvent.change(descripcion, { target: { value: "Base 10 L (Código 1234)" } });
+
+    expect(descripcion.maxLength).toBe(160);
+    expect(screen.getByText("Sólo cambia esta línea; no modifica el catálogo")).toBeTruthy();
+    expect(descripcion.value).toBe("Base 10 L (Código 1234)");
+
+    await elegirCliente();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+    fireEvent.click(screen.getByTestId("registrar-sin-facturar"));
+
+    await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+    expect(dobles.crearVenta.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        items: [
+          {
+            producto_id: PRODUCTO_ID,
+            descripcion: "Base 10 L (Código 1234)",
+          },
+        ],
+      },
+    });
+  });
+
   it.each([
     { flag: false, capacidad: false, visible: false },
     { flag: false, capacidad: true, visible: false },
@@ -294,6 +324,17 @@ describe("ruta real de Nueva venta para NC por período", () => {
     fireEvent.click(screen.getByLabelText("Sin factura puntual — asociar por período"));
     expect(screen.getByText("Asociación fiscal por período")).toBeTruthy();
     expect(screen.queryByLabelText(/Venta fiscal que revierte/)).toBeNull();
+  });
+
+  it("mantiene readonly la descripción heredada de una factura para NC", async () => {
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await abrirSelect(/Venta fiscal que revierte/, /V-00001/);
+
+    const descripcion = (await screen.findByLabelText("Descripción de P-1")) as HTMLInputElement;
+    expect(descripcion.readOnly).toBe(true);
+    expect(screen.getByText("Sólo cambia esta línea; no modifica el catálogo")).toBeTruthy();
   });
 
   it("usa sólo crearVenta para una reversa vinculada", async () => {

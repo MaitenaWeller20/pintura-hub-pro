@@ -197,6 +197,34 @@ describe("comprobante sin CAE (documento interno)", () => {
     expect(texto).toContain("Documento interno");
     expect(texto).not.toContain("Comprobante Autorizado");
   });
+
+  it("conserva el descuento por producto en un remito", () => {
+    const itemConDescuento = {
+      ...items[0],
+      cantidad: 1,
+      precio_unitario_sin_iva: 165989.88,
+      descuento_porcentaje: 30,
+      iva_porcentaje: 21,
+      subtotal_con_iva: 140593.43,
+    };
+    const { doc: docConDescuento } = generarComprobantePdf(
+      { ...venta, tipo_comprobante: "REMITO", numero_comprobante: "OHI-REM-0004" },
+      [itemConDescuento],
+      null,
+    );
+    const textoConDescuento = textoDelPdf(docConDescuento);
+
+    expect(textoConDescuento).toContain("Desc.");
+    expect(textoConDescuento).toContain("30,00%");
+    expect(textoConDescuento).toContain("Precio de lista");
+    expect(textoConDescuento).toContain("Precio final");
+    expect(textoConDescuento).toMatch(/\$\s?200\.847,75/);
+    expect(textoConDescuento).toMatch(/\$\s?140\.593,43/);
+    expect(textoConDescuento).not.toMatch(/\$\s?140\.593,42/);
+    expect(textoConDescuento).not.toContain("P. unit. s/IVA");
+    expect(textoConDescuento).not.toContain("Neto gravado");
+    expect(textoConDescuento).not.toContain("IVA");
+  });
 });
 
 describe("comprobantes largos", () => {

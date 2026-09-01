@@ -19,7 +19,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
-import { conIva } from "@/lib/fiscal/iva";
+import { calcularTotales, conIva } from "@/lib/fiscal/iva";
 import {
   filtroProducto,
   ordenarProductosPorRelevancia,
@@ -396,9 +396,10 @@ function EditarPresupuesto() {
               <TableRow>
                 <TableHead>Código</TableHead>
                 <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Precio</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
+                <TableHead className="text-right">Precio de lista</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
+                <TableHead className="text-right">Precio final</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -406,7 +407,7 @@ function EditarPresupuesto() {
             <TableBody>
               {filas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     No quedó ningún producto. Agregá uno o volvé sin guardar.
                   </TableCell>
                 </TableRow>
@@ -421,6 +422,15 @@ function EditarPresupuesto() {
                   // cliente. Lo que se guarda sigue siendo el neto.
                   const iva = ivaDe(f, repreciar);
                   const precioFinal = conIva(precio, iva);
+                  const precioListaFinal = conIva(base, iva);
+                  const subtotalFinal = calcularTotales([
+                    {
+                      cantidad: Number(f.cantidad || 0),
+                      precio_unitario_sin_iva: precio,
+                      descuento_porcentaje: 0,
+                      iva_porcentaje: iva,
+                    },
+                  ]).total;
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
@@ -430,25 +440,20 @@ function EditarPresupuesto() {
                           <span className="ml-2 text-[10px] text-muted-foreground">(nuevo)</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {fmtMoney(precioFinal)}
-                        {Number(f.descuento || 0) > 0 && (
-                          <span className="block text-[10px] text-muted-foreground line-through">
-                            {fmtMoney(conIva(base, iva))}
-                          </span>
-                        )}
-                        {seMovio && (
-                          <span className="block text-[10px] text-muted-foreground">
-                            hoy vale {fmtMoney(conIva(f.precio_hoy, f.iva_hoy))}
-                          </span>
-                        )}
-                      </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
                           value={f.cantidad}
                           onValueChange={(v) => upd(f.producto_id, { cantidad: v })}
                         />
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                        {fmtMoney(precioListaFinal)}
+                        {seMovio && (
+                          <span className="block text-[10px]">
+                            hoy vale {fmtMoney(conIva(f.precio_hoy, f.iva_hoy))}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
@@ -459,8 +464,11 @@ function EditarPresupuesto() {
                           }
                         />
                       </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-medium">
+                        {fmtMoney(precioFinal)}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(precioFinal * Number(f.cantidad || 0))}
+                        {fmtMoney(subtotalFinal)}
                       </TableCell>
                       <TableCell>
                         <Button
@@ -489,15 +497,12 @@ function EditarPresupuesto() {
             placeholder="Lo que quieras que salga en el presupuesto…"
           />
         </SectionCard>
-        {/* Sin desglose de IVA, igual que en la grilla: los precios de arriba
-            ya son finales y repetir neto + IVA acá no cerraría. */}
         <SectionCard title="Total">
           <div className="space-y-1 text-sm">
             <div className="flex items-baseline justify-between text-lg font-bold">
               <span>TOTAL:</span>
               <span className="font-mono">{fmtMoney(totales.total)}</span>
             </div>
-            <p className="text-right text-[11px] font-normal text-muted-foreground">IVA incluido</p>
             {p.total != null && Number(p.total) !== totales.total && (
               <p className="text-xs text-muted-foreground pt-1">
                 Antes era {fmtMoney(Number(p.total))}.

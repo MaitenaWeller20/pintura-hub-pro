@@ -36,7 +36,7 @@ import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearVenta } from "@/lib/ventas.functions";
 import { calcTotalesComprobante } from "@/lib/ventas-totales";
-import { round2 } from "@/lib/fiscal/iva";
+import { conIva, precioFinalConDescuento, round2, sinIva } from "@/lib/fiscal/iva";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
@@ -823,14 +823,6 @@ function NuevaVenta() {
 
         <SectionCard title="Totales">
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span>Subtotal:</span>
-              <span className="font-mono">{fmtMoney(totales.sub)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>IVA:</span>
-              <span className="font-mono">{fmtMoney(totales.iva)}</span>
-            </div>
             <div className="flex justify-between items-center gap-2">
               <Label className="text-sm m-0">Percepciones:</Label>
               <NumberInput
@@ -885,7 +877,7 @@ function NuevaVenta() {
             <>
               <p className="text-[12px] text-muted-foreground">
                 Cargo extra (interés/mora) sobre {facturaSel?.numero_comprobante} (
-                {fmtMoney(facturaSel?.total)}). Se factura con IVA 21%.
+                {fmtMoney(facturaSel?.total)}).
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -893,7 +885,7 @@ function NuevaVenta() {
                   <NumberInput value={recargoPct} onValueChange={setRecargoPct} className="mt-1" />
                 </div>
                 <div>
-                  <Label>Monto fijo extra ($, con IVA)</Label>
+                  <Label>Monto fijo extra ($, final)</Label>
                   <NumberInput
                     value={recargoMonto}
                     onValueChange={setRecargoMonto}
@@ -902,7 +894,7 @@ function NuevaVenta() {
                 </div>
               </div>
               <div className="text-sm bg-muted/30 p-2 rounded flex justify-between">
-                <span className="text-muted-foreground">Recargo a cobrar (con IVA):</span>
+                <span className="text-muted-foreground">Recargo a cobrar:</span>
                 <span className="font-mono font-semibold">{fmtMoney(recargoConIVA)}</span>
               </div>
             </>
@@ -973,7 +965,7 @@ function NuevaVenta() {
                       </span>
                     </div>
                     <div className="pl-30 text-xs text-muted-foreground">
-                      {fmtMoney(p.precio_sin_iva)} s/IVA · IVA {p.iva_porcentaje}%
+                      {fmtMoney(conIva(p.precio_sin_iva, p.iva_porcentaje))}
                       {yaEsta && " · ya está en el comprobante"}
                     </div>
                   </button>
@@ -1004,9 +996,9 @@ function NuevaVenta() {
                     <TableHead>Código</TableHead>
                     <TableHead>Descripción</TableHead>
                     <TableHead>Cant.</TableHead>
-                    <TableHead>P. unit s/IVA</TableHead>
+                    <TableHead>Precio de lista</TableHead>
                     <TableHead>Desc. %</TableHead>
-                    <TableHead>IVA</TableHead>
+                    <TableHead>Precio final</TableHead>
                     <TableHead className="text-right">Subtotal</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -1014,11 +1006,16 @@ function NuevaVenta() {
                 <TableBody>
                   {items.map((it, i) => {
                     const precioEfectivo = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
-                    const sub =
-                      precioEfectivo *
-                      (1 - (it.descuento_porcentaje || 0) / 100) *
-                      (it.cantidad || 0) *
-                      (1 + (it.iva_porcentaje || 0) / 100);
+                    const descuento = Math.min(
+                      Math.max(Number(it.descuento_porcentaje || 0), 0),
+                      100,
+                    );
+                    const precioFinal = precioFinalConDescuento(
+                      precioEfectivo,
+                      descuento,
+                      it.iva_porcentaje,
+                    );
+                    const sub = calcTotalesComprobante([it], 0, signo).total;
                     const stockWarn =
                       it.stock_disponible !== undefined && it.cantidad > it.stock_disponible;
                     const pisado =
@@ -1050,15 +1047,25 @@ function NuevaVenta() {
                         <TableCell>
                           <NumberInput
                             className="h-8 w-28"
-                            value={it.precio_unitario_sin_iva}
-                            onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v)}
+                            value={
+                              it.precio_unitario_sin_iva === null
+                                ? null
+                                : conIva(it.precio_unitario_sin_iva, it.iva_porcentaje)
+                            }
+                            onValueChange={(v) =>
+                              updateItem(
+                                i,
+                                "precio_unitario_sin_iva",
+                                v === null ? null : sinIva(v, it.iva_porcentaje),
+                              )
+                            }
                           />
                           {pisado && (
                             <div
                               className="text-[10px] text-warning mt-0.5"
                               title="El precio fue modificado a mano"
                             >
-                              lista: {fmtMoney(it.precio_lista)}
+                              lista: {fmtMoney(conIva(it.precio_lista, it.iva_porcentaje))}
                             </div>
                           )}
                         </TableCell>
@@ -1069,7 +1076,9 @@ function NuevaVenta() {
                             onValueChange={(v) => updateItem(i, "descuento_porcentaje", v ?? 0)}
                           />
                         </TableCell>
-                        <TableCell className="text-xs">{it.iva_porcentaje}%</TableCell>
+                        <TableCell className="font-mono text-xs font-medium">
+                          {fmtMoney(precioFinal)}
+                        </TableCell>
                         <TableCell className="text-right font-mono">{fmtMoney(sub)}</TableCell>
                         <TableCell>
                           <Button size="sm" variant="ghost" onClick={() => removeItem(i)}>

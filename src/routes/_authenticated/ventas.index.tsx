@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
 import { SectionCard } from "@/components/app/section-card";
+import { VentaItemsDetalle } from "@/components/ventas/venta-items-detalle";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { fmtDocumento } from "@/lib/documento";
 import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
@@ -183,15 +184,26 @@ function VentasList() {
   });
 
   const exportar = () => {
-    const ws = XLSX.utils.json_to_sheet(filtered.map((v:any) => ({
-      Comprobante: v.numero_comprobante, Tipo: tipoComprobanteLabel[v.tipo_comprobante],
-      Fecha: v.fecha, Sucursal: v.sucursal?.nombre, Cliente: v.cliente?.razon_social,
-      Subtotal: v.subtotal_sin_iva, IVA: v.iva_total, Total: v.total, Pagado: v.total_pagado, Estado: v.estado_pago,
-      // R12.b: forma(s) de pago. Cta cte no tiene venta_pagos (se cobra por cobranzas).
-      "Forma de pago": (v.pagos?.length
-        ? v.pagos.map((p:any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago).join(", ")
-        : (v.condicion_venta === "CTA_CTE" ? "Cuenta Corriente" : "—")),
-    })));
+    const ws = XLSX.utils.json_to_sheet(
+      filtered.map((v: any) => ({
+        Comprobante: v.numero_comprobante,
+        Tipo: tipoComprobanteLabel[v.tipo_comprobante],
+        Fecha: v.fecha,
+        Sucursal: v.sucursal?.nombre,
+        Cliente: v.cliente?.razon_social,
+        "Total final": v.total,
+        Pagado: v.total_pagado,
+        Estado: v.estado_pago,
+        // R12.b: forma(s) de pago. Cta cte no tiene venta_pagos (se cobra por cobranzas).
+        "Forma de pago": v.pagos?.length
+          ? v.pagos
+              .map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago)
+              .join(", ")
+          : v.condicion_venta === "CTA_CTE"
+            ? "Cuenta Corriente"
+            : "—",
+      })),
+    );
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Ventas");
     XLSX.writeFile(wb, "ventas.xlsx");
   };
@@ -466,17 +478,10 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
               <div><strong>CUIT/DNI:</strong> {fmtDocumento(venta.cliente?.cuit_dni)}</div>
             </div>
             <div className="mt-2">
-              <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
-                {(detail?.items ?? []).map((i:any,idx)=>(
-                  <TableRow key={idx}>
-                    <TableCell className="font-mono text-xs">{i.codigo}</TableCell>
-                    <TableCell>{i.descripcion}</TableCell>
-                    <TableCell className="text-right">{i.cantidad}</TableCell>
-                    <TableCell className="text-right font-mono">{fmtMoney(i.precio_unitario_sin_iva)}</TableCell>
-                    <TableCell className="text-right font-mono">{fmtMoney(i.subtotal_con_iva)}</TableCell>
-                  </TableRow>
-                ))}
-              </DataTable>
+              <VentaItemsDetalle
+                tipoComprobante={venta.tipo_comprobante}
+                items={detail?.items ?? []}
+              />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
@@ -500,10 +505,16 @@ function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
               <Card className="p-3">
                 <h4 className="font-semibold text-sm mb-2">Totales</h4>
                 <ul className="space-y-1 text-sm">
-                  <li className="flex justify-between"><span>Subtotal:</span><span className="font-mono">{fmtMoney(venta.subtotal_sin_iva)}</span></li>
-                  <li className="flex justify-between"><span>IVA:</span><span className="font-mono">{fmtMoney(venta.iva_total)}</span></li>
-                  <li className="flex justify-between"><span>Percepciones:</span><span className="font-mono">{fmtMoney(venta.percepciones)}</span></li>
-                  <li className="flex justify-between font-bold border-t border-border pt-1 mt-1"><span>TOTAL:</span><span className="font-mono">{fmtMoney(venta.total)}</span></li>
+                  {Number(venta.percepciones) > 0 && (
+                    <li className="flex justify-between">
+                      <span>Percepciones:</span>
+                      <span className="font-mono">{fmtMoney(venta.percepciones)}</span>
+                    </li>
+                  )}
+                  <li className="flex justify-between font-bold">
+                    <span>TOTAL:</span>
+                    <span className="font-mono">{fmtMoney(venta.total)}</span>
+                  </li>
                   {venta.condicion_venta === "CTA_CTE" ? (
                     <li className="flex justify-between text-warning"><span>Condición:</span><span>A cuenta corriente</span></li>
                   ) : (

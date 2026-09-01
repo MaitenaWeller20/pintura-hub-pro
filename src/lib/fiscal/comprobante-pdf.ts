@@ -11,6 +11,7 @@ import {
   TIPOS_C,
   type CondicionIva,
 } from "./codigos";
+import { conIva, precioFinalConDescuento } from "./iva";
 
 /**
  * El comprobante impreso.
@@ -152,6 +153,7 @@ export function generarComprobantePdf(
 ): { doc: jsPDF; nombre: string } {
   const doc = new jsPDF();
   const esC = fiscal ? TIPOS_C.has(fiscal.cbte_tipo) : false;
+  const esInterno = !fiscal;
   const info = fiscal ? CBTE_INFO[fiscal.cbte_tipo] : null;
   const ALTO = doc.internal.pageSize.getHeight();
 
@@ -286,11 +288,13 @@ export function generarComprobantePdf(
   yr += 4.5;
   // RG 5616: la condición frente al IVA del receptor es obligatoria en el
   // comprobante. Es de las cosas que el contador mira primero.
-  doc.text(
-    `Condición IVA: ${rec?.condicion_iva ? (CONDICION_IVA_LABEL[rec.condicion_iva] ?? rec.condicion_iva) : "Consumidor Final"}`,
-    MARGEN + 3,
-    yr,
-  );
+  if (fiscal) {
+    doc.text(
+      `Condición IVA: ${rec?.condicion_iva ? (CONDICION_IVA_LABEL[rec.condicion_iva] ?? rec.condicion_iva) : "Consumidor Final"}`,
+      MARGEN + 3,
+      yr,
+    );
+  }
   const condVenta = condicionVentaLabel(fiscal?.condicion_venta ?? venta.condicion_venta);
   if (condVenta) doc.text(`Condición de venta: ${condVenta}`, X_DERECHA, yr);
   yr += 4.5;
@@ -299,21 +303,41 @@ export function generarComprobantePdf(
   // --------------------------------------------------------------------- ítems
   // En clase C no se discrimina IVA (AFIP lo prohíbe), así que el papel tampoco
   // muestra ni la columna ni el desglose: sólo importes finales.
-  const cabecera = esC
-    ? ["Código", "Descripción", "Cant.", "P. unit.", "Desc.", "Importe"]
-    : ["Código", "Descripción", "Cant.", "P. unit. s/IVA", "Desc.", "IVA", "Importe"];
+  const cabecera = esInterno
+    ? ["Código", "Descripción", "Cant.", "Precio de lista", "Desc.", "Precio final", "Importe"]
+    : esC
+      ? ["Código", "Descripción", "Cant.", "P. unit.", "Desc.", "Importe"]
+      : ["Código", "Descripción", "Cant.", "P. unit. s/IVA", "Desc.", "IVA", "Importe"];
 
   autoTable(doc, {
     startY: yRec + 25,
     head: [cabecera],
     body: lineas.map((i) => {
+      const descuento = Math.min(Math.max(abs(i.descuento_porcentaje), 0), 100);
       const base = [
         i.codigo ?? "",
         i.descripcion ?? "",
         fmtNum(abs(i.cantidad)),
         money(i.precio_unitario_sin_iva),
-        `${fmtNum(i.descuento_porcentaje ?? 0)}%`,
+        `${fmtNum(descuento)}%`,
       ];
+      if (esInterno) {
+        const precioLista = conIva(abs(i.precio_unitario_sin_iva), abs(i.iva_porcentaje));
+        const precioFinal = precioFinalConDescuento(
+          abs(i.precio_unitario_sin_iva),
+          descuento,
+          abs(i.iva_porcentaje),
+        );
+        return [
+          i.codigo ?? "",
+          i.descripcion ?? "",
+          fmtNum(abs(i.cantidad)),
+          money(precioLista),
+          descuento > 0 ? `${fmtNum(descuento)}%` : "-",
+          money(precioFinal),
+          money(i.subtotal_con_iva),
+        ];
+      }
       return esC
         ? [...base, money(i.subtotal_con_iva)]
         : [...base, `${fmtNum(i.iva_porcentaje ?? 0)}%`, money(i.subtotal_con_iva)];
@@ -341,7 +365,10 @@ export function generarComprobantePdf(
 
   doc.setFontSize(8);
   const t = fiscal?.totales;
-  if (esC) {
+  if (esInterno) {
+    // Documento comercial: sólo importes finales, sin exponer el cálculo fiscal.
+    linea("Subtotal", money(abs(t?.total ?? venta.total) - abs(t?.tributos ?? venta.percepciones)));
+  } else if (esC) {
     // Clase C: importe final, sin neto ni IVA.
     linea("Subtotal", money(t?.total ?? venta.total));
   } else {
@@ -404,7 +431,7 @@ export function generarComprobantePdf(
     );
   }
   if (!fiscal) {
-    leyendas.push("Documento interno — no es un comprobante fiscal y no se declaró a AFIP.");
+    leyendas.push("Documento interno - no es un comprobante fiscal y no se declaró a AFIP.");
   }
 
   if (leyendas.length) {

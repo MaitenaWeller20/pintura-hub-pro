@@ -14,7 +14,7 @@ import {
   puedeForzarConsumidorFinal,
   TIPOS_C,
 } from "./codigos";
-import { calcularTotales, conIva, round2 } from "./iva";
+import { calcularTotales, conIva, round2, sinIva } from "./iva";
 import {
   fmtFechaAfip,
   fmtFechaIsoAr,
@@ -496,5 +496,13 @@ describe("conIva (precio final para mostrar)", () => {
     expect(conIva(null, 21)).toBe(0);
     expect(conIva(undefined, undefined)).toBe(0);
     expect(conIva("100", "21")).toBe(121);
+  });
+});
+
+describe("sinIva (edición de un precio final)", () => {
+  it("recupera el neto que se guarda sin cambiar el precio que tipeó la usuaria", () => {
+    expect(sinIva(121, 21)).toBe(100);
+    expect(sinIva(110.5, 10.5)).toBe(100);
+    expect(sinIva(null, 21)).toBe(0);
   });
 });

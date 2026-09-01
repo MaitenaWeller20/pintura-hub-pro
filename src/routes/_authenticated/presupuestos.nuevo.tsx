@@ -32,7 +32,7 @@ import {
   ordenarProductosPorRelevancia,
   TOPE_BUSQUEDA_PRODUCTOS,
 } from "@/lib/postgrest";
-import { conIva } from "@/lib/fiscal/iva";
+import { calcularTotales, conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
 
@@ -307,9 +307,10 @@ function NuevoPresupuesto() {
               <TableRow>
                 <TableHead>Código</TableHead>
                 <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Precio</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
+                <TableHead className="text-right">Precio de lista</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
+                <TableHead className="text-right">Precio final</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -317,7 +318,7 @@ function NuevoPresupuesto() {
             <TableBody>
               {filas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     Buscá un producto arriba para agregarlo.
                   </TableCell>
                 </TableRow>
@@ -329,24 +330,28 @@ function NuevoPresupuesto() {
                   // Se muestra con IVA: el presupuesto se cotiza con el precio
                   // final. Lo que se manda a guardar sigue siendo el neto.
                   const precioFinal = conIva(precio, f.iva);
+                  const precioListaFinal = conIva(f.precio_lista, f.iva);
+                  const subtotalFinal = calcularTotales([
+                    {
+                      cantidad: Number(f.cantidad || 0),
+                      precio_unitario_sin_iva: precio,
+                      descuento_porcentaje: 0,
+                      iva_porcentaje: f.iva,
+                    },
+                  ]).total;
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
                       <TableCell>{f.nombre}</TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {fmtMoney(precioFinal)}
-                        {Number(f.descuento || 0) > 0 && (
-                          <span className="block text-[10px] text-muted-foreground line-through">
-                            {fmtMoney(conIva(f.precio_lista, f.iva))}
-                          </span>
-                        )}
-                      </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
                           value={f.cantidad}
                           onValueChange={(v) => upd(f.producto_id, { cantidad: v })}
                         />
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                        {fmtMoney(precioListaFinal)}
                       </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
@@ -357,8 +362,11 @@ function NuevoPresupuesto() {
                           }
                         />
                       </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-medium">
+                        {fmtMoney(precioFinal)}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(precioFinal * Number(f.cantidad || 0))}
+                        {fmtMoney(subtotalFinal)}
                       </TableCell>
                       <TableCell>
                         <Button
@@ -387,17 +395,10 @@ function NuevoPresupuesto() {
             placeholder="Lo que quieras que salga en el presupuesto…"
           />
         </SectionCard>
-        {/* Sin desglose de IVA: los precios de arriba ya son finales, así que
-            repetir neto + IVA acá daría números que no cierran con la grilla.
-            El presupuesto no es un comprobante fiscal; la venta que salga de él
-            sí discrimina, que es donde importa. */}
         <SectionCard title="Total">
           <div className="flex items-baseline justify-between">
             <span className="text-sm">TOTAL:</span>
-            <div className="text-right">
-              <p className="font-mono text-lg font-bold">{fmtMoney(totales.total)}</p>
-              <p className="text-[11px] text-muted-foreground">IVA incluido</p>
-            </div>
+            <p className="font-mono text-lg font-bold">{fmtMoney(totales.total)}</p>
           </div>
         </SectionCard>
       </div>

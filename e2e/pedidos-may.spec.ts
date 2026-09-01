@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect, ingresar, campo } from "./apoyo";
 
 /**
@@ -84,7 +85,7 @@ test("presupuestos: la búsqueda de productos no esconde resultados", async ({ p
   await expect(page.locator("body")).toContainText(/ningún producto con ese código o nombre/i);
 });
 
-test("presupuestos: los precios se muestran con IVA incluido", async ({ page }) => {
+test("presupuestos: muestra precio de lista y final sin nombrar IVA", async ({ page }) => {
   await page.goto("/presupuestos");
   const hay = await page
     .locator("tbody tr")
@@ -96,8 +97,55 @@ test("presupuestos: los precios se muestran con IVA incluido", async ({ page }) 
   // El detalle se abre por el link de la fila, no clickeando la fila entera.
   await page.locator('tbody tr a[href*="/presupuestos/"]').first().click();
   await page.waitForLoadState("networkidle").catch(() => {});
-  // No se desglosa IVA: el presupuesto cotiza el precio final.
-  await expect(page.locator("body")).toContainText(/iva incluido/i);
+  const cabecera = page.locator("thead");
+  await expect(cabecera).toContainText(/precio de lista/i);
+  await expect(cabecera).toContainText(/precio final/i);
+  await expect(cabecera).toContainText(/desc\./i);
+  await expect(page.getByText(/iva incluido/i)).toHaveCount(0);
+});
+
+test("presupuestos: el PDF muestra precio de lista y precio final", async ({ page }, testInfo) => {
+  await page.goto("/presupuestos");
+  const hay = await page
+    .locator("tbody tr")
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  test.skip(!hay, "no hay presupuestos cargados para descargar");
+
+  await page.locator('tbody tr a[href*="/presupuestos/"]').first().click();
+  const descarga = page.waitForEvent("download");
+  await page.getByRole("button", { name: /imprimir pdf/i }).click();
+  const archivo = await descarga;
+  const ruta = testInfo.outputPath("presupuesto.pdf");
+  await archivo.saveAs(ruta);
+
+  const texto = (await readFile(ruta, "latin1")).replace(/\\(\d{3})/g, (_m, octal) =>
+    String.fromCharCode(parseInt(octal, 8)),
+  );
+  expect(texto).toContain("Precio de lista");
+  expect(texto).toContain("Precio final");
+  expect(texto).not.toContain("s/IVA");
+});
+
+test("ventas: carga precios finales y descuentos sin mostrar IVA", async ({ page }) => {
+  await page.goto("/ventas/nueva");
+  const buscador = page.getByTestId("venta-buscar-producto");
+  await buscador.fill("ar");
+
+  const resultado = page
+    .getByRole("button")
+    .filter({ hasText: /stock:/i })
+    .first();
+  await expect(resultado).toBeVisible();
+  await resultado.click();
+
+  const cabecera = page.locator("thead");
+  await expect(cabecera).toContainText(/precio de lista/i);
+  await expect(cabecera).toContainText(/precio final/i);
+  await expect(cabecera).toContainText(/desc\. %/i);
+  await expect(cabecera).not.toContainText(/iva/i);
 });
 
 test("ventas: un remito de obra se guarda sin elegir cliente", async ({ page }) => {

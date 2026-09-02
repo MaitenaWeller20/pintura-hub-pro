@@ -59,6 +59,10 @@ export type RegistroFixtureE2E = {
 };
 
 let postgresLocal: Sql | null = null;
+let flagsFacturacionOriginales: {
+  v2: boolean;
+  legacy: boolean;
+} | null = null;
 
 function conexionPostgresLocal(): Sql {
   if (postgresLocal) return postgresLocal;
@@ -66,7 +70,7 @@ function conexionPostgresLocal(): Sql {
   const raizProyecto = fileURLToPath(new URL("../..", import.meta.url));
   let estadoLocal: string;
   try {
-    estadoLocal = execFileSync("supabase", ["status", "-o", "env"], {
+    estadoLocal = execFileSync("npx", ["supabase", "status", "-o", "env"], {
       cwd: raizProyecto,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -99,6 +103,37 @@ async function cerrarPostgresLocal(): Promise<void> {
   const sql = postgresLocal;
   postgresLocal = null;
   if (sql) await sql.end({ timeout: 5 });
+}
+
+async function habilitarFacturacionV2ParaFixture(sql: Sql): Promise<void> {
+  if (flagsFacturacionOriginales) {
+    throw new Error("El fixture de notas ya había capturado los flags fiscales.");
+  }
+  const flags = await sql<{ v2: boolean; legacy: boolean }[]>`
+    SELECT facturacion_receptor_v2_enabled AS v2,
+           facturacion_legacy_writer_enabled AS legacy
+      FROM public.settings
+     WHERE id=true
+  `;
+  flagsFacturacionOriginales = exigirUno(flags, "El fixture necesita settings fiscales");
+  await sql`
+    UPDATE public.settings
+       SET facturacion_receptor_v2_enabled=true,
+           facturacion_legacy_writer_enabled=false
+     WHERE id=true
+  `;
+}
+
+async function restaurarFlagsFacturacion(sql: Sql): Promise<void> {
+  const flags = flagsFacturacionOriginales;
+  if (!flags) return;
+  await sql`
+    UPDATE public.settings
+       SET facturacion_receptor_v2_enabled=${flags.v2},
+           facturacion_legacy_writer_enabled=${flags.legacy}
+     WHERE id=true
+  `;
+  flagsFacturacionOriginales = null;
 }
 
 function exigirUno<T>(filas: T[], contexto: string): T {
@@ -386,6 +421,7 @@ export async function prepararFixtureNotasRemitosE2E(): Promise<FixtureNotasRemi
   await limpiarFixture({ preservarBase: false });
   const sql = conexionPostgresLocal();
   try {
+    await habilitarFacturacionV2ParaFixture(sql);
     return await sql.begin(async (tx) => {
       const usuarios = await tx<{ id: string; sucursal_id: string; sucursal_nombre: string }[]>`
         SELECT u.id::text,
@@ -485,7 +521,11 @@ export async function prepararFixtureNotasRemitosE2E(): Promise<FixtureNotasRemi
     });
   } catch (error) {
     try {
-      await limpiarFixture({ preservarBase: false });
+      try {
+        await limpiarFixture({ preservarBase: false });
+      } finally {
+        await restaurarFlagsFacturacion(sql);
+      }
     } catch (cleanupError) {
       throw new AggregateError(
         [error, cleanupError],
@@ -501,10 +541,15 @@ export async function limpiarEfectosNotasRemitosE2E(): Promise<void> {
 }
 
 export async function limpiarFixtureNotasRemitosE2E(): Promise<void> {
+  const sql = conexionPostgresLocal();
   try {
     await limpiarFixture({ preservarBase: false });
   } finally {
-    await cerrarPostgresLocal();
+    try {
+      await restaurarFlagsFacturacion(sql);
+    } finally {
+      await cerrarPostgresLocal();
+    }
   }
 }
 
@@ -515,6 +560,15 @@ export async function leerVentaNotaCreditoE2E(): Promise<RegistroFixtureE2E> {
      WHERE v.cliente_id=${CLIENTE_ID}::uuid
        AND v.observaciones=${MARCA_VENTA_NC_E2E}
        AND v.tipo_comprobante='NOTA_CREDITO'
+       AND v.afip_cbte_asoc_id IS NULL
+       AND v.afip_estado='NO_APLICA'
+       AND v.cae IS NULL
+       AND v.afip_numero IS NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM public.emision_fiscal_intentos AS e
+          WHERE e.venta_id=v.id
+       )
        AND EXISTS (
          SELECT 1
            FROM public.venta_items AS vi

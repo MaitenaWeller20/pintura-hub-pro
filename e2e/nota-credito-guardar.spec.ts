@@ -63,9 +63,11 @@ test("se guarda una nota de crédito sin factura, a cuenta corriente", async ({ 
   await cliente.waitFor({ state: "visible", timeout: 15_000 });
   await cliente.click();
 
-  // Sin factura: es el punto de todo el cambio.
-  await elegirEnSelect(page, "Factura que rectifica", /sin factura/i);
-  await expect(page.getByText(/no se manda a AFIP/i)).toBeVisible();
+  // En v2 ya no hay selector: el alta manual es siempre interna.
+  await expect(page.getByText(/factura que rectifica/i)).toHaveCount(0);
+  await expect(page.getByTestId("aviso-nota-credito-interna")).toContainText(
+    /no se informa a ARCA/i,
+  );
 
   await page.getByTestId("venta-buscar-producto").fill(PRODUCTO_NC_CODIGO_E2E);
   const resultado = page.getByRole("button", { name: new RegExp(PRODUCTO_NC_CODIGO_E2E) });

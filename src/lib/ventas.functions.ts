@@ -109,6 +109,12 @@ export async function ejecutarCreacionNotaSegunFlags(
   if (flags.facturacion_receptor_v2_enabled && flags.facturacion_legacy_writer_enabled) {
     throw new Error("La configuración fiscal es inválida: ambos escritores están activos.");
   }
+  // Sin asociación no hay emisión fiscal que enrutar: es una devolución
+  // comercial interna y `crear_venta` resuelve stock, saldo/pago e idempotencia
+  // en una sola transacción, incluso durante mantenimiento fiscal.
+  if (input.tipo_comprobante === "NOTA_CREDITO" && !input.cbte_asoc_id) {
+    return deps.crearRegular(input);
+  }
   if (!flags.facturacion_receptor_v2_enabled && !flags.facturacion_legacy_writer_enabled) {
     throw new Error("La facturación está en mantenimiento. No se registró ningún comprobante.");
   }

@@ -56,27 +56,16 @@ async function elegirTipo(page: import("@playwright/test").Page, etiqueta: RegEx
   await page.getByRole("option", { name: etiqueta }).click();
 }
 
-test("la nota de crédito ofrece la opción de ir sin factura", async ({ page }) => {
+test("en v2 la nota de crédito manual ya nace interna y no pide factura", async ({ page }) => {
   await page.goto("/ventas/nueva");
   await elegirTipo(page, /nota de cr[eé]dito/i);
 
-  // El selector de factura tiene que existir y ofrecer la salida. Antes la única
-  // forma de seguir era elegir una factura del cliente, y si no tenía ninguna la
-  // pantalla decía "una nota siempre rectifica una factura": callejón sin salida.
-  await expect(
-    page.getByText(/factura que rectifica/i),
-    "no apareció el campo de factura",
-  ).toBeVisible();
-
-  // Sin cliente el selector está deshabilitado, así que la opción se verifica
-  // sobre el aviso, que es lo que el usuario lee para decidir.
-  await expect(
-    page.getByText(/documento interno/i).first(),
-    "la pantalla no avisa que sin factura queda como documento interno",
-  ).toBeVisible();
+  await expect(page.getByTestId("aviso-nota-credito-interna")).toBeVisible();
+  await expect(page.getByText(/factura que rectifica/i)).toHaveCount(0);
+  await expect(page.locator("body")).toContainText(/sin factura asociada/i);
 });
 
-test("el aviso explica que sin factura no va a AFIP, y no miente sobre la norma", async ({
+test("el aviso explica que sin factura no va a ARCA, y no miente sobre la norma", async ({
   page,
 }) => {
   await page.goto("/ventas/nueva");
@@ -91,17 +80,14 @@ test("el aviso explica que sin factura no va a AFIP, y no miente sobre la norma"
     "volvió el texto que afirma que AFIP exige el comprobante asociado",
   ).not.toContainText(/AFIP exige que toda nota indique el comprobante/i);
 
-  await expect(cuerpo).toContainText(/no se manda a AFIP/i);
+  await expect(cuerpo).toContainText(/no se informa a ARCA/i);
 });
 
-test("la nota de débito sigue exigiendo la factura", async ({ page }) => {
+test("v2 no ofrece el alta manual de nota de débito", async ({ page }) => {
   await page.goto("/ventas/nueva");
-  await elegirTipo(page, /nota de d[eé]bito/i);
-
-  // La ND es un recargo calculado como porcentaje del total de la factura: sin
-  // factura no hay base. El asterisco de obligatorio tiene que seguir estando.
-  await expect(page.getByText(/factura que rectifica\s*\*/i)).toBeVisible();
-  await expect(page.locator("body")).not.toContainText(/Sin factura — documento interno/i);
+  const trigger = page.locator('label:has-text("Tipo comprobante") + button[role=combobox]');
+  await trigger.click();
+  await expect(page.getByRole("option", { name: /nota de d[eé]bito/i })).toHaveCount(0);
 });
 
 test("una venta normal no muestra nada de todo esto", async ({ page }) => {

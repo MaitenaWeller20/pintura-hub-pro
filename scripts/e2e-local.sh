@@ -13,7 +13,7 @@ case "${INVOICING_MOCK_SCENARIO:-}" in
   *) echo "El entrypoint E2E recibió un escenario fiscal inválido." >&2; exit 1 ;;
 esac
 
-if ! estado_local="$(supabase status -o env 2>/dev/null)"; then
+if ! estado_local="$(npx supabase status -o env 2>/dev/null)"; then
   echo "No se pudo leer el estado de Supabase local; ejecutá supabase start." >&2
   exit 1
 fi

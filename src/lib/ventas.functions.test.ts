@@ -57,6 +57,11 @@ describe("cerco comercial de NC/ND", () => {
       tipo_comprobante: "NOTA_CREDITO" | "NOTA_DEBITO";
     };
 
+  const notaInterna = () => ({
+    ...nota("NOTA_CREDITO"),
+    cbte_asoc_id: null,
+  });
+
   it("en v2 una NC usa sólo la reversión total del original", async () => {
     const crearRegular = vi.fn();
     const crearNotaCreditoTotal = vi.fn(async () => ({
@@ -80,6 +85,30 @@ describe("cerco comercial de NC/ND", () => {
       VENTA_BASE.idempotency_key,
     );
     expect(crearRegular).not.toHaveBeenCalled();
+  });
+
+  it("en v2 una NC sin asociación usa el escritor comercial y queda interna", async () => {
+    const input = notaInterna();
+    const crearRegular = vi.fn(async () => ({
+      id: "79000000-0000-4000-8000-000000000002",
+      numero: "NC-00000002",
+      cta_cte: true,
+    }));
+    const crearNotaCreditoTotal = vi.fn();
+
+    await expect(
+      ejecutarCreacionNotaSegunFlags(input, {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: true,
+          facturacion_legacy_writer_enabled: false,
+        }),
+        crearRegular,
+        crearNotaCreditoTotal,
+      }),
+    ).resolves.toMatchObject({ id: "79000000-0000-4000-8000-000000000002" });
+
+    expect(crearRegular).toHaveBeenCalledWith(input);
+    expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
   });
 
   it("en v2 rechaza una NC sin clave estable antes de todo escritor", async () => {
@@ -124,7 +153,7 @@ describe("cerco comercial de NC/ND", () => {
     expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
   });
 
-  it("preserva la escritura de notas sólo en legacy y bloquea mantenimiento", async () => {
+  it("mantiene la NC fiscal en legacy y permite una NC interna sin writer fiscal", async () => {
     const crearRegular = vi.fn(async () => ({ id: "legacy", numero: "NC-1", cta_cte: false }));
     const crearNotaCreditoTotal = vi.fn();
     const input = nota("NOTA_CREDITO");
@@ -139,8 +168,9 @@ describe("cerco comercial de NC/ND", () => {
     });
     expect(crearRegular).toHaveBeenCalledWith(input);
 
+    const interna = notaInterna();
     await expect(
-      ejecutarCreacionNotaSegunFlags(input, {
+      ejecutarCreacionNotaSegunFlags(interna, {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: false,
@@ -148,8 +178,9 @@ describe("cerco comercial de NC/ND", () => {
         crearRegular,
         crearNotaCreditoTotal,
       }),
-    ).rejects.toThrow(/mantenimiento/i);
-    expect(crearRegular).toHaveBeenCalledTimes(1);
+    ).resolves.toMatchObject({ id: "legacy" });
+    expect(crearRegular).toHaveBeenNthCalledWith(2, interna);
+    expect(crearRegular).toHaveBeenCalledTimes(2);
     expect(crearNotaCreditoTotal).not.toHaveBeenCalled();
   });
 });

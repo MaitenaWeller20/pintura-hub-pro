@@ -28,11 +28,11 @@
 - Create: `src/lib/correccion-forma-pago.ts`
 - Create: `src/lib/correccion-forma-pago.test.ts`
 
-- [ ] Escribir pruebas que exijan: lista de medios permitidos sin `CTA_CTE`; validación de cambio real y motivo de 5–1000 caracteres; sanitización de errores del RPC; lectura segura de una auditoría de caja marcada `forma_pago_venta`.
-- [ ] Ejecutar `npx vitest run src/lib/correccion-forma-pago.test.ts` y confirmar el rojo por módulo inexistente.
-- [ ] Implementar tipos y funciones puras mínimas, sin acceso a Supabase ni React.
-- [ ] Repetir la prueba hasta verde.
-- [ ] Commit: `test: definir contrato de corrección de pagos`.
+- [x] Escribir pruebas que exijan: lista de medios permitidos sin `CTA_CTE`; validación de cambio real y motivo de 5–1000 caracteres; sanitización de errores del RPC; lectura segura de una auditoría de caja marcada `forma_pago_venta`.
+- [x] Ejecutar `npx vitest run src/lib/correccion-forma-pago.test.ts` y confirmar el rojo por módulo inexistente.
+- [x] Implementar tipos y funciones puras mínimas, sin acceso a Supabase ni React.
+- [x] Repetir la prueba hasta verde.
+- [x] Commit: `test: definir contrato de corrección de pagos`.
 
 ### Task 2: Persistencia, permisos y transacción
 
@@ -86,4 +86,3 @@
 - [ ] Ejecutar `npm run test`, `npm run typecheck`, `npm run lint` y `npm run build`.
 - [ ] Revisar `git diff --check`, `git status --short` y el diff completo contra esta especificación.
 - [ ] Commit: `test: cubrir corrección integral de forma de pago`.
-

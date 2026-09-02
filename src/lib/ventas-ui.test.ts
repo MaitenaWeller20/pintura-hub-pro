@@ -34,17 +34,50 @@ const FLAGS_MANTENIMIENTO = {
 } as const;
 
 describe("modo de una nota nueva", () => {
-  it("trata la nota de crédito manual v2 como interna, editable y sin emisión", () => {
+  it("separa la reversión fiscal v2 de la nota interna editable", () => {
     expect(
       modoNotaNueva({
         tipoComprobante: "NOTA_CREDITO",
         facturacionV2Habilitada: true,
         comprobanteAsociadoId: "una-asociacion-vieja",
+        caminoNotaCredito: "REVERSAR_FACTURA",
+      }),
+    ).toEqual({
+      esNotaCreditoInterna: false,
+      muestraSelectorComprobante: true,
+      camposEditables: false,
+      permiteAsociacionFiscalManual: true,
+      redirigeAColaFiscal: true,
+    });
+
+    expect(
+      modoNotaNueva({
+        tipoComprobante: "NOTA_CREDITO",
+        facturacionV2Habilitada: true,
+        comprobanteAsociadoId: "una-asociacion-vieja",
+        caminoNotaCredito: "INTERNA",
       }),
     ).toEqual({
       esNotaCreditoInterna: true,
       muestraSelectorComprobante: false,
       camposEditables: true,
+      permiteAsociacionFiscalManual: false,
+      redirigeAColaFiscal: false,
+    });
+  });
+
+  it("mantiene el camino fiscal por período fuera del formulario comercial", () => {
+    expect(
+      modoNotaNueva({
+        tipoComprobante: "NOTA_CREDITO",
+        facturacionV2Habilitada: true,
+        comprobanteAsociadoId: null,
+        caminoNotaCredito: "ASOCIAR_PERIODO",
+      }),
+    ).toEqual({
+      esNotaCreditoInterna: false,
+      muestraSelectorComprobante: false,
+      camposEditables: false,
       permiteAsociacionFiscalManual: false,
       redirigeAColaFiscal: false,
     });
@@ -237,6 +270,16 @@ describe("receptor fiscal congelado en el listado", () => {
   const venta = {
     numero_comprobante: "V-0042",
     cliente: { razon_social: "COMPRADOR COMERCIAL", cuit_dni: "30111222333" },
+    fiscalPresentacion: {
+      receptor: {
+        razonSocial: "RECEPTOR FISCAL CONGELADO",
+        tipoDocumento: "CUIT",
+        numeroDocumento: "30714199664",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "Belgrano 500, Córdoba",
+      },
+      comprobanteAsociado: null,
+    },
     afip_snapshot: {
       version: 2,
       receptor: {
@@ -263,6 +306,16 @@ describe("receptor fiscal congelado en el listado", () => {
       domicilio: "Belgrano 500, Córdoba",
     });
     expect(receptorFiscalDifiereDelComprador(venta)).toBe(true);
+  });
+
+  it("consume la proyección fiscal cerrada aunque el browser no reciba el snapshot", () => {
+    const { afip_snapshot: _omitido, ...ventaSinSnapshot } = venta;
+    expect(receptorFiscalDifiereDelComprador(ventaSinSnapshot)).toBe(true);
+    expect(textoBusquedaVenta(ventaSinSnapshot)).toContain("receptor fiscal congelado");
+    expect(camposExportacionReceptorFiscal(ventaSinSnapshot)).toEqual({
+      "Receptor fiscal": "RECEPTOR FISCAL CONGELADO",
+      "Documento receptor fiscal": "CUIT 30714199664",
+    });
   });
 
   it("incorpora receptor y documento congelados a búsqueda y exportación", () => {

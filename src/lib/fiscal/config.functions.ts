@@ -9,12 +9,15 @@ import {
   confirmacionModalidadFacturaASchema,
   estadoFiscalPublicoMinimo,
   exigirEmisorActualizado,
+  ejecutarPruebaActivacionPadron,
   normalizarCredencialesPublicas,
   probarAccesoSecuenciasFactura,
   probarConexionSegunModo,
   validarHabilitacionCredencial,
   type CredencialArcaPublica,
   type CredencialArcaSecreta,
+  type EntradaPruebaPadron,
+  type ResultadoPruebaPadron,
 } from "./config";
 import type { AmbienteArca } from "./contexto";
 import { cargarContextoFiscal } from "./contexto.server";
@@ -28,7 +31,10 @@ import {
 import { decryptString, encryptString } from "./crypto";
 import { MOCK, ultimoAutorizado } from "./arca";
 import { autorizarAdministradorFiscal } from "./permiso.server";
-import { parsearEntradaFiscal } from "./error-usuario";
+import { crearErrorFiscalUsuario, parsearEntradaFiscal } from "./error-usuario";
+
+type ConsultarPadronArcaDesdeContexto =
+  typeof import("./padron-arca.server").consultarPadronArcaDesdeContexto;
 
 async function admin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -56,6 +62,150 @@ async function exigirAdmin(supabase: SupabaseClient<Database>, userId: string) {
         return data;
       },
     },
+  });
+}
+
+type DependenciasPruebaPadronAdministrativa = {
+  mockMode: boolean;
+  ahora(): Date;
+  exigirAdmin(supabase: SupabaseClient<Database>, userId: string): Promise<void>;
+  crearClientePrivilegiado(): Promise<SupabaseClient<Database>>;
+  consultarPadron(
+    input: Parameters<ConsultarPadronArcaDesdeContexto>[0],
+  ): ReturnType<ConsultarPadronArcaDesdeContexto>;
+};
+
+const dependenciasPruebaPadronAdministrativa: DependenciasPruebaPadronAdministrativa = {
+  mockMode: MOCK,
+  ahora: () => new Date(),
+  exigirAdmin,
+  crearClientePrivilegiado: admin,
+  async consultarPadron(input) {
+    const { consultarPadronArcaDesdeContexto } = await import("./padron-arca.server");
+    return consultarPadronArcaDesdeContexto(input);
+  },
+};
+
+function errorConfiguracionPadron(): never {
+  throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+}
+
+export async function ejecutarPruebaPadronAdministrativa(
+  input: {
+    entrada: EntradaPruebaPadron;
+    userClient: SupabaseClient<Database>;
+    userId: string;
+  },
+  deps: DependenciasPruebaPadronAdministrativa = dependenciasPruebaPadronAdministrativa,
+): Promise<ResultadoPruebaPadron> {
+  await deps.exigirAdmin(input.userClient, input.userId);
+  if (deps.mockMode) errorConfiguracionPadron();
+  let sb: SupabaseClient<Database>;
+  try {
+    sb = await deps.crearClientePrivilegiado();
+  } catch {
+    errorConfiguracionPadron();
+  }
+
+  // La versión se captura antes del CUIT: el trigger por CUIT invalida este
+  // snapshot incluso cuando el cambio ocurre entre ambas lecturas.
+  let credencialResultado;
+  try {
+    credencialResultado = await sb
+      .from("credenciales_arca")
+      .select("emisor_id,ambiente,arca_key_enc,arca_cert_enc,updated_at")
+      .eq("emisor_id", input.entrada.emisor_id)
+      .eq("ambiente", input.entrada.ambiente)
+      .maybeSingle();
+  } catch {
+    errorConfiguracionPadron();
+  }
+  const { data: credencial, error: credencialError } = credencialResultado;
+  if (
+    credencialError ||
+    !credencial ||
+    credencial.emisor_id !== input.entrada.emisor_id ||
+    credencial.ambiente !== input.entrada.ambiente ||
+    typeof credencial.updated_at !== "string" ||
+    credencial.updated_at.length === 0
+  ) {
+    errorConfiguracionPadron();
+  }
+  const versionCredencial = credencial.updated_at;
+
+  let emisorResultado;
+  try {
+    emisorResultado = await sb
+      .from("emisores")
+      .select("id,cuit")
+      .eq("id", input.entrada.emisor_id)
+      .maybeSingle();
+  } catch {
+    errorConfiguracionPadron();
+  }
+  const { data: emisor, error: emisorError } = emisorResultado;
+  if (
+    emisorError ||
+    !emisor ||
+    emisor.id !== input.entrada.emisor_id ||
+    typeof emisor.cuit !== "string"
+  ) {
+    errorConfiguracionPadron();
+  }
+  const cuitEmisor = emisor.cuit;
+
+  // El trigger genérico mueve updated_at para credenciales, resets por CUIT y
+  // resets por cambio de PV. Éste mismo snapshot protege éxito y fallo.
+  const actualizar = async (
+    campos: Database["public"]["Tables"]["credenciales_arca"]["Update"],
+  ) => {
+    const { data: actualizada, error } = await sb
+      .from("credenciales_arca")
+      .update(campos)
+      .eq("emisor_id", input.entrada.emisor_id)
+      .eq("ambiente", input.entrada.ambiente)
+      .eq("updated_at", versionCredencial)
+      .select("emisor_id,ambiente")
+      .maybeSingle();
+    if (
+      error ||
+      !actualizada ||
+      actualizada.emisor_id !== input.entrada.emisor_id ||
+      actualizada.ambiente !== input.entrada.ambiente
+    ) {
+      throw new Error("No se pudo persistir el estado seguro del padrón.");
+    }
+  };
+
+  return ejecutarPruebaActivacionPadron({
+    mockMode: deps.mockMode,
+    cuitEmisor,
+    consultar: () =>
+      deps.consultarPadron({
+        cuit: cuitEmisor,
+        emisor: {
+          cuit: cuitEmisor,
+          arca_key_enc: credencial.arca_key_enc,
+          arca_cert_enc: credencial.arca_cert_enc,
+        },
+        ambiente: input.entrada.ambiente,
+        admin: sb,
+      }),
+    registrarExito: (fecha) =>
+      actualizar({
+        padron_probado_at: fecha,
+        padron_validacion_activa: true,
+        padron_ultimo_error_codigo: null,
+        padron_ultimo_error_at: null,
+      }),
+    registrarFallo: ({ codigo, fecha }) =>
+      actualizar({
+        padron_probado_at: null,
+        padron_validacion_activa: false,
+        padron_ultimo_error_codigo: codigo,
+        padron_ultimo_error_at: fecha,
+      }),
+    ahora: deps.ahora,
   });
 }
 
@@ -117,7 +267,7 @@ export const obtenerConfigFiscal = createServerFn({ method: "GET" })
           sb
             .from("credenciales_arca")
             .select(
-              "emisor_id,ambiente,arca_key_enc,arca_cert_enc,cert_vence_at,cert_alias,probada_at,habilitada",
+              "emisor_id,ambiente,arca_key_enc,arca_cert_enc,cert_vence_at,cert_alias,probada_at,habilitada,padron_probado_at,padron_validacion_activa,padron_ultimo_error_codigo,padron_ultimo_error_at",
             ),
         ]);
       if (emisoresError) {
@@ -143,6 +293,10 @@ export const obtenerConfigFiscal = createServerFn({ method: "GET" })
               cert_alias: fila.cert_alias,
               probada_at: fila.probada_at,
               habilitada: fila.habilitada,
+              padron_probado_at: fila.padron_probado_at,
+              padron_validacion_activa: fila.padron_validacion_activa,
+              padron_ultimo_error_codigo: fila.padron_ultimo_error_codigo,
+              padron_ultimo_error_at: fila.padron_ultimo_error_at,
             }));
 
           return {
@@ -223,17 +377,12 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
       admin,
     );
 
-    const [{ data: sucursal, error: sucursalError }, { data: anterior, error: pvError }] =
-      await Promise.all([
-        sb.from("sucursales").select("id,emisor_id").eq("id", data.sucursal_id).maybeSingle(),
-        sb
-          .from("puntos_venta")
-          .select("numero,modo,activo")
-          .eq("sucursal_id", data.sucursal_id)
-          .maybeSingle(),
-      ]);
+    const { data: sucursal, error: sucursalError } = await sb
+      .from("sucursales")
+      .select("id,emisor_id")
+      .eq("id", data.sucursal_id)
+      .maybeSingle();
     if (sucursalError) throw new Error(sucursalError.message);
-    if (pvError) throw new Error(pvError.message);
     if (!sucursal?.emisor_id) throw new Error("La sucursal no tiene un emisor fiscal asignado.");
 
     const { error } = await sb.from("puntos_venta").upsert(
@@ -248,23 +397,25 @@ export const guardarPuntoVenta = createServerFn({ method: "POST" })
     );
     if (error) throw new Error(error.message);
 
-    const cambio =
-      !anterior ||
-      Number(anterior.numero) !== data.numero ||
-      anterior.modo !== data.modo ||
-      Boolean(anterior.activo) !== data.activo;
-    if (cambio) {
-      const ambientes = anterior ? [...new Set([anterior.modo, data.modo])] : [data.modo];
-      const { error: resetError } = await sb
-        .from("credenciales_arca")
-        .update({ probada_at: null, habilitada: false })
-        .eq("emisor_id", sucursal.emisor_id)
-        .in("ambiente", ambientes);
-      if (resetError) throw new Error(resetError.message);
-    }
-
     return { ok: true };
   });
+
+export const probarYActivarPadronArca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    parsearEntradaFiscal(
+      z.object({ emisor_id: z.string().uuid(), ambiente: ambienteSchema }).strict(),
+      d,
+      "CONFIGURACION",
+    ),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarPruebaPadronAdministrativa({
+      entrada: data,
+      userClient: context.supabase,
+      userId: context.userId,
+    }),
+  );
 
 export const generarCsr = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

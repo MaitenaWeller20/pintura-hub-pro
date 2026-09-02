@@ -1,4 +1,7 @@
-import { CONDICION_IVA_CLIENTE, type CondicionIva } from "./codigos";
+import { CONDICION_IVA_CLIENTE, cuitValido, type CondicionIva } from "./codigos";
+import { crearErrorFiscalUsuario } from "./error-usuario";
+import type { ReceptorPadronArca } from "./padron-arca-shared";
+import type { AsociacionPreparadaFiscal } from "./emision";
 import {
   confirmarReceptorManual,
   validarReceptorFiscalConfirmado,
@@ -20,6 +23,7 @@ export type VentaParaReceptor = {
   } | null;
   tipoComprobante: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO";
   comprobanteOriginalId: string | null;
+  asociacion: AsociacionPreparadaFiscal;
 };
 
 export type FavoritoFiscalRow = {
@@ -73,6 +77,72 @@ function receptorClienteAnonimo(
   );
 }
 
+function cuitCanonico(valor: string | null): string | null {
+  if (!cuitValido(valor)) return null;
+  return valor!.replace(/\D/g, "");
+}
+
+function admiteFallbackNoInscripto(condicion: CondicionIva | null): boolean {
+  return condicion === "EXENTO" || condicion === "CONSUMIDOR_FINAL";
+}
+
+function exigirCondicionAutomaticaConfirmada(
+  condicion: CondicionIva,
+  letraSolicitada: "A" | "B" | "C" | null,
+): void {
+  if (letraSolicitada === null && !admiteFallbackNoInscripto(condicion)) {
+    throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
+  }
+}
+
+function receptorDesdePadron(input: {
+  padron: ReceptorPadronArca;
+  condicionDeclarada: CondicionIva | null;
+  letraSolicitada: "A" | "B" | "C" | null;
+  origenId: string | null;
+  importeTotal: number;
+}): ReceptorFiscalConfirmado {
+  const confirmada = input.padron.condicionIvaConfirmada;
+  const declaradaAdmitidaSinConfirmacion = admiteFallbackNoInscripto(input.condicionDeclarada);
+  if (
+    (confirmada === null && (input.letraSolicitada === "A" || !declaradaAdmitidaSinConfirmacion)) ||
+    (input.letraSolicitada === "B" &&
+      (confirmada === "RESPONSABLE_INSCRIPTO" || confirmada === "MONOTRIBUTO"))
+  ) {
+    throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
+  }
+  const condicion =
+    confirmada ??
+    (input.letraSolicitada === "B" ||
+    input.letraSolicitada === "C" ||
+    input.letraSolicitada === null
+      ? input.condicionDeclarada
+      : null);
+  if (
+    condicion !== "RESPONSABLE_INSCRIPTO" &&
+    condicion !== "MONOTRIBUTO" &&
+    condicion !== "EXENTO" &&
+    condicion !== "CONSUMIDOR_FINAL"
+  ) {
+    throw crearErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE");
+  }
+  return validarReceptorFiscalConfirmado(
+    {
+      razonSocial: input.padron.razonSocial,
+      domicilio: input.padron.domicilioFiscal,
+      tipoDocumento: "CUIT",
+      numeroDocumento: input.padron.cuit,
+      docTipoArca: 80,
+      docNroArca: input.padron.cuit,
+      condicionIva: condicion,
+      origen: "ARCA",
+      origenId: input.origenId,
+      verificadoArcaAt: input.padron.verificadoArcaAt,
+    },
+    input.importeTotal,
+  );
+}
+
 function receptorFavorito(row: FavoritoFiscalRow, importeTotal: number): ReceptorFiscalConfirmado {
   if (!row.activo) throw new Error("El favorito fiscal está inactivo.");
   return validarReceptorFiscalConfirmado(
@@ -110,13 +180,16 @@ export async function resolverReceptorFiscal(input: {
   selector: SelectorReceptorFiscal;
   venta: VentaParaReceptor;
   importeTotal: number;
+  letraSolicitada: "A" | "B" | "C" | null;
   cargarFavorito(id: string): Promise<FavoritoFiscalRow | null>;
   cargarOriginal(id: string): Promise<OriginalFiscalRow | null>;
+  consultarPadron?: (cuit: string) => Promise<ReceptorPadronArca>;
 }): Promise<ReceptorFiscalConfirmado> {
   if (input.venta.tipoComprobante === "NOTA_DEBITO") {
     throw new Error("Las notas de débito nuevas no están habilitadas en el motor fiscal v2.");
   }
-  if (input.venta.tipoComprobante === "NOTA_CREDITO") {
+  const asociacion = input.venta.asociacion;
+  if (input.venta.tipoComprobante === "NOTA_CREDITO" && asociacion.tipo === "COMPROBANTE") {
     if (input.selector.origen !== "COMPROBANTE_ORIGINAL") {
       throw new Error("La nota de crédito exige exactamente el selector COMPROBANTE_ORIGINAL.");
     }
@@ -125,20 +198,67 @@ export async function resolverReceptorFiscal(input: {
     const snapshot = snapshotOriginalAprobado(
       await input.cargarOriginal(input.venta.comprobanteOriginalId),
     );
-    return { ...snapshot.receptor };
+    return snapshot.receptor;
+  }
+  if (input.venta.tipoComprobante === "NOTA_CREDITO" && asociacion.tipo === "NINGUNA") {
+    throw new Error("Una nota fiscal requiere exactamente una asociación.");
+  }
+  if (
+    input.venta.tipoComprobante === "NOTA_CREDITO" &&
+    asociacion.tipo === "PERIODO" &&
+    input.selector.origen === "COMPROBANTE_ORIGINAL"
+  ) {
+    throw new Error("Una nota por período no admite COMPROBANTE_ORIGINAL.");
   }
   if (input.selector.origen === "COMPROBANTE_ORIGINAL") {
     throw new Error("COMPROBANTE_ORIGINAL sólo es válido para una nota de crédito.");
   }
   if (input.selector.origen === "CLIENTE_COMERCIAL") {
+    const cuit = cuitCanonico(input.venta.cliente?.cuitDni ?? null);
+    if (cuit && input.consultarPadron) {
+      return receptorDesdePadron({
+        padron: await input.consultarPadron(cuit),
+        condicionDeclarada: input.venta.cliente
+          ? (CONDICION_IVA_CLIENTE[input.venta.cliente.tipo] ?? null)
+          : null,
+        letraSolicitada: input.letraSolicitada,
+        origenId: null,
+        importeTotal: input.importeTotal,
+      });
+    }
     return receptorClienteAnonimo(input.venta, input.importeTotal);
   }
   if (input.selector.origen === "MANUAL") {
-    return { ...confirmarReceptorManual(input.selector, input.importeTotal) };
+    const receptor = confirmarReceptorManual(input.selector, input.importeTotal);
+    const cuit = receptor.tipoDocumento === "CUIT" ? cuitCanonico(receptor.numeroDocumento) : null;
+    if (cuit && input.consultarPadron) {
+      return receptorDesdePadron({
+        padron: await input.consultarPadron(cuit),
+        condicionDeclarada: receptor.condicionIva,
+        letraSolicitada: input.letraSolicitada,
+        origenId: null,
+        importeTotal: input.importeTotal,
+      });
+    }
+    exigirCondicionAutomaticaConfirmada(receptor.condicionIva, input.letraSolicitada);
+    return { ...receptor };
   }
   const favorito = await input.cargarFavorito(input.selector.receptor_fiscal_id);
   if (!favorito || favorito.sucursalId !== input.venta.sucursalId) {
     throw new Error("Favorito fiscal inexistente, no visible o de otra sucursal.");
   }
-  return { ...receptorFavorito(favorito, input.importeTotal) };
+  if (!favorito.activo) throw new Error("El favorito fiscal está inactivo.");
+  const cuit = favorito.tipoDocumento === "CUIT" ? cuitCanonico(favorito.numeroDocumento) : null;
+  if (cuit && input.consultarPadron) {
+    return receptorDesdePadron({
+      padron: await input.consultarPadron(cuit),
+      condicionDeclarada: favorito.condicionIva,
+      letraSolicitada: input.letraSolicitada,
+      origenId: favorito.id,
+      importeTotal: input.importeTotal,
+    });
+  }
+  const receptor = receptorFavorito(favorito, input.importeTotal);
+  exigirCondicionAutomaticaConfirmada(receptor.condicionIva, input.letraSolicitada);
+  return { ...receptor };
 }

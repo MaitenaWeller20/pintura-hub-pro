@@ -439,6 +439,26 @@ describe("contrato runtime del diálogo fiscal", () => {
     ).toThrow(/previsualizaci.n fiscal/i);
   });
 
+  it("acepta una NC sin CbteAsoc sólo cuando el caller acredita asociación por período", () => {
+    const confirmacion = {
+      ...CONFIRMACION,
+      cbteTipo: 3,
+      cbteAsoc: null,
+    };
+    const preview = {
+      ...PREVIEW,
+      cbte_tipo: 3,
+      cbte_asoc: null,
+      confirmacion_autoritativa: confirmacion,
+      huella_confirmacion: crearHuellaConfirmacionFiscal(confirmacion),
+    };
+
+    expect(() => parsePreviewEmisionFiscal(preview)).toThrow(/previsualizaci.n fiscal/i);
+    expect(parsePreviewEmisionFiscal(preview, undefined, { asociacionNota: "PERIODO" })).toEqual(
+      preview,
+    );
+  });
+
   it.each([
     ["importe", { ...PREVIEW_PROVISIONAL, total: "122.00" }],
     ["CUIT emisor", { ...PREVIEW_PROVISIONAL, emisor_cuit: "30717322467" }],
@@ -613,16 +633,68 @@ describe("contrato runtime del diálogo fiscal", () => {
     ).toThrow(/respuesta fiscal/i);
   });
 
+  it("cierra ERROR_CORREGIBLE sobre el código y reemplaza el texto del transporte", () => {
+    expect(
+      parseRespuestaConfirmacionFiscal({
+        estado: "ERROR_CORREGIBLE",
+        codigo: "PADRON_ARCA_CAIDO",
+        mensaje: "texto del transporte que no se debe confiar",
+      }),
+    ).toEqual({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "PADRON_ARCA_CAIDO",
+      mensaje:
+        "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+    });
+    expect(() =>
+      parseRespuestaConfirmacionFiscal({
+        estado: "ERROR_CORREGIBLE",
+        mensaje: "sin código cerrado",
+      }),
+    ).toThrow(/respuesta fiscal/i);
+  });
+
+  it("despacha un error corregible sin completar ni cerrar el flujo", () => {
+    const onErrorCorregible = vi.fn();
+    const onCompletada = vi.fn();
+    const onReconfirmacion = vi.fn();
+
+    expect(
+      despacharRespuestaConfirmacionFiscal(
+        {
+          estado: "ERROR_CORREGIBLE",
+          codigo: "PADRON_ARCA_CAIDO",
+          mensaje: "texto remoto no confiable",
+        },
+        { onErrorCorregible, onCompletada, onReconfirmacion },
+      ),
+    ).toBe("ERROR_CORREGIBLE");
+    expect(onErrorCorregible).toHaveBeenCalledWith({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "PADRON_ARCA_CAIDO",
+      mensaje:
+        "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+    });
+    expect(onCompletada).not.toHaveBeenCalled();
+    expect(onReconfirmacion).not.toHaveBeenCalled();
+  });
+
   it.each([{ estado: "EXITO", mensaje: "listo" }, { estado: "APROBADO" }])(
     "no dispara éxito ni reconfirmación para una respuesta inválida: %o",
     (respuesta) => {
       const onCompletada = vi.fn();
       const onReconfirmacion = vi.fn();
+      const onErrorCorregible = vi.fn();
       expect(() =>
-        despacharRespuestaConfirmacionFiscal(respuesta, { onCompletada, onReconfirmacion }),
+        despacharRespuestaConfirmacionFiscal(respuesta, {
+          onCompletada,
+          onReconfirmacion,
+          onErrorCorregible,
+        }),
       ).toThrow(/respuesta fiscal/i);
       expect(onCompletada).not.toHaveBeenCalled();
       expect(onReconfirmacion).not.toHaveBeenCalled();
+      expect(onErrorCorregible).not.toHaveBeenCalled();
     },
   );
 
@@ -663,6 +735,7 @@ describe("contrato runtime del diálogo fiscal", () => {
   it("una respuesta semánticamente inválida no dispara callbacks", () => {
     const onCompletada = vi.fn();
     const onReconfirmacion = vi.fn();
+    const onErrorCorregible = vi.fn();
     expect(() =>
       despacharRespuestaConfirmacionFiscal(
         {
@@ -672,16 +745,18 @@ describe("contrato runtime del diálogo fiscal", () => {
           recuperado: false,
           advertencias: [],
         },
-        { onCompletada, onReconfirmacion },
+        { onCompletada, onReconfirmacion, onErrorCorregible },
       ),
     ).toThrow(/respuesta fiscal/i);
     expect(onCompletada).not.toHaveBeenCalled();
     expect(onReconfirmacion).not.toHaveBeenCalled();
+    expect(onErrorCorregible).not.toHaveBeenCalled();
   });
 
   it("una reconfirmación semánticamente inválida no dispara ningún callback", () => {
     const onCompletada = vi.fn();
     const onReconfirmacion = vi.fn();
+    const onErrorCorregible = vi.fn();
     expect(() =>
       despacharRespuestaConfirmacionFiscal(
         {
@@ -691,10 +766,11 @@ describe("contrato runtime del diálogo fiscal", () => {
           huella_confirmacion: HUELLA_CONFIRMACION,
           confirmacion_autoritativa: { ...CONFIRMACION, fechaFiscal: "2026-02-31" },
         },
-        { onCompletada, onReconfirmacion },
+        { onCompletada, onReconfirmacion, onErrorCorregible },
       ),
     ).toThrow(/respuesta fiscal/i);
     expect(onCompletada).not.toHaveBeenCalled();
     expect(onReconfirmacion).not.toHaveBeenCalled();
+    expect(onErrorCorregible).not.toHaveBeenCalled();
   });
 });

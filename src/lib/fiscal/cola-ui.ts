@@ -150,9 +150,9 @@ export function resolverTabAutoritativo(
 }
 
 export function debeRefrescarCola(
-  filas: Array<{ afip_estado: string; claim_vencido: boolean }>,
+  filas: Array<{ afip_estado: string; reclamo_vencido: boolean }>,
 ): boolean {
-  return filas.some((fila) => fila.afip_estado === "EMITIENDO" && !fila.claim_vencido);
+  return filas.some((fila) => fila.afip_estado === "EMITIENDO" && !fila.reclamo_vencido);
 }
 
 /** `isFetching` también cubre polling; sólo placeholder significa datos de otra clave. */
@@ -185,12 +185,20 @@ export function huellaConsultaCola(raw: Record<string, unknown>): string {
 export type SeleccionColaFiscal<T extends { venta_id: string }> = {
   fila: T;
   huellaConsulta: string;
+  retenerHastaCerrar?: true;
 };
 
+export function retenerSeleccionColaFiscalHastaCerrar<T extends { venta_id: string }>(
+  seleccion: SeleccionColaFiscal<T> | null,
+): SeleccionColaFiscal<T> | null {
+  if (!seleccion || seleccion.retenerHastaCerrar) return seleccion;
+  return { ...seleccion, retenerHastaCerrar: true };
+}
+
 /**
- * Una selección sólo sigue siendo autoritativa para la misma consulta y si
- * su fila todavía existe. El placeholder de otra clave nunca puede sostener
- * ni reabrir un diálogo fiscal.
+ * Una selección normal sólo sigue siendo autoritativa para la misma consulta
+ * y mientras su fila existe. La selección retenida puede sobrevivir a que la
+ * fila salga de esa consulta, pero nunca a un placeholder o cambio de clave.
  */
 export function resolverSeleccionColaFiscal<T extends { venta_id: string }>(input: {
   seleccion: SeleccionColaFiscal<T> | null;
@@ -207,9 +215,37 @@ export function resolverSeleccionColaFiscal<T extends { venta_id: string }>(inpu
   }
   const ventaId = input.seleccion.fila.venta_id;
   const filaActual = input.filas.find((fila) => fila.venta_id === ventaId);
-  if (!filaActual) return null;
+  if (!filaActual) return input.seleccion.retenerHastaCerrar ? input.seleccion : null;
   if (filaActual === input.seleccion.fila) return input.seleccion;
   return { ...input.seleccion, fila: filaActual };
+}
+
+/**
+ * Resuelve en conjunto la selección y la pestaña de la ruta. Un error que el
+ * operador todavía debe leer fija ambas hasta el cierre explícito del diálogo;
+ * al cerrarlo, la navegación autoritativa vuelve a seguir la fila actual.
+ */
+export function resolverCicloSeleccionColaFiscal<
+  T extends { venta_id: string; tab: TabColaFiscal },
+>(input: {
+  seleccion: SeleccionColaFiscal<T> | null;
+  huellaConsulta: string;
+  isPlaceholderData: boolean;
+  tab: TabColaFiscal;
+  venta: string | undefined;
+  filas: T[];
+}): {
+  seleccion: SeleccionColaFiscal<T> | null;
+  tabAutoritativo: TabColaFiscal;
+} {
+  const seleccion = resolverSeleccionColaFiscal(input);
+  return {
+    seleccion,
+    tabAutoritativo:
+      input.isPlaceholderData || seleccion?.retenerHastaCerrar
+        ? input.tab
+        : resolverTabAutoritativo(input.tab, input.venta, input.filas),
+  };
 }
 
 export function presentarResultadoCola(

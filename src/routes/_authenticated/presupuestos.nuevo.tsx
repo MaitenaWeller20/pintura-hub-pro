@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { ClientePicker } from "@/components/cliente-picker";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -35,6 +36,8 @@ import {
 import { conIva } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
+import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
+import { crearPresupuesto } from "@/lib/presupuestos.functions";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
   component: NuevoPresupuesto,
@@ -47,7 +50,8 @@ export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
 type Fila = {
   producto_id: string;
   codigo: string;
-  nombre: string;
+  descripcion: string;
+  descripcionBase: string;
   precio_lista: number;
   iva: number;
   cantidad: number | null;
@@ -56,6 +60,7 @@ type Fila = {
 
 function NuevoPresupuesto() {
   const navigate = useNavigate();
+  const crear = useServerFn(crearPresupuesto);
   const { data: cu } = useCurrentUser();
   const [sucursalId, setSucursalId] = useState("");
   const [clienteId, setClienteId] = useState("");
@@ -110,7 +115,8 @@ function NuevoPresupuesto() {
       {
         producto_id: p.id,
         codigo: p.codigo,
-        nombre: p.nombre,
+        descripcion: p.nombre,
+        descripcionBase: p.nombre,
         precio_lista: Number(p.precio_sin_iva),
         iva: Number(p.iva_porcentaje),
         cantidad: 1,
@@ -144,20 +150,23 @@ function NuevoPresupuesto() {
       if (filas.length === 0) throw new Error("Agregá al menos un producto.");
       if (filas.some((f) => !(Number(f.cantidad) > 0)))
         throw new Error("Hay productos sin cantidad.");
-      const { data, error } = await supabase.rpc("crear_presupuesto", {
-        p_sucursal_id: effSucursal,
-        p_items: filas.map((f) => ({
-          producto_id: f.producto_id,
-          cantidad: Number(f.cantidad),
-          descuento_porcentaje: Number(f.descuento || 0),
-        })) as any,
-        p_cliente_id: clienteId || undefined,
-        p_nombre_cliente: nombreCliente.trim() || undefined,
-        p_validez_hasta: validez || undefined,
-        p_observaciones: observaciones.trim() || undefined,
+      const resultado = await crear({
+        data: {
+          p_sucursal_id: effSucursal,
+          p_items: filas.map((f) => ({
+            producto_id: f.producto_id,
+            cantidad: Number(f.cantidad),
+            descuento_porcentaje: Number(f.descuento || 0),
+            ...descripcionItemParaPayload(f.descripcion, f.descripcionBase),
+          })),
+          p_cliente_id: clienteId || undefined,
+          p_nombre_cliente: nombreCliente.trim() || undefined,
+          p_validez_hasta: validez || undefined,
+          p_observaciones: observaciones.trim() || undefined,
+        },
       });
-      if (error) throw new Error(error.message);
-      return (Array.isArray(data) ? data[0] : data) as any;
+      if (!resultado.ok) throw new Error(resultado.error.mensaje);
+      return resultado.valor;
     },
     onSuccess: (r: any) => {
       toast.success(`Presupuesto ${r?.numero ?? ""} guardado.`);
@@ -306,7 +315,7 @@ function NuevoPresupuesto() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Producto</TableHead>
+                <TableHead>Descripción</TableHead>
                 <TableHead className="text-right">Precio</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
@@ -323,6 +332,7 @@ function NuevoPresupuesto() {
                 </TableRow>
               ) : (
                 filas.map((f) => {
+                  const estadoDescripcion = estadoDescripcionItem(f.descripcion, f.descripcionBase);
                   const precio = +(f.precio_lista * (1 - Number(f.descuento || 0) / 100)).toFixed(
                     2,
                   );
@@ -332,7 +342,33 @@ function NuevoPresupuesto() {
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
-                      <TableCell>{f.nombre}</TableCell>
+                      <TableCell className="min-w-64">
+                        <Input
+                          aria-label={`Descripción de ${f.codigo}`}
+                          aria-describedby={`descripcion-ayuda-${f.producto_id}`}
+                          aria-invalid={!estadoDescripcion.valida}
+                          value={f.descripcion}
+                          onChange={(event) =>
+                            upd(f.producto_id, { descripcion: event.target.value })
+                          }
+                        />
+                        <p
+                          id={`descripcion-ayuda-${f.producto_id}`}
+                          role={estadoDescripcion.valida ? undefined : "alert"}
+                          className={`mt-1 text-xs ${estadoDescripcion.valida ? "text-muted-foreground" : "text-destructive"}`}
+                        >
+                          {estadoDescripcion.mensaje ??
+                            (!estadoDescripcion.personalizada &&
+                            estadoDescripcion.caracteres > 160 ? (
+                              "Descripción histórica sin cambios; se conservará completa"
+                            ) : (
+                              <>
+                                <span>Sólo cambia esta línea; no modifica el catálogo</span>
+                                <span> · {estadoDescripcion.caracteres}/160 caracteres</span>
+                              </>
+                            ))}
+                        </p>
+                      </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {fmtMoney(precioFinal)}
                         {Number(f.descuento || 0) > 0 && (

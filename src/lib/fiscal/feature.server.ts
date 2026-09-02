@@ -1,6 +1,7 @@
 export type FlagsFacturacion = {
   facturacion_receptor_v2_enabled: boolean;
   facturacion_legacy_writer_enabled: boolean;
+  nota_credito_periodo_enabled: boolean;
 };
 
 export type TipoEntradaFiscal = "LEGACY" | "V2";
@@ -14,7 +15,8 @@ function esFilaSettings(value: unknown): value is FilaSettings {
   return (
     row.id === true &&
     typeof row.facturacion_receptor_v2_enabled === "boolean" &&
-    typeof row.facturacion_legacy_writer_enabled === "boolean"
+    typeof row.facturacion_legacy_writer_enabled === "boolean" &&
+    typeof row.nota_credito_periodo_enabled === "boolean"
   );
 }
 
@@ -32,6 +34,7 @@ export async function leerFlagsFacturacion(
   return {
     facturacion_receptor_v2_enabled: rows[0].facturacion_receptor_v2_enabled,
     facturacion_legacy_writer_enabled: rows[0].facturacion_legacy_writer_enabled,
+    nota_credito_periodo_enabled: rows[0].nota_credito_periodo_enabled,
   };
 }
 
@@ -77,7 +80,9 @@ export async function cargarFlagsFacturacionDesdeSupabase(supabaseUsuario: {
   return leerFlagsFacturacion(async () => {
     const { data, error } = await supabaseUsuario
       .from("settings")
-      .select("id,facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled")
+      .select(
+        "id,facturacion_receptor_v2_enabled,facturacion_legacy_writer_enabled,nota_credito_periodo_enabled",
+      )
       .eq("id", true);
     if (error)
       throw new Error(

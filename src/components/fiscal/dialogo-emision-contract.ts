@@ -7,6 +7,10 @@ import {
 } from "@/lib/fiscal/confirmacion";
 import { validarFechaIsoCalendario } from "@/lib/fiscal/fecha";
 import { validarReceptorFiscalConfirmado } from "@/lib/fiscal/receptor";
+import {
+  CODIGOS_ERROR_FISCAL_USUARIO,
+  mensajeCodigoErrorFiscalUsuario,
+} from "@/lib/fiscal/error-usuario";
 import type { LetraSolicitada } from "./dialogo-emision-state";
 
 const uuid = z.string().uuid();
@@ -176,7 +180,13 @@ const resultadoEmisionFiscalSchema = z.discriminatedUnion("estado", [
       advertencias: z.array(textoSemantico),
     })
     .strict(),
-  z.object({ estado: z.literal("ERROR_CORREGIBLE"), mensaje: textoSemantico }).strict(),
+  z
+    .object({
+      estado: z.literal("ERROR_CORREGIBLE"),
+      codigo: z.enum(CODIGOS_ERROR_FISCAL_USUARIO),
+      mensaje: textoSemantico,
+    })
+    .strict(),
   z.object({ estado: z.literal("RECONCILIAR"), mensaje: textoSemantico }).strict(),
   z
     .object({ estado: z.literal("BLOQUEADO"), diferencias: z.array(textoSemantico).min(1) })
@@ -205,11 +215,32 @@ export type ResultadoEmisionFiscalUi = z.infer<typeof resultadoEmisionFiscalSche
 export type RespuestaReconfirmacion = z.infer<typeof reconfirmacionSchema>;
 export type RespuestaConfirmacionFiscal = z.infer<typeof respuestaConfirmacionSchema>;
 
+export function manejarErrorCorregibleDialogo(
+  resultado: Extract<ResultadoEmisionFiscalUi, { estado: "ERROR_CORREGIBLE" }>,
+  acciones: {
+    invalidarPreview(): void;
+    limpiarPreview(): void;
+    limpiarHuella(): void;
+    limpiarConfirmacionVentaAntigua(): void;
+    mostrarError(mensaje: string): void;
+  },
+): void {
+  acciones.invalidarPreview();
+  acciones.limpiarPreview();
+  acciones.limpiarHuella();
+  acciones.limpiarConfirmacionVentaAntigua();
+  acciones.mostrarError(resultado.mensaje);
+}
+
 type PreviewAutoritativa = z.infer<typeof previewAutoritativaSchema>;
 type PreviewProvisional = z.infer<typeof previewProvisionalSchema>;
 type ConfirmacionEstructural = z.infer<typeof confirmacionAutoritativaSchema>;
+export type OpcionesAsociacionNotaFiscal = { asociacionNota?: "PERIODO" };
 
-function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): void {
+function validarConfirmacionSemantica(
+  confirmacion: ConfirmacionEstructural,
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): void {
   validarFechaIsoCalendario(confirmacion.fechaFiscal, "La fecha fiscal");
   if (!cuitValido(confirmacion.emisorCuit)) {
     throw new Error("El CUIT emisor no es canónico o no tiene dígito verificador válido.");
@@ -217,10 +248,13 @@ function validarConfirmacionSemantica(confirmacion: ConfirmacionEstructural): vo
   validarReceptorFiscalConfirmado(confirmacion.receptor, Number(confirmacion.importe));
   const esNota = [2, 3, 7, 8, 12, 13].includes(confirmacion.cbteTipo);
   if (esNota) {
-    if (!confirmacion.cbteAsoc) {
+    if (!confirmacion.cbteAsoc && opciones.asociacionNota !== "PERIODO") {
       throw new Error("La nota fiscal no conserva el comprobante asociado.");
     }
-    if (confirmacion.letra !== confirmacion.cbteAsoc.letra) {
+    if (opciones.asociacionNota === "PERIODO" && confirmacion.cbteAsoc) {
+      throw new Error("La nota por período no puede conservar un comprobante puntual asociado.");
+    }
+    if (confirmacion.cbteAsoc && confirmacion.letra !== confirmacion.cbteAsoc.letra) {
       throw new Error("La nota fiscal no hereda la letra del comprobante asociado.");
     }
   } else {
@@ -334,7 +368,10 @@ function confirmacionProvisional(preview: PreviewProvisional): ConfirmacionFisca
   };
 }
 
-function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
+function validarPreviewSemantica(
+  preview: PreviewEmisionFiscal,
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): void {
   const validezEsperada = preview.afip_validez === "SIMULADA" ? "SIMULADA" : preview.modo;
   if (preview.afip_validez !== validezEsperada) {
     throw new Error("El ambiente y la validez fiscal de la preview son incoherentes.");
@@ -347,7 +384,7 @@ function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
   }
   if (preview.autoritativo) {
     const visible = confirmacionVisibleAutoritativa(preview);
-    validarConfirmacionSemantica(preview.confirmacion_autoritativa);
+    validarConfirmacionSemantica(preview.confirmacion_autoritativa, opciones);
     if (!confirmacionesFiscalesIguales(visible, preview.confirmacion_autoritativa)) {
       throw new Error("La preview visible difiere de su confirmación autoritativa.");
     }
@@ -364,7 +401,7 @@ function validarPreviewSemantica(preview: PreviewEmisionFiscal): void {
 
   const visible = confirmacionVisibleProvisional(preview);
   const confirmacion = confirmacionProvisional(preview);
-  validarConfirmacionSemantica(confirmacion);
+  validarConfirmacionSemantica(confirmacion, opciones);
   if (!confirmacionesFiscalesIguales(visible, confirmacion)) {
     throw new Error("La preview visible difiere de su confirmación provisional.");
   }
@@ -391,6 +428,7 @@ function validarLetraSolicitada(
 export function parsePreviewEmisionFiscal(
   value: unknown,
   letraSolicitada?: LetraSolicitada,
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): PreviewEmisionFiscal {
   const preview = parsear(
     previewEmisionFiscalSchema,
@@ -398,7 +436,7 @@ export function parsePreviewEmisionFiscal(
     "ARCA no devolvió una previsualización fiscal completa y válida.",
   );
   try {
-    validarPreviewSemantica(preview);
+    validarPreviewSemantica(preview, opciones);
   } catch {
     throw new Error("ARCA no devolvió una previsualización fiscal completa y válida.");
   }
@@ -409,6 +447,7 @@ export function parsePreviewEmisionFiscal(
 export function parsePreviewEmisionFiscalAutoritativa(
   value: unknown,
   letraSolicitada?: LetraSolicitada,
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): z.infer<typeof previewAutoritativaSchema> {
   const preview = parsear(
     previewAutoritativaSchema,
@@ -416,7 +455,7 @@ export function parsePreviewEmisionFiscalAutoritativa(
     "ARCA no devolvió una previsualización fiscal autoritativa completa y válida.",
   );
   try {
-    validarPreviewSemantica(preview);
+    validarPreviewSemantica(preview, opciones);
   } catch {
     throw new Error("ARCA no devolvió una previsualización fiscal autoritativa completa y válida.");
   }
@@ -424,16 +463,25 @@ export function parsePreviewEmisionFiscalAutoritativa(
   return preview;
 }
 
-export function parseRespuestaConfirmacionFiscal(value: unknown): RespuestaConfirmacionFiscal {
+export function parseRespuestaConfirmacionFiscal(
+  value: unknown,
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): RespuestaConfirmacionFiscal {
   const respuesta = parsear(
     respuestaConfirmacionSchema,
     value,
     "ARCA devolvió una respuesta fiscal desconocida o incompleta.",
   );
+  if (respuesta.estado === "ERROR_CORREGIBLE") {
+    return {
+      ...respuesta,
+      mensaje: mensajeCodigoErrorFiscalUsuario(respuesta.codigo),
+    };
+  }
   if (respuesta.estado !== "RECONFIRMACION_REQUERIDA") return respuesta;
   try {
-    validarPreviewSemantica(respuesta.preview_autoritativa);
-    validarConfirmacionSemantica(respuesta.confirmacion_autoritativa);
+    validarPreviewSemantica(respuesta.preview_autoritativa, opciones);
+    validarConfirmacionSemantica(respuesta.confirmacion_autoritativa, opciones);
     const validezEsperada =
       respuesta.afip_validez === "SIMULADA" ? "SIMULADA" : respuesta.confirmacion_autoritativa.modo;
     if (respuesta.afip_validez !== validezEsperada) {
@@ -468,32 +516,48 @@ export function reconfirmarPreviewEmisionFiscal(
   _anterior: PreviewEmisionFiscal,
   respuesta: RespuestaReconfirmacion,
   letraSolicitada?: LetraSolicitada,
+  opciones: OpcionesAsociacionNotaFiscal = {},
 ): PreviewEmisionFiscal {
-  return parsePreviewEmisionFiscalAutoritativa(respuesta.preview_autoritativa, letraSolicitada);
+  return parsePreviewEmisionFiscalAutoritativa(
+    respuesta.preview_autoritativa,
+    letraSolicitada,
+    opciones,
+  );
 }
 
 export function despacharRespuestaConfirmacionFiscal(
   value: unknown,
   handlers: {
     onReconfirmacion(result: RespuestaReconfirmacion): void;
+    onErrorCorregible(
+      result: Extract<ResultadoEmisionFiscalUi, { estado: "ERROR_CORREGIBLE" }>,
+    ): void;
     onCompletada(result: ResultadoEmisionFiscalUi): void;
   },
-): "RECONFIRMACION" | "COMPLETADA" {
-  const resultado = parseRespuestaConfirmacionFiscal(value);
+  opciones: OpcionesAsociacionNotaFiscal = {},
+): "RECONFIRMACION" | "ERROR_CORREGIBLE" | "COMPLETADA" {
+  const resultado = parseRespuestaConfirmacionFiscal(value, opciones);
   if (resultado.estado === "RECONFIRMACION_REQUERIDA") {
     handlers.onReconfirmacion(resultado);
     return "RECONFIRMACION";
+  }
+  if (resultado.estado === "ERROR_CORREGIBLE") {
+    handlers.onErrorCorregible(resultado);
+    return "ERROR_CORREGIBLE";
   }
   handlers.onCompletada(resultado);
   return "COMPLETADA";
 }
 
 export function parseResultadoConciliacionFiscal(value: unknown): ResultadoEmisionFiscalUi {
-  return parsear(
+  const resultado = parsear(
     resultadoEmisionFiscalSchema,
     value,
     "ARCA devolvió una conciliación fiscal desconocida o incompleta.",
   );
+  return resultado.estado === "ERROR_CORREGIBLE"
+    ? { ...resultado, mensaje: mensajeCodigoErrorFiscalUsuario(resultado.codigo) }
+    : resultado;
 }
 
 export function parseResultadoLiberacionFiscal(value: unknown): { estado: "LIBERADO" } {

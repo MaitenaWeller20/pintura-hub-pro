@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ReceptorFiscalForm, type ReceptorFormulario } from "./receptor-fiscal-form";
 import * as estadoDialogo from "./dialogo-emision-state";
+import type { ClaveConsultaPadron, EstadoConsultaPadronUi } from "./padron-receptor";
 
 const RECEPTOR_MANUAL: Extract<ReceptorFormulario, { origen: "MANUAL" }> = {
   origen: "MANUAL",
@@ -12,6 +13,12 @@ const RECEPTOR_MANUAL: Extract<ReceptorFormulario, { origen: "MANUAL" }> = {
   condicion_iva: "CONSUMIDOR_FINAL",
   domicilio: "",
   guardar_para_proximas: false,
+};
+
+const CLAVE_MANUAL: ClaveConsultaPadron = {
+  sucursalId: "20000000-0000-4000-8000-000000000001",
+  selector: { origen: "MANUAL" },
+  cuit: "30714199664",
 };
 
 type LetraSolicitada = "A" | "B";
@@ -42,6 +49,10 @@ function renderFormulario(
       string
     >
   > = {},
+  estadoConsultaPadron: EstadoConsultaPadronUi = {
+    estado: "INACTIVO",
+    clave: CLAVE_MANUAL,
+  },
 ): string {
   return renderToStaticMarkup(
     createElement(ReceptorFiscalForm as ReceptorFiscalFormConLetra, {
@@ -54,6 +65,8 @@ function renderFormulario(
         condicionIva: "CONSUMIDOR_FINAL",
       },
       confirmaDatosManuales: false,
+      estadoConsultaPadron,
+      claveConsultaPadron: CLAVE_MANUAL,
       errores,
       disabled: false,
       onChange: vi.fn(),
@@ -71,6 +84,78 @@ function select(html: string, id: string): string {
 }
 
 describe("receptor según la letra solicitada", () => {
+  it("muestra estado live, identidad oficial readonly y hora de verificación", () => {
+    const html = renderFormulario(
+      "A",
+      RECEPTOR_MANUAL,
+      {},
+      {
+        estado: "VERIFICADO",
+        clave: CLAVE_MANUAL,
+        receptor: {
+          cuit: "30714199664",
+          razonSocial: "IDENTIDAD OFICIAL SA",
+          domicilioFiscal: "Sarmiento 123, Cordoba",
+          estado: "ACTIVO",
+          tipoPersona: "JURIDICA",
+          condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+          verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+        },
+      },
+    );
+    const razon = html.match(/<input[^>]*id="receptor-razon-social"[^>]*>/)?.[0] ?? "";
+    const domicilio = html.match(/<input[^>]*id="receptor-domicilio"[^>]*>/)?.[0] ?? "";
+
+    expect(html).toContain("CUIT verificado por ARCA");
+    expect(html).toContain('dateTime="2026-08-26T12:34:56.000-03:00"');
+    expect(razon).toContain('value="IDENTIDAD OFICIAL SA"');
+    expect(razon).toContain('readOnly=""');
+    expect(domicilio).toContain('value="Sarmiento 123, Cordoba"');
+    expect(domicilio).toContain('readOnly=""');
+    expect(html).not.toContain('id="confirmar-datos-receptor"');
+  });
+
+  it("no presenta un domicilio manual viejo como oficial cuando ARCA no informó domicilio", () => {
+    const html = renderFormulario(
+      "A",
+      { ...RECEPTOR_MANUAL, domicilio: "DOMICILIO MANUAL HOSTIL" },
+      {},
+      {
+        estado: "VERIFICADO",
+        clave: CLAVE_MANUAL,
+        receptor: {
+          cuit: "30714199664",
+          razonSocial: "IDENTIDAD OFICIAL SA",
+          domicilioFiscal: null,
+          estado: "ACTIVO",
+          tipoPersona: "JURIDICA",
+          condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+          verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+        },
+      },
+    );
+    const domicilio = html.match(/<input[^>]*id="receptor-domicilio"[^>]*>/)?.[0] ?? "";
+
+    expect(html).not.toContain("DOMICILIO MANUAL HOSTIL");
+    expect(domicilio).toContain('value="Sin domicilio informado por ARCA"');
+    expect(domicilio).toContain('readOnly=""');
+  });
+
+  it("anuncia la consulta en curso de manera accesible", () => {
+    const html = renderFormulario(
+      "A",
+      RECEPTOR_MANUAL,
+      {},
+      {
+        estado: "CONSULTANDO",
+        clave: CLAVE_MANUAL,
+        token: 3,
+      },
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Consultando CUIT en ARCA…");
+  });
   it("explica cuándo usar el cliente comercial y cuándo otro receptor", () => {
     const html = renderFormulario("B");
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   cargarContextoArcaCongelado,
   crearDependenciasEmisionFiscalServer,
@@ -10,6 +10,7 @@ import {
   liberarClaimFiscalVerificado,
   observarUltimoNumeroFiscalLocal,
   previsualizarVentaFiscalExistente,
+  previsualizarBorradorFiscalProvisionalServer,
   proyectarReceptorFiscalConfirmado,
   type ConfirmacionFiscalPostBorrador,
 } from "./emision.server";
@@ -18,7 +19,9 @@ import {
   type DependenciasEmisionFiscal,
   type ReservaFiscalPersistida,
 } from "./emision";
-import { validarSnapshotFiscalV2 } from "./snapshot";
+import { validarSnapshotFiscalPersistido, validarSnapshotFiscalV2 } from "./snapshot";
+import { codigoErrorFiscalUsuario } from "./error-usuario";
+import type { ReceptorPadronArca } from "./padron-arca-shared";
 
 describe("liberación administrativa de claims", () => {
   function dependenciasLiberacion(
@@ -269,6 +272,7 @@ function preparacion(percepciones = "0.00") {
         id: "71000000-0000-4000-8000-000000000001",
         sucursalId: "71000000-0000-4000-8000-000000000301",
         clienteId: null,
+        cliente: null,
         fechaComercial: "2026-08-22T15:00:00.000Z",
         numeroComercial: "V-1",
         tipoComprobante: "VENTA",
@@ -285,6 +289,7 @@ function preparacion(percepciones = "0.00") {
         afipClaimToken: null,
         afipNumero: null,
         afipVersion: 0,
+        afipIntentos: 0,
         afipEmisorCuit: null,
         afipPuntoVenta: null,
         afipCbteTipo: null,
@@ -296,6 +301,15 @@ function preparacion(percepciones = "0.00") {
         afipSnapshot: null,
         afipSnapshotHash: null,
         afipCbteAsocId: null,
+        periodoAsocDesde: null,
+        periodoAsocHasta: null,
+        ncPeriodoModalidad: null,
+        motivoNotaCredito: null,
+        ncResolucion: null,
+        ncPeriodoPayloadHash: null,
+        ncEfectosAplicadosAt: null,
+        idempotencyKey: null,
+        idempotencyPayloadHash: null,
         cae: null,
         caeVencimiento: null,
       },
@@ -314,6 +328,7 @@ function preparacion(percepciones = "0.00") {
           subtotalTotal: "0.18",
         },
       ],
+      reintegrosIntencion: [],
     },
     contexto: {
       emisor: {
@@ -340,6 +355,7 @@ function preparacion(percepciones = "0.00") {
         emisor_id: "71000000-0000-4000-8000-000000000201",
       },
       facturaA: { modalidad: "ESTANDAR_CONFIRMADA", revalidar_at: "2027-01-01" },
+      padron: { probadoAt: null, validacionActiva: false },
     },
     direccionSucursal: "Domicilio sucursal",
     receptor: {
@@ -356,10 +372,564 @@ function preparacion(percepciones = "0.00") {
     },
     letra: "B",
     original: null,
+    asociacion: { tipo: "NINGUNA" },
   } as const;
 }
 
+function receptorPadron(cambios: Partial<ReceptorPadronArca> = {}): ReceptorPadronArca {
+  return {
+    cuit: "30714199664",
+    razonSocial: "RAZON SOCIAL AUTORITATIVA S.A.",
+    domicilioFiscal: "DOMICILIO FISCAL ARCA",
+    estado: "ACTIVO",
+    tipoPersona: "JURIDICA",
+    condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+    verificadoArcaAt: "2026-08-26T15:00:00.000Z",
+    ...cambios,
+  };
+}
+
+function preparacionNcPeriodo(condicionEmisor: "RESPONSABLE_INSCRIPTO" | "MONOTRIBUTO") {
+  const base = preparacion();
+  return {
+    ...base,
+    lectura: {
+      ...base.lectura,
+      venta: {
+        ...base.lectura.venta,
+        numeroComercial: "NC-P-SERVER-REAL",
+        tipoComprobante: "NOTA_CREDITO",
+        periodoAsocDesde: "2026-08-01",
+        periodoAsocHasta: "2026-08-15",
+        ncPeriodoModalidad: "BONIFICACION_AJUSTE",
+        motivoNotaCredito: "Bonificación server-real del período",
+        ncResolucion: "SALDO_FAVOR",
+        ncPeriodoPayloadHash: "c".repeat(64),
+      },
+    },
+    contexto: {
+      ...base.contexto,
+      emisor: { ...base.contexto.emisor, condicion_iva: condicionEmisor },
+      emisorImpreso: { ...base.contexto.emisorImpreso, condicion_iva: condicionEmisor },
+    },
+    asociacion: {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Bonificación server-real del período",
+      resolucion: "SALDO_FAVOR",
+    },
+  } as const;
+}
+
+function adminVentaConPadron(validacionActiva = true, base = preparacion()) {
+  const emisorId = base.contexto.sucursal.emisor_id;
+  return {
+    async rpc(nombre: string) {
+      if (nombre !== "leer_venta_fiscal_exacta") {
+        throw new Error(`RPC inesperada: ${nombre}.`);
+      }
+      return { data: base.lectura, error: null };
+    },
+    from(tabla: string) {
+      return {
+        select(columnas: string) {
+          const consulta = {
+            eq() {
+              return consulta;
+            },
+            async maybeSingle() {
+              if (tabla === "sucursales" && columnas === "direccion") {
+                return { data: { direccion: "Domicilio sucursal" }, error: null };
+              }
+              if (tabla === "sucursales") {
+                return {
+                  data: {
+                    id: base.contexto.sucursal.id,
+                    nombre: base.contexto.sucursal.nombre,
+                    telefono: base.contexto.sucursal.telefono,
+                    emisor_id: emisorId,
+                    emisor: {
+                      id: emisorId,
+                      razon_social: base.contexto.emisorImpreso.razon_social,
+                      nombre_fantasia: null,
+                      cuit: base.contexto.emisor.cuit,
+                      domicilio_fiscal: base.contexto.emisorImpreso.domicilio_fiscal,
+                      condicion_iva: base.contexto.emisor.condicion_iva,
+                      ingresos_brutos: null,
+                      inicio_actividades: base.contexto.emisorImpreso.inicio_actividades,
+                      factura_a_modalidad: base.contexto.facturaA.modalidad,
+                      factura_a_revalidar_at: base.contexto.facturaA.revalidar_at,
+                    },
+                  },
+                  error: null,
+                };
+              }
+              if (tabla === "puntos_venta") {
+                return {
+                  data: {
+                    sucursal_id: base.contexto.sucursal.id,
+                    emisor_id: emisorId,
+                    numero: base.contexto.pv.numero,
+                    modo: base.contexto.pv.modo,
+                    activo: true,
+                  },
+                  error: null,
+                };
+              }
+              if (tabla === "credenciales_arca") {
+                return {
+                  data: {
+                    emisor_id: emisorId,
+                    ambiente: base.contexto.pv.modo,
+                    arca_key_enc: "key",
+                    arca_cert_enc: "cert",
+                    habilitada: true,
+                    padron_probado_at: validacionActiva ? "2026-08-26T14:00:00.000Z" : null,
+                    padron_validacion_activa: validacionActiva,
+                  },
+                  error: null,
+                };
+              }
+              throw new Error(`Consulta inesperada a ${tabla}.`);
+            },
+          };
+          return consulta;
+        },
+      };
+    },
+  };
+}
+
+describe("padrón autoritativo en preview y preparación final", () => {
+  const selectorForjado = {
+    origen: "MANUAL" as const,
+    tipo_documento: "CUIT" as const,
+    numero_documento: "30-71419966-4",
+    razon_social: "NOMBRE FORJADO EN EL NAVEGADOR",
+    condicion_iva: "RESPONSABLE_INSCRIPTO" as const,
+    domicilio: "DOMICILIO FORJADO",
+    guardar_para_proximas: false,
+    confirma_datos_manuales: true as const,
+  };
+
+  it("consulta otra vez al preparar la emisión aunque ya exista una preview visual", async () => {
+    const admin = adminVentaConPadron();
+    const usuario = { from: () => Promise.reject(new Error("Consulta inesperada.")) };
+    const consultarPadron = vi.fn(async ({ cuit }: { cuit: string }) => receptorPadron({ cuit }));
+
+    const preview = await previsualizarVentaFiscalExistente({
+      ventaId: preparacion().lectura.venta.id,
+      receptor: selectorForjado,
+      letraSolicitada: "A",
+      admin: admin as never,
+      usuario: usuario as never,
+      consultarPadron,
+    } as never);
+    const deps = crearDependenciasEmisionFiscalServer({
+      admin: admin as never,
+      usuario: usuario as never,
+      ventaIdAutorizada: preparacion().lectura.venta.id,
+      validarModalidadFacturaA: false,
+      consultarPadron,
+    } as never);
+    const preparacionFinal = await deps.prepararEmision({
+      ventaId: preparacion().lectura.venta.id,
+      receptor: selectorForjado,
+      seleccionLetra: { origen: "EXPLICITA", letra: "A" },
+    });
+
+    expect(consultarPadron).toHaveBeenCalledTimes(2);
+    expect(consultarPadron).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ cuit: "30714199664", ambiente: "HOMOLOGACION" }),
+    );
+    expect(consultarPadron).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ cuit: "30714199664", ambiente: "HOMOLOGACION" }),
+    );
+    expect(preview.receptor.razonSocial).toBe("RAZON SOCIAL AUTORITATIVA S.A.");
+    expect(preparacionFinal.confirmacionAutoritativa.receptor.razonSocial).toBe(
+      "RAZON SOCIAL AUTORITATIVA S.A.",
+    );
+    expect(JSON.stringify([preview, preparacionFinal])).not.toContain(
+      "NOMBRE FORJADO EN EL NAVEGADOR",
+    );
+  });
+
+  it("el wrapper real de borrador inyecta el adaptador sin tocar la red", async () => {
+    const baseAdmin = adminVentaConPadron();
+    const admin = {
+      ...baseAdmin,
+      from(tabla: string) {
+        if (tabla === "productos") {
+          return {
+            select() {
+              return {
+                async in() {
+                  return {
+                    data: [
+                      {
+                        id: "71000000-0000-4000-8000-000000000501",
+                        activo: true,
+                        precio_sin_iva: 100,
+                        iva_porcentaje: 21,
+                      },
+                    ],
+                    error: null,
+                  };
+                },
+              };
+            },
+          };
+        }
+        return baseAdmin.from(tabla);
+      },
+    };
+    const usuario = {
+      from(tabla: string) {
+        if (tabla !== "clientes") throw new Error(`Consulta inesperada a ${tabla}.`);
+        return {
+          select() {
+            const consulta = {
+              eq() {
+                return consulta;
+              },
+              async maybeSingle() {
+                return {
+                  data: {
+                    id: "71000000-0000-4000-8000-000000000401",
+                    razon_social: "Cliente comercial",
+                    cuit_dni: null,
+                    tipo: "CONSUMIDOR_FINAL",
+                    direccion: null,
+                  },
+                  error: null,
+                };
+              },
+            };
+            return consulta;
+          },
+        };
+      },
+    };
+    const consultarPadron = vi.fn(async ({ cuit }: { cuit: string }) => receptorPadron({ cuit }));
+
+    const resultado = await previsualizarBorradorFiscalProvisionalServer({
+      borrador: {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        clienteId: "71000000-0000-4000-8000-000000000401",
+        fechaComercial: "2026-08-26T15:00:00.000Z",
+        items: [
+          {
+            producto_id: "71000000-0000-4000-8000-000000000501",
+            cantidad: 1,
+            descuento_porcentaje: 0,
+          },
+        ],
+        pagos: [],
+        percepciones: 0,
+        receptor: selectorForjado,
+        letraSolicitada: "A",
+      },
+      admin: admin as never,
+      usuario: usuario as never,
+      consultarPadron,
+    } as never);
+
+    expect(consultarPadron).toHaveBeenCalledOnce();
+    expect(resultado.receptor.razonSocial).toBe("RAZON SOCIAL AUTORITATIVA S.A.");
+  });
+});
+
+describe("pipeline server-real de NC por período", () => {
+  const ventaId = preparacion().lectura.venta.id;
+
+  it.each([
+    [
+      "A por RI confirmada",
+      "RESPONSABLE_INSCRIPTO",
+      "MONOTRIBUTO",
+      "RESPONSABLE_INSCRIPTO",
+      "A",
+      3,
+      1,
+    ],
+    ["B por CF no inscripto", "RESPONSABLE_INSCRIPTO", "CONSUMIDOR_FINAL", null, "B", 8, 5],
+    ["B por EXENTO no inscripto", "RESPONSABLE_INSCRIPTO", "EXENTO", null, "B", 8, 4],
+    [
+      "C por emisor monotributista",
+      "MONOTRIBUTO",
+      "RESPONSABLE_INSCRIPTO",
+      "MONOTRIBUTO",
+      "C",
+      13,
+      6,
+    ],
+  ] as const)(
+    "%s resuelve receptor, letra, snapshot v3 y payload con dependencias reales",
+    async (
+      _caso,
+      condicionEmisor,
+      condicionDeclarada,
+      condicionConfirmada,
+      letraEsperada,
+      cbteTipoEsperado,
+      condicionIdEsperada,
+    ) => {
+      const base = preparacionNcPeriodo(condicionEmisor);
+      const admin = adminVentaConPadron(true, base as never);
+      const selector = {
+        origen: "MANUAL" as const,
+        tipo_documento: "CUIT" as const,
+        numero_documento: "30-71419966-4",
+        razon_social: "Texto manual no autoritativo",
+        condicion_iva: condicionDeclarada,
+        domicilio: null,
+        guardar_para_proximas: false,
+        confirma_datos_manuales: true as const,
+      };
+      const reales = crearDependenciasEmisionFiscalServer({
+        admin: admin as never,
+        usuario: { from: () => Promise.reject(new Error("Consulta inesperada.")) } as never,
+        ventaIdAutorizada: ventaId,
+        validarModalidadFacturaA: false,
+        consultarPadron: async ({ cuit }: { cuit: string }) =>
+          receptorPadron({ cuit, condicionIvaConfirmada: condicionConfirmada }),
+      } as never);
+      const preflight = await reales.prepararEmision({
+        ventaId,
+        receptor: selector,
+        seleccionLetra: { origen: "AUTOMATICA_NC_PERIODO" },
+      });
+
+      let estado: Awaited<ReturnType<DependenciasEmisionFiscal["transicionar"]>> = {
+        venta_id: ventaId,
+        afip_estado: "SIN_FACTURAR",
+        afip_fase: null,
+        afip_claim_token: null,
+        afip_numero: null,
+        afip_version: 0,
+      };
+      const observado: {
+        reserva?: ReservaFiscalPersistida;
+        payloadArca?: Record<string, unknown>;
+      } = {};
+      const deps: DependenciasEmisionFiscal = {
+        ...reales,
+        generarClaimToken: () => "81000000-0000-4000-8000-000000000001",
+        ahoraIso: () => "2026-08-29T15:00:00.000Z",
+        consultarSecuencia: async () => ({
+          ultimoRemoto: 0,
+          ultimaFechaRemota: null,
+          ultimoLocal: 0,
+        }),
+        async transicionar({ accion, claimToken, payload }) {
+          const siguienteVersion = estado.afip_version + 1;
+          if (accion === "RECLAMAR") {
+            estado = {
+              ...estado,
+              afip_estado: "EMITIENDO",
+              afip_fase: "PREFLIGHT",
+              afip_claim_token: claimToken,
+              afip_version: siguienteVersion,
+            };
+          } else if (accion === "RESERVAR") {
+            const snapshot = validarSnapshotFiscalPersistido(payload.snapshot);
+            const numero = payload.numero_propuesto as number;
+            estado = {
+              ...estado,
+              afip_estado: "EMITIENDO",
+              afip_fase: "RESERVADO",
+              afip_claim_token: claimToken,
+              afip_numero: numero,
+              afip_version: siguienteVersion,
+            };
+            observado.reserva = {
+              ventaId,
+              claimToken: claimToken!,
+              afipVersion: siguienteVersion,
+              numero,
+              snapshot,
+              payloadHash: snapshot.hash,
+              emisorCuit: snapshot.identidad.emisorCuit,
+              puntoVenta: snapshot.identidad.puntoVenta,
+              cbteTipo: snapshot.identidad.cbteTipo,
+              modo: snapshot.identidad.modo,
+            };
+          } else if (accion === "REQUEST_INICIADO" || accion === "RESPUESTA_RECIBIDA") {
+            estado = {
+              ...estado,
+              afip_estado: "EMITIENDO",
+              afip_fase: accion,
+              afip_version: siguienteVersion,
+            };
+          } else if (accion === "APROBAR") {
+            estado = {
+              ...estado,
+              afip_estado: "APROBADO",
+              afip_fase: "PERSISTIDO",
+              afip_version: siguienteVersion,
+            };
+          } else {
+            throw new Error(`Transición inesperada: ${accion}.`);
+          }
+          return estado;
+        },
+        cargarEstadoPersistido: async () => estado,
+        cargarReservaPersistida: async () => {
+          if (!observado.reserva) throw new Error("La reserva mockeada todavía no existe.");
+          return observado.reserva;
+        },
+        async solicitarCae(_reserva, payload) {
+          observado.payloadArca = payload as Record<string, unknown>;
+          return {
+            resultado: "APROBADA",
+            cae: "75123456789012",
+            vencimiento: "2026-09-08",
+          };
+        },
+      };
+
+      const resultado = await ejecutarEmisionFiscal(
+        {
+          ventaId,
+          receptor: selector,
+          letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: preflight.huellaConfirmacion,
+        },
+        deps,
+      );
+      const { reserva, payloadArca } = observado;
+      if (!reserva || !payloadArca) throw new Error("El pipeline no alcanzó snapshot y adaptador.");
+
+      expect(resultado).toMatchObject({ estado: "APROBADO", numero: 1 });
+      expect(reserva.snapshot).toMatchObject({
+        version: 3,
+        letra: letraEsperada,
+        receptor: {
+          condicionIva: condicionConfirmada ?? condicionDeclarada,
+          condicionIvaReceptorId: condicionIdEsperada,
+          razonSocial: "RAZON SOCIAL AUTORITATIVA S.A.",
+        },
+        identidad: { cbteTipo: cbteTipoEsperado, numero: 1 },
+      });
+      expect(payloadArca).toMatchObject({
+        CbteTipo: cbteTipoEsperado,
+        CondicionIVAReceptorId: condicionIdEsperada,
+        ImpTotal: 0.18,
+        ImpNeto: letraEsperada === "C" ? 0.18 : 0.15,
+        ImpIVA: letraEsperada === "C" ? 0 : 0.03,
+      });
+      if (letraEsperada === "C") expect(payloadArca).not.toHaveProperty("Iva");
+      else expect(payloadArca).toHaveProperty("Iva");
+    },
+  );
+
+  it.each(["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"] as const)(
+    "rechaza %s declarada sin confirmación antes de transición o request",
+    async (condicionDeclarada) => {
+      const base = preparacionNcPeriodo("RESPONSABLE_INSCRIPTO");
+      const reales = crearDependenciasEmisionFiscalServer({
+        admin: adminVentaConPadron(true, base as never) as never,
+        usuario: { from: () => Promise.reject(new Error("Consulta inesperada.")) } as never,
+        ventaIdAutorizada: ventaId,
+        validarModalidadFacturaA: false,
+        consultarPadron: async ({ cuit }: { cuit: string }) =>
+          receptorPadron({ cuit, condicionIvaConfirmada: null }),
+      } as never);
+      let transiciones = 0;
+      let requests = 0;
+      let estado: Awaited<ReturnType<DependenciasEmisionFiscal["transicionar"]>> = {
+        venta_id: ventaId,
+        afip_estado: "SIN_FACTURAR",
+        afip_fase: null,
+        afip_claim_token: null,
+        afip_numero: null,
+        afip_version: 0,
+      };
+      const deps: DependenciasEmisionFiscal = {
+        ...reales,
+        generarClaimToken: () => "81000000-0000-4000-8000-000000000001",
+        async transicionar({ accion, claimToken }) {
+          transiciones += 1;
+          estado = {
+            ...estado,
+            afip_estado: accion === "ERROR_CORREGIBLE" ? "ERROR_CORREGIBLE" : "EMITIENDO",
+            afip_fase: accion === "RECLAMAR" ? "PREFLIGHT" : null,
+            afip_claim_token: accion === "RECLAMAR" ? claimToken : null,
+            afip_version: estado.afip_version + 1,
+          };
+          return estado;
+        },
+        cargarEstadoPersistido: async () => estado,
+        async consultarSecuencia() {
+          requests += 1;
+          throw new Error("La condición inválida alcanzó la secuencia ARCA.");
+        },
+        async solicitarCae() {
+          requests += 1;
+          throw new Error("La condición inválida alcanzó el request ARCA.");
+        },
+      };
+
+      await expect(
+        ejecutarEmisionFiscal(
+          {
+            ventaId,
+            receptor: {
+              origen: "MANUAL",
+              tipo_documento: "CUIT",
+              numero_documento: "30-71419966-4",
+              razon_social: "Texto manual no autoritativo",
+              condicion_iva: condicionDeclarada,
+              domicilio: null,
+              guardar_para_proximas: false,
+              confirma_datos_manuales: true,
+            },
+            letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+            confirmaVentaAntigua: false,
+            huellaConfirmacion: "no-debe-evaluarse",
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({ codigoFiscalUsuario: "CONDICION_FISCAL_INCOMPATIBLE" });
+      expect(transiciones).toBe(0);
+      expect(requests).toBe(0);
+    },
+  );
+});
+
 describe("Snapshot desde lectura PostgreSQL exacta", () => {
+  it("rechaza una NC con ambas asociaciones desde la lectura exacta", async () => {
+    const base = preparacion();
+    const venta = {
+      ...base.lectura.venta,
+      tipoComprobante: "NOTA_CREDITO",
+      afipCbteAsocId: "71000000-0000-4000-8000-000000000099",
+      periodoAsocDesde: "2026-07-01",
+      periodoAsocHasta: "2026-07-31",
+      ncPeriodoModalidad: "BONIFICACION_AJUSTE" as const,
+      motivoNotaCredito: "Ajuste comercial del período",
+      ncResolucion: "SALDO_FAVOR" as const,
+      ncPeriodoPayloadHash: "a".repeat(64),
+    };
+    const deps = crearDependenciasEmisionFiscalServer({
+      admin: {
+        async rpc() {
+          return { data: { ...base.lectura, venta }, error: null };
+        },
+      } as never,
+      usuario: {} as never,
+      ventaIdAutorizada: venta.id,
+    });
+    await expect(
+      deps.autorizarEmision({ ventaId: venta.id, confirmaVentaAntigua: false }),
+    ).rejects.toThrow(/asociación|asociaciones/i);
+  });
+
   it("conserva el redondeo fixed-point 0.02 × 7.25 = 0.15 sin iva.ts", () => {
     const snapshot = construirSnapshotFiscalDesdeLectura({
       preparacion: preparacion() as never,
@@ -388,6 +958,54 @@ describe("Snapshot desde lectura PostgreSQL exacta", () => {
     ]);
     expect(snapshot.importeTributos).toBe("0.02");
     expect(snapshot.otrosImpuestosNacionalesIndirectos).toBe("0.00");
+  });
+
+  it("construye v3 exclusivamente desde la asociación por período preparada", () => {
+    const base = preparacion();
+    const snapshot = construirSnapshotFiscalDesdeLectura({
+      preparacion: {
+        ...base,
+        lectura: {
+          ...base.lectura,
+          venta: {
+            ...base.lectura.venta,
+            tipoComprobante: "NOTA_CREDITO",
+            numeroComercial: "NC-P-1",
+            periodoAsocDesde: "2026-07-01",
+            periodoAsocHasta: "2026-07-31",
+            ncPeriodoModalidad: "BONIFICACION_AJUSTE",
+            motivoNotaCredito: "Bonificación comercial de julio",
+            ncResolucion: "SALDO_FAVOR",
+            ncPeriodoPayloadHash: "b".repeat(64),
+          },
+        },
+        asociacion: {
+          tipo: "PERIODO",
+          desde: "2026-07-01",
+          hasta: "2026-07-31",
+          modalidad: "BONIFICACION_AJUSTE",
+          motivo: "Bonificación comercial de julio",
+          resolucion: "SALDO_FAVOR",
+        },
+      } as never,
+      numero: 9,
+      fechaComprobante: "2026-08-22",
+    });
+
+    expect(snapshot).toMatchObject({
+      version: 3,
+      origen: "PERIODO_ASOCIADO",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+      periodoAsoc: { desde: "2026-07-01", hasta: "2026-07-31" },
+      notaCredito: {
+        modalidad: "BONIFICACION_AJUSTE",
+        motivo: "Bonificación comercial de julio",
+      },
+      letra: "B",
+      identidad: { cbteTipo: 8, numero: 9 },
+    });
+    expect(validarSnapshotFiscalPersistido(snapshot)).toEqual(snapshot);
   });
 });
 
@@ -516,6 +1134,8 @@ describe("preview autoritativa de una nota de crédito", () => {
                       arca_key_enc: "key",
                       arca_cert_enc: "cert",
                       habilitada: true,
+                      padron_probado_at: "2026-08-26T14:00:00.000Z",
+                      padron_validacion_activa: true,
                     },
                     error: null,
                   };
@@ -528,17 +1148,19 @@ describe("preview autoritativa de una nota de crédito", () => {
         };
       },
     };
+    const consultarPadron = vi.fn(async ({ cuit }: { cuit: string }) => receptorPadron({ cuit }));
 
     const dependencias = crearDependenciasEmisionFiscalServer({
       admin: admin as never,
       usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
       ventaIdAutorizada: notaId,
       validarModalidadFacturaA: false,
-    });
+      consultarPadron,
+    } as never);
     const preparacionRuntime = await dependencias.prepararEmision({
       ventaId: notaId,
       receptor: { origen: "COMPROBANTE_ORIGINAL" },
-      letraSolicitada: "A",
+      seleccionLetra: { origen: "EXPLICITA", letra: "A" },
     });
     expect(preparacionRuntime.confirmacionAutoritativa).toMatchObject({
       emisorRazonSocial: "EMISOR ORIGINAL CONGELADO",
@@ -553,7 +1175,8 @@ describe("preview autoritativa de una nota de crédito", () => {
       letraSolicitada: "A",
       admin: admin as never,
       usuario: { from: () => Promise.reject(new Error("consulta inesperada")) } as never,
-    });
+      consultarPadron,
+    } as never);
 
     expect(preview.emisor_razon_social).toBe("EMISOR ORIGINAL CONGELADO");
     expect(preview.sucursal_nombre).toBe("SUCURSAL ORIGINAL CONGELADA");
@@ -578,6 +1201,7 @@ describe("preview autoritativa de una nota de crédito", () => {
         sucursalNombre: "SUCURSAL ORIGINAL CONGELADA",
       }),
     );
+    expect(consultarPadron).not.toHaveBeenCalled();
   });
 });
 
@@ -662,7 +1286,19 @@ describe("credencial ARCA congelada después de reservar", () => {
         cargarEmisor,
         cargarCredencial,
       } as never),
-    ).rejects.toThrow(/emisor|CUIT|credencial|ambiente/i);
+    ).rejects.toThrow(/emisor|CUIT|credencial|certificado|ambiente/i);
+  });
+
+  it("clasifica una credencial ausente como configuración segura", async () => {
+    const promise = cargarContextoArcaCongelado(reservaCongelada(), {
+      cargarEmisor: async (id) => ({ id, cuit: "30714199664" }),
+      cargarCredencial: async () => null,
+    });
+
+    await expect(promise).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "CERTIFICADO_ARCA_INVALIDO",
+    );
+    await expect(promise).rejects.not.toThrow(/tabla|SQL|credenciales_arca/i);
   });
 
   it("rechaza una reserva cuya PV/tipo/número no coincide con el snapshot", async () => {
@@ -844,12 +1480,72 @@ describe("preview provisional de borrador", () => {
     origen: "MANUAL",
     tipo_documento: "CUIT",
     numero_documento: "30-71419966-4",
-    razon_social: "Receptor A",
+    razon_social: "NOMBRE FORJADO EN EL NAVEGADOR",
     condicion_iva: "RESPONSABLE_INSCRIPTO",
     domicilio: null,
     guardar_para_proximas: false,
     confirma_datos_manuales: true,
   };
+
+  it("consulta el padrón activo en el preview y no devuelve el nombre forjado", async () => {
+    const contexto = {
+      ...preparacion().contexto,
+      padron: { probadoAt: "2026-08-26T14:00:00.000Z", validacionActiva: true },
+    };
+    const consultarPadron = vi.fn(async (_contexto, cuit: string) => receptorPadron({ cuit }));
+
+    const resultado = await construirPreviewBorradorFiscalProvisional(
+      entradaConLetra("A", receptorA) as never,
+      {
+        ...dependenciasPreviewLetra(),
+        cargarContexto: async () => contexto as never,
+        consultarPadron,
+      },
+    );
+
+    expect(consultarPadron).toHaveBeenCalledOnce();
+    expect(consultarPadron).toHaveBeenCalledWith(contexto, "30714199664");
+    expect(resultado.receptor).toMatchObject({
+      razonSocial: "RAZON SOCIAL AUTORITATIVA S.A.",
+      domicilio: "DOMICILIO FISCAL ARCA",
+      origen: "ARCA",
+      verificadoArcaAt: "2026-08-26T15:00:00.000Z",
+    });
+    expect(JSON.stringify(resultado)).not.toContain("NOMBRE FORJADO EN EL NAVEGADOR");
+  });
+
+  it("preserva el preview actual sin consultar cuando la validación está inactiva", async () => {
+    const consultarPadron = vi.fn(async () => receptorPadron());
+
+    const resultado = await construirPreviewBorradorFiscalProvisional(
+      entradaConLetra("A", receptorA) as never,
+      { ...dependenciasPreviewLetra(), consultarPadron },
+    );
+
+    expect(consultarPadron).not.toHaveBeenCalled();
+    expect(resultado.receptor).toMatchObject({
+      razonSocial: "NOMBRE FORJADO EN EL NAVEGADOR",
+      origen: "MANUAL",
+      verificadoArcaAt: null,
+    });
+  });
+
+  it("falla con código cerrado si el padrón está activo pero el adaptador no está disponible", async () => {
+    const contexto = {
+      ...preparacion().contexto,
+      padron: { probadoAt: "2026-08-26T14:00:00.000Z", validacionActiva: true },
+    };
+
+    const error = await construirPreviewBorradorFiscalProvisional(
+      entradaConLetra("A", receptorA) as never,
+      {
+        ...dependenciasPreviewLetra(),
+        cargarContexto: async () => contexto as never,
+      },
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+  });
 
   it("deriva CbteTipo 1/6 desde la letra A/B solicitada", async () => {
     const [facturaA, facturaB] = await Promise.all([
@@ -1093,6 +1789,7 @@ describe("handshake post-creación del borrador", () => {
         simulado: false,
         validez: confirmacion.afipValidez,
         fechaComprobante: confirmacion.fechaFiscal,
+        asociacion: { tipo: "NINGUNA" as const },
         confirmacionAutoritativa: confirmacion,
         huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacion),
         reconfirmacion: {
@@ -1120,9 +1817,13 @@ describe("handshake post-creación del borrador", () => {
     const deps = {
       generarClaimToken: () => claimToken,
       ahoraIso: () => "2026-08-24T15:00:00.000Z",
-      autorizarEmision: async () => ({ tipoComprobante: "VENTA" as const, afipVersion: 0 }),
-      prepararEmision: async (input: { letraSolicitada?: "A" | "B" }) =>
-        preparar(input.letraSolicitada ?? "A"),
+      autorizarEmision: async () => ({
+        tipoComprobante: "VENTA" as const,
+        afipVersion: 0,
+        asociacion: { tipo: "NINGUNA" as const },
+      }),
+      prepararEmision: async (input: { seleccionLetra: { letra?: "A" | "B" } }) =>
+        preparar(input.seleccionLetra.letra ?? "A"),
       consultarSecuencia: async () => {
         consultoSecuencia = true;
         throw new Error("Una huella vieja avanzó más allá de PREFLIGHT.");

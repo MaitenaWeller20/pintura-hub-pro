@@ -2,8 +2,8 @@
 -- sus efectos comerciales, pero no se asocian ni se envían a ARCA. Las notas
 -- fiscales asociadas de v2 siguen naciendo exclusivamente por anular_venta.
 --
--- Se reemplaza el core owner-only completo para mantener una sola transacción
--- para idempotencia, stock, pagos, cuenta corriente y numeración.
+-- Se parte del último core vigente (20260830151434) para preservar también las
+-- descripciones personalizadas de cada renglón.
 
 CREATE OR REPLACE FUNCTION public._crear_venta_core_20260823(
   p_sucursal_id uuid,
@@ -56,6 +56,8 @@ DECLARE
   v_stock_ant      numeric(14,2);
   v_stock_nue      numeric(14,2);
   v_calc           jsonb := '[]'::jsonb;
+  v_descripcion     text;
+  v_fallback_descripcion text;
   v_saldo_actual   numeric(14,2);
   v_monto          numeric(14,2);
   v_forma          public.forma_pago;
@@ -287,6 +289,13 @@ BEGIN
       RAISE EXCEPTION 'Producto % inexistente o inactivo',it->>'producto_id';
     END IF;
 
+    v_fallback_descripcion := v_prod.nombre;
+    v_descripcion := public._normalizar_descripcion_item_20260830(
+      it->>'descripcion',
+      v_fallback_descripcion,
+      it ? 'descripcion'
+    );
+
     v_cant := COALESCE((it->>'cantidad')::numeric,0);
     v_desc := LEAST(GREATEST(COALESCE((it->>'descuento_porcentaje')::numeric,0),0),100);
     IF v_cant<0 THEN
@@ -306,7 +315,7 @@ BEGIN
     v_iva_total := v_iva_total+v_iva_item;
     v_calc := v_calc||pg_catalog.jsonb_build_object(
       'producto_id',v_prod.id,'codigo',v_prod.codigo,
-      'descripcion',v_prod.nombre,'cantidad',v_cant,'precio',v_precio,
+      'descripcion',v_descripcion,'cantidad',v_cant,'precio',v_precio,
       'precio_lista',v_precio_lista,'iva_porcentaje',v_prod.iva_porcentaje,
       'descuento',v_desc,'sub_item',v_sub_item,'iva_item',v_iva_item
     );

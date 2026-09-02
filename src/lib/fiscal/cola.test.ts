@@ -43,7 +43,7 @@ const safeRow = {
   afip_estado: "SIN_FACTURAR",
   afip_fase: null,
   afip_legacy_incompleto: false,
-  claim_vencido: false,
+  reclamo_vencido: false,
   venta_antigua: false,
   afip_validez: null,
   afip_punto_venta: null,
@@ -51,6 +51,12 @@ const safeRow = {
   afip_numero: null,
   cae: null,
   cae_vencimiento: null,
+  periodo_asoc_desde: null,
+  periodo_asoc_hasta: null,
+  nc_periodo_modalidad: null,
+  motivo_nota_credito: null,
+  nc_resolucion: null,
+  nc_efectos_aplicados_at: null,
   tab: "pendientes",
 };
 
@@ -79,6 +85,7 @@ const FLAGS_V2 = [
     id: true,
     facturacion_receptor_v2_enabled: true,
     facturacion_legacy_writer_enabled: false,
+    nota_credito_periodo_enabled: false,
   },
 ];
 
@@ -92,6 +99,7 @@ describe("rollout autoritativo de la cola fiscal", () => {
           id: true,
           facturacion_receptor_v2_enabled: "true",
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         },
       ],
     ],
@@ -102,6 +110,7 @@ describe("rollout autoritativo de la cola fiscal", () => {
           id: true,
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: true,
+          nota_credito_periodo_enabled: false,
         },
       ],
     ],
@@ -112,6 +121,7 @@ describe("rollout autoritativo de la cola fiscal", () => {
           id: true,
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: true,
+          nota_credito_periodo_enabled: false,
         },
       ],
     ],
@@ -122,6 +132,7 @@ describe("rollout autoritativo de la cola fiscal", () => {
           id: true,
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         },
       ],
     ],
@@ -201,6 +212,31 @@ describe("rollout autoritativo de la cola fiscal", () => {
 });
 
 describe("contrato de consulta de la cola fiscal", () => {
+  it("conserva una NC por período pendiente en la cola por afip_estado", async () => {
+    const filaPendientePeriodo = {
+      ...safeRow,
+      tipo_comprobante: "NOTA_CREDITO",
+      afip_estado: "SIN_FACTURAR",
+      periodo_asoc_desde: "2026-07-01",
+      periodo_asoc_hasta: "2026-07-31",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "Bonificación comercial del período",
+      nc_resolucion: "SALDO_FAVOR",
+    };
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([filaPendientePeriodo]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+
+    await expect(
+      servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).resolves.toMatchObject({ filas: [filaPendientePeriodo] });
+  });
+
   it.each([
     [{ tab: "pendientes", page: 1, pageSize: 101 }, /100/],
     [{ tab: "desconocida", page: 1, pageSize: 20 }, /tab/i],
@@ -313,6 +349,46 @@ describe("contrato de consulta de la cola fiscal", () => {
 
     await expect(
       servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).rejects.toThrow(/clave reservada.*afip_snapshot_hash/i);
+  });
+
+  it("expone la intención de período sin filtrar los reintegros planificados", async () => {
+    const filaPeriodo = {
+      ...safeRow,
+      tipo_comprobante: "NOTA_CREDITO",
+      periodo_asoc_desde: "2026-07-01",
+      periodo_asoc_hasta: "2026-07-31",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "Ajuste comercial del período",
+      nc_resolucion: "SALDO_FAVOR",
+    };
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([filaPeriodo]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+
+    await expect(
+      servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).resolves.toMatchObject({ filas: [filaPeriodo] });
+
+    const filtrandoReintegros = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([{ ...filaPeriodo, reintegrosIntencion: [] }]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+    await expect(
+      filtrandoReintegros.listarColaFiscal(UUID.user, {
+        tab: "pendientes",
+        page: 1,
+        pageSize: 20,
+      }),
     ).rejects.toThrow(/proyecci.n segura/i);
   });
 
@@ -336,6 +412,50 @@ describe("contrato de consulta de la cola fiscal", () => {
     await expect(
       servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
     ).rejects.toThrow(/proyecci.n segura/i);
+  });
+
+  it.each([
+    "snapshot",
+    "payload_hash",
+    "claim",
+    "idempotency",
+    "payload",
+    "raw",
+    "secret",
+    "service_role",
+  ])("rechaza recursivamente la clave reservada %s en la salida RPC", async (clave) => {
+    const respuesta = rpcPage();
+    respuesta[0].filtros_disponibles.emisores[0] = {
+      ...respuesta[0].filtros_disponibles.emisores[0],
+      metadatos: [{ [clave]: "no debe salir" }],
+    } as any;
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => respuesta,
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+
+    await expect(
+      servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).rejects.toThrow(new RegExp(`clave reservada.*${clave}`, "i"));
+  });
+
+  it("rechaza el hash técnico de período aunque reaparezca en una fila", async () => {
+    const servicio = crearServicioColaFiscal({
+      cargarFlags: () => leerFlagsFacturacion(async () => FLAGS_V2),
+      autorizar: async () => ({ userId: UUID.user, esAdmin: true, sucursalId: null }),
+      consultarCola: async () => rpcPage([{ ...safeRow, nc_periodo_payload_hash: "a".repeat(64) }]),
+      listarFavoritos: async () => [],
+      guardarFavoritoDesdeVenta: async () => null,
+      desactivarFavorito: async () => undefined,
+    });
+
+    await expect(
+      servicio.listarColaFiscal(UUID.user, { tab: "pendientes", page: 1, pageSize: 20 }),
+    ).rejects.toThrow(/clave reservada.*nc_periodo_payload_hash/i);
   });
 });
 

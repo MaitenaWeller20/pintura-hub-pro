@@ -23,7 +23,13 @@ type EntornoServidorE2E = {
   INVOICING_MOCK_SCENARIO?: string;
 };
 
-const ESCENARIOS = new Set(["OK", "RECHAZO_DEFINITIVO", "TIMEOUT_POST_REQUEST", "QR_ERROR"]);
+const ESCENARIOS = new Set([
+  "OK",
+  "CAIDA_PRE_REQUEST",
+  "RECHAZO_DEFINITIVO",
+  "TIMEOUT_POST_REQUEST",
+  "QR_ERROR",
+]);
 
 export function validarEntornoServidorE2E(entorno: EntornoServidorE2E): void {
   if (

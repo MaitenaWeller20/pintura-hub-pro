@@ -1,6 +1,7 @@
 import type { SelectorReceptorFiscal } from "./fiscal/receptor";
 import { CBTE_INFO } from "./fiscal/codigos";
 import { requiereConfirmacionVentaDemorada } from "./fiscal/fecha";
+import type { CaminoNotaCredito } from "./nota-credito-periodo-ui";
 
 export type ModoNotaNueva = {
   esNotaCreditoInterna: boolean;
@@ -11,27 +12,47 @@ export type ModoNotaNueva = {
 };
 
 /**
- * Separa el alta manual de la anulación fiscal. En v2 una NC creada desde este
- * formulario siempre es interna; la NC fiscal asociada sólo nace en
- * `anular_venta` desde el comprobante original.
+ * Separa los tres caminos de NC. En v2 una reversión asociada usa `anular_venta`,
+ * una NC por período tiene su editor fiscal propio y una NC interna conserva el
+ * escritor comercial sin entrar a la cola de ARCA.
  */
 export function modoNotaNueva({
   tipoComprobante,
   facturacionV2Habilitada,
   comprobanteAsociadoId,
+  caminoNotaCredito = "REVERSAR_FACTURA",
 }: {
   tipoComprobante: string;
   facturacionV2Habilitada: boolean;
   comprobanteAsociadoId: string | null;
+  caminoNotaCredito?: CaminoNotaCredito;
 }): ModoNotaNueva {
   if (tipoComprobante === "NOTA_CREDITO") {
     if (facturacionV2Habilitada) {
+      if (caminoNotaCredito === "INTERNA") {
+        return {
+          esNotaCreditoInterna: true,
+          muestraSelectorComprobante: false,
+          camposEditables: true,
+          permiteAsociacionFiscalManual: false,
+          redirigeAColaFiscal: false,
+        };
+      }
+      if (caminoNotaCredito === "ASOCIAR_PERIODO") {
+        return {
+          esNotaCreditoInterna: false,
+          muestraSelectorComprobante: false,
+          camposEditables: false,
+          permiteAsociacionFiscalManual: false,
+          redirigeAColaFiscal: false,
+        };
+      }
       return {
-        esNotaCreditoInterna: true,
-        muestraSelectorComprobante: false,
-        camposEditables: true,
-        permiteAsociacionFiscalManual: false,
-        redirigeAColaFiscal: false,
+        esNotaCreditoInterna: false,
+        muestraSelectorComprobante: true,
+        camposEditables: false,
+        permiteAsociacionFiscalManual: true,
+        redirigeAColaFiscal: true,
       };
     }
     return {
@@ -73,7 +94,7 @@ export type ReceptorFiscalCongeladoListado = {
 type VentaConReceptorCongelado = {
   numero_comprobante?: string | null;
   cliente?: { razon_social?: string | null; cuit_dni?: string | null } | null;
-  afip_snapshot?: unknown;
+  fiscalPresentacion?: { receptor?: ReceptorFiscalCongeladoListado | null } | null;
 };
 
 function esRegistro(value: unknown): value is Record<string, unknown> {
@@ -128,7 +149,7 @@ function normalizarIdentidad(value: string | null | undefined): string {
 }
 
 export function receptorFiscalDifiereDelComprador(venta: VentaConReceptorCongelado): boolean {
-  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  const receptor = venta.fiscalPresentacion?.receptor ?? null;
   if (!receptor) return false;
   const comprador = normalizarIdentidad(venta.cliente?.razon_social);
   const documentoComprador = normalizarIdentidad(venta.cliente?.cuit_dni);
@@ -140,7 +161,7 @@ export function receptorFiscalDifiereDelComprador(venta: VentaConReceptorCongela
 }
 
 function camposBusquedaVenta(venta: VentaConReceptorCongelado): string[] {
-  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  const receptor = venta.fiscalPresentacion?.receptor ?? null;
   return [
     venta.numero_comprobante,
     venta.cliente?.razon_social,
@@ -174,7 +195,7 @@ export function camposExportacionReceptorFiscal(venta: VentaConReceptorCongelado
   "Receptor fiscal": string;
   "Documento receptor fiscal": string;
 } {
-  const receptor = leerReceptorFiscalCongelado(venta.afip_snapshot);
+  const receptor = venta.fiscalPresentacion?.receptor ?? null;
   return {
     "Receptor fiscal": receptor?.razonSocial ?? "—",
     "Documento receptor fiscal": receptor?.numeroDocumento
@@ -414,9 +435,7 @@ export function resumirCierreVenta(input: {
 }
 
 export type ResultadoColaVenta =
-  | "venta_creada_factura_pendiente"
-  | "venta_creada_requiere_revision"
-  | "factura_aprobada";
+  "venta_creada_factura_pendiente" | "venta_creada_requiere_revision" | "factura_aprobada";
 
 export function resultadoColaDespuesDeEmision(
   estado:

@@ -1,11 +1,59 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+
+const accionPuntoVenta = vi.hoisted(() => ({
+  admin: null as unknown,
+}));
+
+vi.mock("@tanstack/react-start", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-start")>();
+  return {
+    ...actual,
+    createServerFn: () => {
+      let validar: ((value: unknown) => unknown) | undefined;
+      const builder = {
+        middleware() {
+          return builder;
+        },
+        inputValidator(validator: (value: unknown) => unknown) {
+          validar = validator;
+          return builder;
+        },
+        handler(...args: unknown[]) {
+          const handler = args.at(-1) as (input: {
+            data: unknown;
+            context: unknown;
+          }) => Promise<unknown>;
+          return (input: { data: unknown; context: unknown }) =>
+            handler({
+              data: validar ? validar(input.data) : input.data,
+              context: input.context,
+            });
+        },
+      };
+      return builder;
+    },
+  };
+});
+
+vi.mock("@/integrations/supabase/client.server", () => ({
+  supabaseAdmin: new Proxy(
+    {},
+    {
+      get(_target, property) {
+        return Reflect.get(accionPuntoVenta.admin as object, property);
+      },
+    },
+  ),
+}));
+
 import { ModalidadFacturaAEditor } from "@/components/app/emisores-config";
 import {
   actualizacionModalidadFacturaA,
   autorizarAntesDeClientePrivilegiado,
   confirmacionModalidadFacturaASchema,
+  ejecutarPruebaActivacionPadron,
   estadoFiscalPublicoMinimo,
   exigirEmisorActualizado,
   normalizarCredencialesPublicas,
@@ -15,6 +63,14 @@ import {
   QUERY_KEY_ESTADO_FISCAL_PUBLICO,
   validarHabilitacionCredencial,
 } from "./config";
+import {
+  codigoErrorFiscalUsuario,
+  crearErrorFiscalUsuario,
+  mensajeCodigoErrorFiscalUsuario,
+  mensajeErrorFiscal,
+} from "./error-usuario";
+import type { CodigoErrorPadronArca, ReceptorPadronArca } from "./padron-arca-shared";
+import { ejecutarPruebaPadronAdministrativa, guardarPuntoVenta } from "./config.functions";
 
 describe("estado público de credenciales ARCA", () => {
   it("si sólo existe producción igual devuelve ambos ambientes sin secretos", () => {
@@ -27,6 +83,10 @@ describe("estado público de credenciales ARCA", () => {
         cert_alias: "CasaForma",
         probada_at: null,
         habilitada: false,
+        padron_probado_at: "2026-08-26T12:00:00.000Z",
+        padron_validacion_activa: true,
+        padron_ultimo_error_codigo: null,
+        padron_ultimo_error_at: null,
       },
     ]);
 
@@ -39,6 +99,10 @@ describe("estado público de credenciales ARCA", () => {
         cert_alias: null,
         probada_at: null,
         habilitada: false,
+        padron_probado_at: null,
+        padron_validacion_activa: false,
+        padron_ultimo_error_codigo: null,
+        padron_ultimo_error_at: null,
       },
       {
         ambiente: "PRODUCCION",
@@ -48,10 +112,48 @@ describe("estado público de credenciales ARCA", () => {
         cert_alias: "CasaForma",
         probada_at: null,
         habilitada: false,
+        padron_probado_at: "2026-08-26T12:00:00.000Z",
+        padron_validacion_activa: true,
+        padron_ultimo_error_codigo: null,
+        padron_ultimo_error_at: null,
       },
     ]);
     expect(resultado.every((fila) => !("arca_key_enc" in fila))).toBe(true);
     expect(resultado.every((fila) => !("arca_cert_enc" in fila))).toBe(true);
+  });
+
+  it("normaliza un código de padrón desconocido sin exponer secretos ni texto libre", () => {
+    const [homologacion] = normalizarCredencialesPublicas([
+      {
+        ambiente: "HOMOLOGACION",
+        arca_key_enc: "key-no-publica",
+        arca_cert_enc: "cert-no-publico",
+        cert_vence_at: null,
+        cert_alias: null,
+        probada_at: null,
+        habilitada: false,
+        padron_probado_at: null,
+        padron_validacion_activa: false,
+        padron_ultimo_error_codigo: "valor-ajeno-al-catalogo",
+        padron_ultimo_error_at: "2026-08-26T12:05:00.000Z",
+      },
+    ]);
+
+    expect(homologacion).toEqual({
+      ambiente: "HOMOLOGACION",
+      tiene_clave: true,
+      tiene_certificado: true,
+      cert_vence_at: null,
+      cert_alias: null,
+      probada_at: null,
+      habilitada: false,
+      padron_probado_at: null,
+      padron_validacion_activa: false,
+      padron_ultimo_error_codigo: "PADRON_CONFIG_INVALIDA",
+      padron_ultimo_error_at: "2026-08-26T12:05:00.000Z",
+    });
+    expect(Object.keys(homologacion)).not.toContain("arca_key_enc");
+    expect(Object.keys(homologacion)).not.toContain("arca_cert_enc");
   });
 
   it("sólo habilita una credencial vigente que ya pasó la prueba real", () => {
@@ -108,6 +210,624 @@ describe("estado público de credenciales ARCA", () => {
 
   it("separa la caché operativa mínima de la configuración administrativa", () => {
     expect(QUERY_KEY_ESTADO_FISCAL_PUBLICO).not.toEqual(QUERY_KEY_CONFIG_FISCAL_ADMIN);
+  });
+});
+
+describe("prueba y activación del padrón ARCA", () => {
+  const receptorEmisor: ReceptorPadronArca = {
+    cuit: "30714199664",
+    razonSocial: "Quimex SA",
+    domicilioFiscal: "Córdoba 123",
+    estado: "ACTIVO",
+    tipoPersona: "JURIDICA",
+    condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+    verificadoArcaAt: "2026-08-26T12:00:00.000Z",
+  };
+
+  function base() {
+    return {
+      mockMode: false,
+      cuitEmisor: receptorEmisor.cuit,
+      consultar: vi.fn(async () => receptorEmisor),
+      registrarExito: vi.fn(async () => undefined),
+      registrarFallo: vi.fn(async () => undefined),
+      ahora: () => new Date("2026-08-26T12:00:00.000Z"),
+    };
+  }
+
+  it("rechaza el modo simulado antes de consultar o persistir una activación", async () => {
+    const deps = base();
+    const promesa = ejecutarPruebaActivacionPadron({ ...deps, mockMode: true });
+
+    await expect(promesa).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "PADRON_CONFIG_INVALIDA",
+    );
+    expect(deps.consultar).not.toHaveBeenCalled();
+    expect(deps.registrarExito).not.toHaveBeenCalled();
+    expect(deps.registrarFallo).not.toHaveBeenCalled();
+  });
+
+  it("rechaza una fecha inválida antes de consultar o ejecutar callbacks de persistencia", async () => {
+    const deps = base();
+    const promesa = ejecutarPruebaActivacionPadron({
+      ...deps,
+      ahora: () => new Date(Number.NaN),
+    });
+
+    await expect(promesa).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "PADRON_CONFIG_INVALIDA",
+    );
+    expect(deps.consultar).not.toHaveBeenCalled();
+    expect(deps.registrarExito).not.toHaveBeenCalled();
+    expect(deps.registrarFallo).not.toHaveBeenCalled();
+  });
+
+  it("activa una sola vez cuando ARCA devuelve el CUIT propio", async () => {
+    const deps = base();
+
+    await expect(ejecutarPruebaActivacionPadron(deps)).resolves.toEqual({
+      cuit: "30714199664",
+      razon_social: "Quimex SA",
+      probado_at: "2026-08-26T12:00:00.000Z",
+    });
+    expect(deps.consultar).toHaveBeenCalledWith("30714199664");
+    expect(deps.registrarExito).toHaveBeenCalledOnce();
+    expect(deps.registrarExito).toHaveBeenCalledWith("2026-08-26T12:00:00.000Z");
+    expect(deps.registrarFallo).not.toHaveBeenCalled();
+  });
+
+  it("registra RESPUESTA_PADRON_INVALIDA si ARCA devuelve otro CUIT", async () => {
+    const deps = base();
+    deps.consultar.mockResolvedValue({ ...receptorEmisor, cuit: "30621146315" });
+
+    await expect(ejecutarPruebaActivacionPadron(deps)).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "RESPUESTA_PADRON_INVALIDA",
+    );
+    expect(deps.registrarExito).not.toHaveBeenCalled();
+    expect(deps.registrarFallo).toHaveBeenCalledWith({
+      codigo: "RESPUESTA_PADRON_INVALIDA",
+      fecha: "2026-08-26T12:00:00.000Z",
+    });
+  });
+
+  it.each<CodigoErrorPadronArca>([
+    "PADRON_NO_AUTORIZADO",
+    "PADRON_CONFIG_INVALIDA",
+    "PADRON_ARCA_CAIDO",
+  ])("preserva el código cerrado %s al registrar el fallo", async (codigo) => {
+    const deps = base();
+    deps.consultar.mockRejectedValue(crearErrorFiscalUsuario(codigo));
+
+    const error = await ejecutarPruebaActivacionPadron(deps).catch((cause) => cause);
+
+    expect(deps.registrarFallo).toHaveBeenCalledWith({
+      codigo,
+      fecha: "2026-08-26T12:00:00.000Z",
+    });
+    expect(codigoErrorFiscalUsuario(error)).toBe(codigo);
+    expect(mensajeErrorFiscal(error, "CONFIGURACION")).toBe(
+      mensajeCodigoErrorFiscalUsuario(codigo),
+    );
+  });
+
+  it("convierte una excepción no marcada sin filtrar su texto", async () => {
+    const deps = base();
+    deps.consultar.mockRejectedValue(new Error("SOAP secreto certificado=ABC123"));
+
+    const error = await ejecutarPruebaActivacionPadron(deps).catch((cause) => cause);
+
+    expect(deps.registrarFallo).toHaveBeenCalledWith({
+      codigo: "PADRON_CONFIG_INVALIDA",
+      fecha: "2026-08-26T12:00:00.000Z",
+    });
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(mensajeErrorFiscal(error, "CONFIGURACION")).toBe(
+      mensajeCodigoErrorFiscalUsuario("PADRON_CONFIG_INVALIDA"),
+    );
+    expect(mensajeErrorFiscal(error, "CONFIGURACION")).not.toContain("ABC123");
+  });
+
+  it("encierra como configuración inválida incluso una excepción hostil", async () => {
+    const deps = base();
+    const hostil = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("getter secreto");
+        },
+      },
+    );
+    deps.consultar.mockRejectedValue(hostil);
+
+    const error = await ejecutarPruebaActivacionPadron(deps).catch((cause) => cause);
+
+    expect(deps.registrarFallo).toHaveBeenCalledWith({
+      codigo: "PADRON_CONFIG_INVALIDA",
+      fecha: "2026-08-26T12:00:00.000Z",
+    });
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+  });
+
+  it("convierte un fallo de persistencia en PADRON_CONFIG_INVALIDA", async () => {
+    const deps = base();
+    deps.consultar.mockRejectedValue(crearErrorFiscalUsuario("PADRON_ARCA_CAIDO"));
+    deps.registrarFallo.mockRejectedValue(new Error("SQL secreto"));
+
+    const error = await ejecutarPruebaActivacionPadron(deps).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(mensajeErrorFiscal(error, "CONFIGURACION")).toBe(
+      mensajeCodigoErrorFiscalUsuario("PADRON_CONFIG_INVALIDA"),
+    );
+    expect(mensajeErrorFiscal(error, "CONFIGURACION")).not.toContain("SQL secreto");
+  });
+});
+
+describe("acción administrativa de punto de venta", () => {
+  const sucursalId = "36d48748-42ff-4aa5-a7d7-d476572cb429";
+  const emisorId = "77f9f76c-c943-410f-bbcc-78e5f29282b4";
+  const entrada = {
+    sucursal_id: sucursalId,
+    numero: 5,
+    modo: "PRODUCCION" as const,
+    activo: true,
+  };
+
+  function usuarioAdmin() {
+    return {
+      rpc: vi.fn(async () => ({ data: true, error: null })),
+      from(tabla: string) {
+        if (tabla !== "profiles") throw new Error(`tabla de usuario inesperada: ${tabla}`);
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: async () => ({ data: { activo: true }, error: null }),
+        };
+        return builder;
+      },
+    };
+  }
+
+  function clientePrivilegiado(upsertError: Error | null = null) {
+    const operaciones: Array<{ tabla: string; tipo: string }> = [];
+    return {
+      operaciones,
+      cliente: {
+        from(tabla: string) {
+          const builder = {
+            select() {
+              operaciones.push({ tabla, tipo: "select" });
+              return builder;
+            },
+            eq() {
+              return builder;
+            },
+            maybeSingle: async () =>
+              tabla === "sucursales"
+                ? { data: { id: sucursalId, emisor_id: emisorId }, error: null }
+                : {
+                    data: { numero: 4, modo: "HOMOLOGACION", activo: true },
+                    error: null,
+                  },
+            upsert: async () => {
+              operaciones.push({ tabla, tipo: "upsert" });
+              return { data: null, error: upsertError };
+            },
+            update() {
+              operaciones.push({ tabla, tipo: "update" });
+              return builder;
+            },
+            in: async () => ({ data: null, error: null }),
+          };
+          return builder;
+        },
+      },
+    };
+  }
+
+  async function ejecutar(cliente: ReturnType<typeof clientePrivilegiado>["cliente"]) {
+    accionPuntoVenta.admin = cliente;
+    const accion = guardarPuntoVenta as unknown as (input: {
+      data: typeof entrada;
+      context: { supabase: ReturnType<typeof usuarioAdmin>; userId: string };
+    }) => Promise<unknown>;
+    return accion({
+      data: entrada,
+      context: { supabase: usuarioAdmin(), userId: "admin-id" },
+    });
+  }
+
+  it("delega el reset al upsert atómico sin una segunda escritura PostgREST", async () => {
+    const escenario = clientePrivilegiado();
+
+    await expect(ejecutar(escenario.cliente)).resolves.toEqual({ ok: true });
+
+    expect(escenario.operaciones).toEqual([
+      { tabla: "sucursales", tipo: "select" },
+      { tabla: "puntos_venta", tipo: "upsert" },
+    ]);
+  });
+
+  it("propaga el fallo del upsert que contiene toda la mutación atómica", async () => {
+    const escenario = clientePrivilegiado(new Error("RESET_ATOMICO_FALLO"));
+
+    await expect(ejecutar(escenario.cliente)).rejects.toThrow("RESET_ATOMICO_FALLO");
+    expect(escenario.operaciones).toEqual([
+      { tabla: "sucursales", tipo: "select" },
+      { tabla: "puntos_venta", tipo: "upsert" },
+    ]);
+  });
+});
+
+describe("acción administrativa de prueba del padrón", () => {
+  const entrada = {
+    emisor_id: "36d48748-42ff-4aa5-a7d7-d476572cb429",
+    ambiente: "PRODUCCION" as const,
+  };
+  const receptor: ReceptorPadronArca = {
+    cuit: "30714199664",
+    razonSocial: "Quimex SA",
+    domicilioFiscal: "Córdoba 123",
+    estado: "ACTIVO",
+    tipoPersona: "JURIDICA",
+    condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+    verificadoArcaAt: "2026-08-26T12:00:00.000Z",
+  };
+
+  type Operacion = {
+    tabla: string;
+    select: string | null;
+    filtros: Array<[string, unknown]>;
+    update: unknown;
+  };
+
+  function clienteAdmin(input?: {
+    consultaError?: Error;
+    actualizacionError?: Error;
+    cambiarCuitDuranteLecturaEmisor?: boolean;
+  }) {
+    const operaciones: Operacion[] = [];
+    const estado = {
+      cuitEmisor: receptor.cuit,
+      updatedAt: "2026-08-26T11:50:00.000Z",
+      padronProbadoAt: null as string | null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null as CodigoErrorPadronArca | null,
+      padronUltimoErrorAt: null as string | null,
+    };
+    const simularResetConcurrente = (nuevoCuit?: string) => {
+      if (nuevoCuit) estado.cuitEmisor = nuevoCuit;
+      estado.updatedAt = "2026-08-26T12:00:01.000Z";
+      estado.padronProbadoAt = null;
+      estado.padronValidacionActiva = false;
+      estado.padronUltimoErrorCodigo = null;
+      estado.padronUltimoErrorAt = null;
+    };
+    const cliente = {
+      from(tabla: string) {
+        const operacion: Operacion = { tabla, select: null, filtros: [], update: null };
+        operaciones.push(operacion);
+        const builder = {
+          select(columnas: string) {
+            operacion.select = columnas;
+            return builder;
+          },
+          eq(campo: string, valor: unknown) {
+            operacion.filtros.push([campo, valor]);
+            return builder;
+          },
+          update(campos: unknown) {
+            operacion.update = campos;
+            return builder;
+          },
+          async maybeSingle() {
+            if (operacion.update) {
+              if (input?.actualizacionError) {
+                return { data: null, error: input.actualizacionError };
+              }
+              const versionEsperada = operacion.filtros.find(
+                ([campo]) => campo === "updated_at",
+              )?.[1];
+              if (versionEsperada !== undefined && versionEsperada !== estado.updatedAt) {
+                return { data: null, error: null };
+              }
+              const campos = operacion.update as {
+                padron_probado_at: string | null;
+                padron_validacion_activa: boolean;
+                padron_ultimo_error_codigo: CodigoErrorPadronArca | null;
+                padron_ultimo_error_at: string | null;
+              };
+              estado.padronProbadoAt = campos.padron_probado_at;
+              estado.padronValidacionActiva = campos.padron_validacion_activa;
+              estado.padronUltimoErrorCodigo = campos.padron_ultimo_error_codigo;
+              estado.padronUltimoErrorAt = campos.padron_ultimo_error_at;
+              estado.updatedAt = "2026-08-26T12:00:02.000Z";
+              return {
+                data: { emisor_id: entrada.emisor_id, ambiente: entrada.ambiente },
+                error: null,
+              };
+            }
+            if (input?.consultaError) return { data: null, error: input.consultaError };
+            if (tabla === "emisores") {
+              const cuitLeido = estado.cuitEmisor;
+              if (input?.cambiarCuitDuranteLecturaEmisor) {
+                simularResetConcurrente("30621146315");
+              }
+              return { data: { id: entrada.emisor_id, cuit: cuitLeido }, error: null };
+            }
+            return {
+              data: {
+                emisor_id: entrada.emisor_id,
+                ambiente: entrada.ambiente,
+                arca_key_enc: "key-cifrada",
+                arca_cert_enc: "cert-cifrado",
+                updated_at: estado.updatedAt,
+              },
+              error: null,
+            };
+          },
+        };
+        return builder;
+      },
+    };
+    return { cliente, operaciones, estado, simularResetConcurrente };
+  }
+
+  function deps(
+    admin: ReturnType<typeof clienteAdmin>["cliente"],
+    consultarPadron = vi.fn(async () => receptor),
+  ) {
+    return {
+      mockMode: false,
+      ahora: () => new Date("2026-08-26T12:00:00.000Z"),
+      exigirAdmin: vi.fn(async () => undefined),
+      crearClientePrivilegiado: vi.fn(async () => admin),
+      consultarPadron,
+    };
+  }
+
+  it("autoriza con el cliente del usuario antes de siquiera crear service-role", async () => {
+    const { cliente } = clienteAdmin();
+    const userClient = { alcance: "usuario" };
+    const dependencias = deps(cliente);
+    dependencias.exigirAdmin.mockRejectedValue(new Error("Sólo admin"));
+
+    await expect(
+      ejecutarPruebaPadronAdministrativa(
+        { entrada, userClient: userClient as never, userId: "admin-id" },
+        dependencias as never,
+      ),
+    ).rejects.toThrow(/sólo admin/i);
+    expect(dependencias.exigirAdmin).toHaveBeenCalledWith(userClient, "admin-id");
+    expect(dependencias.crearClientePrivilegiado).not.toHaveBeenCalled();
+    expect(dependencias.consultarPadron).not.toHaveBeenCalled();
+  });
+
+  it("consulta el CUIT propio y activa sólo la credencial exacta del emisor y ambiente", async () => {
+    const { cliente, operaciones } = clienteAdmin();
+    const dependencias = deps(cliente);
+
+    await expect(
+      ejecutarPruebaPadronAdministrativa(
+        { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+        dependencias as never,
+      ),
+    ).resolves.toEqual({
+      cuit: receptor.cuit,
+      razon_social: receptor.razonSocial,
+      probado_at: "2026-08-26T12:00:00.000Z",
+    });
+
+    expect(dependencias.consultarPadron).toHaveBeenCalledWith({
+      cuit: receptor.cuit,
+      emisor: {
+        cuit: receptor.cuit,
+        arca_key_enc: "key-cifrada",
+        arca_cert_enc: "cert-cifrado",
+      },
+      ambiente: "PRODUCCION",
+      admin: cliente,
+    });
+    expect(operaciones).toEqual([
+      {
+        tabla: "credenciales_arca",
+        select: "emisor_id,ambiente,arca_key_enc,arca_cert_enc,updated_at",
+        filtros: [
+          ["emisor_id", entrada.emisor_id],
+          ["ambiente", "PRODUCCION"],
+        ],
+        update: null,
+      },
+      {
+        tabla: "emisores",
+        select: "id,cuit",
+        filtros: [["id", entrada.emisor_id]],
+        update: null,
+      },
+      {
+        tabla: "credenciales_arca",
+        select: "emisor_id,ambiente",
+        filtros: [
+          ["emisor_id", entrada.emisor_id],
+          ["ambiente", "PRODUCCION"],
+          ["updated_at", "2026-08-26T11:50:00.000Z"],
+        ],
+        update: {
+          padron_probado_at: "2026-08-26T12:00:00.000Z",
+          padron_validacion_activa: true,
+          padron_ultimo_error_codigo: null,
+          padron_ultimo_error_at: null,
+        },
+      },
+    ]);
+  });
+
+  it("desactiva la credencial exacta y guarda sólo código cerrado y fecha si ARCA falla", async () => {
+    const { cliente, operaciones } = clienteAdmin();
+    const consultarPadron = vi.fn(async (): Promise<ReceptorPadronArca> => {
+      throw crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    });
+    const dependencias = deps(cliente, consultarPadron);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_ARCA_CAIDO");
+    expect(operaciones.at(-1)).toEqual({
+      tabla: "credenciales_arca",
+      select: "emisor_id,ambiente",
+      filtros: [
+        ["emisor_id", entrada.emisor_id],
+        ["ambiente", "PRODUCCION"],
+        ["updated_at", "2026-08-26T11:50:00.000Z"],
+      ],
+      update: {
+        padron_probado_at: null,
+        padron_validacion_activa: false,
+        padron_ultimo_error_codigo: "PADRON_ARCA_CAIDO",
+        padron_ultimo_error_at: "2026-08-26T12:00:00.000Z",
+      },
+    });
+    expect(JSON.stringify(operaciones.at(-1))).not.toContain("FISCAL_USUARIO");
+  });
+
+  it("no consulta ni activa en mock mode", async () => {
+    const { cliente, operaciones } = clienteAdmin();
+    const dependencias = { ...deps(cliente), mockMode: true };
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(dependencias.consultarPadron).not.toHaveBeenCalled();
+    expect(operaciones.every((operacion) => operacion.update === null)).toBe(true);
+  });
+
+  it("reemplaza un error de persistencia por PADRON_CONFIG_INVALIDA", async () => {
+    const { cliente } = clienteAdmin({ actualizacionError: new Error("SQL secreto") });
+    const dependencias = deps(cliente);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(mensajeErrorFiscal(error, "CONFIGURACION")).toBe(
+      mensajeCodigoErrorFiscalUsuario("PADRON_CONFIG_INVALIDA"),
+    );
+  });
+
+  it("no reactiva ni sobrescribe una credencial que cambió durante una consulta exitosa", async () => {
+    const escenario = clienteAdmin();
+    const consultarPadron = vi.fn(async () => {
+      escenario.simularResetConcurrente();
+      return receptor;
+    });
+    const dependencias = deps(escenario.cliente, consultarPadron);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(escenario.estado).toEqual({
+      cuitEmisor: receptor.cuit,
+      updatedAt: "2026-08-26T12:00:01.000Z",
+      padronProbadoAt: null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null,
+      padronUltimoErrorAt: null,
+    });
+    expect(escenario.operaciones.filter((operacion) => operacion.update)).toHaveLength(2);
+  });
+
+  it("no mezcla un CUIT viejo con la versión nueva si el CUIT cambia entre las lecturas", async () => {
+    const escenario = clienteAdmin({ cambiarCuitDuranteLecturaEmisor: true });
+    const dependencias = deps(escenario.cliente);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(dependencias.consultarPadron).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cuit: receptor.cuit,
+        emisor: expect.objectContaining({
+          cuit: receptor.cuit,
+          arca_key_enc: "key-cifrada",
+          arca_cert_enc: "cert-cifrado",
+        }),
+      }),
+    );
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(escenario.estado).toEqual({
+      cuitEmisor: "30621146315",
+      updatedAt: "2026-08-26T12:00:01.000Z",
+      padronProbadoAt: null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null,
+      padronUltimoErrorAt: null,
+    });
+  });
+
+  it("no guarda el fallo viejo si cambió el CUIT y su trigger reseteó la credencial", async () => {
+    const escenario = clienteAdmin();
+    const consultarPadron = vi.fn(async (): Promise<ReceptorPadronArca> => {
+      escenario.simularResetConcurrente("30621146315");
+      throw crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    });
+    const dependencias = deps(escenario.cliente, consultarPadron);
+
+    const error = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      dependencias as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(escenario.estado).toEqual({
+      cuitEmisor: "30621146315",
+      updatedAt: "2026-08-26T12:00:01.000Z",
+      padronProbadoAt: null,
+      padronValidacionActiva: false,
+      padronUltimoErrorCodigo: null,
+      padronUltimoErrorAt: null,
+    });
+    expect(escenario.operaciones.filter((operacion) => operacion.update)).toHaveLength(1);
+  });
+
+  it("no filtra errores de creación del cliente privilegiado ni de lectura de configuración", async () => {
+    const { cliente: clienteLectura, operaciones } = clienteAdmin({
+      consultaError: new Error("PostgREST secreto tabla=credenciales"),
+    });
+    const errorCliente = new Error("SUPABASE_SERVICE_ROLE_KEY=secreto");
+    const depsCliente = deps(clienteLectura);
+    depsCliente.crearClientePrivilegiado.mockRejectedValue(errorCliente);
+
+    const falloCliente = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      depsCliente as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(falloCliente)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(mensajeErrorFiscal(falloCliente, "CONFIGURACION")).not.toContain("service_role");
+    expect(operaciones).toEqual([]);
+
+    const depsLectura = deps(clienteLectura);
+    const falloLectura = await ejecutarPruebaPadronAdministrativa(
+      { entrada, userClient: { alcance: "usuario" } as never, userId: "admin-id" },
+      depsLectura as never,
+    ).catch((cause) => cause);
+
+    expect(codigoErrorFiscalUsuario(falloLectura)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(mensajeErrorFiscal(falloLectura, "CONFIGURACION")).not.toContain("credenciales");
+    expect(depsLectura.consultarPadron).not.toHaveBeenCalled();
   });
 });
 

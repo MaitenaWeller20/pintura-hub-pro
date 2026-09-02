@@ -11,8 +11,10 @@ import {
   type TipoEntradaFiscal,
 } from "./fiscal/feature.server";
 import {
+  autorizarLecturaVenta,
   autorizarOperacionFiscal,
   evaluarPermisoFiscal,
+  type LecturasLecturaVenta,
   type LecturasPermisoFiscal,
 } from "./fiscal/permiso.server";
 import {
@@ -23,10 +25,31 @@ import {
 } from "./fiscal/impresion";
 import { exigirPngDataUrlFiscal, type QrAfipInput } from "./fiscal/qr";
 import {
+  codigoErrorFiscalUsuario,
   parsearEntradaFiscal,
+  crearErrorFiscalUsuario,
   referenciaErrorFiscalUsuario,
   type CodigoErrorFiscalUsuario,
 } from "./fiscal/error-usuario";
+import { cuitValido } from "./fiscal/codigos";
+import type { ContextoFiscal } from "./fiscal/contexto";
+import { receptorPadronArcaSchema, type ReceptorPadronArca } from "./fiscal/padron-arca-shared";
+import {
+  notaCreditoPeriodoInputSchema,
+  type NotaCreditoPeriodoInput,
+} from "./fiscal/nota-credito-periodo";
+import {
+  cargarEvidenciaAutorizacionFiscal,
+  type FilaEvidenciaAutorizacionSegura,
+  type FilaVentaEvidenciaAutorizacionSegura,
+} from "./fiscal/evidencia-auditoria";
+import { cargarAuditoriaNotaCreditoPeriodo } from "@/components/ventas/dialogo-detalle-venta-auditoria";
+import {
+  COLUMNAS_DETALLE_VENTA_FISCAL_SERVIDOR,
+  ejecutarDetalleVentaFiscalPresentacion,
+  type DetalleVentaFiscalServidor,
+} from "./fiscal/detalle-venta-presentacion";
+import { normalizarDescripcionItem } from "./item-descripcion";
 
 const receptorSchema = z.discriminatedUnion("origen", [
   z.object({ origen: z.literal("CLIENTE_COMERCIAL") }).strict(),
@@ -48,11 +71,15 @@ const receptorSchema = z.discriminatedUnion("origen", [
 
 const legacyInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
 const incidenteInputSchema = legacyInputSchema;
+const seleccionLetraV2Schema = z.union([
+  z.enum(["A", "B"]),
+  z.object({ origen: z.literal("AUTOMATICA_NC_PERIODO") }).strict(),
+]);
 const v2BaseInputSchema = z
   .object({
     venta_id: z.string().uuid(),
     receptor: receptorSchema,
-    letra_solicitada: z.enum(["A", "B"]),
+    letra_solicitada: seleccionLetraV2Schema,
     confirma_venta_antigua: z.boolean(),
   })
   .strict();
@@ -66,12 +93,63 @@ export const postBorradorInputSchema = v2BaseInputSchema
   })
   .strict();
 
+export type ResultadoConsultaCuitPadron =
+  | { estado: "INACTIVO" }
+  | { estado: "VERIFICADO"; receptor: ReceptorPadronArca };
+
+export const consultaCuitPadronInputSchema = z
+  .object({
+    sucursal_id: z.string().uuid(),
+    cuit: z.string(),
+  })
+  .strict();
+
+export async function ejecutarConsultaPadronOperador(
+  input: { sucursalId: string; cuit: string },
+  deps: {
+    autorizarSucursal(): Promise<void>;
+    cargarContexto(): Promise<ContextoFiscal>;
+    consultar(contexto: ContextoFiscal, cuit: string): Promise<ReceptorPadronArca>;
+  },
+): Promise<ResultadoConsultaCuitPadron> {
+  await deps.autorizarSucursal();
+  let contexto: ContextoFiscal;
+  try {
+    contexto = await deps.cargarContexto();
+  } catch {
+    throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+  }
+  if (!contexto.padron.validacionActiva) return { estado: "INACTIVO" };
+  try {
+    const receptor = receptorPadronArcaSchema.parse(await deps.consultar(contexto, input.cuit));
+    return { estado: "VERIFICADO", receptor };
+  } catch (cause) {
+    if (codigoErrorFiscalUsuario(cause)) throw cause;
+    throw crearErrorFiscalUsuario("RESPUESTA_PADRON_INVALIDA");
+  }
+}
+
 const itemBorradorSchema = z
   .object({
     producto_id: z.string().uuid(),
     cantidad: z.number().finite().nonnegative(),
     descuento_porcentaje: z.number().finite().min(0).max(100).default(0),
     precio_unitario_sin_iva: z.number().finite().nonnegative().optional(),
+    descripcion: z
+      .string()
+      .transform((value, context) => {
+        try {
+          return normalizarDescripcionItem(value);
+        } catch (cause) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              cause instanceof Error ? cause.message : "La descripción de la línea es inválida.",
+          });
+          return z.NEVER;
+        }
+      })
+      .optional(),
   })
   .strict();
 
@@ -97,7 +175,7 @@ export const previewInputSchema = z.discriminatedUnion("origen", [
       origen: z.literal("VENTA_EXISTENTE"),
       venta_id: z.string().uuid(),
       receptor: receptorSchema,
-      letra_solicitada: z.enum(["A", "B"]),
+      letra_solicitada: seleccionLetraV2Schema,
     })
     .strict(),
   z
@@ -144,15 +222,20 @@ function lecturasPermiso(supabase: SupabaseClient<Database>): LecturasPermisoFis
     async cargarPerfil(userId) {
       const { data, error } = await supabase
         .from("profiles")
-        .select("activo,puede_facturar,sucursal_id")
+        .select("activo,puede_facturar,puede_emitir_nc_periodo,sucursal_id")
         .eq("id", userId)
         .maybeSingle();
       if (error) throw new Error("No se pudo verificar el perfil fiscal.");
-      return data
+      const perfil = data as unknown as {
+        activo: boolean;
+        puede_facturar: boolean;
+        sucursal_id: string | null;
+      } | null;
+      return perfil
         ? {
-            activo: data.activo,
-            puedeFacturar: data.puede_facturar,
-            sucursalId: data.sucursal_id,
+            activo: perfil.activo,
+            puedeFacturar: perfil.puede_facturar,
+            sucursalId: perfil.sucursal_id,
           }
         : null;
     },
@@ -173,6 +256,57 @@ async function autorizarVenta(
     userId: context.userId,
     lecturas: lecturasPermiso(context.supabase),
   });
+}
+
+function lecturasLecturaVenta(supabase: SupabaseClient<Database>): LecturasLecturaVenta {
+  return {
+    async cargarVentaVisible(ventaId) {
+      const { data, error } = await supabase
+        .from("ventas")
+        .select("id,sucursal_id")
+        .eq("id", ventaId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return { id: data.id, sucursalId: data.sucursal_id };
+    },
+    async consultarEsAdmin(userId) {
+      const { data, error } = await supabase.rpc("is_admin", { _user_id: userId });
+      if (error || typeof data !== "boolean") {
+        throw new Error("No se pudo verificar el rol para leer la venta.");
+      }
+      return data;
+    },
+    async cargarPerfil(userId) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("activo,sucursal_id,secciones")
+        .eq("id", userId)
+        .maybeSingle();
+      if (error) throw new Error("No se pudo verificar el perfil para leer la venta.");
+      return data
+        ? { activo: data.activo, sucursalId: data.sucursal_id, secciones: data.secciones }
+        : null;
+    },
+  };
+}
+
+async function autorizarLecturaVentaContexto(context: ContextoFiscalFn, ventaId: string) {
+  return autorizarLecturaVenta({
+    userId: context.userId,
+    ventaId,
+    lecturas: lecturasLecturaVenta(context.supabase),
+  });
+}
+
+export async function ejecutarLecturaFiscalExactaAutorizada<T>(
+  ventaId: string,
+  deps: {
+    autorizar(ventaId: string): Promise<void>;
+    cargarExacta(ventaId: string): Promise<T>;
+  },
+): Promise<T> {
+  await deps.autorizar(ventaId);
+  return deps.cargarExacta(ventaId);
 }
 
 const mantenimiento = () => ({
@@ -259,6 +393,156 @@ export async function ejecutarFachadaEmisionPostBorrador<T>(
   return deps.ejecutar();
 }
 
+type ResultadoCreacionNotaCreditoPeriodo = {
+  id: string;
+  numero: string;
+  cta_cte: boolean;
+};
+
+type ArgumentosRpcNotaCreditoPeriodo = {
+  p_sucursal_id: string;
+  p_cliente_id: string;
+  p_modalidad: NotaCreditoPeriodoInput["modalidad"];
+  p_periodo_desde: string;
+  p_periodo_hasta: string;
+  p_motivo: string;
+  p_resolucion: NotaCreditoPeriodoInput["resolucion"];
+  p_items: NotaCreditoPeriodoInput["items"];
+  p_reintegros: NotaCreditoPeriodoInput["pagos"];
+  p_idempotency_key: string;
+};
+
+const resultadoCreacionNotaCreditoPeriodoSchema = z
+  .array(
+    z
+      .object({
+        venta_id: z.string().uuid(),
+        numero: z.string().min(1),
+        es_cta_cte: z.boolean(),
+      })
+      .strict(),
+  )
+  .length(1);
+
+/**
+ * Cerco testeable de la acción: contrato estricto -> flags frescos -> única RPC.
+ * La RPC JWT-bound conserva la autoridad final sobre sesión, perfil, sucursal y
+ * capacidad, incluso si la UI o esta lectura de flags quedan obsoletas.
+ */
+export async function ejecutarCreacionNotaCreditoPeriodoFiscal(
+  rawInput: unknown,
+  deps: {
+    cargarFlags(): Promise<FlagsFacturacion>;
+    crear(args: ArgumentosRpcNotaCreditoPeriodo): Promise<unknown>;
+  },
+): Promise<ResultadoCreacionNotaCreditoPeriodo> {
+  const input = parsearEntradaFiscal(notaCreditoPeriodoInputSchema, rawInput);
+  let flags: FlagsFacturacion;
+  try {
+    flags = await deps.cargarFlags();
+  } catch (error) {
+    if (codigoErrorFiscalUsuario(error)) throw error;
+    throw crearErrorFiscalUsuario("CONFIGURACION_INVALIDA");
+  }
+  if (
+    flags.facturacion_receptor_v2_enabled !== true ||
+    flags.facturacion_legacy_writer_enabled !== false ||
+    flags.nota_credito_periodo_enabled !== true
+  ) {
+    throw crearErrorFiscalUsuario("MANTENIMIENTO");
+  }
+
+  try {
+    const [row] = resultadoCreacionNotaCreditoPeriodoSchema.parse(
+      await deps.crear({
+        p_sucursal_id: input.sucursal_id,
+        p_cliente_id: input.cliente_id,
+        p_modalidad: input.modalidad,
+        p_periodo_desde: input.periodo_desde,
+        p_periodo_hasta: input.periodo_hasta,
+        p_motivo: input.motivo,
+        p_resolucion: input.resolucion,
+        p_items: input.items,
+        p_reintegros: input.pagos,
+        p_idempotency_key: input.idempotency_key,
+      }),
+    );
+    return { id: row.venta_id, numero: row.numero, cta_cte: row.es_cta_cte };
+  } catch (error) {
+    if (codigoErrorFiscalUsuario(error)) throw error;
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "42501") {
+      throw crearErrorFiscalUsuario("PERMISO_NC_PERIODO");
+    }
+    throw crearErrorFiscalUsuario("ERROR_CORREGIBLE");
+  }
+}
+
+export const crearNotaCreditoPeriodoFiscal = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(notaCreditoPeriodoInputSchema, value))
+  .handler(async ({ data, context }) =>
+    ejecutarCreacionNotaCreditoPeriodoFiscal(data, {
+      cargarFlags: () => cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
+      async crear(args) {
+        const { data: result, error } = await context.supabase.rpc(
+          "crear_nota_credito_periodo_fiscal" as never,
+          args as never,
+        );
+        if (error) throw error;
+        return result;
+      },
+    }),
+  );
+
+/** Consulta visual acotada: auth -> permiso user-bound -> service-role -> ARCA. */
+export const consultarCuitPadronArca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(consultaCuitPadronInputSchema, value, "REVISION"),
+  )
+  .handler(async ({ data, context }) => {
+    if (!cuitValido(data.cuit)) throw crearErrorFiscalUsuario("CUIT_INVALIDO");
+
+    return ejecutarConsultaPadronOperador(
+      { sucursalId: data.sucursal_id, cuit: data.cuit.replace(/\D/g, "") },
+      {
+        async autorizarSucursal() {
+          const lecturas = lecturasPermiso(context.supabase);
+          const [esAdmin, perfil] = await Promise.all([
+            lecturas.consultarEsAdmin(context.userId),
+            lecturas.cargarPerfil(context.userId),
+          ]);
+          evaluarPermisoFiscal({
+            venta: { id: "CONSULTA_PADRON", sucursalId: data.sucursal_id, diasAntiguedad: 0 },
+            perfil,
+            esAdmin,
+            accion: "PREVISUALIZAR",
+            confirmaVentaAntigua: false,
+          });
+        },
+        async cargarContexto() {
+          const [{ supabaseAdmin }, { cargarContextoFiscal }] = await Promise.all([
+            import("@/integrations/supabase/client.server"),
+            import("./fiscal/contexto.server"),
+          ]);
+          return cargarContextoFiscal(supabaseAdmin, data.sucursal_id);
+        },
+        async consultar(contextoFiscal, cuit) {
+          const [{ supabaseAdmin }, { consultarPadronArcaDesdeContexto }] = await Promise.all([
+            import("@/integrations/supabase/client.server"),
+            import("./fiscal/padron-arca.server"),
+          ]);
+          return consultarPadronArcaDesdeContexto({
+            cuit,
+            emisor: contextoFiscal.emisor,
+            ambiente: contextoFiscal.pv.modo,
+            admin: supabaseAdmin,
+          });
+        },
+      },
+    );
+  });
+
 /** Facade único: auth -> permiso user-bound -> flags -> import server-only -> writer exacto. */
 export const emitirComprobante = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -280,7 +564,7 @@ export const emitirComprobante = createServerFn({ method: "POST" })
 
     if (escritor === "LEGACY") {
       const { emitirComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
-      return emitirComprobanteLegacy({ data, context });
+      return emitirComprobanteLegacy({ data, context, ventaIdAutorizada: data.venta_id });
     }
 
     if (!("receptor" in data)) throw new Error("El escritor v2 exige receptor confirmado.");
@@ -562,8 +846,12 @@ export async function resolverDatosFiscalesComprobanteDesdeFila(
   return { ...preparado, qr };
 }
 
-/** Lectura user-bound y fail-closed para PDF fiscal. No participa del writer v2. */
-export const datosFiscalesComprobante = createServerFn({ method: "GET" })
+/**
+ * Proyección user-bound: el navegador recibe sólo origen y timestamp confirmados.
+ * El admin lee aliases escalares de evidencia_externa; nunca transporta el JSON
+ * completo del intento, payload/hash ni diagnósticos.
+ */
+export const evidenciaAutorizacionNotaCreditoPeriodo = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
   .handler(async ({ data, context }) => {
@@ -572,20 +860,260 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
       accion: "PREVISUALIZAR",
       confirmaVentaAntigua: false,
     });
-    const { data: venta, error } = await context.supabase
+    return cargarEvidenciaAutorizacionFiscal(data.venta_id, {
+      async cargarVenta({ ventaId, columnas }) {
+        const respuesta = await context.supabase
+          .from("ventas")
+          .select(columnas)
+          .eq("id", ventaId)
+          .maybeSingle();
+        return respuesta as unknown as {
+          data: FilaVentaEvidenciaAutorizacionSegura | null;
+          error: { message: string } | null;
+        };
+      },
+      async cargarIntento({ ventaId, columnas }) {
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        const respuesta = await supabaseAdmin
+          .from("emision_fiscal_intentos")
+          .select(columnas)
+          .eq("venta_id", ventaId)
+          .eq("snapshot_version", 3)
+          .eq("fase", "PERSISTIDO")
+          .in("resultado", ["APROBADO", "RECUPERADO_CAE"])
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        return respuesta as unknown as {
+          data: FilaEvidenciaAutorizacionSegura | null;
+          error: { message: string } | null;
+        };
+      },
+    });
+  });
+
+/** Proyección exacta del detalle fiscal después de revocar SELECT browser sobre ventas. */
+export const detalleVentaFiscalSegura = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
+  .handler(async ({ data, context }) =>
+    ejecutarDetalleVentaFiscalPresentacion(data.venta_id, {
+      async autorizar(ventaId) {
+        await autorizarLecturaVentaContexto(context, ventaId);
+      },
+      async cargarVenta(ventaId) {
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        const { data: venta, error } = await supabaseAdmin
+          .from("ventas")
+          .select(
+            `${COLUMNAS_DETALLE_VENTA_FISCAL_SERVIDOR}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)`,
+          )
+          .eq("id", ventaId)
+          .maybeSingle();
+        if (error || !venta) throw new Error("No se pudo cargar el detalle fiscal autorizado.");
+        return venta as unknown as DetalleVentaFiscalServidor;
+      },
+      async cargarAuditoriaPeriodo(venta) {
+        const esPeriodo = Boolean(
+          venta.tipo_comprobante === "NOTA_CREDITO" &&
+          venta.periodo_asoc_desde &&
+          venta.periodo_asoc_hasta &&
+          venta.nc_periodo_modalidad,
+        );
+        if (!esPeriodo) return null;
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        return cargarAuditoriaNotaCreditoPeriodo({
+          venta: {
+            id: venta.id,
+            estado: venta.estado,
+            afipEstado: venta.afip_estado,
+            afipFase: venta.afip_fase,
+            afipVersion: venta.afip_version,
+            afipIntentos: venta.afip_intentos,
+            afipSnapshot: venta.afip_snapshot,
+            afipSnapshotHash: venta.afip_snapshot_hash,
+            cae: venta.cae,
+            caeVencimiento: venta.cae_vencimiento,
+            afipEmisorCuit: venta.afip_emisor_cuit,
+            afipPuntoVenta: venta.afip_punto_venta,
+            afipCbteTipo: venta.afip_cbte_tipo,
+            afipNumero: venta.afip_numero,
+            afipModo: venta.afip_modo,
+            afipValidez: venta.afip_validez,
+            afipFechaComprobante: venta.afip_fecha_comprobante,
+            afipEmitidoAt: venta.afip_emitido_at,
+            afipImpTotal: venta.afip_imp_total,
+            afipSimulado: venta.afip_simulado,
+            afipCbteAsocId: venta.afip_cbte_asoc_id,
+            ncEfectosAplicadosAt: venta.nc_efectos_aplicados_at,
+            periodoDesde: venta.periodo_asoc_desde,
+            periodoHasta: venta.periodo_asoc_hasta,
+            modalidad: venta.nc_periodo_modalidad,
+            motivo: venta.motivo_nota_credito,
+          },
+          async cargarOperador() {
+            return supabaseAdmin
+              .from("profiles")
+              .select("nombre_completo,username")
+              .eq("id", venta.usuario_id)
+              .maybeSingle();
+          },
+          async cargarReintegros() {
+            return supabaseAdmin
+              .from("nota_credito_periodo_reintegros")
+              .select("id,forma_pago,monto,orden")
+              .eq("venta_id", venta.id)
+              .order("orden", { ascending: true });
+          },
+          async cargarStock() {
+            const respuesta = await supabaseAdmin
+              .from("stock_movimientos")
+              .select(
+                "id,producto_id,cantidad,cantidad_anterior,cantidad_nueva,created_at,producto:productos(codigo,nombre)",
+              )
+              .eq("referencia_id", venta.id)
+              .eq("tipo", "DEVOLUCION")
+              .order("created_at", { ascending: true });
+            return respuesta as unknown as Parameters<
+              typeof cargarAuditoriaNotaCreditoPeriodo
+            >[0]["cargarStock"] extends () => Promise<infer R>
+              ? R
+              : never;
+          },
+          async cargarCuentaCorriente() {
+            return supabaseAdmin
+              .from("cuenta_corriente_movimientos")
+              .select("id,tipo,estado,monto,descripcion,created_at")
+              .eq("venta_id", venta.id)
+              .order("created_at", { ascending: true });
+          },
+          async cargarEvidenciaAutorizacion() {
+            return cargarEvidenciaAutorizacionFiscal(venta.id, {
+              async cargarVenta({ ventaId, columnas }) {
+                const respuesta = await context.supabase
+                  .from("ventas")
+                  .select(columnas)
+                  .eq("id", ventaId)
+                  .maybeSingle();
+                return respuesta as unknown as {
+                  data: FilaVentaEvidenciaAutorizacionSegura | null;
+                  error: { message: string } | null;
+                };
+              },
+              async cargarIntento({ ventaId, columnas }) {
+                const respuesta = await supabaseAdmin
+                  .from("emision_fiscal_intentos")
+                  .select(columnas)
+                  .eq("venta_id", ventaId)
+                  .eq("snapshot_version", 3)
+                  .eq("fase", "PERSISTIDO")
+                  .in("resultado", ["APROBADO", "RECUPERADO_CAE"])
+                  .order("updated_at", { ascending: false })
+                  .limit(1)
+                  .maybeSingle();
+                return respuesta as unknown as {
+                  data: FilaEvidenciaAutorizacionSegura | null;
+                  error: { message: string } | null;
+                };
+              },
+            });
+          },
+        });
+      },
+    }),
+  );
+
+/**
+ * Fuentes auditadas exactas. La autorización se resuelve user-bound antes de
+ * abrir las lecturas admin; el navegador no obtiene acceso directo a las tablas.
+ */
+export const fuentesAuditoriaNotaCreditoPeriodo = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
+  .handler(async ({ data, context }) => {
+    await autorizarVenta(context, {
+      ventaId: data.venta_id,
+      accion: "PREVISUALIZAR",
+      confirmaVentaAntigua: false,
+    });
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: cabecera, error: cabeceraError } = await supabaseAdmin
       .from("ventas")
-      .select(
-        "id,afip_estado,afip_fase,afip_version,afip_legacy_incompleto,afip_snapshot,afip_snapshot_hash,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,cae,cae_vencimiento",
-      )
+      .select("usuario_id,nc_periodo_modalidad")
       .eq("id", data.venta_id)
       .maybeSingle();
-    if (error || !venta) {
-      throw new ErrorImpresionFiscal(
-        "COMPROBANTE_FISCAL_INCONSISTENTE",
-        "No se pudo leer el comprobante fiscal autorizado.",
-        error ? { cause: error } : undefined,
-      );
+    if (cabeceraError || !cabecera?.usuario_id || !cabecera.nc_periodo_modalidad) {
+      throw new Error("No se pudo reconstruir la auditoría de la nota de crédito.");
     }
+    const [operador, reintegros, stock, cuentaCorriente] = await Promise.all([
+      supabaseAdmin
+        .from("profiles")
+        .select("nombre_completo,username")
+        .eq("id", cabecera.usuario_id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("nota_credito_periodo_reintegros")
+        .select("id,forma_pago,monto,orden")
+        .eq("venta_id", data.venta_id)
+        .order("orden", { ascending: true }),
+      supabaseAdmin
+        .from("stock_movimientos")
+        .select(
+          "id,producto_id,cantidad,cantidad_anterior,cantidad_nueva,created_at,producto:productos(codigo,nombre)",
+        )
+        .eq("referencia_id", data.venta_id)
+        .eq("tipo", "DEVOLUCION")
+        .order("created_at", { ascending: true }),
+      supabaseAdmin
+        .from("cuenta_corriente_movimientos")
+        .select("id,tipo,estado,monto,descripcion,created_at")
+        .eq("venta_id", data.venta_id)
+        .order("created_at", { ascending: true }),
+    ]);
+    if (
+      operador.error ||
+      !operador.data ||
+      reintegros.error ||
+      stock.error ||
+      cuentaCorriente.error
+    ) {
+      throw new Error("No se pudo reconstruir la auditoría de la nota de crédito.");
+    }
+    return {
+      operador: operador.data,
+      reintegros: reintegros.data ?? [],
+      stock: stock.data ?? [],
+      cuentaCorriente: cuentaCorriente.data ?? [],
+    };
+  });
+
+/** Lectura user-bound y fail-closed para PDF fiscal. No participa del writer v2. */
+export const datosFiscalesComprobante = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) => parsearEntradaFiscal(legacyInputSchema, value))
+  .handler(async ({ data, context }) => {
+    const venta = await ejecutarLecturaFiscalExactaAutorizada(data.venta_id, {
+      autorizar: async (ventaId) => {
+        await autorizarLecturaVentaContexto(context, ventaId);
+      },
+      async cargarExacta(ventaId) {
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        const { data: fila, error } = await supabaseAdmin
+          .from("ventas")
+          .select(
+            "id,afip_estado,afip_fase,afip_version,afip_legacy_incompleto,afip_snapshot,afip_snapshot_hash,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_numero,afip_modo,afip_simulado,afip_validez,afip_fecha_comprobante,afip_imp_total,cae,cae_vencimiento",
+          )
+          .eq("id", ventaId)
+          .maybeSingle();
+        if (error || !fila) {
+          throw new ErrorImpresionFiscal(
+            "COMPROBANTE_FISCAL_INCONSISTENTE",
+            "No se pudo leer el comprobante fiscal autorizado.",
+          );
+        }
+        return fila;
+      },
+    });
 
     const [flags, { qrAfipDataUrlObligatorio }, { escenarioMockFiscalActual }] = await Promise.all([
       cargarFlagsFacturacionDesdeSupabase(context.supabase as never),
@@ -606,7 +1134,11 @@ export const datosFiscalesComprobante = createServerFn({ method: "GET" })
       generarQr,
       async cargarLegacy() {
         const { datosFiscalesComprobanteLegacy } = await import("./fiscal/emision-legacy.server");
-        return datosFiscalesComprobanteLegacy({ data, context });
+        return datosFiscalesComprobanteLegacy({
+          data,
+          context,
+          ventaIdAutorizada: data.venta_id,
+        });
       },
     });
   });

@@ -293,10 +293,14 @@ suite("motor fiscal contra Supabase local", () => {
     const dependencies: any = {
       generarClaimToken: () => crypto.randomUUID(),
       ahoraIso: () => "2026-08-22T16:00:00.000Z",
-      autorizarEmision: async () => ({ tipoComprobante: "VENTA", afipVersion: 0 }),
+      autorizarEmision: async () => ({
+        tipoComprobante: "VENTA",
+        afipVersion: 0,
+        asociacion: { tipo: "NINGUNA" },
+      }),
       autorizarConciliacion: async () => undefined,
-      prepararEmision: async (input: { letraSolicitada: "A" | "B" }) => {
-        if (input.letraSolicitada !== letraSolicitada) {
+      prepararEmision: async (input: { seleccionLetra: { letra?: "A" | "B" } }) => {
+        if (input.seleccionLetra.letra !== letraSolicitada) {
           throw new Error("El motor no propagó la letra solicitada al preflight.");
         }
         return {
@@ -309,6 +313,7 @@ suite("motor fiscal contra Supabase local", () => {
           simulado: true,
           validez: "SIMULADA",
           fechaComprobante: "2026-08-22",
+          asociacion: { tipo: "NINGUNA" },
           confirmacionAutoritativa,
           huellaConfirmacion,
         };
@@ -382,6 +387,69 @@ suite("motor fiscal contra Supabase local", () => {
       huellaConfirmacion,
     };
   }
+
+  it("la lectura exacta expone el contrato completo y reintegros separados", async () => {
+    const { data, error } = await supabase.rpc("leer_venta_fiscal_exacta", {
+      p_venta_id: ids.sales[0],
+    });
+    expect(error).toBeNull();
+    expect(Object.keys(data).sort()).toEqual(["items", "reintegrosIntencion", "venta"]);
+    expect(Object.keys(data.venta).sort()).toEqual(
+      [
+        "afipCbteAsocId",
+        "afipCbteTipo",
+        "afipClaimToken",
+        "afipEmisorCuit",
+        "afipEstado",
+        "afipFase",
+        "afipFechaComprobante",
+        "afipImpTotal",
+        "afipIntentos",
+        "afipModo",
+        "afipNumero",
+        "afipPuntoVenta",
+        "afipSimulado",
+        "afipSnapshot",
+        "afipSnapshotHash",
+        "afipValidez",
+        "afipVersion",
+        "cae",
+        "caeVencimiento",
+        "cliente",
+        "clienteId",
+        "condicionVenta",
+        "estado",
+        "fechaComercial",
+        "id",
+        "idempotencyKey",
+        "idempotencyPayloadHash",
+        "ivaTotal",
+        "motivoNotaCredito",
+        "ncEfectosAplicadosAt",
+        "ncPeriodoModalidad",
+        "ncPeriodoPayloadHash",
+        "ncResolucion",
+        "numeroComercial",
+        "percepciones",
+        "periodoAsocDesde",
+        "periodoAsocHasta",
+        "saldo",
+        "subtotalSinIva",
+        "sucursalId",
+        "tipoComprobante",
+        "total",
+        "totalPagado",
+      ].sort(),
+    );
+    expect(data).toMatchObject({
+      venta: {
+        cliente: { id: ids.client, razonSocial: "TASK 9 INTEGRATION" },
+        periodoAsocDesde: null,
+        ncPeriodoPayloadHash: null,
+      },
+      reintegrosIntencion: [],
+    });
+  });
 
   it("aprueba, conserva lo comercial y hace coincidir los payloads TS con las allowlists", async () => {
     const before = await sql`

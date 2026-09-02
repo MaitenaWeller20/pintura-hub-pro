@@ -1,4 +1,5 @@
 import { diasDesdeHoyAr } from "./fecha";
+import { puedeVer } from "../secciones";
 
 export type AccionFiscalAutorizada = "PREVISUALIZAR" | "EMITIR" | "CONCILIAR" | "LIBERAR";
 
@@ -18,6 +19,22 @@ export type ContextoColaFiscal = {
   sucursalId: string | null;
 };
 
+export type ContextoVentas = {
+  userId: string;
+  esAdmin: boolean;
+  sucursalId: string | null;
+};
+
+export type LecturasContextoVentas = {
+  consultarEsAdmin(userId: string): Promise<boolean>;
+  cargarPerfil(userId: string): Promise<{
+    activo: boolean;
+    puedeFacturar: boolean;
+    sucursalId: string | null;
+    secciones: string[] | null;
+  } | null>;
+};
+
 export type LecturasContextoColaFiscal = {
   consultarEsAdmin(userId: string): Promise<boolean>;
   cargarPerfil(
@@ -32,6 +49,16 @@ export type LecturasContextoColaFiscal = {
 export type LecturasAdministradorFiscal = {
   consultarEsAdmin(userId: string): Promise<boolean>;
   cargarPerfil(userId: string): Promise<{ activo: boolean } | null>;
+};
+
+export type LecturasLecturaVenta = {
+  cargarVentaVisible(ventaId: string): Promise<{ id: string; sucursalId: string } | null>;
+  consultarEsAdmin(userId: string): Promise<boolean>;
+  cargarPerfil(userId: string): Promise<{
+    activo: boolean;
+    sucursalId: string | null;
+    secciones: string[] | null;
+  } | null>;
 };
 
 function exigirPerfilActivo(
@@ -53,6 +80,65 @@ export async function autorizarAdministradorFiscal(input: {
   exigirPerfilActivo(perfil);
   if (!esAdmin) throw new Error("Sólo un administrador puede operar la configuración fiscal.");
   return { userId: input.userId, esAdmin: true };
+}
+
+/**
+ * Autoriza el detalle comercial con la misma fila que RLS deja ver al usuario.
+ * No exige capacidad fiscal: abrir Ventas y emitir/previsualizar son permisos
+ * independientes.
+ */
+export async function autorizarLecturaVenta(input: {
+  userId: string;
+  ventaId: string;
+  lecturas: LecturasLecturaVenta;
+}): Promise<PermisoFiscal> {
+  const venta = await input.lecturas.cargarVentaVisible(input.ventaId);
+  if (!venta) throw new Error("Venta no encontrada o no visible para el operador.");
+
+  const [esAdmin, perfil] = await Promise.all([
+    input.lecturas.consultarEsAdmin(input.userId),
+    input.lecturas.cargarPerfil(input.userId),
+  ]);
+  exigirPerfilActivo(perfil);
+  if (esAdmin) return { ventaId: venta.id, sucursalId: venta.sucursalId, esAdmin: true };
+
+  if (!perfil.sucursalId || perfil.sucursalId !== venta.sucursalId) {
+    throw new Error("La venta no pertenece a la sucursal activa del operador.");
+  }
+  if (!puedeVer("ventas", { isAdmin: false, secciones: perfil.secciones })) {
+    throw new Error("El perfil no tiene habilitada la sección Ventas.");
+  }
+  return { ventaId: venta.id, sucursalId: venta.sucursalId, esAdmin: false };
+}
+
+/**
+ * Autoriza listados comerciales antes de abrir service-role. El listado común
+ * exige la sección Ventas, pero no capacidad fiscal; la selección de un
+ * original para previsualizar/emitir una NC sí la exige.
+ */
+export async function autorizarContextoVentas(input: {
+  userId: string;
+  exigirCapacidadFiscal: boolean;
+  lecturas: LecturasContextoVentas;
+}): Promise<ContextoVentas> {
+  const [esAdmin, perfil] = await Promise.all([
+    input.lecturas.consultarEsAdmin(input.userId),
+    input.lecturas.cargarPerfil(input.userId),
+  ]);
+  exigirPerfilActivo(perfil);
+  if (esAdmin) return { userId: input.userId, esAdmin: true, sucursalId: null };
+  if (!perfil.sucursalId) throw new Error("El operador no tiene una sucursal activa.");
+  if (!puedeVer("ventas", { isAdmin: false, secciones: perfil.secciones })) {
+    throw new Error("El perfil no tiene habilitada la sección Ventas.");
+  }
+  if (input.exigirCapacidadFiscal && !perfil.puedeFacturar) {
+    throw new Error("El perfil no tiene la capacidad fiscal puede_facturar.");
+  }
+  return {
+    userId: input.userId,
+    esAdmin: false,
+    sucursalId: perfil.sucursalId,
+  };
 }
 
 /** Autoriza lecturas operativas sin abrir un cliente privilegiado. */

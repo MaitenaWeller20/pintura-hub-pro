@@ -1,8 +1,282 @@
 import { describe, expect, it } from "vitest";
 import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import { validarSelectorReceptorFiscal } from "./dialogo-emision-validacion";
+import type { ClaveConsultaPadron } from "./padron-receptor";
+
+const RECEPTOR_ARCA = {
+  cuit: "30714199664",
+  razonSocial: "IDENTIDAD OFICIAL SA",
+  domicilioFiscal: "Sarmiento 123, Cordoba",
+  estado: "ACTIVO" as const,
+  tipoPersona: "JURIDICA" as const,
+  condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO" as const,
+  verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+};
+const SUCURSAL_ID = "20000000-0000-4000-8000-000000000001";
+const CLAVE_COMERCIAL: ClaveConsultaPadron = {
+  sucursalId: SUCURSAL_ID,
+  selector: { origen: "CLIENTE_COMERCIAL" },
+  cuit: "30714199664",
+};
+const CLAVE_MANUAL: ClaveConsultaPadron = {
+  ...CLAVE_COMERCIAL,
+  selector: { origen: "MANUAL" },
+};
 
 describe("validación del receptor antes de consultar al servidor", () => {
+  it("para una NC por período confirma identidad sin exigir una letra manual", () => {
+    const favoritoRi = {
+      id: "10000000-0000-4000-8000-000000000009",
+      sucursal_id: SUCURSAL_ID,
+      cliente_comercial_id: null,
+      tipo_documento: "CUIT" as const,
+      numero_documento: "30714199664",
+      razon_social: "Receptor RI",
+      condicion_iva: "RESPONSABLE_INSCRIPTO" as const,
+      domicilio: null,
+    };
+    expect(
+      validarSelectorReceptorFiscal({
+        value: { origen: "CLIENTE_COMERCIAL" },
+        confirmaDatosManuales: false,
+        letraSolicitada: null,
+        clienteComercial: {
+          razonSocial: "Cuenta comercial",
+          documento: null,
+          condicionIva: "CONSUMIDOR_FINAL",
+        },
+      }),
+    ).toEqual({ ok: true, selector: { origen: "CLIENTE_COMERCIAL" } });
+    expect(
+      validarSelectorReceptorFiscal({
+        value: { origen: "FAVORITO", receptor_fiscal_id: favoritoRi.id },
+        confirmaDatosManuales: false,
+        letraSolicitada: null,
+        favoritos: [favoritoRi],
+      }),
+    ).toEqual({ ok: true, selector: { origen: "FAVORITO", receptor_fiscal_id: favoritoRi.id } });
+  });
+
+  it("bloquea un CUIT activo pendiente o fallido con el mensaje seguro", () => {
+    const base = {
+      value: { origen: "CLIENTE_COMERCIAL" as const },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A" as const,
+      clienteComercial: {
+        razonSocial: "Nombre comercial viejo",
+        documento: "30-71419966-4",
+        condicionIva: "CONSUMIDOR_FINAL" as const,
+      },
+    };
+
+    expect(
+      validarSelectorReceptorFiscal({ ...base, estadoConsultaPadron: { estado: "SIN_CUIT" } }),
+    ).toMatchObject({ ok: false, campo: "numero_documento" });
+    expect(
+      validarSelectorReceptorFiscal({
+        ...base,
+        claveConsultaPadron: CLAVE_COMERCIAL,
+        estadoConsultaPadron: {
+          estado: "ERROR",
+          clave: CLAVE_COMERCIAL,
+          mensaje: "ARCA está caído. Intentá nuevamente en otro momento.",
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      campo: "numero_documento",
+      mensaje: "ARCA está caído. Intentá nuevamente en otro momento.",
+    });
+  });
+
+  it("un verificado coincidente preserva el origen comercial sin confiar en nombre o IVA stale", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: { origen: "CLIENTE_COMERCIAL" },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      clienteComercial: {
+        razonSocial: "Nombre inventado",
+        documento: "30-71419966-4",
+        condicionIva: "CONSUMIDOR_FINAL",
+      },
+      claveConsultaPadron: CLAVE_COMERCIAL,
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: CLAVE_COMERCIAL,
+        receptor: RECEPTOR_ARCA,
+      },
+    });
+
+    expect(resultado).toEqual({ ok: true, selector: { origen: "CLIENTE_COMERCIAL" } });
+  });
+
+  it("no usa un verificado de otra sucursal aunque el CUIT coincida", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: { origen: "CLIENTE_COMERCIAL" },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      clienteComercial: {
+        razonSocial: "Nombre comercial",
+        documento: "30-71419966-4",
+        condicionIva: "CONSUMIDOR_FINAL",
+      },
+      claveConsultaPadron: { ...CLAVE_COMERCIAL, sucursalId: `${SUCURSAL_ID}-otra` },
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: CLAVE_COMERCIAL,
+        receptor: RECEPTOR_ARCA,
+      },
+    });
+
+    expect(resultado).toEqual({
+      ok: false,
+      campo: "numero_documento",
+      mensaje: "Esperá a que ARCA termine de verificar el CUIT.",
+    });
+  });
+
+  it("un favorito verificado no se pre-rechaza por su condición guardada vieja", () => {
+    const favorito = {
+      id: "10000000-0000-4000-8000-000000000001",
+      sucursal_id: "20000000-0000-4000-8000-000000000001",
+      cliente_comercial_id: null,
+      tipo_documento: "CUIT" as const,
+      numero_documento: "30-71419966-4",
+      razon_social: "Nombre viejo",
+      condicion_iva: "EXENTO" as const,
+      domicilio: null,
+    };
+    const resultado = validarSelectorReceptorFiscal({
+      value: { origen: "FAVORITO", receptor_fiscal_id: favorito.id },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      favoritos: [favorito],
+      claveConsultaPadron: {
+        ...CLAVE_COMERCIAL,
+        selector: { origen: "FAVORITO", receptorFiscalId: favorito.id },
+      },
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: {
+          ...CLAVE_COMERCIAL,
+          selector: { origen: "FAVORITO", receptorFiscalId: favorito.id },
+        },
+        receptor: RECEPTOR_ARCA,
+      },
+    });
+
+    expect(resultado).toEqual({
+      ok: true,
+      selector: { origen: "FAVORITO", receptor_fiscal_id: favorito.id },
+    });
+  });
+
+  it("arma el selector manual con identidad oficial, condición explícita y confirmación true", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30-71419966-4",
+        razon_social: "Cualquiera",
+        condicion_iva: "CONSUMIDOR_FINAL",
+        domicilio: "Viejo",
+        guardar_para_proximas: true,
+      },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      claveConsultaPadron: CLAVE_MANUAL,
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: CLAVE_MANUAL,
+        receptor: RECEPTOR_ARCA,
+      },
+    });
+
+    expect(resultado).toEqual({
+      ok: true,
+      selector: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30714199664",
+        razon_social: "IDENTIDAD OFICIAL SA",
+        condicion_iva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "Sarmiento 123, Cordoba",
+        guardar_para_proximas: true,
+        confirma_datos_manuales: true,
+      },
+    });
+  });
+
+  it("mantiene domicilio oficial nulo aunque el manual anterior contenga otro valor", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30-71419966-4",
+        razon_social: "Cualquiera",
+        condicion_iva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "DOMICILIO MANUAL HOSTIL",
+        guardar_para_proximas: false,
+      },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      claveConsultaPadron: CLAVE_MANUAL,
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: CLAVE_MANUAL,
+        receptor: { ...RECEPTOR_ARCA, domicilioFiscal: null },
+      },
+    });
+
+    expect(resultado).toMatchObject({ ok: true, selector: { domicilio: null } });
+  });
+
+  it("para B con condición ARCA ambigua retiene sólo una declaración B válida", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30-71419966-4",
+        razon_social: "Declarado",
+        condicion_iva: "EXENTO",
+        domicilio: "Declarado",
+        guardar_para_proximas: false,
+      },
+      confirmaDatosManuales: false,
+      letraSolicitada: "B",
+      claveConsultaPadron: CLAVE_MANUAL,
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: CLAVE_MANUAL,
+        receptor: { ...RECEPTOR_ARCA, condicionIvaConfirmada: null },
+      },
+    });
+
+    expect(resultado).toMatchObject({
+      ok: true,
+      selector: { condicion_iva: "EXENTO", confirma_datos_manuales: true },
+    });
+  });
+
+  it("INACTIVO conserva exactamente el flujo manual legacy", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: {
+        origen: "MANUAL",
+        tipo_documento: "CUIT",
+        numero_documento: "30-71419966-4",
+        razon_social: "Declarado",
+        condicion_iva: "RESPONSABLE_INSCRIPTO",
+        domicilio: "",
+        guardar_para_proximas: false,
+      },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      claveConsultaPadron: CLAVE_MANUAL,
+      estadoConsultaPadron: { estado: "INACTIVO", clave: CLAVE_MANUAL },
+    });
+
+    expect(resultado).toMatchObject({ ok: false, campo: "confirmacion" });
+  });
   it("impide usar el cliente comercial para factura A antes de consultar al servidor", () => {
     const resultado = validarSelectorReceptorFiscal({
       value: { origen: "CLIENTE_COMERCIAL" },

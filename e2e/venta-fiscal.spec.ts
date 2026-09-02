@@ -43,7 +43,7 @@ async function cargarVentaBasica(page: Page, pago = 40) {
 }
 
 function opcionLetra(dialogo: Locator, letra: LetraFactura) {
-  return dialogo.getByRole("radio", { name: new RegExp(`Factura ${letra}\\b`, "i") });
+  return dialogo.getByRole("radio", { name: new RegExp(`^Factura ${letra}\\b`, "i") });
 }
 
 async function elegirLetra(dialogo: Locator, letra: LetraFactura) {
@@ -166,8 +166,10 @@ test("una VENTA neutral aprobada genera una NC total y abre la cola con receptor
     });
   const despues = await leerReversionNotaCreditoFixture(fixture.ventaOriginalNotaCreditoId);
   expect(despues.original.venta_anulada_por).toBe(despues.nota?.id);
-  await fila.getByRole("button", { name: "Facturar" }).click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
+  // `?venta=` abre autoritativamente el comprobante recién creado; no hay que
+  // volver a clickear el botón de la fila que queda detrás del diálogo.
+  await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText(/conservan el receptor del comprobante original/i);
   await expect(dialogo.locator("fieldset")).toHaveAttribute("disabled", "");
   await expect(dialogo.getByRole("radio", { name: /Factura [AB]/i })).toHaveCount(0);
@@ -223,7 +225,8 @@ test("Registrar venta y facturar exige elegir letra y emite A con CUIT", async (
   });
   await revisar(dialogo, "A");
   await expect(dialogo).toContainText(/Factura A/i);
-  await expect(dialogo).toContainText("T13-E2E RECEPTOR DISTINTO");
+  await expect(dialogo).toContainText("T13-E2E RECEPTOR PADRÓN MOCK");
+  await expect(dialogo).not.toContainText("T13-E2E RECEPTOR DISTINTO");
   await expect(dialogo).toContainText(fixture.emisorRazonSocial);
   await expect(dialogo).toContainText(`CUIT ${fixture.emisorCuit}`);
   await expect(dialogo).toContainText(fixture.sucursalPrincipalNombre);
@@ -281,10 +284,17 @@ test("Escape devuelve foco y el diálogo queda contenido para teclado", async ({
   await expect(boton).toBeFocused();
 });
 
-test("un empleado sin capacidad no ve facturar y la URL directa queda guardada", async ({
+test("un empleado de Ventas sin capacidad abre su detalle pero no ámbito ajeno ni facturación", async ({
   page,
 }) => {
   await ingresar(page, "sinCapacidad");
+  await page.goto("/ventas");
+  const filaVisible = page.locator("tbody tr", { hasText: "V-T13-E2E-APROBADA" });
+  await expect(filaVisible).toBeVisible();
+  await expect(page.locator("tbody tr", { hasText: "V-T13-E2E-OTRA-1" })).toHaveCount(0);
+  await filaVisible.getByRole("button", { name: "Ver detalle de V-T13-E2E-APROBADA" }).click();
+  await expect(page.getByRole("dialog")).toContainText("Venta V-T13-E2E-APROBADA");
+
   await page.goto("/ventas/nueva");
   await expect(page.getByTestId("registrar-y-facturar")).toHaveCount(0);
   await expect(page.getByTestId("registrar-sin-facturar")).toBeVisible();
@@ -394,16 +404,16 @@ test("dos pestañas sobre la misma venta no repiten efectos comerciales", async 
       paginas.map((page) => page.goto(`/facturacion/cola?venta=${fixture.ventaPendienteId}`)),
     );
     const efectosAntes = await leerEfectosVentaFixture(fixture.ventaPendienteId);
-    await Promise.all(
-      paginas.map((page) => page.getByRole("button", { name: "Facturar" }).click()),
-    );
     const dialogos = paginas.map((page) => page.getByTestId("dialogo-emision-fiscal"));
+    await Promise.all(dialogos.map((dialogo) => expect(dialogo).toBeVisible()));
     await Promise.all(
       dialogos.map((dialogo) =>
         receptorManual(dialogo, {
           letra: "B",
-          tipo: "CUIT",
-          numero: "20345678906",
+          // La concurrencia prueba idempotencia, no padrón. Un CUIT haría que
+          // ARCA imponga RI y volvería incompatible la factura B elegida.
+          tipo: "DNI",
+          numero: "30123456",
           razon: "T13-E2E COMPRADOR PAGINACIÓN",
           iva: "CONSUMIDOR_FINAL",
         }),

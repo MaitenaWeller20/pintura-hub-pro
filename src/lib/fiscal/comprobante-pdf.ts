@@ -113,7 +113,8 @@ export function generarComprobantePdf(
   fiscal: DatosFiscalesPreparados | null,
 ): { doc: jsPDF; nombre: string } {
   const qrFiscal = fiscal?.cae ? exigirPngDataUrlFiscal(fiscal.qr) : null;
-  if (fiscal?.origen === "SNAPSHOT_V2") {
+  const esSnapshotFiscal = fiscal?.origen === "SNAPSHOT_V2" || fiscal?.origen === "SNAPSHOT_V3";
+  if (esSnapshotFiscal) {
     if (
       !fiscal.emisor ||
       typeof fiscal.emisor.razon_social !== "string" ||
@@ -134,12 +135,7 @@ export function generarComprobantePdf(
 
   // Las líneas congeladas al emitir ganan sobre las de la base: una reimpresión
   // tiene que salir idéntica al original entregado.
-  const lineas =
-    fiscal?.origen === "SNAPSHOT_V2"
-      ? fiscal.lineas
-      : fiscal?.lineas?.length
-        ? fiscal.lineas
-        : items;
+  const lineas = esSnapshotFiscal ? fiscal.lineas : fiscal?.lineas?.length ? fiscal.lineas : items;
 
   /**
    * Reserva `alto` mm antes de dibujar un bloque. autoTable pagina la tabla sola,
@@ -180,10 +176,9 @@ export function generarComprobantePdf(
   }
 
   const em = fiscal?.emisor ?? null;
-  const razonSocialEmisor =
-    fiscal?.origen === "SNAPSHOT_V2"
-      ? fiscal.emisor.razon_social!
-      : (em?.razon_social ?? venta.sucursal?.nombre ?? "Comprobante");
+  const razonSocialEmisor = esSnapshotFiscal
+    ? fiscal.emisor.razon_social!
+    : (em?.razon_social ?? venta.sucursal?.nombre ?? "Comprobante");
 
   // --- Emisor (columna izquierda)
   let y = yBox + 6;
@@ -252,7 +247,7 @@ export function generarComprobantePdf(
   yd += 4;
   // El número interno del mostrador, cuando difiere del fiscal: es por el que la
   // clienta busca el comprobante en el sistema.
-  if (fiscal && venta.numero_comprobante) {
+  if (fiscal && fiscal.origen !== "SNAPSHOT_V3" && venta.numero_comprobante) {
     doc.setTextColor(120);
     doc.text(`Interno: ${venta.numero_comprobante}`, X_DERECHA, yd);
     doc.setTextColor(0);
@@ -288,6 +283,32 @@ export function generarComprobantePdf(
   yr += 4.5;
   if (rec?.domicilio) doc.text(`Domicilio: ${rec.domicilio}`, MARGEN + 3, yr, { maxWidth: 170 });
 
+  // ------------------------------------------- asociación de NC por período
+  let inicioItems = yRec + 25;
+  if (fiscal?.origen === "SNAPSHOT_V3") {
+    const metadata = fiscal.nota_credito_periodo;
+    const modalidad =
+      metadata.modalidad === "DEVOLUCION_PRODUCTOS"
+        ? "Devolución de productos"
+        : "Bonificación / ajuste";
+    const motivoPartido = doc.splitTextToSize(`Motivo: ${metadata.motivo}`, DERECHA - MARGEN - 6);
+    const altoMetadata = 14 + motivoPartido.length * 3.8;
+    doc.setDrawColor(170);
+    doc.setFillColor(248, 248, 248);
+    doc.roundedRect(MARGEN, inicioItems, DERECHA - MARGEN, altoMetadata, 1.5, 1.5, "FD");
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.text(
+      `Período asociado: ${fmtFechaSola(metadata.periodo_desde)} a ${fmtFechaSola(metadata.periodo_hasta)}`,
+      MARGEN + 3,
+      inicioItems + 5,
+    );
+    doc.setFont("helvetica", "normal");
+    doc.text(`Modalidad: ${modalidad}`, MARGEN + 3, inicioItems + 9.5);
+    doc.text(motivoPartido, MARGEN + 3, inicioItems + 14);
+    inicioItems += altoMetadata + 5;
+  }
+
   // --------------------------------------------------------------------- ítems
   // En clase C no se discrimina IVA (AFIP lo prohíbe), así que el papel tampoco
   // muestra ni la columna ni el desglose: sólo importes finales.
@@ -296,7 +317,7 @@ export function generarComprobantePdf(
     : ["Código", "Descripción", "Cant.", "P. unit. s/IVA", "Desc.", "IVA", "Importe"];
 
   autoTable(doc, {
-    startY: yRec + 25,
+    startY: inicioItems,
     head: [cabecera],
     body: lineas.map((i) => {
       const base = [
@@ -391,7 +412,7 @@ export function generarComprobantePdf(
     requiereLeyendaTransparencia(fiscal.cbte_tipo, fiscal.receptor?.condicion_iva ?? null)
   ) {
     if (
-      fiscal.origen === "SNAPSHOT_V2" &&
+      (fiscal.origen === "SNAPSHOT_V2" || fiscal.origen === "SNAPSHOT_V3") &&
       (fiscal.iva_contenido == null || fiscal.otros_impuestos_nacionales_indirectos == null)
     ) {
       throw new ErrorImpresionFiscal(

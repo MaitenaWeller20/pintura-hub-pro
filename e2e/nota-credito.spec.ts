@@ -56,10 +56,11 @@ async function elegirTipo(page: import("@playwright/test").Page, etiqueta: RegEx
   await page.getByRole("option", { name: etiqueta }).click();
 }
 
-test("en v2 la nota de crédito manual ya nace interna y no pide factura", async ({ page }) => {
+test("en v2 se puede elegir una nota interna y no pide factura", async ({ page }) => {
   await page.goto("/ventas/nueva");
   await elegirTipo(page, /nota de cr[eé]dito/i);
 
+  await page.getByText("Nota interna — sin informar a ARCA", { exact: true }).click();
   await expect(page.getByTestId("aviso-nota-credito-interna")).toBeVisible();
   await expect(page.getByText(/factura que rectifica/i)).toHaveCount(0);
   await expect(page.locator("body")).toContainText(/sin factura asociada/i);
@@ -70,6 +71,7 @@ test("el aviso explica que sin factura no va a ARCA, y no miente sobre la norma"
 }) => {
   await page.goto("/ventas/nueva");
   await elegirTipo(page, /nota de cr[eé]dito/i);
+  await page.getByText("Nota interna — sin informar a ARCA", { exact: true }).click();
 
   const cuerpo = page.locator("body");
   // El texto viejo afirmaba que "AFIP exige que toda nota indique el comprobante

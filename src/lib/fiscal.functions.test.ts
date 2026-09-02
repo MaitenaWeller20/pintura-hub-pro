@@ -1,11 +1,91 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as fiscalFunctions from "./fiscal.functions";
 import {
+  consultaCuitPadronInputSchema,
   emitirInputSchema,
+  ejecutarConsultaPadronOperador,
   ejecutarFachadaEmisionPostBorrador,
+  ejecutarLecturaFiscalExactaAutorizada,
   postBorradorInputSchema,
   proyectarIncidenteFiscal,
 } from "./fiscal.functions";
+
+describe("frontera de lectura fiscal exacta", () => {
+  it("autoriza con RLS antes de abrir admin y corta BOLA", async () => {
+    const orden: string[] = [];
+    await expect(
+      ejecutarLecturaFiscalExactaAutorizada("venta", {
+        autorizar: async () => {
+          orden.push("autorizar");
+        },
+        cargarExacta: async () => {
+          orden.push("admin");
+          return { id: "venta" };
+        },
+      }),
+    ).resolves.toEqual({ id: "venta" });
+    expect(orden).toEqual(["autorizar", "admin"]);
+
+    const cargarExacta = vi.fn();
+    await expect(
+      ejecutarLecturaFiscalExactaAutorizada("ajena", {
+        autorizar: async () => {
+          throw new Error("no visible");
+        },
+        cargarExacta,
+      }),
+    ).rejects.toThrow("no visible");
+    expect(cargarExacta).not.toHaveBeenCalled();
+  });
+});
+import type { ContextoFiscal } from "./fiscal/contexto";
+import type { ReceptorPadronArca } from "./fiscal/padron-arca-shared";
+import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./fiscal/error-usuario";
+
+const NC_PERIODO_INPUT = {
+  idempotency_key: "81000000-0000-4000-8000-000000000001",
+  sucursal_id: "81000000-0000-4000-8000-000000000002",
+  cliente_id: "81000000-0000-4000-8000-000000000003",
+  modalidad: "DEVOLUCION_PRODUCTOS",
+  periodo_desde: "2026-08-01",
+  periodo_hasta: "2026-08-28",
+  motivo: "Devolución del período",
+  resolucion: "REINTEGRO",
+  items: [
+    {
+      producto_id: "81000000-0000-4000-8000-000000000004",
+      cantidad: 2,
+      precio_unitario_sin_iva: 100,
+      iva_porcentaje: 21,
+    },
+  ],
+  pagos: [{ forma_pago: "TRANSFERENCIA", monto_centavos: 24200 }],
+} as const;
+
+type DependenciasNcPeriodo = {
+  cargarFlags(): Promise<{
+    facturacion_receptor_v2_enabled: boolean;
+    facturacion_legacy_writer_enabled: boolean;
+    nota_credito_periodo_enabled: boolean;
+  }>;
+  crear(args: Record<string, unknown>): Promise<unknown>;
+};
+
+type EjecutarNcPeriodo = (
+  input: unknown,
+  deps: DependenciasNcPeriodo,
+) => Promise<{ id: string; numero: string; cta_cte: boolean }>;
+
+function fachadaNcPeriodo(): EjecutarNcPeriodo {
+  const modulo = fiscalFunctions as unknown as {
+    crearNotaCreditoPeriodoFiscal?: unknown;
+    ejecutarCreacionNotaCreditoPeriodoFiscal?: EjecutarNcPeriodo;
+  };
+  expect(modulo.crearNotaCreditoPeriodoFiscal).toBeDefined();
+  const fachada = modulo.ejecutarCreacionNotaCreditoPeriodoFiscal;
+  expect(fachada).toBeDefined();
+  return fachada!;
+}
 
 const INPUT = {
   venta_id: "71000000-0000-4000-8000-000000000001",
@@ -24,6 +104,339 @@ function esquemaPreviewFiscal(): EsquemaEntrada {
   expect(esquema).toBeDefined();
   return esquema!;
 }
+
+const RECEPTOR_PADRON: ReceptorPadronArca = {
+  cuit: "30714199664",
+  razonSocial: "QUIMEX PRUEBA SA",
+  domicilioFiscal: "Sarmiento 123, Cordoba",
+  estado: "ACTIVO",
+  tipoPersona: "JURIDICA",
+  condicionIvaConfirmada: "RESPONSABLE_INSCRIPTO",
+  verificadoArcaAt: "2026-08-26T12:34:56.000-03:00",
+};
+
+function contextoPadron(validacionActiva: boolean): ContextoFiscal {
+  return {
+    padron: { validacionActiva, probadoAt: validacionActiva ? "2026-08-26T12:00:00Z" : null },
+  } as ContextoFiscal;
+}
+
+describe("consulta autorizada del CUIT para el operador", () => {
+  it("autoriza la sucursal antes de cargar contexto privilegiado", async () => {
+    const orden: string[] = [];
+
+    await expect(
+      ejecutarConsultaPadronOperador(
+        {
+          sucursalId: "71000000-0000-4000-8000-000000000301",
+          cuit: "30714199664",
+        },
+        {
+          autorizarSucursal: async () => {
+            orden.push("permiso");
+            throw new Error("sin permiso");
+          },
+          cargarContexto: async () => {
+            orden.push("service-role");
+            throw new Error("no debe ejecutarse");
+          },
+          consultar: async () => {
+            orden.push("ARCA");
+            throw new Error("no debe ejecutarse");
+          },
+        },
+      ),
+    ).rejects.toThrow(/permiso/i);
+    expect(orden).toEqual(["permiso"]);
+  });
+
+  it("devuelve INACTIVO sin consultar ARCA", async () => {
+    const orden: string[] = [];
+
+    await expect(
+      ejecutarConsultaPadronOperador(
+        {
+          sucursalId: "71000000-0000-4000-8000-000000000301",
+          cuit: "30714199664",
+        },
+        {
+          autorizarSucursal: async () => {
+            orden.push("permiso");
+          },
+          cargarContexto: async () => {
+            orden.push("contexto");
+            return contextoPadron(false);
+          },
+          consultar: async () => {
+            orden.push("ARCA");
+            return RECEPTOR_PADRON;
+          },
+        },
+      ),
+    ).resolves.toEqual({ estado: "INACTIVO" });
+    expect(orden).toEqual(["permiso", "contexto"]);
+  });
+
+  it("cuando está activo proyecta únicamente el receptor canónico", async () => {
+    const resultado = await ejecutarConsultaPadronOperador(
+      {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+      },
+      {
+        autorizarSucursal: async () => undefined,
+        cargarContexto: async () => contextoPadron(true),
+        consultar: async () => RECEPTOR_PADRON,
+      },
+    );
+
+    expect(resultado).toEqual({ estado: "VERIFICADO", receptor: RECEPTOR_PADRON });
+    expect(JSON.stringify(resultado)).not.toMatch(/cert|key|ticket|soap/i);
+  });
+
+  it("cierra fallos privilegiados sin transportar detalles internos", async () => {
+    const errorContexto = await ejecutarConsultaPadronOperador(
+      {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+      },
+      {
+        autorizarSucursal: async () => undefined,
+        cargarContexto: async () => {
+          throw new Error("SQL credencial secreta");
+        },
+        consultar: async () => RECEPTOR_PADRON,
+      },
+    ).catch((error: unknown) => error);
+    expect(codigoErrorFiscalUsuario(errorContexto)).toBe("PADRON_CONFIG_INVALIDA");
+    expect(String(errorContexto)).not.toContain("SQL credencial secreta");
+
+    const caida = crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    const errorConsulta = await ejecutarConsultaPadronOperador(
+      {
+        sucursalId: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+      },
+      {
+        autorizarSucursal: async () => undefined,
+        cargarContexto: async () => contextoPadron(true),
+        consultar: async () => {
+          throw caida;
+        },
+      },
+    ).catch((error: unknown) => error);
+    expect(errorConsulta).toBe(caida);
+  });
+
+  it("valida una sucursal UUID estricta pero deja el checksum para después de auth", () => {
+    expect(
+      consultaCuitPadronInputSchema.parse({
+        sucursal_id: "71000000-0000-4000-8000-000000000301",
+        cuit: "30621146314",
+      }),
+    ).toEqual({
+      sucursal_id: "71000000-0000-4000-8000-000000000301",
+      cuit: "30621146314",
+    });
+    expect(() =>
+      consultaCuitPadronInputSchema.parse({
+        sucursal_id: "no-es-uuid",
+        cuit: "30714199664",
+      }),
+    ).toThrow();
+    expect(() =>
+      consultaCuitPadronInputSchema.parse({
+        sucursal_id: "71000000-0000-4000-8000-000000000301",
+        cuit: "30714199664",
+        credencial: "no debe entrar",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("fachada de alta de NC fiscal por período", () => {
+  it("rechaza totales, percepciones, fecha fiscal y cualquier campo fuera de la unión", async () => {
+    const cargarFlags = vi.fn();
+    const crear = vi.fn();
+
+    for (const extra of [
+      { total: 242 },
+      { percepciones: 10 },
+      { fecha_fiscal: "2026-08-29" },
+      { campo_fuera_del_contrato: true },
+    ]) {
+      const error = await fachadaNcPeriodo()(
+        { ...NC_PERIODO_INPUT, ...extra },
+        { cargarFlags, crear },
+      ).catch((cause: unknown) => cause);
+      expect(codigoErrorFiscalUsuario(error)).toBe("VALIDACION_DATOS");
+    }
+    expect(cargarFlags).not.toHaveBeenCalled();
+    expect(crear).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [false, false, false],
+    [false, true, true],
+    [true, true, true],
+    [true, false, false],
+  ] as const)(
+    "deniega antes de la RPC con v2=%s legacy=%s período=%s",
+    async (v2, legacy, periodo) => {
+      const crear = vi.fn();
+      const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {
+        cargarFlags: async () => ({
+          facturacion_receptor_v2_enabled: v2,
+          facturacion_legacy_writer_enabled: legacy,
+          nota_credito_periodo_enabled: periodo,
+        }),
+        crear,
+      }).catch((cause: unknown) => cause);
+
+      expect(codigoErrorFiscalUsuario(error)).toBe("MANTENIMIENTO");
+      expect(crear).not.toHaveBeenCalled();
+    },
+  );
+
+  it("relee flags y llama sólo a la RPC nueva con los insumos crudos e idempotentes", async () => {
+    const cargarFlags = vi
+      .fn()
+      .mockResolvedValueOnce({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: false,
+      })
+      .mockResolvedValueOnce({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: true,
+      });
+    const crear = vi.fn(async () => [
+      {
+        venta_id: "81000000-0000-4000-8000-000000000005",
+        numero: "NC-00000001",
+        es_cta_cte: false,
+      },
+    ]);
+    const fachada = fachadaNcPeriodo();
+
+    await expect(fachada(NC_PERIODO_INPUT, { cargarFlags, crear })).rejects.toSatisfy(
+      (error: unknown) => codigoErrorFiscalUsuario(error) === "MANTENIMIENTO",
+    );
+    await expect(fachada(NC_PERIODO_INPUT, { cargarFlags, crear })).resolves.toEqual({
+      id: "81000000-0000-4000-8000-000000000005",
+      numero: "NC-00000001",
+      cta_cte: false,
+    });
+
+    expect(cargarFlags).toHaveBeenCalledTimes(2);
+    expect(crear).toHaveBeenCalledOnce();
+    expect(crear).toHaveBeenCalledWith({
+      p_sucursal_id: NC_PERIODO_INPUT.sucursal_id,
+      p_cliente_id: NC_PERIODO_INPUT.cliente_id,
+      p_modalidad: "DEVOLUCION_PRODUCTOS",
+      p_periodo_desde: "2026-08-01",
+      p_periodo_hasta: "2026-08-28",
+      p_motivo: "Devolución del período",
+      p_resolucion: "REINTEGRO",
+      p_items: NC_PERIODO_INPUT.items,
+      p_reintegros: NC_PERIODO_INPUT.pagos,
+      p_idempotency_key: NC_PERIODO_INPUT.idempotency_key,
+    });
+    const [payload] = crear.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(payload).not.toHaveProperty("total");
+    expect(payload).not.toHaveProperty("percepciones");
+    expect(payload).not.toHaveProperty("fecha_fiscal");
+  });
+
+  it.each([
+    [[], "sin filas"],
+    [[{ venta_id: "81000000-0000-4000-8000-000000000005", numero: "NC-1" }], "sin booleano"],
+    [
+      [
+        {
+          venta_id: "81000000-0000-4000-8000-000000000005",
+          numero: "NC-1",
+          es_cta_cte: false,
+          total: 242,
+        },
+      ],
+      "con campo extra",
+    ],
+    [
+      [
+        {
+          venta_id: "81000000-0000-4000-8000-000000000005",
+          numero: "NC-1",
+          es_cta_cte: false,
+        },
+        {
+          venta_id: "81000000-0000-4000-8000-000000000006",
+          numero: "NC-2",
+          es_cta_cte: false,
+        },
+      ],
+      "con múltiples filas",
+    ],
+  ])("rechaza una respuesta de creación %s", async (respuesta, _descripcion) => {
+    const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {
+      cargarFlags: async () => ({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: true,
+      }),
+      crear: async () => respuesta,
+    }).catch((cause: unknown) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("ERROR_CORREGIBLE");
+  });
+
+  it("normaliza errores de dominio/DB sin filtrar el mensaje técnico", async () => {
+    const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {
+      cargarFlags: async () => ({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: true,
+      }),
+      crear: async () => {
+        throw new Error("SQL secreto de la función");
+      },
+    }).catch((cause: unknown) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("ERROR_CORREGIBLE");
+    expect(String(error)).not.toContain("SQL secreto");
+  });
+
+  it("traduce una denegación SQL por capacidad a un mensaje de permiso cerrado", async () => {
+    const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {
+      cargarFlags: async () => ({
+        facturacion_receptor_v2_enabled: true,
+        facturacion_legacy_writer_enabled: false,
+        nota_credito_periodo_enabled: true,
+      }),
+      crear: async () => {
+        throw Object.assign(new Error("permission denied SQL raw"), { code: "42501" });
+      },
+    }).catch((cause: unknown) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("PERMISO_NC_PERIODO");
+    expect(String(error)).not.toMatch(/permission denied|SQL raw/i);
+  });
+
+  it("tipa un fallo al releer settings sin filtrar detalles de la consulta", async () => {
+    const crear = vi.fn();
+    const error = await fachadaNcPeriodo()(NC_PERIODO_INPUT, {
+      cargarFlags: async () => {
+        throw new Error("PGRST detalle interno de settings");
+      },
+      crear,
+    }).catch((cause: unknown) => cause);
+
+    expect(codigoErrorFiscalUsuario(error)).toBe("CONFIGURACION_INVALIDA");
+    expect(String(error)).not.toContain("PGRST detalle interno");
+    expect(crear).not.toHaveBeenCalled();
+  });
+});
 
 describe("contrato público de letra fiscal solicitada", () => {
   const emision = {
@@ -148,6 +561,7 @@ describe("fachada post-borrador", () => {
           return {
             facturacion_receptor_v2_enabled: true,
             facturacion_legacy_writer_enabled: false,
+            nota_credito_periodo_enabled: false,
           };
         },
         ejecutar: async () => {
@@ -171,6 +585,7 @@ describe("fachada post-borrador", () => {
           return {
             facturacion_receptor_v2_enabled: true,
             facturacion_legacy_writer_enabled: false,
+            nota_credito_periodo_enabled: false,
           };
         },
         ejecutar: async () => {
@@ -199,6 +614,7 @@ describe("fachada post-borrador", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: true,
+          nota_credito_periodo_enabled: false,
         }),
       }),
     ).rejects.toThrow(/v2.*habilitado|receptor v2/i);
@@ -210,6 +626,7 @@ describe("fachada post-borrador", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: false,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
       }),
     ).resolves.toMatchObject({ estado: "MANTENIMIENTO" });
@@ -221,6 +638,7 @@ describe("fachada post-borrador", () => {
         cargarFlags: async () => ({
           facturacion_receptor_v2_enabled: true,
           facturacion_legacy_writer_enabled: false,
+          nota_credito_periodo_enabled: false,
         }),
       }),
     ).resolves.toEqual({ estado: "APROBADO" });

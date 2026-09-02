@@ -11,9 +11,14 @@ import {
   navegarTabColaPorTecla,
   presentarResultadoCola,
   presentarEstadoColaFiscal,
+  retenerSeleccionColaFiscalHastaCerrar,
   resolverSeleccionColaFiscal,
   resolverTabAutoritativo,
 } from "./cola-ui";
+import {
+  despacharRespuestaConfirmacionFiscal,
+  manejarErrorCorregibleDialogo,
+} from "@/components/fiscal/dialogo-emision-contract";
 
 const VENTA = "10000000-0000-4000-8000-000000000001";
 
@@ -327,6 +332,70 @@ describe("URL de la cola fiscal", () => {
 });
 
 describe("actualización y resultado autoritativos", () => {
+  it("mantiene visible el error corregible si la fila pasa de pendientes a revisar", () => {
+    type Fila = { venta_id: string; afip_estado: string };
+    type Seleccion = { fila: Fila; huellaConsulta: string; retenerHastaCerrar?: true };
+
+    const filaPendiente: Fila = { venta_id: VENTA, afip_estado: "SIN_FACTURAR" };
+    let seleccion: Seleccion | null = retenerSeleccionColaFiscalHastaCerrar({
+      fila: filaPendiente,
+      huellaConsulta: "pendientes-pagina-1",
+    });
+    seleccion = resolverSeleccionColaFiscal({
+      seleccion,
+      huellaConsulta: "pendientes-pagina-1",
+      isPlaceholderData: false,
+      filas: [],
+    });
+
+    let preview: object | null = {};
+    let huella: string | null = "a".repeat(64);
+    let mensajeVisible: string | null = null;
+    let completada = false;
+    if (seleccion) {
+      despacharRespuestaConfirmacionFiscal(
+        {
+          estado: "ERROR_CORREGIBLE",
+          codigo: "PADRON_ARCA_CAIDO",
+          mensaje: "texto remoto que no debe mostrarse",
+        },
+        {
+          onReconfirmacion: () => {
+            throw new Error("No corresponde reconfirmar.");
+          },
+          onErrorCorregible: (resultado) =>
+            manejarErrorCorregibleDialogo(resultado, {
+              invalidarPreview: () => undefined,
+              limpiarPreview: () => {
+                preview = null;
+              },
+              limpiarHuella: () => {
+                huella = null;
+              },
+              limpiarConfirmacionVentaAntigua: () => undefined,
+              mostrarError: (mensaje) => {
+                mensajeVisible = mensaje;
+              },
+            }),
+          onCompletada: () => {
+            completada = true;
+          },
+        },
+      );
+    }
+
+    expect(seleccion?.fila).toBe(filaPendiente);
+    expect(preview).toBeNull();
+    expect(huella).toBeNull();
+    expect(mensajeVisible).toBe(
+      "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+    );
+    expect(completada).toBe(false);
+
+    seleccion = null;
+    expect(seleccion).toBeNull();
+  });
+
   it("inmoviliza placeholder de otra clave pero no un polling de la clave actual", () => {
     expect(accionesColaHabilitadas({ isPlaceholderData: true, isFetching: true })).toBe(false);
     expect(accionesColaHabilitadas({ isPlaceholderData: false, isFetching: true })).toBe(true);
@@ -343,9 +412,11 @@ describe("actualización y resultado autoritativos", () => {
   });
 
   it("hace polling sólo si la página contiene un EMITIENDO reciente según el servidor", () => {
-    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", claim_vencido: false }])).toBe(true);
-    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", claim_vencido: true }])).toBe(false);
-    expect(debeRefrescarCola([{ afip_estado: "SIN_FACTURAR", claim_vencido: false }])).toBe(false);
+    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", reclamo_vencido: false }])).toBe(true);
+    expect(debeRefrescarCola([{ afip_estado: "EMITIENDO", reclamo_vencido: true }])).toBe(false);
+    expect(debeRefrescarCola([{ afip_estado: "SIN_FACTURAR", reclamo_vencido: false }])).toBe(
+      false,
+    );
   });
 
   it("explica el resultado parcial sin invitar a repetir venta ni cobro", () => {

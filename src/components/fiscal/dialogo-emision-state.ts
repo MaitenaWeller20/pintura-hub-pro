@@ -84,6 +84,16 @@ export function cambiarReceptorConfirmacion(
   return crearEstadoConfirmacionFiscal(estado.letraSolicitada);
 }
 
+export function invalidarHuellaConfirmacion(
+  estado: EstadoConfirmacionFiscal,
+): EstadoConfirmacionFiscal {
+  return {
+    ...estado,
+    huellaConfirmacion: null,
+    requiereSegundaConfirmacion: false,
+  };
+}
+
 export function cambiarLetraConfirmacion(
   _estado: EstadoConfirmacionFiscal,
   letraSolicitada: LetraSolicitada,

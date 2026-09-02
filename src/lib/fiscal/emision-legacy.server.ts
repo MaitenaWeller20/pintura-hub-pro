@@ -83,18 +83,23 @@ async function admin() {
 export async function emitirComprobanteLegacy({
   data,
   context,
+  ventaIdAutorizada,
 }: {
   data: { venta_id: string };
   context: { supabase: any };
+  ventaIdAutorizada: string;
 }) {
+  if (data.venta_id !== ventaIdAutorizada) throw new Error("La venta autorizada no coincide.");
   const sb = await admin();
-  const { supabase } = context;
+  const supabase = sb;
+  void context;
 
-  // Leemos la venta con el cliente RLS: si el usuario no puede ver esta venta
-  // (otra sucursal), no puede facturarla.
+  // La fachada ya cerró RLS, sucursal y capacidad fiscal antes de abrir admin.
   const { data: venta, error: vErr } = await supabase
     .from("ventas")
-    .select(`${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social, cuit_dni, tipo, direccion)`)
+    .select(
+      `${COLUMNAS_VENTA_SEGURAS},afip_snapshot, cliente:clientes(razon_social, cuit_dni, tipo, direccion)`,
+    )
     .eq("id", data.venta_id)
     .single();
   if (vErr || !venta) throw new Error("Venta no encontrada.");
@@ -105,7 +110,14 @@ export async function emitirComprobanteLegacy({
         "Sólo se facturan Factura A/B/C y notas de crédito/débito.",
     );
   }
-  if (esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)) {
+  if (
+    esNotaInterna(
+      venta.tipo_comprobante,
+      venta.afip_cbte_asoc_id,
+      venta.periodo_asoc_desde,
+      venta.periodo_asoc_hasta,
+    )
+  ) {
     throw new Error(
       "Esta nota revierte un comprobante que nunca se declaró a AFIP, así que no hay nada que rectificar: " +
         "no corresponde emitirla. Sirve sólo como documento interno (ya devolvió el stock y la plata).",
@@ -582,14 +594,20 @@ async function marcarPendiente(sb: any, ventaId: string, error: string) {
 export async function datosFiscalesComprobanteLegacy({
   data,
   context,
+  ventaIdAutorizada,
 }: {
   data: { venta_id: string };
   context: { supabase: any };
+  ventaIdAutorizada: string;
 }) {
+  if (data.venta_id !== ventaIdAutorizada) throw new Error("La venta autorizada no coincide.");
   const sb = await admin();
-  const { data: venta } = await context.supabase
+  void context;
+  const { data: venta } = await sb
     .from("ventas")
-    .select(`${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social, cuit_dni, tipo, direccion)`)
+    .select(
+      `${COLUMNAS_VENTA_SEGURAS},afip_snapshot, cliente:clientes(razon_social, cuit_dni, tipo, direccion)`,
+    )
     .eq("id", data.venta_id)
     .single();
 

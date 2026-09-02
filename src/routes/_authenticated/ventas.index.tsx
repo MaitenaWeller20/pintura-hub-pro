@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Button } from "@/components/ui/button";
@@ -31,8 +31,8 @@ import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/l
 import { Plus, Eye, Ban, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { anularVenta } from "@/lib/ventas.functions";
-import { emitirComprobante } from "@/lib/fiscal.functions";
+import { anularVenta, listarVentasSeguras } from "@/lib/ventas.functions";
+import { detalleVentaFiscalSegura, emitirComprobante } from "@/lib/fiscal.functions";
 import { obtenerEstadoFiscalPublico } from "@/lib/fiscal/config.functions";
 import { QUERY_KEY_ESTADO_FISCAL_PUBLICO } from "@/lib/fiscal/config";
 import { esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
@@ -47,7 +47,6 @@ import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import {
   camposExportacionReceptorFiscal,
   describirCaeLegacy,
-  leerReceptorFiscalCongelado,
   puedeOfrecerEmisionLegacy,
   receptorFiscalDifiereDelComprador,
   requiereAdvertenciaAnulacionProduccion,
@@ -60,7 +59,8 @@ import {
   solicitudAnulacion,
   type IntentoAnulacion,
 } from "@/lib/anulacion-venta-ui";
-import { COLUMNAS_VENTA_SEGURAS } from "@/lib/ventas-proyeccion";
+import { esVentaVisibleEnListadoComercial } from "@/lib/nota-credito-periodo-ui";
+import { crearSecuenciadorDetalleVenta } from "@/lib/ventas-detalle-concurrencia";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
@@ -103,7 +103,12 @@ function sePuedeAnular(v: any, generadasPorAnulacion: Set<string>): boolean {
   return (
     v.tipo_comprobante === "NOTA_CREDITO" &&
     !v.cae &&
-    esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+    esNotaInterna(
+      v.tipo_comprobante,
+      v.afip_cbte_asoc_id,
+      v.periodo_asoc_desde,
+      v.periodo_asoc_hasta,
+    ) &&
     !generadasPorAnulacion.has(v.id)
   );
 }
@@ -131,10 +136,34 @@ function VentasList() {
   const [pagoFilter, setPagoFilter] = useState("all");
   const [q, setQ] = useState("");
   const [verVenta, setVerVenta] = useState<VentaDetalle | null>(null);
+  const [detalleCargandoId, setDetalleCargandoId] = useState<string | null>(null);
   const [anularDlg, setAnularDlg] = useState<IntentoAnulacion<VentaDetalle> | null>(null);
   const anulandoRef = useRef(false);
+  const secuenciadorDetalleRef = useRef(crearSecuenciadorDetalleVenta());
   const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
+  const detalleVentaFn = useServerFn(detalleVentaFiscalSegura);
+  const listarVentasFn = useServerFn(listarVentasSeguras);
+
+  useEffect(() => {
+    const secuenciador = secuenciadorDetalleRef.current;
+    return () => secuenciador.invalidar();
+  }, []);
+
+  const cargarDetalle = async (ventaId: string) => {
+    const solicitud = secuenciadorDetalleRef.current.iniciar();
+    setDetalleCargandoId(ventaId);
+    try {
+      const venta = await detalleVentaFn({ data: { venta_id: ventaId } });
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) setVerVenta(venta);
+    } catch (error) {
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) {
+        toast.error(mensajeErrorFiscal(error, "CONSULTA"), { duration: 12000 });
+      }
+    } finally {
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) setDetalleCargandoId(null);
+    }
+  };
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
@@ -144,24 +173,23 @@ function VentasList() {
   const { data: ventas = [], isLoading: loadingVentas } = useQuery({
     queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
     enabled: !!cu,
-    queryFn: async () => {
-      let q = supabase
-        .from("ventas")
-        .select(
-          `
-        ${COLUMNAS_VENTA_SEGURAS}, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
-        pagos:venta_pagos(forma_pago,monto)
-      `,
-        )
-        .order("fecha", { ascending: false })
-        .limit(200);
-      if (sucFilter) q = q.eq("sucursal_id", sucFilter);
-      if (pagoFilter !== "all") q = q.eq("estado_pago", pagoFilter as any);
-      return ((await q).data ?? []) as any[];
-    },
+    queryFn: () =>
+      listarVentasFn({
+        data: {
+          sucursal_id: sucFilter || undefined,
+          estado_pago:
+            pagoFilter === "all" ? undefined : (pagoFilter as "PAGADO" | "PARCIAL" | "PENDIENTE"),
+        },
+      }),
   });
 
-  const filtered = useMemo(() => ventas.filter((v) => ventaCoincideBusqueda(v, q)), [ventas, q]);
+  const filtered = useMemo(
+    () =>
+      ventas.filter(
+        (v) => esVentaVisibleEnListadoComercial(v.estado) && ventaCoincideBusqueda(v, q),
+      ),
+    [ventas, q],
+  );
 
   /**
    * Cuáles de las notas internas en pantalla las generó una ANULACIÓN.
@@ -175,7 +203,16 @@ function VentasList() {
   const idsNotasInternas = useMemo(
     () =>
       ventas
-        .filter((v: any) => v.tipo_comprobante === "NOTA_CREDITO" && !v.cae && !v.afip_cbte_asoc_id)
+        .filter(
+          (v: any) =>
+            !v.cae &&
+            esNotaInterna(
+              v.tipo_comprobante,
+              v.afip_cbte_asoc_id,
+              v.periodo_asoc_desde,
+              v.periodo_asoc_hasta,
+            ),
+        )
         .map((v: any) => v.id as string),
     [ventas],
   );
@@ -399,7 +436,7 @@ function VentasList() {
               <p>{v.cliente?.razon_social}</p>
               {receptorFiscalDifiereDelComprador(v) ? (
                 <p className="text-xs text-muted-foreground" data-testid={`receptor-${v.id}`}>
-                  → {leerReceptorFiscalCongelado(v.afip_snapshot)?.razonSocial}
+                  → {v.fiscalPresentacion?.receptor?.razonSocial}
                 </p>
               ) : null}
             </TableCell>
@@ -439,9 +476,14 @@ function VentasList() {
                 className="min-h-11 min-w-11"
                 aria-label={`Ver detalle de ${v.numero_comprobante}`}
                 title="Ver detalle"
-                onClick={() => setVerVenta(v)}
+                onClick={() => void cargarDetalle(v.id)}
+                disabled={detalleCargandoId === v.id}
               >
-                <Eye className="h-3.5 w-3.5" />
+                {detalleCargandoId === v.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
               </Button>
               {/* Sólo se factura lo que es un comprobante fiscal. Los remitos, la
                   factura interna y las notas que revierten algo nunca declarado
@@ -456,7 +498,12 @@ function VentasList() {
                 ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO"].includes(
                   v.tipo_comprobante,
                 ) &&
-                !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+                !esNotaInterna(
+                  v.tipo_comprobante,
+                  v.afip_cbte_asoc_id,
+                  v.periodo_asoc_desde,
+                  v.periodo_asoc_hasta,
+                ) &&
                 !v.cae && (
                   <Button
                     size="sm"
@@ -478,7 +525,12 @@ function VentasList() {
               cu?.facturacionV2Habilitada &&
               cu?.puedeFacturar &&
               ["VENTA", "NOTA_CREDITO"].includes(v.tipo_comprobante) &&
-              !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
+              !esNotaInterna(
+                v.tipo_comprobante,
+                v.afip_cbte_asoc_id,
+                v.periodo_asoc_desde,
+                v.periodo_asoc_hasta,
+              ) &&
               !v.cae ? (
                 <Button
                   size="sm"
@@ -584,7 +636,12 @@ function VentasList() {
 function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
   if (
     !esComprobanteFiscal(venta.tipo_comprobante) ||
-    esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)
+    esNotaInterna(
+      venta.tipo_comprobante,
+      venta.afip_cbte_asoc_id,
+      venta.periodo_asoc_desde,
+      venta.periodo_asoc_hasta,
+    )
   ) {
     return (
       <span title="Documento interno: no se declara a AFIP">

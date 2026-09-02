@@ -1,8 +1,9 @@
 import { AlertTriangle, ArrowDown, ReceiptText } from "lucide-react";
 import { StatusPill } from "@/components/app/status-pill";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, formaPagoLabel } from "@/lib/format";
 import { letraDeCbteTipo, tituloDeCbteTipo } from "@/lib/fiscal/codigos";
 import type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
+import type { ModalidadNcPeriodo, ResolucionNcPeriodo } from "@/lib/fiscal/nota-credito-periodo";
 
 export type { PreviewEmisionFiscal } from "./dialogo-emision-contract";
 
@@ -55,10 +56,26 @@ export function ResumenEmisionFiscal({
   preview,
   comprador,
   requiereSegundaConfirmacion = false,
+  asociacionPeriodo,
 }: {
   preview: PreviewEmisionFiscal;
   comprador: string;
   requiereSegundaConfirmacion?: boolean;
+  asociacionPeriodo?: {
+    desde: string;
+    hasta: string;
+    modalidad: ModalidadNcPeriodo;
+    motivo: string;
+    resolucion: ResolucionNcPeriodo;
+    detalleAutoritativo?: {
+      neto: string;
+      iva: string;
+      total: string;
+      concepto: string | null;
+      alicuotas: readonly { id: string; base: string; porcentaje: string; iva: string }[];
+      reintegros: readonly { id: string; orden: number; formaPago: string; monto: string }[];
+    } | null;
+  } | null;
 }) {
   const validez = etiquetaValidez(preview);
   return (
@@ -112,6 +129,90 @@ export function ResumenEmisionFiscal({
               {String(preview.cbte_asoc.numero).padStart(8, "0")} ·{" "}
               {fechaArgentina(preview.cbte_asoc.fecha)}
             </p>
+          </div>
+        ) : null}
+
+        {asociacionPeriodo ? (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Asociación fiscal por período
+            </p>
+            <p className="mt-1 font-medium">
+              {fechaArgentina(asociacionPeriodo.desde)} a {fechaArgentina(asociacionPeriodo.hasta)}{" "}
+              ·{" "}
+              {asociacionPeriodo.modalidad === "DEVOLUCION_PRODUCTOS"
+                ? "Devolución de productos"
+                : "Bonificación o ajuste"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {asociacionPeriodo.motivo} ·{" "}
+              {asociacionPeriodo.resolucion === "REINTEGRO" ? "Reintegro exacto" : "Saldo a favor"}
+            </p>
+            <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-3">
+              <div>
+                <dt className="text-muted-foreground">Importe fiscal</dt>
+                <dd className="font-mono font-semibold tabular-nums">{fmtMoney(preview.total)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Receptor resuelto</dt>
+                <dd className="font-medium">{preview.receptor.razonSocial}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Letra resuelta</dt>
+                <dd className="font-medium">{preview.letra}</dd>
+              </div>
+            </dl>
+            {asociacionPeriodo.detalleAutoritativo ? (
+              <div className="mt-3 rounded-md border border-primary/20 bg-background/60 p-2 text-xs">
+                <dl className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <dt className="text-muted-foreground">Neto autoritativo</dt>
+                    <dd className="font-mono font-medium">
+                      {fmtMoney(asociacionPeriodo.detalleAutoritativo.neto)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">IVA autoritativo</dt>
+                    <dd className="font-mono font-medium">
+                      {fmtMoney(asociacionPeriodo.detalleAutoritativo.iva)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Total autoritativo</dt>
+                    <dd className="font-mono font-semibold">
+                      {fmtMoney(asociacionPeriodo.detalleAutoritativo.total)}
+                    </dd>
+                  </div>
+                </dl>
+                {asociacionPeriodo.detalleAutoritativo.concepto ? (
+                  <p className="mt-2 text-muted-foreground">
+                    Ajuste: {asociacionPeriodo.detalleAutoritativo.concepto}
+                  </p>
+                ) : null}
+                {asociacionPeriodo.detalleAutoritativo.alicuotas.map((alicuota) => (
+                  <p key={alicuota.id} className="mt-1 text-muted-foreground">
+                    Base {fmtMoney(alicuota.base)} · IVA {alicuota.porcentaje}%{" "}
+                    {fmtMoney(alicuota.iva)}
+                  </p>
+                ))}
+                {asociacionPeriodo.resolucion === "REINTEGRO" ? (
+                  <div className="mt-2">
+                    <p className="font-medium">Liquidación planificada</p>
+                    {asociacionPeriodo.detalleAutoritativo.reintegros.map((reintegro) => (
+                      <p key={reintegro.id} className="text-muted-foreground">
+                        {formaPagoLabel[reintegro.formaPago] ?? reintegro.formaPago} ·{" "}
+                        {fmtMoney(reintegro.monto)}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-muted-foreground">
+                    Saldo a favor planificado ·{" "}
+                    {fmtMoney(asociacionPeriodo.detalleAutoritativo.total)}
+                  </p>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

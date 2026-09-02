@@ -1,0 +1,561 @@
+// @vitest-environment jsdom
+
+import { createElement, type ComponentType } from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { NotaCreditoPeriodoInput } from "@/lib/fiscal/nota-credito-periodo";
+
+const SUCURSAL_ID = "10000000-0000-4000-8000-000000000001";
+const CLIENTE_ID = "20000000-0000-4000-8000-000000000001";
+const FACTURA_ID = "30000000-0000-4000-8000-000000000001";
+const PRODUCTO_ID = "40000000-0000-4000-8000-000000000001";
+
+const dobles = vi.hoisted(() => ({
+  usuario: {
+    isAdmin: true,
+    sucursal: {
+      id: "10000000-0000-4000-8000-000000000001",
+      nombre: "Casa central",
+    },
+    facturacionV2Habilitada: true,
+    facturacionLegacyHabilitada: false,
+    puedeFacturar: true,
+    notaCreditoPeriodoHabilitada: true,
+    puedeEmitirNcPeriodo: true,
+    puedeVenderSinStock: false,
+  },
+  navigate: vi.fn(),
+  crearVenta: vi.fn(),
+  listarOriginales: vi.fn(),
+  crearPeriodo: vi.fn(),
+  previsualizar: vi.fn(),
+  emitir: vi.fn(),
+  listarFavoritos: vi.fn(),
+  catalogoNombre: "Producto Uno",
+  facturaDescripcion: "Producto Uno",
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+  createFileRoute: () => (options: Record<string, unknown>) => ({ options }),
+  useNavigate: () => dobles.navigate,
+}));
+
+vi.mock("@tanstack/react-start", () => ({ useServerFn: (serverFn: unknown) => serverFn }));
+
+vi.mock("@/hooks/use-current-user", () => ({
+  useCurrentUser: () => ({ data: dobles.usuario }),
+}));
+
+vi.mock("@/lib/ventas.functions", () => ({
+  crearVenta: dobles.crearVenta,
+  listarComprobantesOriginalesVenta: dobles.listarOriginales,
+}));
+
+vi.mock("@/lib/fiscal.functions", () => ({
+  crearNotaCreditoPeriodoFiscal: dobles.crearPeriodo,
+  previsualizarEmisionFiscal: dobles.previsualizar,
+  emitirComprobantePostBorrador: dobles.emitir,
+}));
+
+vi.mock("@/lib/fiscal/cola.functions", () => ({
+  listarReceptoresFiscales: dobles.listarFavoritos,
+}));
+
+vi.mock("@/components/fiscal/dialogo-emision-fiscal", () => ({
+  DialogoEmisionFiscal: ({
+    onOpenChange,
+    onPrevisualizar,
+  }: {
+    onOpenChange(open: boolean): void;
+    onPrevisualizar(input: { receptor: unknown; letraSolicitada: "B" }): Promise<unknown>;
+  }) =>
+    createElement(
+      "div",
+      null,
+      createElement(
+        "button",
+        {
+          onClick: () =>
+            void onPrevisualizar({
+              receptor: { origen: "CLIENTE_COMERCIAL" },
+              letraSolicitada: "B",
+            }),
+        },
+        "Previsualizar datos fiscales",
+      ),
+      createElement("button", { onClick: () => onOpenChange(false) }, "Cancelar"),
+    ),
+}));
+
+vi.mock("@tanstack/react-query", async () => {
+  const React = await import("react");
+  return {
+    useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+      const clave = queryKey[0];
+      if (clave === "condicion-emisor") return { data: "RESPONSABLE_INSCRIPTO" };
+      if (clave === "sucs") {
+        return { data: [{ id: SUCURSAL_ID, nombre: "Casa central", numero: 1 }] };
+      }
+      if (clave === "clientes-search") {
+        return {
+          data: [
+            {
+              id: CLIENTE_ID,
+              razon_social: "Cliente Uno",
+              cuit_dni: "30714199664",
+              tipo: "RESPONSABLE_INSCRIPTO",
+              condicion_cta_cte: false,
+            },
+          ],
+        };
+      }
+      if (clave === "prods-catalogo") {
+        return {
+          data: [
+            {
+              id: PRODUCTO_ID,
+              codigo: "P-1",
+              nombre: dobles.catalogoNombre,
+              precio_sin_iva: 100,
+              iva_porcentaje: 21,
+              stock_sucursal: [{ sucursal_id: SUCURSAL_ID, cantidad: 10 }],
+            },
+          ],
+        };
+      }
+      if (clave === "settings-stock-negativo") return { data: false };
+      if (clave === "facturas-cliente") {
+        return {
+          data: [
+            {
+              id: FACTURA_ID,
+              numero_comprobante: "V-00001",
+              fecha: "2026-07-15",
+              subtotal_sin_iva: 100,
+              iva_total: 21,
+              percepciones: 0,
+              total: 121,
+              total_pagado: 121,
+              condicion_venta: "CONTADO",
+            },
+          ],
+        };
+      }
+      return { data: [] };
+    },
+    useMutation: ({
+      mutationFn,
+      onSuccess,
+      onError,
+    }: {
+      mutationFn(value: unknown): Promise<unknown>;
+      onSuccess?(value: unknown): void;
+      onError?(cause: unknown): void;
+    }) => {
+      const [estado, setEstado] = React.useState({ isPending: false, variables: null as unknown });
+      return {
+        ...estado,
+        mutate(value: unknown) {
+          setEstado({ isPending: true, variables: value });
+          void mutationFn(value)
+            .then(onSuccess, onError)
+            .finally(() => {
+              setEstado({ isPending: false, variables: null });
+            });
+        },
+      };
+    },
+  };
+});
+
+vi.mock("@/integrations/supabase/client", () => {
+  function consulta(tabla: string) {
+    const resultado = () => {
+      if (tabla === "venta_items") {
+        return {
+          data: [
+            {
+              producto_id: PRODUCTO_ID,
+              codigo: "P-1",
+              descripcion: dobles.facturaDescripcion,
+              cantidad: 1,
+              precio_unitario_sin_iva: 100,
+              iva_porcentaje: 21,
+              descuento_porcentaje: 0,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (tabla === "venta_pagos") {
+        return {
+          data: [{ id: "pago-1", forma_pago: "EFECTIVO", monto: 121, detalle: {} }],
+          error: null,
+        };
+      }
+      return { data: [], error: null, count: 0 };
+    };
+    const builder: Record<string, unknown> = {};
+    for (const metodo of [
+      "select",
+      "eq",
+      "neq",
+      "not",
+      "in",
+      "or",
+      "order",
+      "limit",
+      "range",
+      "maybeSingle",
+    ]) {
+      builder[metodo] = () => builder;
+    }
+    builder.then = (resolve: (value: unknown) => unknown, reject: (cause: unknown) => unknown) =>
+      Promise.resolve(resultado()).then(resolve, reject);
+    return builder;
+  }
+  return {
+    supabase: {
+      from: (tabla: string) => consulta(tabla),
+      rpc: vi.fn(async () => ({ data: "RESPONSABLE_INSCRIPTO", error: null })),
+    },
+  };
+});
+
+import { Route } from "./ventas.nueva";
+
+const scrollIntoViewOriginal = Element.prototype.scrollIntoView;
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
+
+afterAll(() => {
+  Element.prototype.scrollIntoView = scrollIntoViewOriginal;
+});
+
+function paginaNuevaVenta(): ComponentType {
+  return (Route as unknown as { options: { component: ComponentType } }).options.component;
+}
+
+async function abrirSelect(label: string | RegExp, opcion: string | RegExp) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(await screen.findByRole("option", { name: opcion }));
+}
+
+async function elegirCliente() {
+  fireEvent.click(screen.getByRole("button", { name: "Buscar cliente…" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Cliente Uno/ }));
+}
+
+async function elegirNotaCredito() {
+  await abrirSelect("Tipo comprobante *", "Nota de Crédito");
+}
+
+async function completarAjustePeriodo() {
+  fireEvent.click(screen.getByLabelText("Sin factura puntual — asociar por período"));
+  fireEvent.click(screen.getByLabelText("Bonificación o ajuste"));
+  fireEvent.click(screen.getByLabelText("Acreditar saldo a favor"));
+  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-01" } });
+  fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-07-31" } });
+  fireEvent.change(screen.getByLabelText("Motivo"), {
+    target: { value: "Bonificación comercial" },
+  });
+  fireEvent.change(screen.getByLabelText("Concepto del ajuste"), {
+    target: { value: "Bonificación comercial" },
+  });
+  fireEvent.change(screen.getByLabelText("Importe neto"), { target: { value: "100" } });
+}
+
+function renderRuta() {
+  const Pagina = paginaNuevaVenta();
+  return render(createElement(Pagina));
+}
+
+beforeEach(() => {
+  Object.assign(dobles.usuario, {
+    facturacionV2Habilitada: true,
+    notaCreditoPeriodoHabilitada: true,
+    puedeEmitirNcPeriodo: true,
+  });
+  dobles.navigate.mockReset();
+  dobles.crearVenta.mockReset().mockImplementation(() => new Promise(() => undefined));
+  dobles.crearPeriodo.mockReset().mockImplementation(() => new Promise(() => undefined));
+  dobles.previsualizar.mockReset();
+  dobles.emitir.mockReset();
+  dobles.listarFavoritos.mockReset().mockResolvedValue([]);
+  dobles.catalogoNombre = "Producto Uno";
+  dobles.facturaDescripcion = "Producto Uno";
+});
+
+afterEach(cleanup);
+
+describe("ruta real de Nueva venta para NC por período", () => {
+  it("deriva la misma descripción personalizada para preview y creación", async () => {
+    renderRuta();
+
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+
+    const descripcion = screen.getByLabelText("Descripción de P-1") as HTMLInputElement;
+    fireEvent.change(descripcion, { target: { value: "Base 10 L (Código 1234)" } });
+
+    expect(descripcion.hasAttribute("maxlength")).toBe(false);
+    expect(screen.getByText("Sólo cambia esta línea; no modifica el catálogo")).toBeTruthy();
+    expect(descripcion.value).toBe("Base 10 L (Código 1234)");
+
+    await elegirCliente();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+    fireEvent.click(screen.getByTestId("registrar-y-facturar"));
+    fireEvent.click(screen.getByRole("button", { name: "Previsualizar datos fiscales" }));
+
+    await waitFor(() => expect(dobles.previsualizar).toHaveBeenCalledOnce());
+    expect(dobles.previsualizar.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        items: [
+          {
+            producto_id: PRODUCTO_ID,
+            descripcion: "Base 10 L (Código 1234)",
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(screen.getByTestId("registrar-sin-facturar"));
+
+    await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+    expect(dobles.crearVenta.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        items: [
+          {
+            producto_id: PRODUCTO_ID,
+            descripcion: "Base 10 L (Código 1234)",
+          },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    ["largo", `Catálogo histórico ${"😀".repeat(170)}`],
+    ["vacío al normalizar", "\uFEFF\u00A0 \t"],
+  ])(
+    "omite el fallback de catálogo %s tanto en preview como en venta directa",
+    async (_caso, nombre) => {
+      dobles.catalogoNombre = nombre;
+      renderRuta();
+
+      fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+      fireEvent.click(await screen.findByRole("button", { name: /P-1/ }));
+      await elegirCliente();
+      fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+      fireEvent.click(screen.getByTestId("registrar-y-facturar"));
+      fireEvent.click(screen.getByRole("button", { name: "Previsualizar datos fiscales" }));
+
+      await waitFor(() => expect(dobles.previsualizar).toHaveBeenCalledOnce());
+      expect(dobles.previsualizar.mock.calls[0]?.[0].data.items[0]).not.toHaveProperty(
+        "descripcion",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+      fireEvent.click(screen.getByTestId("registrar-sin-facturar"));
+      await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+      expect(dobles.crearVenta.mock.calls[0]?.[0].data.items[0]).not.toHaveProperty("descripcion");
+    },
+  );
+
+  it("mantiene la descripción de cada línea cuando se repite el mismo producto", async () => {
+    renderRuta();
+
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+
+    const descripciones = screen.getAllByLabelText("Descripción de P-1") as HTMLInputElement[];
+    fireEvent.change(descripciones[1]!, { target: { value: "Base 10 L (Código 1234)" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Quitar Producto Uno" })[0]!);
+
+    expect((screen.getByLabelText("Descripción de P-1") as HTMLInputElement).value).toBe(
+      "Base 10 L (Código 1234)",
+    );
+  });
+
+  it.each([
+    { flag: false, capacidad: false, visible: false },
+    { flag: false, capacidad: true, visible: false },
+    { flag: true, capacidad: false, visible: false },
+    { flag: true, capacidad: true, visible: true },
+  ])(
+    "expone la opción sólo con flag=$flag y capacidad=$capacidad",
+    async ({ flag, capacidad, visible }) => {
+      dobles.usuario.notaCreditoPeriodoHabilitada = flag;
+      dobles.usuario.puedeEmitirNcPeriodo = capacidad;
+      renderRuta();
+
+      await elegirNotaCredito();
+
+      expect(screen.queryByLabelText("Sin factura puntual — asociar por período") !== null).toBe(
+        visible,
+      );
+      expect(screen.getByLabelText(/Venta fiscal que revierte/)).toBeTruthy();
+    },
+  );
+
+  it("crea una NC interna editable, sin asociación ni cola fiscal", async () => {
+    dobles.crearVenta.mockResolvedValueOnce({
+      id: "50000000-0000-4000-8000-000000000001",
+      numero: "NC-00001",
+      cta_cte: false,
+    });
+    renderRuta();
+    await elegirNotaCredito();
+
+    fireEvent.click(screen.getByLabelText("Nota interna — sin informar a ARCA"));
+
+    expect(screen.getByTestId("aviso-nota-credito-interna")).toBeTruthy();
+    expect(screen.queryByLabelText(/Venta fiscal que revierte/)).toBeNull();
+    expect((screen.getByTestId("venta-buscar-producto") as HTMLInputElement).disabled).toBe(false);
+
+    await elegirCliente();
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), {
+      target: { value: "P-1" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+    expect(dobles.crearVenta.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        tipo_comprobante: "NOTA_CREDITO",
+        cbte_asoc_id: null,
+      },
+    });
+    await waitFor(() => expect(dobles.navigate).toHaveBeenCalledWith({ to: "/ventas" }));
+  });
+
+  it("mantiene la reversa vinculada heredada separada del editor por período", async () => {
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await abrirSelect(/Venta fiscal que revierte/, /V-00001/);
+
+    expect(await screen.findByText(/La nota es total: hereda receptor/)).toBeTruthy();
+    expect(screen.queryByText("Asociación fiscal por período")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Sin factura puntual — asociar por período"));
+    expect(screen.getByText("Asociación fiscal por período")).toBeTruthy();
+    expect(screen.queryByLabelText(/Venta fiscal que revierte/)).toBeNull();
+  });
+
+  it("mantiene readonly la descripción heredada de una factura para NC", async () => {
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await abrirSelect(/Venta fiscal que revierte/, /V-00001/);
+
+    const descripcion = (await screen.findByLabelText("Descripción de P-1")) as HTMLInputElement;
+    expect(descripcion.readOnly).toBe(true);
+    expect(screen.getByText("Sólo cambia esta línea; no modifica el catálogo")).toBeTruthy();
+  });
+
+  it("usa sólo crearVenta para una reversa vinculada", async () => {
+    dobles.facturaDescripcion = `Descripción congelada ${"x".repeat(180)}`;
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await abrirSelect(/Venta fiscal que revierte/, /V-00001/);
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Guardar" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+    expect(dobles.crearPeriodo).not.toHaveBeenCalled();
+    expect(dobles.crearVenta.mock.calls[0]?.[0].data.items[0]).not.toHaveProperty("descripcion");
+  });
+
+  it("usa sólo crearNotaCreditoPeriodoFiscal para una NC por período", async () => {
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await completarAjustePeriodo();
+
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+
+    await waitFor(() => expect(dobles.crearPeriodo).toHaveBeenCalledOnce());
+    expect(dobles.crearVenta).not.toHaveBeenCalled();
+  });
+
+  it("bloquea la ruta y sus writers externos durante ENVIANDO", async () => {
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await completarAjustePeriodo();
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+
+    await waitFor(() => expect(dobles.crearPeriodo).toHaveBeenCalledOnce());
+    expect((screen.getByRole("button", { name: /Volver/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByLabelText("Tipo comprobante *") as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Cliente Uno" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getAllByRole("combobox")[0] as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Volver/ }));
+    expect(dobles.navigate).not.toHaveBeenCalled();
+    expect(dobles.crearVenta).not.toHaveBeenCalled();
+  });
+
+  it("mantiene AMBIGUO bloqueado hasta descartar y crea el nuevo intento con otra key", async () => {
+    dobles.crearPeriodo
+      .mockRejectedValueOnce(new Error("La respuesta pudo perderse"))
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    renderRuta();
+    await elegirNotaCredito();
+    await elegirCliente();
+    await completarAjustePeriodo();
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    await screen.findByText("La respuesta pudo perderse");
+
+    expect((screen.getByRole("button", { name: /Volver/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByLabelText("Tipo comprobante *") as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Cliente Uno" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getAllByRole("combobox")[0] as HTMLButtonElement).disabled).toBe(true);
+    expect(dobles.crearVenta).not.toHaveBeenCalled();
+
+    const primero = dobles.crearPeriodo.mock.calls[0]?.[0] as {
+      data: NotaCreditoPeriodoInput;
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Editar y crear un nuevo intento" }));
+    expect((screen.getByRole("button", { name: /Volver/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByLabelText("Tipo comprobante *") as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "Cliente Uno" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect((screen.getAllByRole("combobox")[0] as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Motivo"), {
+      target: { value: "Bonificación comercial nueva" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear nota pendiente" }));
+    await waitFor(() => expect(dobles.crearPeriodo).toHaveBeenCalledTimes(2));
+    const segundo = dobles.crearPeriodo.mock.calls[1]?.[0] as {
+      data: NotaCreditoPeriodoInput;
+    };
+    expect(segundo.data.idempotency_key).not.toBe(primero.data.idempotency_key);
+    expect(dobles.crearVenta).not.toHaveBeenCalled();
+  });
+});

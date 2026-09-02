@@ -27,6 +27,7 @@ import { Plus, Power, KeyRound, Loader2, RefreshCw, ShieldCheck } from "lucide-r
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  administrarPuedeEmitirNcPeriodo,
   crearUsuario,
   toggleUsuarioActivo,
   resetearPassword,
@@ -181,6 +182,7 @@ function UsuariosPage() {
         id: r?.id,
         secciones: null,
         puede_facturar: false,
+        puede_emitir_nc_periodo: false,
         puede_gestionar_credito_clientes: false,
       };
       setForm(formVacio);
@@ -459,6 +461,7 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   const guardarSecciones = useServerFn(setSeccionesUsuario);
   const guardarSinStock = useServerFn(setPermiteVentaSinStock);
   const guardarPuedeFacturar = useServerFn(setPuedeFacturar);
+  const guardarPuedeEmitirNcPeriodo = useServerFn(administrarPuedeEmitirNcPeriodo);
   const guardarPuedeGestionarCredito = useServerFn(setPuedeGestionarCreditoClientes);
   const esAdmin = usuario.role === "admin";
 
@@ -468,6 +471,9 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   const [sinStock, setSinStock] = useState<boolean>(!!usuario.permite_venta_sin_stock);
   const [puedeFacturar, setPuedeFacturarLocal] = useState<boolean>(
     esAdmin || usuario.puede_facturar === true,
+  );
+  const [puedeEmitirNcPeriodo, setPuedeEmitirNcPeriodo] = useState<boolean>(
+    esAdmin || usuario.puede_emitir_nc_periodo === true,
   );
   const [puedeGestionarCredito, setPuedeGestionarCredito] = useState<boolean>(
     esAdmin || usuario.puede_gestionar_credito_clientes === true,
@@ -492,6 +498,11 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
       if (!esAdmin && puedeFacturar !== !!usuario.puede_facturar) {
         await guardarPuedeFacturar({
           data: { user_id: usuario.id, value: puedeFacturar },
+        });
+      }
+      if (!esAdmin && puedeEmitirNcPeriodo !== !!usuario.puede_emitir_nc_periodo) {
+        await guardarPuedeEmitirNcPeriodo({
+          data: { user_id: usuario.id, value: puedeEmitirNcPeriodo },
         });
       }
       if (!esAdmin && puedeGestionarCredito !== !!usuario.puede_gestionar_credito_clientes) {
@@ -655,6 +666,33 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
                 {esAdmin
                   ? "Los administradores siempre tienen esta capacidad y no se puede desactivar."
                   : "Permite entrar a la cola y emitir sólo cuando Facturación v2 está habilitada."}
+              </span>
+            </span>
+          </label>
+          <label
+            htmlFor="usuario-puede-emitir-nc-periodo"
+            className="mt-3 flex min-h-11 cursor-pointer items-start gap-2 text-sm disabled:cursor-not-allowed"
+          >
+            <input
+              id="usuario-puede-emitir-nc-periodo"
+              type="checkbox"
+              className="mt-1"
+              checked={puedeEmitirNcPeriodo}
+              disabled={m.isPending || esAdmin || !puedeFacturar}
+              aria-describedby="usuario-puede-emitir-nc-periodo-ayuda"
+              onChange={(event) => setPuedeEmitirNcPeriodo(event.target.checked)}
+            />
+            <span>
+              <strong>Emitir NC por período</strong>
+              <span
+                id="usuario-puede-emitir-nc-periodo-ayuda"
+                className="block text-xs text-muted-foreground"
+              >
+                {esAdmin
+                  ? "Los administradores siempre tienen acceso efectivo a esta capacidad."
+                  : puedeFacturar
+                    ? "Habilita esta operación especial; el servidor vuelve a verificar ambos permisos."
+                    : "Primero habilitá Puede facturar: un empleado necesita ambos permisos activos."}
               </span>
             </span>
           </label>

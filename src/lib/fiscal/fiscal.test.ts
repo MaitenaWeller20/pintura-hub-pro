@@ -13,6 +13,7 @@ import {
   letraDeCbteTipo,
   tituloDeCbteTipo,
   TIPOS_C,
+  cbteTipoAfipNcPeriodo,
 } from "./codigos";
 import { calcularTotales, conIva, round2 } from "./iva";
 import {
@@ -147,6 +148,20 @@ describe("notas internas (reversión de algo que nunca se declaró)", () => {
     expect(esNotaInterna("FACTURA_A", null)).toBe(false);
     expect(esNotaInterna("FACTURA_B", null)).toBe(false);
     expect(esNotaInterna("FACTURA_C", null)).toBe(false);
+  });
+
+  it("una NC por período es fiscal aunque no tenga comprobante asociado", () => {
+    expect(esNotaInterna("NOTA_CREDITO", null, "2026-07-01", "2026-07-31")).toBe(false);
+    expect(esNotaInterna("NOTA_CREDITO", null, "2026-07-01", null)).toBe(true);
+  });
+});
+
+describe("tipo de NC fiscal por período", () => {
+  it("acepta sólo las NC estándar de ARCA, no tipos futuros como FCE", () => {
+    expect(cbteTipoAfipNcPeriodo("A")).toBe(3);
+    expect(cbteTipoAfipNcPeriodo("B")).toBe(8);
+    expect(cbteTipoAfipNcPeriodo("C")).toBe(13);
+    expect(() => cbteTipoAfipNcPeriodo("FCE" as never)).toThrow(/3.*8.*13/i);
   });
 });
 

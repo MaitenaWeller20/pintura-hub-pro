@@ -154,7 +154,7 @@ CREATE TEMP TABLE t_v2_nc_interna AS
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b1300000-0000-4000-8000-000000000001','NOTA_CREDITO','CTA_CTE',
-  '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb,
+  '[{"producto_id":"b1300000-0000-4000-8000-000000000002","descripcion":"T13 descripción personalizada interna","cantidad":1}]'::jsonb,
   '[]'::jsonb,0,'T13-NC-V2-INTERNA',NULL,NULL,NULL,
   'd1300000-0000-4000-8000-000000000000'
 );
@@ -176,6 +176,15 @@ SELECT pg_temp.assert_true(
        )
   ),
   'v2 permite una NC manual sin factura y la deja estrictamente interna'
+);
+SELECT pg_temp.assert_true(
+  EXISTS (
+    SELECT 1
+      FROM public.venta_items AS vi
+      JOIN t_v2_nc_interna AS creada ON creada.venta_id=vi.venta_id
+     WHERE vi.descripcion='T13 descripción personalizada interna'
+  ),
+  'la NC interna conserva la descripción personalizada de la base vigente'
 );
 SELECT pg_temp.assert_true(
   EXISTS (

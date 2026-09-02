@@ -1,5 +1,18 @@
 import type { AmbienteArca } from "./contexto";
+import { codigoErrorFiscalUsuario, crearErrorFiscalUsuario } from "./error-usuario";
+import {
+  esCodigoErrorPadronArca,
+  type CodigoErrorPadronArca,
+  type ReceptorPadronArca,
+} from "./padron-arca-shared";
 import { z } from "zod";
+
+export type EstadoPadronArcaPublico = {
+  padron_probado_at: string | null;
+  padron_validacion_activa: boolean;
+  padron_ultimo_error_codigo: CodigoErrorPadronArca | null;
+  padron_ultimo_error_at: string | null;
+};
 
 export type CredencialArcaPublica = {
   ambiente: AmbienteArca;
@@ -9,7 +22,7 @@ export type CredencialArcaPublica = {
   cert_alias: string | null;
   probada_at: string | null;
   habilitada: boolean;
-};
+} & EstadoPadronArcaPublico;
 
 export type CredencialArcaSecreta = {
   ambiente: AmbienteArca;
@@ -19,6 +32,10 @@ export type CredencialArcaSecreta = {
   cert_alias: string | null;
   probada_at: string | null;
   habilitada: boolean;
+  padron_probado_at: string | null;
+  padron_validacion_activa: boolean;
+  padron_ultimo_error_codigo: string | null;
+  padron_ultimo_error_at: string | null;
 };
 
 /** Convierte filas privadas en el único formato que puede llegar al navegador. */
@@ -27,6 +44,7 @@ export function normalizarCredencialesPublicas(
 ): CredencialArcaPublica[] {
   return (["HOMOLOGACION", "PRODUCCION"] as const).map((ambiente) => {
     const row = rows.find((item) => item.ambiente === ambiente);
+    const codigoGuardado = row?.padron_ultimo_error_codigo ?? null;
     return {
       ambiente,
       tiene_clave: Boolean(row?.arca_key_enc),
@@ -35,8 +53,81 @@ export function normalizarCredencialesPublicas(
       cert_alias: row?.cert_alias ?? null,
       probada_at: row?.probada_at ?? null,
       habilitada: row?.habilitada ?? false,
+      padron_probado_at: row?.padron_probado_at ?? null,
+      padron_validacion_activa: row?.padron_validacion_activa ?? false,
+      padron_ultimo_error_codigo:
+        codigoGuardado === null
+          ? null
+          : esCodigoErrorPadronArca(codigoGuardado)
+            ? codigoGuardado
+            : "PADRON_CONFIG_INVALIDA",
+      padron_ultimo_error_at: row?.padron_ultimo_error_at ?? null,
     };
   });
+}
+
+export type EntradaPruebaActivacionPadron = {
+  mockMode: boolean;
+  cuitEmisor: string;
+  consultar(cuit: string): Promise<ReceptorPadronArca>;
+  registrarExito(fecha: string): Promise<void>;
+  registrarFallo(input: { codigo: CodigoErrorPadronArca; fecha: string }): Promise<void>;
+  ahora(): Date;
+};
+
+export type EntradaPruebaPadron = {
+  emisor_id: string;
+  ambiente: AmbienteArca;
+};
+
+export type ResultadoPruebaPadron = {
+  cuit: string;
+  razon_social: string;
+  probado_at: string;
+};
+
+export async function ejecutarPruebaActivacionPadron(
+  input: EntradaPruebaActivacionPadron,
+): Promise<ResultadoPruebaPadron> {
+  if (input.mockMode) throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+
+  let ahora: Date;
+  try {
+    ahora = input.ahora();
+  } catch {
+    throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+  }
+  if (!(ahora instanceof Date) || !Number.isFinite(ahora.getTime())) {
+    throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+  }
+  const fecha = ahora.toISOString();
+
+  try {
+    const receptor = await input.consultar(input.cuitEmisor);
+    if (receptor.cuit !== input.cuitEmisor) {
+      throw crearErrorFiscalUsuario("RESPUESTA_PADRON_INVALIDA");
+    }
+    await input.registrarExito(fecha);
+    return {
+      cuit: receptor.cuit,
+      razon_social: receptor.razonSocial,
+      probado_at: fecha,
+    };
+  } catch (cause) {
+    let marcado = null;
+    try {
+      marcado = codigoErrorFiscalUsuario(cause);
+    } catch {
+      // Una excepción remota hostil no puede escapar de la clasificación cerrada.
+    }
+    const codigo = esCodigoErrorPadronArca(marcado) ? marcado : "PADRON_CONFIG_INVALIDA";
+    try {
+      await input.registrarFallo({ codigo, fecha });
+    } catch {
+      throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
+    }
+    throw crearErrorFiscalUsuario(codigo);
+  }
 }
 
 type EstadoPrivadoCredencial = Pick<

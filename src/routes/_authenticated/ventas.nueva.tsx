@@ -34,15 +34,21 @@ import { ordenarProductosPorRelevancia, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/po
 import { Trash2, ArrowLeft, AlertTriangle, Loader2, Search, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { crearVenta } from "@/lib/ventas.functions";
+import { crearVenta, listarComprobantesOriginalesVenta } from "@/lib/ventas.functions";
 import { calcTotalesComprobante } from "@/lib/ventas-totales";
 import { round2 } from "@/lib/fiscal/iva";
 import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
 import { EditorPagos, type PagoVentaEditable } from "@/components/ventas/editor-pagos";
 import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
 import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
-import { emitirComprobantePostBorrador, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
+import { parseRespuestaConfirmacionFiscal } from "@/components/fiscal/dialogo-emision-contract";
+import {
+  crearNotaCreditoPeriodoFiscal,
+  emitirComprobantePostBorrador,
+  previsualizarEmisionFiscal,
+} from "@/lib/fiscal.functions";
 import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
+import { mensajeCodigoErrorFiscalUsuario } from "@/lib/fiscal/error-usuario";
 import {
   confirmarCierreFiscalInmediato,
   crearControlCreacionVenta,
@@ -51,15 +57,20 @@ import {
   registrarVentaSinFactura,
   resultadoColaDespuesDeEmision,
 } from "@/lib/ventas-ui";
+import { EditorNotaCreditoPeriodo } from "@/components/ventas/editor-nota-credito-periodo";
+import { puedeIniciarNcPeriodo, type CaminoNotaCredito } from "@/lib/nota-credito-periodo-ui";
+import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
 
 export const Route = createFileRoute("/_authenticated/ventas/nueva")({
   component: NuevaVenta,
 });
 
 interface ItemRow {
+  lineaId: string;
   producto_id: string;
   codigo: string;
   descripcion: string;
+  descripcionBase: string;
   cantidad: number;
   // null = "usá el precio de lista". Vacío en el input NO es 0.
   precio_unitario_sin_iva: number | null;
@@ -83,6 +94,8 @@ function NuevaVenta() {
   const { data: cu } = useCurrentUser();
   const navigate = useNavigate();
   const crear = useServerFn(crearVenta);
+  const listarOriginales = useServerFn(listarComprobantesOriginalesVenta);
+  const crearNotaPeriodo = useServerFn(crearNotaCreditoPeriodoFiscal);
   const previsualizarFiscal = useServerFn(previsualizarEmisionFiscal);
   const emitirPostBorrador = useServerFn(emitirComprobantePostBorrador);
   const listarFavoritos = useServerFn(listarReceptoresFiscales);
@@ -91,6 +104,10 @@ function NuevaVenta() {
   const [clienteId, setClienteId] = useState<string>("");
   const [clienteQuery, setClienteQuery] = useState("");
   const [tipoComp, setTipoComp] = useState<string>("FACTURA_B");
+  const [caminoNotaCredito, setCaminoNotaCredito] = useState<CaminoNotaCredito>("REVERSAR_FACTURA");
+  const [estadoIntentoNcPeriodo, setEstadoIntentoNcPeriodo] = useState<
+    "IDLE" | "ENVIANDO" | "AMBIGUO"
+  >("IDLE");
   const [condVenta, setCondVenta] = useState<"CONTADO" | "CTA_CTE">("CONTADO");
   const [percepciones, setPercepciones] = useState<number | null>(0);
   const [observaciones, setObservaciones] = useState("");
@@ -116,7 +133,6 @@ function NuevaVenta() {
   const esFacInterna = tipoComp === "FAC_INTERNA_CTA_CTE";
   const esCtaCte = (TIPOS_CTA_CTE.has(tipoComp) || condVenta === "CTA_CTE") && !esFacInterna;
   const esRemitoObra = tipoComp === "REMITO_OBRA";
-
   // R2.b: condición de IVA del emisor. Si es Monotributo, la única factura que
   // puede emitir es la C (la matriz A/B requiere emisor Responsable Inscripto).
   const { data: condicionEmisor } = useQuery({
@@ -211,6 +227,16 @@ function NuevaVenta() {
     // queda sepultado. Primero lo que arranca con lo tipeado.
     return ordenarProductosPorRelevancia(coinciden, prodQuery);
   }, [productosCatalogo, prodQuery]);
+  const productosNcPeriodo = useMemo(
+    () =>
+      productosCatalogo.map((producto: any) => ({
+        id: producto.id,
+        descripcion: producto.nombre,
+        precioSinIva: Number(producto.precio_sin_iva),
+        ivaPorcentaje: Number(producto.iva_porcentaje),
+      })),
+    [productosCatalogo],
+  );
 
   const addProducto = (p: any) => {
     const stock =
@@ -218,9 +244,11 @@ function NuevaVenta() {
     setItems((prev) => [
       ...prev,
       {
+        lineaId: crypto.randomUUID(),
         producto_id: p.id,
         codigo: p.codigo,
         descripcion: p.nombre,
+        descripcionBase: p.nombre,
         cantidad: 1,
         precio_unitario_sin_iva: Number(p.precio_sin_iva),
         precio_lista: Number(p.precio_sin_iva),
@@ -285,9 +313,11 @@ function NuevaVenta() {
     }
     setItems(
       (itemsResult.data ?? []).map((it: any) => ({
+        lineaId: crypto.randomUUID(),
         producto_id: it.producto_id,
         codigo: it.codigo,
         descripcion: it.descripcion,
+        descripcionBase: it.descripcion,
         cantidad: Number(it.cantidad),
         precio_unitario_sin_iva: Number(it.precio_unitario_sin_iva),
         precio_lista: Number(it.precio_unitario_sin_iva),
@@ -342,10 +372,21 @@ function NuevaVenta() {
   const esNotaCredito = tipoComp === "NOTA_CREDITO";
   const esNotaDebito = tipoComp === "NOTA_DEBITO";
   const esNota = tipoComp === "NOTA_CREDITO" || tipoComp === "NOTA_DEBITO";
+  const esNotaCreditoV2 = esNotaCredito && !!cu?.facturacionV2Habilitada;
+  const puedeCrearNcPeriodo = puedeIniciarNcPeriodo({
+    v2: cu?.facturacionV2Habilitada ?? false,
+    periodoHabilitado: cu?.notaCreditoPeriodoHabilitada ?? false,
+    puedeEmitir: cu?.puedeEmitirNcPeriodo ?? false,
+  });
+  const esNcPeriodo =
+    esNotaCreditoV2 && caminoNotaCredito === "ASOCIAR_PERIODO" && puedeCrearNcPeriodo;
+  const bloqueoGlobalNcPeriodo = estadoIntentoNcPeriodo !== "IDLE";
+  const esNcCreditoReversaV2 = esNotaCreditoV2 && caminoNotaCredito === "REVERSAR_FACTURA";
   const modoNota = modoNotaNueva({
     tipoComprobante: tipoComp,
     facturacionV2Habilitada: cu?.facturacionV2Habilitada ?? false,
     comprobanteAsociadoId: cbteAsocId || null,
+    caminoNotaCredito,
   });
   const camposNotaBloqueados = esNota && !modoNota.camposEditables;
   const esFiscal = [
@@ -373,32 +414,26 @@ function NuevaVenta() {
   const { data: facturasDelCliente = [] } = useQuery({
     queryKey: ["facturas-cliente", clienteId, cu?.facturacionV2Habilitada ?? false],
     enabled: esNota && modoNota.muestraSelectorComprobante && !!clienteId,
-    queryFn: async () => {
-      let query = supabase
-        .from("ventas")
-        .select(
-          "id,numero_comprobante,tipo_comprobante,fecha,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,condicion_venta,afip_estado,afip_fase,afip_validez,afip_modo,afip_simulado,afip_numero,afip_emisor_cuit,afip_punto_venta,afip_cbte_tipo,afip_snapshot_hash,cae",
-        )
-        .eq("cliente_id", clienteId)
-        .eq("estado", "ACTIVA");
-      if (cu?.facturacionV2Habilitada) {
-        query = query
-          .eq("tipo_comprobante", "VENTA")
-          .eq("afip_estado", "APROBADO")
-          .eq("afip_fase", "PERSISTIDO")
-          .eq("afip_validez", "PRODUCCION")
-          .eq("afip_modo", "PRODUCCION")
-          .eq("afip_simulado", false)
-          .not("cae", "is", null)
-          .not("afip_numero", "is", null)
-          .not("afip_snapshot_hash", "is", null);
-      } else {
-        query = query.in("tipo_comprobante", ["FACTURA_A", "FACTURA_B", "FACTURA_C"]);
-      }
-      const { data } = await query.order("fecha", { ascending: false }).limit(30);
-      return (data ?? []) as any[];
-    },
+    queryFn: () =>
+      listarOriginales({
+        data: {
+          cliente_id: clienteId,
+          receptor_v2: cu?.facturacionV2Habilitada ?? false,
+        },
+      }),
   });
+
+  const cambiarCaminoNotaCredito = (camino: CaminoNotaCredito) => {
+    pedidoFacturaRef.current++;
+    setCaminoNotaCredito(camino);
+    if (camino === "REVERSAR_FACTURA") return;
+    setCbteAsocId("");
+    setItems((prev) =>
+      prev.some((item) => item.desde_factura) ? prev.filter((item) => !item.desde_factura) : prev,
+    );
+    setPagos([]);
+    setPercepciones(0);
+  };
 
   // R5: la Nota de Débito NO trae productos. Es un recargo (interés/mora) sobre la
   // factura que rectifica: % sobre el total con IVA + un monto fijo. Se materializa
@@ -443,6 +478,15 @@ function NuevaVenta() {
   useEffect(() => {
     if (esCtaCte && pagos.length) setPagos([]);
   }, [esCtaCte, pagos.length]);
+
+  useEffect(() => {
+    if (esNotaCreditoV2 && caminoNotaCredito === "ASOCIAR_PERIODO" && !puedeCrearNcPeriodo) {
+      cambiarCaminoNotaCredito("REVERSAR_FACTURA");
+    }
+    // El cambio de permisos/rollout invalida el camino; el handler limpia datos
+    // copiados que ya no deben sobrevivir al modo disponible.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caminoNotaCredito, esNotaCreditoV2, puedeCrearNcPeriodo]);
 
   // Al cambiar de cliente, limpio lo que era específico del cliente anterior: la
   // factura que rectifica una nota (no puede pertenecer a otro cliente) y el
@@ -569,6 +613,7 @@ function NuevaVenta() {
           producto_id: item.producto_id,
           cantidad: Number(item.cantidad || 0),
           descuento_porcentaje: Number(item.descuento_porcentaje || 0),
+          ...descripcionItemParaPayload(item.descripcion, item.descripcionBase),
           ...(precioPisado ? { precio_unitario_sin_iva: precioTipeado } : {}),
         };
       });
@@ -688,6 +733,7 @@ function NuevaVenta() {
     (!esFiscal || Math.abs(totales.total) > 0.005) &&
     // (1) no permitir Factura A a un cliente que no es Responsable Inscripto
     !comboInvalido &&
+    (!esNcCreditoReversaV2 || !!cbteAsocId) &&
     (!esRemitoObra || nombreObra.trim().length > 0) &&
     // La factura que rectifica ya la exige la ND unas líneas más arriba. La NC
     // puede ir sin ninguna: queda como documento interno (ver el aviso abajo).
@@ -763,40 +809,49 @@ function NuevaVenta() {
         title="Nuevo comprobante"
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => navigate({ to: "/ventas" })}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={bloqueoGlobalNcPeriodo}
+              onClick={() => navigate({ to: "/ventas" })}
+            >
               <ArrowLeft className="h-4 w-4 mr-1" /> Volver
             </Button>
-            {cierreVenta.acciones.map((accion) =>
-              accion.id === "REGISTRAR_Y_FACTURAR" ? (
-                <Button
-                  key={accion.id}
-                  ref={botonFacturarRef}
-                  onClick={() => setDialogoFiscalAbierto(true)}
-                  disabled={!canSave || guardar.isPending}
-                  data-testid="registrar-y-facturar"
-                >
-                  <ReceiptText className="mr-1 h-4 w-4" /> {accion.etiqueta}
-                </Button>
-              ) : (
-                <Button
-                  key={accion.id}
-                  variant={accion.id === "REGISTRAR_SIN_FACTURAR" ? "outline" : "default"}
-                  onClick={() => guardar.mutate(accion.id)}
-                  disabled={!canSave || guardar.isPending}
-                  data-testid={
-                    accion.id === "REGISTRAR_SIN_FACTURAR"
-                      ? "registrar-sin-facturar"
-                      : "guardar-venta"
-                  }
-                >
-                  {guardar.isPending && guardar.variables === accion.id ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {accion.etiqueta}
-                </Button>
-              ),
-            )}
-            {cierreVenta.bloqueado ? <Button disabled>Facturación en mantenimiento</Button> : null}
+            {!esNcPeriodo
+              ? cierreVenta.acciones.map((accion) =>
+                  accion.id === "REGISTRAR_Y_FACTURAR" ? (
+                    <Button
+                      key={accion.id}
+                      ref={botonFacturarRef}
+                      onClick={() => setDialogoFiscalAbierto(true)}
+                      disabled={!canSave || guardar.isPending || bloqueoGlobalNcPeriodo}
+                      data-testid="registrar-y-facturar"
+                    >
+                      <ReceiptText className="mr-1 h-4 w-4" /> {accion.etiqueta}
+                    </Button>
+                  ) : (
+                    <Button
+                      key={accion.id}
+                      variant={accion.id === "REGISTRAR_SIN_FACTURAR" ? "outline" : "default"}
+                      onClick={() => guardar.mutate(accion.id)}
+                      disabled={!canSave || guardar.isPending || bloqueoGlobalNcPeriodo}
+                      data-testid={
+                        accion.id === "REGISTRAR_SIN_FACTURAR"
+                          ? "registrar-sin-facturar"
+                          : "guardar-venta"
+                      }
+                    >
+                      {guardar.isPending && guardar.variables === accion.id ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : null}
+                      {accion.etiqueta}
+                    </Button>
+                  ),
+                )
+              : null}
+            {!esNcPeriodo && cierreVenta.bloqueado ? (
+              <Button disabled>Facturación en mantenimiento</Button>
+            ) : null}
           </>
         }
       />
@@ -807,7 +862,11 @@ function NuevaVenta() {
             <div>
               <Label>Sucursal *</Label>
               {cu?.isAdmin ? (
-                <Select value={sucursalId} onValueChange={setSucursalId}>
+                <Select
+                  value={sucursalId}
+                  disabled={bloqueoGlobalNcPeriodo}
+                  onValueChange={setSucursalId}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccionar…" />
                   </SelectTrigger>
@@ -825,7 +884,11 @@ function NuevaVenta() {
             </div>
             <div>
               <Label htmlFor="tipo-comprobante">Tipo comprobante *</Label>
-              <Select value={tipoComp} onValueChange={(v) => setTipoComp(v)}>
+              <Select
+                value={tipoComp}
+                disabled={bloqueoGlobalNcPeriodo}
+                onValueChange={(v) => setTipoComp(v)}
+              >
                 <SelectTrigger id="tipo-comprobante">
                   <SelectValue />
                 </SelectTrigger>
@@ -862,7 +925,12 @@ function NuevaVenta() {
               <Select
                 value={esFacInterna ? "CONTADO" : esCtaCte ? "CTA_CTE" : condVenta}
                 onValueChange={(v) => setCondVenta(v as any)}
-                disabled={TIPOS_CTA_CTE.has(tipoComp) || esFacInterna || camposNotaBloqueados}
+                disabled={
+                  TIPOS_CTA_CTE.has(tipoComp) ||
+                  esFacInterna ||
+                  camposNotaBloqueados ||
+                  bloqueoGlobalNcPeriodo
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -897,7 +965,11 @@ function NuevaVenta() {
               </Label>
               <Popover open={showCli} onOpenChange={setShowCli}>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start truncate">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start truncate"
+                    disabled={bloqueoGlobalNcPeriodo}
+                  >
                     {clienteSel ? clienteSel.razon_social : "Buscar cliente…"}
                   </Button>
                 </PopoverTrigger>
@@ -905,6 +977,7 @@ function NuevaVenta() {
                   <Input
                     placeholder="Nombre o CUIT…"
                     value={clienteQuery}
+                    disabled={bloqueoGlobalNcPeriodo}
                     onChange={(e) => setClienteQuery(e.target.value)}
                     autoFocus
                   />
@@ -912,6 +985,7 @@ function NuevaVenta() {
                     {clientes.map((c: any) => (
                       <button
                         key={c.id}
+                        disabled={bloqueoGlobalNcPeriodo}
                         className="w-full text-left p-2 hover:bg-accent rounded text-sm"
                         onClick={() => {
                           setClienteId(c.id);
@@ -941,10 +1015,50 @@ function NuevaVenta() {
                 <Input
                   placeholder="Nombre / dirección de la obra"
                   value={nombreObra}
+                  disabled={bloqueoGlobalNcPeriodo}
                   onChange={(e) => setNombreObra(e.target.value)}
                 />
               </div>
             )}
+            {esNotaCreditoV2 ? (
+              <fieldset className="col-span-2 space-y-2">
+                <legend className="text-sm font-semibold">Tipo de nota de crédito</legend>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
+                    <input
+                      type="radio"
+                      name="camino-nota-credito"
+                      checked={caminoNotaCredito === "REVERSAR_FACTURA"}
+                      disabled={bloqueoGlobalNcPeriodo}
+                      onChange={() => cambiarCaminoNotaCredito("REVERSAR_FACTURA")}
+                    />
+                    Revertir una factura específica
+                  </label>
+                  {puedeCrearNcPeriodo ? (
+                    <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
+                      <input
+                        type="radio"
+                        name="camino-nota-credito"
+                        checked={caminoNotaCredito === "ASOCIAR_PERIODO"}
+                        disabled={bloqueoGlobalNcPeriodo}
+                        onChange={() => cambiarCaminoNotaCredito("ASOCIAR_PERIODO")}
+                      />
+                      Sin factura puntual — asociar por período
+                    </label>
+                  ) : null}
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 focus-within:ring-2 focus-within:ring-ring">
+                    <input
+                      type="radio"
+                      name="camino-nota-credito"
+                      checked={caminoNotaCredito === "INTERNA"}
+                      disabled={bloqueoGlobalNcPeriodo}
+                      onChange={() => cambiarCaminoNotaCredito("INTERNA")}
+                    />
+                    Nota interna — sin informar a ARCA
+                  </label>
+                </div>
+              </fieldset>
+            ) : null}
             {modoNota.esNotaCreditoInterna ? (
               <div
                 className="col-span-2 rounded-lg border border-info/35 bg-info/5 p-3 text-sm"
@@ -960,12 +1074,13 @@ function NuevaVenta() {
             {esNota && modoNota.muestraSelectorComprobante ? (
               <div className="col-span-2">
                 <Label htmlFor="comprobante-original">
-                  Factura que rectifica {esNotaDebito ? "*" : ""}
+                  {esNcCreditoReversaV2 ? "Venta fiscal que revierte *" : "Factura que rectifica"}{" "}
+                  {esNotaDebito && "*"}
                 </Label>
                 <Select
-                  value={cbteAsocId || (esNotaCredito ? SIN_FACTURA : "")}
+                  value={cbteAsocId || (esNotaCredito && !esNcCreditoReversaV2 ? SIN_FACTURA : "")}
                   onValueChange={(v) => seleccionarFacturaRectifica(v === SIN_FACTURA ? "" : v)}
-                  disabled={!clienteId}
+                  disabled={!clienteId || bloqueoGlobalNcPeriodo}
                 >
                   <SelectTrigger id="comprobante-original">
                     <SelectValue
@@ -976,7 +1091,7 @@ function NuevaVenta() {
                     {/* La salida para la devolución cuya factura no está en el
                         sistema. Sólo para la NC: la ND necesita una factura
                         sobre la cual calcular el recargo. */}
-                    {esNotaCredito ? (
+                    {esNotaCredito && !esNotaCreditoV2 ? (
                       <SelectItem value={SIN_FACTURA}>Sin factura — documento interno</SelectItem>
                     ) : null}
                     {facturasDelCliente.map((f: any) => (
@@ -988,9 +1103,11 @@ function NuevaVenta() {
                 </Select>
                 {clienteId && facturasDelCliente.length === 0 && (
                   <p className="text-[11px] text-warning mt-1">
-                    {esNotaCredito
-                      ? "Este cliente no tiene facturas cargadas. Podés hacerla igual, sin factura."
-                      : "Este cliente no tiene facturas activas, y una nota de débito recarga una factura. Cargá la factura primero."}
+                    {esNcCreditoReversaV2
+                      ? "No hay ventas neutrales aprobadas de producción disponibles para este cliente."
+                      : esNotaCredito
+                        ? "Este cliente no tiene facturas cargadas. Podés hacerla igual, sin factura."
+                        : "Este cliente no tiene facturas activas, y una nota de débito recarga una factura. Cargá la factura primero."}
                   </p>
                 )}
                 {/* Antes decía "AFIP exige que toda nota indique el comprobante
@@ -998,7 +1115,12 @@ function NuevaVenta() {
                     asociado O el período, y este sistema todavía no manda el
                     período. Lo que importa que el usuario sepa no es la norma
                     sino qué le va a pasar al comprobante que está por guardar. */}
-                {esNotaCredito && !cbteAsocId ? (
+                {esNcCreditoReversaV2 ? (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    La nota es total: hereda receptor, emisor, identidad, productos, devolución y
+                    saldo del comprobante original. Esos datos son de sólo lectura.
+                  </p>
+                ) : esNotaCredito && !cbteAsocId ? (
                   <p className="text-[11px] text-warning mt-1">
                     Sin factura queda como <strong>documento interno</strong>: devuelve el stock y
                     la plata (o el saldo), pero no se manda a AFIP y no lleva CAE. Usalo cuando la
@@ -1014,7 +1136,7 @@ function NuevaVenta() {
           </div>
         </SectionCard>
 
-        <SectionCard title="Totales">
+        <SectionCard title="Totales" className={esNcPeriodo ? "hidden" : undefined}>
           <div className="space-y-1 text-sm">
             <div className="flex justify-between">
               <span>Subtotal:</span>
@@ -1068,7 +1190,23 @@ function NuevaVenta() {
         </SectionCard>
       </div>
 
-      {esNotaDebito && (
+      {esNcPeriodo ? (
+        <EditorNotaCreditoPeriodo
+          sucursalId={effSucursal}
+          clienteId={clienteId}
+          clienteComercial={clienteSel?.razon_social ?? "Cliente seleccionado"}
+          productos={productosNcPeriodo}
+          disabled={!effSucursal || !clienteId || bloqueoGlobalNcPeriodo}
+          onEstadoIntento={setEstadoIntentoNcPeriodo}
+          onCrear={async (input) => {
+            const creada = await crearNotaPeriodo({ data: input });
+            toast.success(`Nota de crédito ${creada.numero} creada para revisión fiscal.`);
+            navegarACola(creada.id, "venta_creada_factura_pendiente");
+          }}
+        />
+      ) : null}
+
+      {esNotaDebito && !esNcPeriodo && (
         <SectionCard className="space-y-3">
           <h3 className="font-semibold text-sm">Recargo de la nota de débito</h3>
           {!cbteAsocId ? (
@@ -1104,7 +1242,7 @@ function NuevaVenta() {
         </SectionCard>
       )}
 
-      {!esNotaDebito && (
+      {!esNotaDebito && !esNcPeriodo && (
         <SectionCard className="space-y-3">
           <h3 className="font-semibold text-sm">Productos</h3>
           {camposNotaBloqueados ? (
@@ -1215,6 +1353,10 @@ function NuevaVenta() {
                 </TableHeader>
                 <TableBody>
                   {items.map((it, i) => {
+                    const estadoDescripcion = estadoDescripcionItem(
+                      it.descripcion,
+                      it.descripcionBase,
+                    );
                     const precioEfectivo = it.precio_unitario_sin_iva ?? it.precio_lista ?? 0;
                     const sub =
                       precioEfectivo *
@@ -1228,10 +1370,38 @@ function NuevaVenta() {
                       Math.abs(Number(it.precio_unitario_sin_iva) - Number(it.precio_lista || 0)) >
                         0.005;
                     return (
-                      <TableRow key={i}>
+                      <TableRow key={it.lineaId}>
                         <TableCell className="font-mono text-xs">{it.codigo}</TableCell>
                         <TableCell className="max-w-xs">
-                          <div className="text-sm">{it.descripcion}</div>
+                          <Input
+                            aria-label={`Descripción de ${it.codigo}`}
+                            aria-describedby={`descripcion-ayuda-${i}`}
+                            aria-invalid={!estadoDescripcion.valida}
+                            value={it.descripcion}
+                            readOnly={it.desde_factura === true}
+                            onChange={(event) => updateItem(i, "descripcion", event.target.value)}
+                          />
+                          <p
+                            id={`descripcion-ayuda-${i}`}
+                            role={estadoDescripcion.valida ? undefined : "alert"}
+                            className={`mt-1 text-xs ${estadoDescripcion.valida ? "text-muted-foreground" : "text-destructive"}`}
+                          >
+                            {estadoDescripcion.mensaje ??
+                              (!it.desde_factura &&
+                              !estadoDescripcion.personalizada &&
+                              estadoDescripcion.caracteres > 160 ? (
+                                "Descripción histórica sin cambios; se conservará completa"
+                              ) : (
+                                <>
+                                  <span>Sólo cambia esta línea; no modifica el catálogo</span>
+                                  <span>
+                                    {it.desde_factura
+                                      ? " · La reversión usa el original guardado"
+                                      : ` · ${estadoDescripcion.caracteres}/160 caracteres`}
+                                  </span>
+                                </>
+                              ))}
+                          </p>
                           {stockWarn && (
                             <Badge
                               variant="outline"
@@ -1298,7 +1468,7 @@ function NuevaVenta() {
         </SectionCard>
       )}
 
-      {!esCtaCte && (
+      {!esCtaCte && !esNcPeriodo && (
         <SectionCard className="space-y-3">
           <EditorPagos
             pagos={pagos}
@@ -1314,21 +1484,25 @@ function NuevaVenta() {
         </SectionCard>
       )}
 
-      <ResumenCierreVenta
-        total={totales.total}
-        pagadoAhora={esCtaCte ? 0 : totales.pagado}
-        esCtaCte={esCtaCte}
-      />
-
-      <SectionCard>
-        <Label>Observaciones</Label>
-        <Textarea
-          value={observaciones}
-          onChange={(e) => setObservaciones(e.target.value)}
-          rows={2}
-          className="mt-1"
+      {!esNcPeriodo ? (
+        <ResumenCierreVenta
+          total={totales.total}
+          pagadoAhora={esCtaCte ? 0 : totales.pagado}
+          esCtaCte={esCtaCte}
         />
-      </SectionCard>
+      ) : null}
+
+      {!esNcPeriodo ? (
+        <SectionCard>
+          <Label>Observaciones</Label>
+          <Textarea
+            value={observaciones}
+            onChange={(e) => setObservaciones(e.target.value)}
+            rows={2}
+            className="mt-1"
+          />
+        </SectionCard>
+      ) : null}
 
       {dialogoFiscalAbierto && clienteId && cierreVenta.tipoPersistido === "VENTA" ? (
         <DialogoEmisionFiscal
@@ -1341,6 +1515,7 @@ function NuevaVenta() {
             },
             emisor: { razonSocial: "Emisor de la sucursal", cuit: "a confirmar" },
             sucursal: {
+              id: effSucursal,
               nombre:
                 sucs.find((sucursal: any) => sucursal.id === effSucursal)?.nombre ??
                 cu?.sucursal?.nombre ??
@@ -1367,14 +1542,7 @@ function NuevaVenta() {
                 sucursal_id: effSucursal,
                 cliente_id: clienteId,
                 fecha_comercial: new Date().toISOString(),
-                items: items.map((item) => ({
-                  producto_id: item.producto_id,
-                  cantidad: Number(item.cantidad || 0),
-                  descuento_porcentaje: Number(item.descuento_porcentaje || 0),
-                  ...(item.precio_unitario_sin_iva == null
-                    ? {}
-                    : { precio_unitario_sin_iva: Number(item.precio_unitario_sin_iva) }),
-                })),
+                items: itemsPayload,
                 pagos: pagosPayload,
                 percepciones: Number(percepciones || 0),
                 receptor,
@@ -1389,6 +1557,9 @@ function NuevaVenta() {
             huellaConfirmacion,
           }) => {
             try {
+              if (typeof letraSolicitada !== "string") {
+                throw new Error("La venta ordinaria requiere una letra fiscal explícita.");
+              }
               const respuesta = await confirmarCierreFiscalInmediato(
                 {
                   control: controlCreacionRef.current,
@@ -1418,20 +1589,20 @@ function NuevaVenta() {
                 "estado" in respuesta &&
                 respuesta.estado === "MANTENIMIENTO"
               ) {
-                return {
+                return parseRespuestaConfirmacionFiscal({
                   estado: "ERROR_CORREGIBLE" as const,
-                  mensaje:
-                    "La venta quedó registrada y la emisión está en mantenimiento. No repitas la venta ni el cobro.",
-                };
+                  codigo: "MANTENIMIENTO_POST_VENTA" as const,
+                  mensaje: mensajeCodigoErrorFiscalUsuario("MANTENIMIENTO_POST_VENTA"),
+                });
               }
-              return respuesta;
+              return parseRespuestaConfirmacionFiscal(respuesta);
             } catch (cause) {
               if (!controlCreacionRef.current.ventaId) throw cause;
-              return {
+              return parseRespuestaConfirmacionFiscal({
                 estado: "RECONCILIAR" as const,
                 mensaje:
                   "La venta quedó registrada, pero no se pudo confirmar la respuesta fiscal. No repitas la venta ni el cobro.",
-              };
+              });
             }
           }}
           onCompletada={(resultado) => {

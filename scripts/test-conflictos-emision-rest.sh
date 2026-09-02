@@ -191,6 +191,8 @@ INSERT INTO auth.users (
   '$USUARIO_ID','00000000-0000-0000-0000-000000000000',
   'authenticated','authenticated','t13-rest-conflict@local.test','x',now(),now(),now()
 );
+INSERT INTO public.user_roles(user_id,role)
+VALUES ('$USUARIO_ID','admin');
 INSERT INTO public.clientes (id,razon_social)
 VALUES ('$CLIENTE_ID','T13 REST CONFLICT CLIENTE');
 INSERT INTO public.ventas (
@@ -438,7 +440,7 @@ assert_eq "la primera reserva real sigue intacta" \
 post_transicion request-real-uno "$VENTA_REAL_UNO" REQUEST_INICIADO "$TOKEN_REAL_UNO" \
   '{"expected_version":2}'
 post_transicion respuesta-real-uno "$VENTA_REAL_UNO" RESPUESTA_RECIBIDA "$TOKEN_REAL_UNO" \
-  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[]}}'
+  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[],"cae":"74123456789021","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T15:00:00.000Z"}}'
 post_transicion aprobar-real-uno "$VENTA_REAL_UNO" APROBAR "$TOKEN_REAL_UNO" \
   '{"expected_version":4,"cae":"74123456789021","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T15:00:00.000Z"}'
 
@@ -454,7 +456,7 @@ assert_eq "tras avanzar remoto la segunda reserva el número 2" "200" \
 post_transicion request-real-dos "$VENTA_REAL_DOS" REQUEST_INICIADO "$TOKEN_REAL_DOS_REINTENTO" \
   '{"expected_version":4}'
 post_transicion respuesta-real-dos "$VENTA_REAL_DOS" RESPUESTA_RECIBIDA "$TOKEN_REAL_DOS_REINTENTO" \
-  '{"expected_version":5,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[]}}'
+  '{"expected_version":5,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[],"cae":"74123456789022","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T15:00:01.000Z"}}'
 post_transicion aprobar-real-dos "$VENTA_REAL_DOS" APROBAR "$TOKEN_REAL_DOS_REINTENTO" \
   '{"expected_version":6,"cae":"74123456789022","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T15:00:01.000Z"}'
 assert_eq "dos ventas reales terminan aprobadas con números consecutivos" \
@@ -488,7 +490,7 @@ printf '%s\n' \
   "SET ROLE service_role;" \
   "BEGIN;" \
   "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','REQUEST_INICIADO','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":2}'::jsonb);" \
-  "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','RESPUESTA_RECIBIDA','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":3,\"respuesta_resumen\":{\"tipo\":\"EMISION\",\"resultado\":\"A\",\"fuente\":\"FECAESolicitar\",\"rechazo_confirmado\":false,\"observaciones\":[]}}'::jsonb);" \
+  "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','RESPUESTA_RECIBIDA','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":3,\"respuesta_resumen\":{\"tipo\":\"EMISION\",\"resultado\":\"A\",\"fuente\":\"FECAESolicitar\",\"rechazo_confirmado\":false,\"observaciones\":[],\"cae\":\"74123456789031\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:01:00.000Z\"}}'::jsonb);" \
   "SELECT * FROM public.transicionar_emision_fiscal('$VENTA_TOCTOU_APROBADA_UNO','APROBAR','$TOKEN_TOCTOU_APROBADA_UNO','{\"expected_version\":4,\"cae\":\"74123456789031\",\"cae_vencimiento\":\"2026-09-01\",\"emitido_at\":\"2026-08-22T15:01:00.000Z\"}'::jsonb);" >&8
 esperar_condicion_db \
   "la aprobación concurrente mantiene la fila máxima bloqueada" \

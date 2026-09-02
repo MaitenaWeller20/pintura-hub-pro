@@ -4,7 +4,12 @@ cd "$(dirname "$0")/.."
 
 PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
 DB="${DB:-supabase_db_${PROJECT_ID}}"
-PSQL=(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1)
+V2_FIXTURE="$(jq -c '.input' test/fixtures/fiscal-snapshot-parity-v2.json)"
+V2_HASH="$(jq -r '.input.hash' test/fixtures/fiscal-snapshot-parity-v2.json)"
+PSQL=(
+  docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1
+  -v "V2_FIXTURE=$V2_FIXTURE" -v "V2_HASH=$V2_HASH"
+)
 
 q() { "${PSQL[@]}" -tAc "$1"; }
 check() {
@@ -24,8 +29,12 @@ check "ventas tiene los doce campos fiscales nuevos" "12" \
 
 check "profiles.puede_facturar nace false" "false" \
   "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='puede_facturar'")"
+check "profiles.puede_emitir_nc_periodo nace false" "false" \
+  "$(q "select column_default from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='puede_emitir_nc_periodo'")"
 check "schema post-corte nace en mantenimiento y legacy retirado" "false|false" \
   "$(q "select facturacion_receptor_v2_enabled::text||'|'||facturacion_legacy_writer_enabled::text from public.settings where id=true")"
+check "NC por período nace deshabilitada" "false" \
+  "$(q "select nota_credito_periodo_enabled::text from public.settings where id=true")"
 check "legacy no puede reactivarse y su default es false" "false|1" \
   "$(q "select column_default||'|'||(select count(*) from pg_constraint where conrelid='public.settings'::regclass and conname='ck_settings_legacy_writer_retirado')::text from information_schema.columns where table_schema='public' and table_name='settings' and column_name='facturacion_legacy_writer_enabled'")"
 check "firma antigua de presupuesto fue retirada" "0" \
@@ -84,7 +93,7 @@ check "service_role tiene sólo lectura/alta/actualización de intentos" "true|t
 
 check "puede_facturar tiene una única firma invoker" "1|true|false" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='_uid uuid')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='puede_facturar'")"
-check "backfill tiene una única firma invoker" "1|true|false" \
+check "backfill privilegiado tiene una única firma definer" "1|true|true" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_aplicar boolean')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='backfill_cola_fiscal'")"
 check "desactivar favorito tiene una única firma definer" "1|true|true" \
   "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_receptor_id uuid')::text||'|'||bool_or(p.prosecdef)::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='desactivar_receptor_fiscal'")"
@@ -98,8 +107,8 @@ check "PUBLIC no ejecuta rutinas fiscales o privilegiadas nuevas" "0" \
   "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname in ('puede_facturar','desactivar_receptor_fiscal','guardar_receptor_fiscal_desde_venta','administrar_puede_facturar','guard_profiles_columnas','backfill_cola_fiscal','transicionar_emision_fiscal') and a.grantee=0 and a.privilege_type='EXECUTE'")"
 check "authenticated y service_role ejecutan puede_facturar" "true|true" \
   "$(q "select has_function_privilege('authenticated','public.puede_facturar(uuid)','execute')::text||'|'||has_function_privilege('service_role','public.puede_facturar(uuid)','execute')::text")"
-check "el navegador no ejecuta backfill" "false|false" \
-  "$(q "select has_function_privilege('anon','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.backfill_cola_fiscal(boolean)','execute')::text")"
+check "sólo service_role ejecuta backfill" "false|false|true" \
+  "$(q "select has_function_privilege('anon','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.backfill_cola_fiscal(boolean)','execute')::text||'|'||has_function_privilege('service_role','public.backfill_cola_fiscal(boolean)','execute')::text")"
 check "el navegador no ejecuta directamente el guard de perfiles" "false|false" \
   "$(q "select has_function_privilege('anon','public.guard_profiles_columnas()','execute')::text||'|'||has_function_privilege('authenticated','public.guard_profiles_columnas()','execute')::text")"
 check "sólo authenticated ejecuta la desactivación controlada" "false|true|false" \
@@ -109,12 +118,14 @@ check "sólo authenticated ejecuta el guardado post-CAE" "false|true|false" \
 check "sólo authenticated ejecuta la administración del permiso fiscal" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('authenticated','public.administrar_puede_facturar(uuid,boolean)','execute')::text||'|'||has_function_privilege('service_role','public.administrar_puede_facturar(uuid,boolean)','execute')::text")"
 
-check "cola fiscal tiene una única firma invoker y estable" "1|true|false|s" \
-  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_tab text, p_page integer, p_page_size integer, p_desde date, p_hasta date, p_sucursal_id uuid, p_emisor_id uuid, p_documento text, p_estado text, p_venta_id uuid')::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
+check "cola fiscal tiene una única firma definer estable y owner postgres" "1|true|true|s|postgres" \
+  "$(q "select count(*)::text||'|'||bool_and(pg_get_function_identity_arguments(p.oid)='p_tab text, p_page integer, p_page_size integer, p_desde date, p_hasta date, p_sucursal_id uuid, p_emisor_id uuid, p_documento text, p_estado text, p_venta_id uuid')::text||'|'||bool_or(p.prosecdef)::text||'|'||min(p.provolatile)||'|'||min(pg_get_userbyid(p.proowner)) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
 check "cola fiscal fija search_path vacío" "search_path=\"\"" \
   "$(q "select array_to_string(p.proconfig,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='cola_fiscal_lectura'")"
 check "sólo authenticated ejecuta la lectura de cola" "false|true|false" \
   "$(q "select has_function_privilege('anon','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text||'|'||has_function_privilege('authenticated','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text||'|'||has_function_privilege('service_role','public.cola_fiscal_lectura(text,integer,integer,date,date,uuid,uuid,text,text,uuid)','execute')::text")"
+check "el dispatcher persistido sigue owner-only pese a la frontera de cola" "false|false|false" \
+  "$(q "select has_function_privilege('anon','public.validar_snapshot_fiscal_persistido(jsonb)','execute')::text||'|'||has_function_privilege('authenticated','public.validar_snapshot_fiscal_persistido(jsonb)','execute')::text||'|'||has_function_privilege('service_role','public.validar_snapshot_fiscal_persistido(jsonb)','execute')::text")"
 check "favoritos dejan sólo SELECT directo al navegador" "true|false|false|false|1|0|0|0" \
   "$(q "select has_table_privilege('authenticated','public.receptores_fiscales','select')::text||'|'||has_table_privilege('authenticated','public.receptores_fiscales','insert')::text||'|'||has_table_privilege('authenticated','public.receptores_fiscales','update')::text||'|'||has_table_privilege('authenticated','public.receptores_fiscales','delete')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='SELECT')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='INSERT')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='UPDATE')::text||'|'||(select count(*) from pg_policies where schemaname='public' and tablename='receptores_fiscales' and cmd='DELETE')::text")"
 
@@ -176,7 +187,7 @@ INSERT INTO public.ventas (
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-ESTADO-EMITIENDO','VENTA','EMITIENDO',
-  'c2000000-0000-0000-0000-000000000001',now(),'{"version":2}'::jsonb,repeat('e',64),2
+  'c2000000-0000-0000-0000-000000000001',now(),:'V2_FIXTURE'::jsonb,:'V2_HASH',2
 );
 INSERT INTO public.ventas (
   sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,
@@ -186,7 +197,7 @@ INSERT INTO public.ventas (
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-ESTADO-RECONCILIAR','VENTA','RECONCILIAR',
-  '30714199664',90,6,920001,'PRODUCCION','2026-08-22','{"version":2}'::jsonb,repeat('r',64),'PRODUCCION',2
+  '30714199664',90,6,920001,'PRODUCCION','2026-08-22',:'V2_FIXTURE'::jsonb,:'V2_HASH','PRODUCCION',2
 );
 INSERT INTO public.ventas (
   sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,
@@ -196,7 +207,7 @@ INSERT INTO public.ventas (
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-ESTADO-APROBADO','VENTA','APROBADO',
-  '30714199664',90,6,920002,'PRODUCCION','2026-08-22','{"version":2}'::jsonb,repeat('a',64),'PRODUCCION',2,'CAE-T2'
+  '30714199664',90,6,920002,'PRODUCCION','2026-08-22',:'V2_FIXTURE'::jsonb,:'V2_HASH','PRODUCCION',2,'CAE-T2'
 );
 
 DO $$
@@ -341,8 +352,13 @@ INSERT INTO public.receptores_fiscales (
   ('d2000000-0000-0000-0000-000000000003',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'a2000000-0000-0000-0000-000000000002',NULL,'DNI','33111222','T2 FAV INACTIVO','CONSUMIDOR_FINAL',false),
   ('d2000000-0000-0000-0000-000000000004',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),'a2000000-0000-0000-0000-000000000003',NULL,'CDI','27333111229','T2 FAV AJENO','EXENTO',true);
 
+CREATE TEMP TABLE t2_snapshot_congelado (snapshot jsonb) ON COMMIT DROP;
+INSERT INTO t2_snapshot_congelado VALUES (:'V2_FIXTURE'::jsonb);
+GRANT SELECT ON t2_snapshot_congelado TO authenticated;
 UPDATE public.ventas
-   SET afip_snapshot='{"version":1,"receptor":{"origenId":"d2000000-0000-0000-0000-000000000002","razonSocial":"CONGELADO"}}'::jsonb
+   SET afip_snapshot=(SELECT snapshot FROM t2_snapshot_congelado),
+       afip_snapshot_hash=:'V2_HASH',
+       afip_version=2
  WHERE numero_comprobante='T2-ESTADO-NO_APLICA';
 
 SET LOCAL ROLE authenticated;
@@ -487,13 +503,15 @@ BEGIN
        WHERE id='d2000000-0000-0000-0000-000000000002') THEN
     RAISE EXCEPTION 'admin no pudo desactivar el favorito de otra sucursal por RPC';
   END IF;
+END $$;
+RESET ROLE;
+DO $$
+BEGIN
   IF (SELECT afip_snapshot FROM public.ventas WHERE numero_comprobante='T2-ESTADO-NO_APLICA')
-       IS DISTINCT FROM
-       '{"version":1,"receptor":{"origenId":"d2000000-0000-0000-0000-000000000002","razonSocial":"CONGELADO"}}'::jsonb THEN
+       IS DISTINCT FROM (SELECT snapshot FROM t2_snapshot_congelado) THEN
     RAISE EXCEPTION 'editar un favorito modificó el snapshot ya congelado de una venta';
   END IF;
 END $$;
-RESET ROLE;
 SELECT set_config('request.jwt.claims','{}',true);
 
 -- Fixtures del backfill. La rutina se ejecuta en aplicar=true sólo dentro de
@@ -510,7 +528,7 @@ INSERT INTO public.ventas (
   'e2000000-0000-0000-0000-000000000001',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-BACKFILL-CAE','FACTURA_B','PENDIENTE','CAE-LEGACY',930001,'30714199664',91,6,
-  'HOMOLOGACION',true,'{"version":1,"legacy":"preservar"}'::jsonb
+  'HOMOLOGACION',true,(SELECT snapshot FROM t2_snapshot_congelado)
 );
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,
@@ -520,7 +538,7 @@ INSERT INTO public.ventas (
   'e2000000-0000-0000-0000-000000000002',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-BACKFILL-V2','FACTURA_B','PENDIENTE',930002,'30714199664',91,6,'PRODUCCION',
-  '{"version":2,"receptor":{"tipoDocumento":"CUIT"}}'::jsonb,repeat('2',64),2,'2026-08-22'
+  (SELECT snapshot FROM t2_snapshot_congelado),:'V2_HASH',2,'2026-08-22'
 );
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,
@@ -539,8 +557,8 @@ INSERT INTO public.ventas (
   'e2000000-0000-0000-0000-000000000011',(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b2000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000002',
   'T2-BACKFILL-CAE-V2-SIN-FECHA','FACTURA_B','PENDIENTE','CAE-V2-SIN-FECHA',930011,
-  '30714199664',91,6,'PRODUCCION','{"version":2,"receptor":{"tipoDocumento":"CUIT"}}'::jsonb,
-  repeat('b',64),2
+  '30714199664',91,6,'PRODUCCION',(SELECT snapshot FROM t2_snapshot_congelado),
+  :'V2_HASH',2
 );
 INSERT INTO public.ventas (
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,afip_estado,estado
@@ -601,7 +619,7 @@ BEGIN
   IF (SELECT afip_estado FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000001') <> 'APROBADO'
      OR NOT (SELECT afip_legacy_incompleto FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000001')
      OR (SELECT afip_validez FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000001') <> 'SIMULADA'
-     OR (SELECT afip_snapshot FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000001') IS DISTINCT FROM '{"version":1,"legacy":"preservar"}'::jsonb
+     OR (SELECT afip_snapshot FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000001') IS DISTINCT FROM (SELECT snapshot FROM t2_snapshot_congelado)
      OR (SELECT afip_fecha_comprobante FROM public.ventas WHERE id='e2000000-0000-0000-0000-000000000001') IS NOT NULL THEN
     RAISE EXCEPTION 'el aprobado legacy no preservó snapshot/fecha ni quedó marcado y simulado';
   END IF;

@@ -73,6 +73,22 @@ ARCA indica oficialmente que los certificados de producción se gestionan con Ad
 
 ## 5. De vuelta en el sistema
 
+### Después de cargar el certificado: tres controles distintos
+
+No confundir estas operaciones:
+
+- **Probar conexión WSFE:** comprueba el acceso al servicio de facturación electrónica del punto de
+  venta y del ambiente seleccionados.
+- **Asociar el servicio de padrón:** se realiza externamente en el Administrador de Relaciones de
+  ARCA, reutilizando el certificado actual y seleccionando el servicio exacto
+  `ws_sr_constancia_inscripcion`.
+- **Probar y activar padrón:** se ejecuta después desde `/facturacion/configuracion`; consulta
+  realmente el CUIT propio y activa sólo esa combinación de emisor y ambiente.
+
+La migración y el despliegue no activan el padrón por sí solos. El procedimiento completo, incluida
+la operación ante caídas y la vuelta atrás, está en
+[Operación del padrón de ARCA para receptores](./facturacion-padron-arca-operacion.md).
+
 Para cada empresa:
 
 1. Confirmar el número de PV y elegir **Producción (legal)**.

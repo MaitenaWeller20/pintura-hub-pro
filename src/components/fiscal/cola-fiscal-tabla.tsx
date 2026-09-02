@@ -37,7 +37,7 @@ function accionSegura(row: ColaFiscalFila, esAdmin: boolean): string {
     return presentarEstadoColaFiscal({
       estado: row.afip_estado,
       fase: row.afip_fase,
-      claimVencido: row.claim_vencido,
+      claimVencido: row.reclamo_vencido,
       numeroFiscal: row.afip_numero,
       ventaAntigua: row.venta_antigua,
       legacyIncompleto: row.afip_legacy_incompleto,
@@ -46,6 +46,14 @@ function accionSegura(row: ColaFiscalFila, esAdmin: boolean): string {
   } catch {
     return "Requiere administrador";
   }
+}
+
+function esNotaCreditoPorPeriodo(row: ColaFiscalFila): boolean {
+  return (
+    row.tipo_comprobante === "NOTA_CREDITO" &&
+    row.periodo_asoc_desde !== null &&
+    row.periodo_asoc_hasta !== null
+  );
 }
 
 function FilaSkeleton({ index }: { index: number }) {
@@ -66,6 +74,7 @@ export function ColaFiscalTabla({
   loading,
   updating,
   accionesHabilitadas,
+  puedeEmitirNcPeriodo,
   accionPendienteId,
   error,
   onRetry,
@@ -76,6 +85,7 @@ export function ColaFiscalTabla({
   loading: boolean;
   updating: boolean;
   accionesHabilitadas: boolean;
+  puedeEmitirNcPeriodo: boolean;
   accionPendienteId?: string | null;
   error?: string | null;
   onRetry(): void;
@@ -147,6 +157,8 @@ export function ColaFiscalTabla({
                 const procesando = accion === "Procesando";
                 const ejecutandoAccion = accionPendienteId === row.venta_id;
                 const accionable = clasificarInteraccionCola(accion) !== null;
+                const requierePermisoPeriodo =
+                  accion === "Facturar" && esNotaCreditoPorPeriodo(row) && !puedeEmitirNcPeriodo;
                 return (
                   <TableRow key={row.venta_id}>
                     <TableCell className="align-top">
@@ -204,10 +216,10 @@ export function ColaFiscalTabla({
                           compacta
                         />
                       </p>
-                      {row.claim_vencido || row.venta_antigua ? (
+                      {row.reclamo_vencido || row.venta_antigua ? (
                         <p className="mt-1 flex items-center gap-1 text-xs font-medium text-warning">
                           <AlertTriangle className="h-3 w-3" />
-                          {row.claim_vencido ? "Claim vencido" : "Venta demorada"}
+                          {row.reclamo_vencido ? "Claim vencido" : "Venta demorada"}
                         </p>
                       ) : null}
                     </TableCell>
@@ -216,7 +228,12 @@ export function ColaFiscalTabla({
                         size="sm"
                         variant={accion === "Facturar" ? "default" : "outline"}
                         className="min-h-11 min-w-11"
-                        disabled={!accionesHabilitadas || !accionable || accionPendienteId != null}
+                        disabled={
+                          !accionesHabilitadas ||
+                          !accionable ||
+                          accionPendienteId != null ||
+                          requierePermisoPeriodo
+                        }
                         onClick={(event) => onAccion(row, accion, event.currentTarget)}
                       >
                         {procesando || ejecutandoAccion ? (
@@ -224,6 +241,11 @@ export function ColaFiscalTabla({
                         ) : null}
                         {ejecutandoAccion ? "Procesando…" : accion}
                       </Button>
+                      {requierePermisoPeriodo ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Requiere la habilitación y capacidad para NC por período.
+                        </p>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 );

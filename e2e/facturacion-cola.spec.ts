@@ -2,6 +2,7 @@ import type { Locator } from "@playwright/test";
 
 import { test, expect, ingresar } from "./apoyo";
 import {
+  leerCabeceraFiscalFixture,
   limpiarFixturesFiscales,
   prepararFixturesFiscales,
   type FixtureFiscal,
@@ -10,8 +11,21 @@ import {
 let fixture: FixtureFiscal;
 type LetraFactura = "A" | "B";
 
+function esServerFn(url: string, exportacion: string): boolean {
+  const segmento = new URL(url).pathname.split("/_serverFn/")[1];
+  if (!segmento) return false;
+  try {
+    const metadata = JSON.parse(Buffer.from(segmento, "base64url").toString("utf8")) as {
+      export?: unknown;
+    };
+    return typeof metadata.export === "string" && metadata.export.startsWith(exportacion);
+  } catch {
+    return false;
+  }
+}
+
 function opcionLetra(dialogo: Locator, letra: LetraFactura) {
-  return dialogo.getByRole("radio", { name: new RegExp(`Factura ${letra}\\b`, "i") });
+  return dialogo.getByRole("radio", { name: new RegExp(`^Factura ${letra}\\b`, "i") });
 }
 
 async function revisar(dialogo: Locator, letra: LetraFactura) {
@@ -158,7 +172,6 @@ test("Sin facturar → Facturar exige letra y revisa B con CUIL opcional", async
   await expect(fila).toContainText(/\$\s*121/);
   await expect(fila).toContainText(/Cobrado.*40/);
   await expect(fila).toContainText(/Saldo.*81/);
-  await fila.getByRole("button", { name: "Facturar" }).click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
   await expect(dialogo).toBeVisible();
   await expect(opcionLetra(dialogo, "A")).not.toBeChecked();
@@ -189,9 +202,8 @@ test("la NC no ofrece selector y hereda letra, receptor y referencia original", 
 }) => {
   await ingresar(page, "fiscalAdmin");
   await page.goto(`/facturacion/cola?venta=${fixture.notaCreditoId}`);
-  const fila = page.locator("tbody tr", { hasText: "NC-T13-E2E-PENDIENTE" });
-  await fila.getByRole("button", { name: "Facturar" }).click();
   const dialogo = page.getByTestId("dialogo-emision-fiscal");
+  await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText(/conservan el receptor del comprobante original/i);
   await expect(dialogo.locator("fieldset")).toHaveAttribute("disabled", "");
   await expect(dialogo.getByText("Otro receptor", { exact: true })).toHaveCount(0);
@@ -205,6 +217,35 @@ test("la NC no ofrece selector y hereda letra, receptor y referencia original", 
   await expect(dialogo).toContainText("Factura A");
   await expect(dialogo).toContainText(`PV ${String(fixture.puntoVenta).padStart(5, "0")}`);
   await expect(dialogo).toContainText("00913001");
+
+  await dialogo.getByRole("button", { name: "Emitir comprobante", exact: true }).click();
+  await expect
+    .poll(() => leerCabeceraFiscalFixture(fixture.notaCreditoId))
+    .toMatchObject({
+      afip_estado: "APROBADO",
+      afip_fase: "PERSISTIDO",
+      afip_cbte_asoc_id: fixture.ventaAprobadaId,
+      afip_error_clase: null,
+      afip_error_codigo: null,
+      afip_error_fase: null,
+      periodo_asoc_desde: null,
+      periodo_asoc_hasta: null,
+      cae: expect.stringMatching(/^\d{14}$/),
+      afip_snapshot: {
+        version: 2,
+        origen: "COMPROBANTE_ORIGINAL",
+        cbtesAsoc: [
+          {
+            tipo: 1,
+            puntoVenta: fixture.puntoVenta,
+            numero: 913001,
+            cuit: fixture.emisorCuit,
+            fecha: fixture.fechaFiscal,
+          },
+        ],
+      },
+    });
+  await expect(page).toHaveURL(/resultado=factura_aprobada/, { timeout: 25_000 });
 });
 
 test("APROBADO abre detalle fiscal descargable y restaura el foco al salir", async ({ page }) => {
@@ -233,9 +274,8 @@ test("un fallo de cabecera muestra progreso, permite reintentar y cerrar con foc
   let bloquearCabecera = true;
   let demorarPrimera = true;
   let liberarCabecera: (() => void) | undefined;
-  await page.route(/\/rest\/v1\/ventas\?/, async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get("id") !== `eq.${fixture.ventaAprobadaId}`) {
+  await page.route("**/_serverFn/**", async (route) => {
+    if (!esServerFn(route.request().url(), "detalleVentaFiscalSegura")) {
       await route.continue();
       return;
     }
@@ -246,14 +286,7 @@ test("un fallo de cabecera muestra progreso, permite reintentar y cerrar con foc
       });
     }
     if (bloquearCabecera) {
-      await route.fulfill({
-        status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({
-          code: "T13_E2E",
-          message: "CABECERA_E2E_INDISPONIBLE",
-        }),
-      });
+      await route.abort("failed");
       return;
     }
     await route.continue();
@@ -267,7 +300,9 @@ test("un fallo de cabecera muestra progreso, permite reintentar y cerrar con foc
   expect(liberarCabecera).toBeDefined();
   liberarCabecera?.();
 
-  const error = page.getByRole("alert").filter({ hasText: "CABECERA_E2E_INDISPONIBLE" });
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "No pudimos cargar la información fiscal porque se cortó la conexión" });
   await expect(error).toBeVisible();
   await expect(error.getByRole("button", { name: "Reintentar detalle" })).toBeVisible();
   await error.getByRole("button", { name: "Cerrar detalle" }).click();
@@ -275,7 +310,9 @@ test("un fallo de cabecera muestra progreso, permite reintentar y cerrar con foc
   await expect(abrir).toBeFocused();
 
   await abrir.click();
-  const segundoError = page.getByRole("alert").filter({ hasText: "CABECERA_E2E_INDISPONIBLE" });
+  const segundoError = page
+    .getByRole("alert")
+    .filter({ hasText: "No pudimos cargar la información fiscal porque se cortó la conexión" });
   await expect(segundoError).toBeVisible();
   bloquearCabecera = false;
   await segundoError.getByRole("button", { name: "Reintentar detalle" }).click();
@@ -308,7 +345,9 @@ test("un detalle incompleto bloquea el PDF y permite reintentar o cerrar desde l
   const abrir = fila.getByRole("button", { name: "Ver/descargar" });
   await abrir.click();
   const dialogo = page.getByTestId("dialogo-detalle-venta");
-  await expect(dialogo.getByRole("alert")).toContainText("ITEMS_E2E_INDISPONIBLES");
+  await expect(dialogo.getByRole("alert")).toContainText(
+    "No pudimos cargar la información fiscal. Volvé a intentar",
+  );
   await expect(dialogo.getByRole("button", { name: "PDF" })).toBeDisabled();
   bloquearItems = false;
   await dialogo.getByRole("button", { name: "Reintentar" }).click();

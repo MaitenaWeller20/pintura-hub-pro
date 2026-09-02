@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ejecutarConciliacionFiscal,
   ejecutarEmisionFiscal,
   type AccionTransicionFiscal,
+  type AsociacionPreparadaFiscal,
   type DependenciasEmisionFiscal,
   type EstadoTransicionFiscal,
   type PreparacionEmisionFiscal,
@@ -10,8 +11,11 @@ import {
   type SolicitudCaeFiscal,
 } from "./emision";
 import type { SelectorReceptorFiscal } from "./receptor";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import type { SnapshotFiscalPersistido, SnapshotFiscalV2 } from "./snapshot";
 import { crearHuellaConfirmacionFiscal, type ConfirmacionFiscalPostBorrador } from "./confirmacion";
+import { crearErrorFiscalUsuario } from "./error-usuario";
+import { crearPayloadCaeDesdeSnapshot } from "./arca";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 
 const MANUAL_A: SelectorReceptorFiscal = {
   origen: "MANUAL",
@@ -129,8 +133,9 @@ class FiscalDouble {
   version = 0;
   claim: string | null = null;
   numero: number | null = null;
-  persistedSnapshot: SnapshotFiscalV2 | null = null;
+  persistedSnapshot: SnapshotFiscalPersistido | null = null;
   tipo: "VENTA" | "NOTA_CREDITO" | "NOTA_DEBITO" = "VENTA";
+  asociacionOverride: AsociacionPreparadaFiscal | null = null;
   simulado = false;
   ultimoLocal = 0;
   ultimoRemoto = 0;
@@ -154,7 +159,7 @@ class FiscalDouble {
   conflictosSecuenciaRestantes = 0;
   reservaAjenaActiva = false;
   commitThenThrowOnce: AccionTransicionFiscal | null = null;
-  preparedSnapshot: SnapshotFiscalV2 | null = null;
+  preparedSnapshot: SnapshotFiscalPersistido | null = null;
   nextClaim = 1;
   estadoActual = "SIN_FACTURAR";
   faseActual: string | null = null;
@@ -172,6 +177,15 @@ class FiscalDouble {
       afip_numero: this.numero,
       afip_version: this.version,
     };
+  }
+
+  asociacion(): AsociacionPreparadaFiscal {
+    return (
+      this.asociacionOverride ??
+      (this.tipo === "NOTA_CREDITO"
+        ? { tipo: "COMPROBANTE", original: snapshot(40) }
+        : { tipo: "NINGUNA" })
+    );
   }
 
   confirmarTransicion(
@@ -200,7 +214,7 @@ class FiscalDouble {
       payloadHash: this.persistedSnapshot.hash,
       emisorCuit: "30714199664",
       puntoVenta: 5,
-      cbteTipo: this.tipo === "NOTA_CREDITO" ? 3 : 1,
+      cbteTipo: this.persistedSnapshot.identidad.cbteTipo,
       modo: "PRODUCCION",
     };
   }
@@ -210,7 +224,11 @@ class FiscalDouble {
       generarClaimToken: () =>
         `81000000-0000-4000-8000-${String(this.nextClaim++).padStart(12, "0")}`,
       ahoraIso: () => "2026-08-22T15:00:00.000Z",
-      autorizarEmision: async () => ({ tipoComprobante: this.tipo, afipVersion: this.version }),
+      autorizarEmision: async () => ({
+        tipoComprobante: this.tipo,
+        afipVersion: this.version,
+        asociacion: this.asociacion(),
+      }),
       autorizarConciliacion: async () => undefined,
       prepararEmision: async ({ receptor }) => {
         this.receptoresPreparados.push(structuredClone(receptor));
@@ -225,6 +243,7 @@ class FiscalDouble {
           simulado: this.simulado,
           validez: this.simulado ? "SIMULADA" : "PRODUCCION",
           fechaComprobante: "2026-08-22",
+          asociacion: this.asociacion(),
           confirmacionAutoritativa,
           huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacionAutoritativa),
           reconfirmacion: {
@@ -304,7 +323,7 @@ class FiscalDouble {
             return this.confirmarTransicion(accion, "ERROR_CORREGIBLE", null);
           }
           this.numero = payload.numero_propuesto as number;
-          this.persistedSnapshot = structuredClone(payload.snapshot as SnapshotFiscalV2);
+          this.persistedSnapshot = structuredClone(payload.snapshot as SnapshotFiscalPersistido);
           this.ultimoLocal = Math.max(this.ultimoLocal, this.numero);
           this.version += 1;
           return this.confirmarTransicion(accion, "EMITIENDO", "RESERVADO");
@@ -386,6 +405,313 @@ function acciones(doble: FiscalDouble): string[] {
 }
 
 describe("ejecutarEmisionFiscal", () => {
+  it("una caída ARCA previa al request de una NC por período libera con copy reintentable", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "DEVOLUCION_PRODUCTOS",
+      motivo: "Devolución del período",
+      resolucion: "REINTEGRO",
+    };
+    doble.throwBeforeSequence = Object.assign(new Error("SOAP timeout secreto"), {
+      name: "AfipTimeout",
+    });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      doble.deps(),
+    );
+
+    expect(resultado).toEqual({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "ARCA_CAIDA_PRE_REQUEST_NC",
+      mensaje:
+        "ARCA está caída. No se pudo emitir la nota de crédito. Intentá nuevamente en otro momento.",
+    });
+    expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
+    expect(JSON.stringify(doble.calls)).not.toMatch(/SOAP timeout secreto/);
+  });
+
+  it("un timeout post-request de NC por período concilia con copy que prohíbe reemitir", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Bonificación del período",
+      resolucion: "SALDO_FAVOR",
+    };
+    doble.throwSolicitud = Object.assign(new Error("timeout SOAP raw"), { name: "AfipTimeout" });
+    const deps = doble.deps();
+    deps.crearSnapshot = async () => crearSnapshotFiscalV3Fixture({ letra: "B" });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      estado: "RECONCILIAR",
+      mensaje: "ARCA está caída y estamos verificando si autorizó la nota. No vuelvas a emitirla.",
+    });
+    expect(doble.calls.at(-1)?.payload).toMatchObject({
+      error_codigo: "ARCA_INCIERTA_POST_REQUEST_NC",
+      mensaje_mascarado:
+        "ARCA está caída y estamos verificando si autorizó la nota. No vuelvas a emitirla.",
+    });
+    expect(JSON.stringify(doble.calls)).not.toMatch(/timeout SOAP raw/);
+  });
+
+  it("una respuesta incierta no-transporte concilia sin afirmar que ARCA cayó", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Bonificación del período",
+      resolucion: "SALDO_FAVOR",
+    };
+    doble.throwSolicitud = Object.assign(new Error("respuesta contradictoria raw"), {
+      name: "ArcaRespuestaIncierta",
+    });
+    const deps = doble.deps();
+    deps.crearSnapshot = async () => crearSnapshotFiscalV3Fixture({ letra: "B" });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      estado: "RECONCILIAR",
+      mensaje: "La respuesta fiscal es incierta y requiere conciliación.",
+    });
+    expect(doble.calls.at(-1)?.payload).toMatchObject({
+      error_codigo: "REQUEST_INCIERTO",
+      mensaje_mascarado: "La respuesta fiscal es incierta y requiere conciliación.",
+    });
+    expect(JSON.stringify(doble.calls)).not.toMatch(/respuesta contradictoria raw/);
+  });
+
+  it("un certificado inválido post-request concilia como configuración y no como caída", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-08-01",
+      hasta: "2026-08-15",
+      modalidad: "DEVOLUCION_PRODUCTOS",
+      motivo: "Devolución del período",
+      resolucion: "REINTEGRO",
+    };
+    doble.throwSolicitud = crearErrorFiscalUsuario("CERTIFICADO_ARCA_INVALIDO");
+    const deps = doble.deps();
+    deps.crearSnapshot = async () => crearSnapshotFiscalV3Fixture({ letra: "B" });
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_B,
+        letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_B),
+      },
+      deps,
+    );
+
+    expect(resultado.estado).toBe("RECONCILIAR");
+    if (resultado.estado !== "RECONCILIAR") throw new Error("debió conciliar");
+    expect(resultado.mensaje).toContain("certificado de ARCA");
+    expect(resultado.mensaje).not.toContain("ARCA está caída");
+    expect(doble.calls.at(-1)?.payload).toMatchObject({
+      error_codigo: "CERTIFICADO_ARCA_INVALIDO",
+    });
+  });
+
+  it.each([
+    ["A", 3, MANUAL_A],
+    ["B", 8, MANUAL_B],
+    ["C", 13, MANUAL_B],
+  ] as const)(
+    "reserva snapshot v3 %s y llega a REQUEST_INICIADO usando sólo su payload",
+    async (letra, cbteTipo, receptor) => {
+      const doble = new FiscalDouble();
+      doble.tipo = "NOTA_CREDITO";
+      doble.asociacionOverride = {
+        tipo: "PERIODO",
+        desde: "2026-08-01",
+        hasta: "2026-08-15",
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Devolución de productos del período",
+        resolucion: "REINTEGRO",
+      };
+      const snapshotV3 = crearSnapshotFiscalV3Fixture({ letra });
+      const deps = doble.deps();
+      const prepararBase = deps.prepararEmision;
+      deps.prepararEmision = async (input) => {
+        const preparada = await prepararBase(input);
+        const confirmacion = {
+          ...preparada.confirmacionAutoritativa,
+          letra,
+          cbteTipo,
+          cbteAsoc: null,
+        };
+        return {
+          ...preparada,
+          cbteTipo,
+          confirmacionAutoritativa: confirmacion,
+          huellaConfirmacion: crearHuellaConfirmacionFiscal(confirmacion),
+        };
+      };
+      deps.crearSnapshot = async () => snapshotV3;
+      deps.crearPayloadCae = crearPayloadCaeDesdeSnapshot;
+      const preparada = await deps.prepararEmision({
+        ventaId: snapshotV3.venta.id,
+        receptor,
+        seleccionLetra: { origen: "AUTOMATICA_NC_PERIODO" },
+      });
+
+      const resultado = await ejecutarEmisionFiscal(
+        {
+          ventaId: snapshotV3.venta.id,
+          receptor,
+          letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: preparada.huellaConfirmacion,
+        },
+        deps,
+      );
+
+      expect(resultado.estado).toBe("APROBADO");
+      expect(acciones(doble)).toContain("REQUEST_INICIADO");
+      expect(doble.payloadsCae[0]?.reserva.snapshot).toEqual(snapshotV3);
+      expect(doble.payloadsCae[0]?.payload).toMatchObject({ CbteTipo: cbteTipo });
+      if (letra === "C") {
+        expect(doble.payloadsCae[0]?.payload).toMatchObject({
+          ImpTotal: 1360,
+          ImpNeto: 1360,
+          ImpIVA: 0,
+        });
+        expect(doble.payloadsCae[0]?.payload).not.toHaveProperty("Iva");
+      } else {
+        expect(doble.payloadsCae[0]?.payload).toMatchObject({
+          ImpTotal: 1360,
+          ImpNeto: 1000,
+          ImpIVA: 210,
+          Iva: [{ Id: 5, BaseImp: 1000, Importe: 210 }],
+        });
+      }
+    },
+  );
+
+  it("rechaza una NC sin asociación antes de reclamar", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = { tipo: "NINGUNA" };
+
+    await expect(
+      ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: ORIGINAL,
+          letraSolicitada: "A",
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, ORIGINAL),
+        },
+        doble.deps(),
+      ),
+    ).rejects.toThrow(/exactamente una asociación/i);
+    expect(doble.calls).toEqual([]);
+  });
+
+  it("rechaza letra explícita para una NC por período antes de reclamar", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-07-01",
+      hasta: "2026-07-31",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Ajuste comercial del período",
+      resolucion: "SALDO_FAVOR",
+    };
+
+    await expect(
+      ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: MANUAL_A,
+          letraSolicitada: "A",
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
+        },
+        doble.deps(),
+      ),
+    ).rejects.toThrow(/automáticamente/i);
+    expect(doble.calls).toEqual([]);
+  });
+
+  it("corta un CbteTipo no estándar de período antes de REQUEST_INICIADO", async () => {
+    const doble = new FiscalDouble();
+    doble.tipo = "NOTA_CREDITO";
+    doble.asociacionOverride = {
+      tipo: "PERIODO",
+      desde: "2026-07-01",
+      hasta: "2026-07-31",
+      modalidad: "BONIFICACION_AJUSTE",
+      motivo: "Ajuste comercial del período",
+      resolucion: "SALDO_FAVOR",
+    };
+    const deps = doble.deps();
+    const preparar = deps.prepararEmision;
+    deps.prepararEmision = async (input) => ({ ...(await preparar(input)), cbteTipo: 203 });
+
+    await expect(
+      ejecutarEmisionFiscal(
+        {
+          ventaId: "71000000-0000-4000-8000-000000000001",
+          receptor: MANUAL_A,
+          letraSolicitada: { origen: "AUTOMATICA_NC_PERIODO" },
+          confirmaVentaAntigua: false,
+          huellaConfirmacion: huellaPara(doble, MANUAL_A),
+        },
+        deps,
+      ),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof Error && error.message === "FISCAL_USUARIO_V1:FCE_NC_PERIODO_NO_SOPORTADA",
+    );
+
+    expect(doble.calls).toEqual([]);
+    expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
+    expect(doble.payloadsCae).toHaveLength(0);
+  });
+
   it("al reconfirmar una nota explica que la letra viene del comprobante original", async () => {
     const doble = new FiscalDouble();
     doble.tipo = "NOTA_CREDITO";
@@ -494,6 +820,21 @@ describe("ejecutarEmisionFiscal", () => {
     ]);
     expect(doble.calls.map((call) => call.payload.expected_version)).toEqual([0, 1, 2, 3, 4]);
     expect(doble.payloadsCae).toHaveLength(1);
+    expect(doble.calls[3].payload.respuesta_resumen).toEqual({
+      tipo: "EMISION",
+      resultado: "A",
+      fuente: "FECAESolicitar",
+      rechazo_confirmado: false,
+      cae: "74123456789012",
+      cae_vencimiento: "2026-09-01",
+      emitido_at: "2026-08-22T15:00:00.000Z",
+      observaciones: [],
+    });
+    expect(doble.calls[4].payload).toMatchObject({
+      cae: "74123456789012",
+      cae_vencimiento: "2026-09-01",
+      emitido_at: "2026-08-22T15:00:00.000Z",
+    });
   });
 
   it("un timeout de preflight libera como error corregible sin pedir CAE", async () => {
@@ -514,6 +855,46 @@ describe("ejecutarEmisionFiscal", () => {
     expect(result.estado).toBe("ERROR_CORREGIBLE");
     expect(acciones(doble)).toEqual(["RECLAMAR", "ERROR_CORREGIBLE"]);
     expect(doble.payloadsCae).toHaveLength(0);
+  });
+
+  it("un padrón caído libera PREFLIGHT sin reservar ni pedir CAE", async () => {
+    const doble = new FiscalDouble();
+    const deps = doble.deps();
+    const solicitarCae = vi.fn(deps.solicitarCae);
+    deps.prepararEmision = async () => {
+      throw crearErrorFiscalUsuario("PADRON_ARCA_CAIDO");
+    };
+    deps.solicitarCae = solicitarCae;
+
+    const resultado = await ejecutarEmisionFiscal(
+      {
+        ventaId: "71000000-0000-4000-8000-000000000001",
+        receptor: MANUAL_A,
+        letraSolicitada: "A",
+        confirmaVentaAntigua: false,
+        huellaConfirmacion: huellaPara(doble, MANUAL_A),
+      },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "PADRON_ARCA_CAIDO",
+      mensaje:
+        "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+    });
+    expect(acciones(doble)).toEqual(["RECLAMAR", "ERROR_CORREGIBLE"]);
+    expect(acciones(doble)).not.toContain("RESERVAR");
+    expect(acciones(doble)).not.toContain("REQUEST_INICIADO");
+    expect(solicitarCae).not.toHaveBeenCalled();
+    expect(doble.calls[1].payload).toMatchObject({
+      error_clase: "APLICACION",
+      error_codigo: "PADRON_ARCA_CAIDO",
+      error_fase: "PREFLIGHT",
+      mensaje_mascarado:
+        "ARCA está caído y no pudimos verificar el CUIT. No se emitió ningún comprobante. Intentá nuevamente en otro momento.",
+      liberar_identidad: true,
+    });
   });
 
   it("un timeout después de REQUEST_INICIADO concilia y nunca libera ni reemite", async () => {
@@ -1020,6 +1401,8 @@ describe("ejecutarConciliacionFiscal", () => {
           resultado: "COINCIDE",
           fuente: "FECompConsultar",
           coincidencia_completa: true,
+          cae: "74123456789077",
+          cae_vencimiento: null,
           observaciones: [],
         },
       },
@@ -1042,6 +1425,28 @@ describe("ejecutarConciliacionFiscal", () => {
       campos: ["receptor.docNro", "total"],
     });
     expect(JSON.stringify(doble.calls[0].payload)).not.toContain("distinto");
+  });
+
+  it("una diferencia de NC por período bloquea con copy accionable y sin valores fiscales", async () => {
+    const doble = new FiscalDouble();
+    reconciliable(doble);
+    doble.persistedSnapshot = crearSnapshotFiscalV3Fixture({ letra: "B", numero: 7 });
+    doble.remote = { voucher: "SOAP secreto distinto" };
+    doble.decision = { accion: "BLOQUEAR", diferencias: ["total"] };
+
+    const result = await ejecutarConciliacionFiscal(
+      { ventaId: "71000000-0000-4000-8000-000000000001" },
+      doble.deps(),
+    );
+
+    expect(result.estado).toBe("BLOQUEADO");
+    expect(doble.calls[0].payload).toMatchObject({
+      error_codigo: "CONFLICTO_RECONCILIACION_NC",
+      mensaje_mascarado:
+        "Los datos recuperados de ARCA no coinciden con la nota reservada. La emisión quedó bloqueada para revisión; no vuelvas a emitirla.",
+      diferencias: { campos: ["total"] },
+    });
+    expect(JSON.stringify(doble.calls[0].payload)).not.toContain("SOAP secreto distinto");
   });
 
   it("una ausencia segura rota claim y reenvía exactamente número, receptor, importes y hash", async () => {

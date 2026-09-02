@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ComprobanteArcaConsultado } from "./arca";
-import type { SnapshotFiscalV2 } from "./snapshot";
+import type { SnapshotFiscalPersistido, SnapshotFiscalV2 } from "./snapshot";
 import { compararSnapshotConArca, decidirConciliacion } from "./reconciliacion";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 
 const snapshotFiscalFixture = {
+  version: 2,
   hash: "a".repeat(64),
   identidad: { puntoVenta: 5, cbteTipo: 3, numero: 42 },
   concepto: 1,
@@ -49,6 +51,7 @@ const remotoFixture: ComprobanteArcaConsultado = {
   tributosTotal: "3.00",
   moneda: "PES",
   cotizacion: "1.000000",
+  periodoAsoc: null,
   alicuotas: [{ id: 5, base: "100.00", importe: "21.00" }],
   tributos: [
     {
@@ -60,6 +63,27 @@ const remotoFixture: ComprobanteArcaConsultado = {
     },
   ],
   asociados: [{ tipo: 1, puntoVenta: 5, numero: 40, cuit: "30714199664", fecha: "2026-08-20" }],
+};
+
+const snapshotPeriodoFixture = crearSnapshotFiscalV3Fixture({ letra: "B", numero: 42 });
+
+const remotoPeriodoFixture: ComprobanteArcaConsultado = {
+  ...remotoFixture,
+  cbteTipo: 8,
+  docTipo: 96,
+  docNro: "30123456",
+  condicionIvaReceptorId: 5,
+  fecha: "2026-08-22",
+  total: "1360.00",
+  neto: "1000.00",
+  exento: "100.00",
+  noGravado: "50.00",
+  iva: "210.00",
+  tributosTotal: "0.00",
+  asociados: [],
+  periodoAsoc: { desde: "2026-08-01", hasta: "2026-08-15" },
+  alicuotas: [{ id: 5, base: "1000.00", importe: "210.00" }],
+  tributos: [],
 };
 
 describe("comparación exacta del snapshot contra ARCA", () => {
@@ -153,6 +177,73 @@ describe("comparación exacta del snapshot contra ARCA", () => {
       "tributos[0].descripcion",
     ]);
   });
+
+  it("exige coincidencia exacta de período y ausencia de comprobantes para v3", () => {
+    expect(compararSnapshotConArca(snapshotPeriodoFixture, remotoPeriodoFixture)).toEqual([]);
+
+    expect(
+      compararSnapshotConArca(snapshotPeriodoFixture, {
+        ...remotoPeriodoFixture,
+        periodoAsoc: { desde: "2026-08-02", hasta: "2026-08-15" },
+      }),
+    ).toEqual(["periodoAsoc.desde"]);
+    expect(
+      compararSnapshotConArca(snapshotPeriodoFixture, {
+        ...remotoPeriodoFixture,
+        periodoAsoc: { desde: "2026-08-01", hasta: "2026-08-14" },
+      }),
+    ).toEqual(["periodoAsoc.hasta"]);
+    expect(
+      compararSnapshotConArca(snapshotPeriodoFixture, {
+        ...remotoPeriodoFixture,
+        periodoAsoc: null,
+      }),
+    ).toEqual(["periodoAsoc.desde", "periodoAsoc.hasta"]);
+    expect(
+      compararSnapshotConArca(snapshotPeriodoFixture, {
+        ...remotoPeriodoFixture,
+        asociados: remotoFixture.asociados,
+      }),
+    ).toEqual(["cbtesAsoc.length"]);
+  });
+
+  it("compara una NC C contra la proyección no discriminada consultada en ARCA", () => {
+    const snapshotC = crearSnapshotFiscalV3Fixture({ letra: "C", numero: 42 });
+    const remotoC: ComprobanteArcaConsultado = {
+      ...remotoPeriodoFixture,
+      cbteTipo: 13,
+      total: "1360.00",
+      neto: "1360.00",
+      exento: "0.00",
+      noGravado: "0.00",
+      iva: "0.00",
+      alicuotas: [],
+    };
+
+    expect(compararSnapshotConArca(snapshotC, remotoC)).toEqual([]);
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotC,
+        remoto: remotoC,
+        ultimoRemoto: 42,
+        numeroReservado: 42,
+        payloadHash: snapshotC.hash,
+      }),
+    ).toEqual({
+      accion: "RECUPERAR_CAE",
+      cae: "74123456789012",
+      vencimiento: "2026-09-01",
+    });
+  });
+
+  it("v2 exige que ARCA no informe un período asociado", () => {
+    expect(
+      compararSnapshotConArca(snapshotFiscalFixture, {
+        ...remotoFixture,
+        periodoAsoc: { desde: "2026-08-01", hasta: "2026-08-15" },
+      }),
+    ).toEqual(["periodoAsoc.desde", "periodoAsoc.hasta"]);
+  });
 });
 
 describe("decisión de conciliación", () => {
@@ -170,6 +261,47 @@ describe("decisión de conciliación", () => {
       cae: "74123456789012",
       vencimiento: "2026-09-01",
     });
+  });
+
+  it("recupera una NC v3 sólo ante período remoto exacto", () => {
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotPeriodoFixture,
+        remoto: remotoPeriodoFixture,
+        ultimoRemoto: 42,
+        numeroReservado: 42,
+        payloadHash: snapshotPeriodoFixture.hash,
+      }),
+    ).toEqual({
+      accion: "RECUPERAR_CAE",
+      cae: "74123456789012",
+      vencimiento: "2026-09-01",
+    });
+
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotPeriodoFixture,
+        remoto: { ...remotoPeriodoFixture, periodoAsoc: null },
+        ultimoRemoto: 42,
+        numeroReservado: 42,
+        payloadHash: snapshotPeriodoFixture.hash,
+      }),
+    ).toEqual({
+      accion: "BLOQUEAR",
+      diferencias: ["periodoAsoc.desde", "periodoAsoc.hasta"],
+    });
+  });
+
+  it("mantiene pendiente una NC v3 sólo tras confirmar ausencia y secuencia anterior exacta", () => {
+    expect(
+      decidirConciliacion({
+        snapshot: snapshotPeriodoFixture,
+        remoto: null,
+        ultimoRemoto: 41,
+        numeroReservado: 42,
+        payloadHash: snapshotPeriodoFixture.hash,
+      }),
+    ).toEqual({ accion: "REENVIAR_MISMO_NUMERO" });
   });
 
   it("bloquea ante cualquier diferencia remota", () => {

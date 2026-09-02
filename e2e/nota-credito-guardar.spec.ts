@@ -50,7 +50,7 @@ async function elegirEnSelect(
   await page.getByRole("option", { name: opcion }).first().click();
 }
 
-test("se guarda una nota de crédito sin factura, a cuenta corriente", async ({ page }) => {
+test("el writer fiscal retirado no guarda una nota interna ni deja efectos", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto("/ventas/nueva");
 
@@ -76,19 +76,14 @@ test("se guarda una nota de crédito sin factura, a cuenta corriente", async ({ 
   await page.locator('label:has-text("Observaciones") + textarea').fill(MARCA_VENTA_NC_E2E);
 
   const guardar = page.getByRole("button", { name: /^Guardar$/ });
-  await expect(guardar, "Guardar tiene que habilitarse sin factura asociada").toBeEnabled({
-    timeout: 15_000,
-  });
+  await expect(guardar).toBeEnabled();
   await guardar.click();
-
-  // Termina en el listado y la nota está.
-  await expect(page).toHaveURL(/\/ventas\/?$/, { timeout: 30_000 });
-  const venta = await leerVentaNotaCreditoE2E();
-  const filaPropia = page.getByRole("row").filter({ hasText: venta.numero });
-  await expect(filaPropia).toHaveCount(1);
-  await expect(filaPropia).toContainText(/Nota de Cr[eé]dito/i, {
-    timeout: 20_000,
-  });
+  await expect(
+    page.getByText("La facturación está en mantenimiento. No se registró ningún comprobante."),
+  ).toBeVisible();
+  await expect(leerVentaNotaCreditoE2E()).rejects.toThrow(
+    "La UI debía crear una única nota de crédito T14",
+  );
 });
 
 test("al contado sin cobrar nada, la pantalla explica qué falta", async ({ page }) => {

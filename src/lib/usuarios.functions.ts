@@ -5,10 +5,54 @@ import { z } from "zod";
 import { normalizarSecciones } from "@/lib/secciones";
 import { PASSWORD_MINIMO } from "@/lib/alta-usuario";
 
-type RespuestaRpc = { data: unknown; error: { message?: string } | null };
+type ErrorRpc = {
+  message?: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+};
+type RespuestaRpc = { data: unknown; error: ErrorRpc | null };
 export type ClienteCapacidadFiscal = {
   rpc(nombre: string, args: Record<string, unknown>): Promise<RespuestaRpc>;
 };
+
+export type CodigoErrorAdministracionUsuario =
+  | "DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO"
+  | "PERFIL_NC_PERIODO_INEXISTENTE"
+  | "NO_SE_PUDO_ACTUALIZAR_NC_PERIODO";
+
+const MENSAJE_ERROR_ADMINISTRACION_USUARIO: Record<CodigoErrorAdministracionUsuario, string> = {
+  DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO:
+    "El permiso de NC por período sólo se puede asignar a empleados.",
+  PERFIL_NC_PERIODO_INEXISTENTE: "No se encontró el usuario al que querés cambiarle el permiso.",
+  NO_SE_PUDO_ACTUALIZAR_NC_PERIODO:
+    "No se pudo actualizar el permiso de NC por período. Volvé a cargar la pantalla antes de intentar nuevamente.",
+};
+
+// La causa queda retenida en el proceso servidor sin transformarse en una
+// propiedad serializable del error que recibirá el navegador.
+const causasAdministracionUsuario = new WeakMap<ErrorAdministracionUsuario, ErrorRpc>();
+
+export class ErrorAdministracionUsuario extends Error {
+  readonly codigo: CodigoErrorAdministracionUsuario;
+
+  constructor(codigo: CodigoErrorAdministracionUsuario, causa: ErrorRpc) {
+    super(MENSAJE_ERROR_ADMINISTRACION_USUARIO[codigo]);
+    this.name = "ErrorAdministracionUsuario";
+    this.codigo = codigo;
+    causasAdministracionUsuario.set(this, causa);
+  }
+}
+
+function traducirErrorAdministrarNcPeriodo(error: ErrorRpc): ErrorAdministracionUsuario {
+  const codigo: CodigoErrorAdministracionUsuario =
+    error.code === "PNC01"
+      ? "DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO"
+      : error.code === "PNC02"
+        ? "PERFIL_NC_PERIODO_INEXISTENTE"
+        : "NO_SE_PUDO_ACTUALIZAR_NC_PERIODO";
+  return new ErrorAdministracionUsuario(codigo, error);
+}
 
 export async function requireAdmin(
   supabase: ClienteCapacidadFiscal,
@@ -38,6 +82,33 @@ export const setPuedeFacturar = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) =>
     ejecutarSetPuedeFacturar(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
+export async function ejecutarAdministrarPuedeEmitirNcPeriodo(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_emitir_nc_periodo", {
+    p_profile_id: input.user_id,
+    p_habilitado: input.value,
+  });
+  if (error) {
+    throw traducirErrorAdministrarNcPeriodo(error);
+  }
+  return { ok: true };
+}
+
+export const administrarPuedeEmitirNcPeriodo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarAdministrarPuedeEmitirNcPeriodo(
       { actorId: context.userId, ...data },
       context.supabase as unknown as ClienteCapacidadFiscal,
     ),

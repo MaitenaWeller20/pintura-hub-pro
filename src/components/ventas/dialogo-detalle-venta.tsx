@@ -31,8 +31,7 @@ import {
 import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 import type { DatosFiscalesPreparados } from "@/lib/fiscal/impresion";
 import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
-import { leerComprobanteAsociadoFiscal, leerReceptorFiscalCongelado } from "@/lib/ventas-ui";
-import type { VentaSeguraOperador } from "@/lib/ventas-proyeccion";
+import type { DetalleVentaFiscalPresentacion } from "@/lib/fiscal/detalle-venta-presentacion";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
@@ -41,17 +40,268 @@ import {
   HistorialCorreccionesPago,
   type CorreccionPagoVisible,
 } from "./historial-correcciones-pago";
+import {
+  type AuditoriaPersistidaNotaCreditoPeriodo,
+  type ErrorLecturaSegura,
+} from "./dialogo-detalle-venta-auditoria";
 
 type ItemVenta = Database["public"]["Tables"]["venta_items"]["Row"];
-type PagoVenta = Database["public"]["Tables"]["venta_pagos"]["Row"];
+type PagoVentaRow = Database["public"]["Tables"]["venta_pagos"]["Row"];
+type PagoVenta = Pick<
+  PagoVentaRow,
+  | "id"
+  | "venta_id"
+  | "forma_pago"
+  | "monto"
+  | "created_at"
+  | "caja_sesion_id"
+  | "correccion_version"
+> &
+  Partial<Pick<PagoVentaRow, "detalle">>;
 type CorreccionPago = Database["public"]["Tables"]["venta_pago_correcciones"]["Row"] & {
   editor: { nombre_completo: string | null; username: string } | null;
 };
 
-export type VentaDetalle = VentaSeguraOperador & {
-  cliente?: { razon_social: string | null; cuit_dni: string | null } | null;
-  sucursal?: { nombre: string | null; telefono?: string | null } | null;
+export type VentaDetalle = DetalleVentaFiscalPresentacion;
+
+type PagoAplicadoAuditado = {
+  id: string;
+  formaPago: string;
+  monto: number;
+  createdAt: string;
 };
+
+export type DatosAuditoriaNotaCreditoPeriodo = AuditoriaPersistidaNotaCreditoPeriodo & {
+  pagosAplicados: PagoAplicadoAuditado[];
+};
+
+function fechaCalendario(value: string | null): string {
+  return value ? value.split("-").reverse().join("/") : "—";
+}
+
+const modalidadNcPeriodoLabel: Record<string, string> = {
+  DEVOLUCION_PRODUCTOS: "Devolución de productos",
+  BONIFICACION_AJUSTE: "Bonificación / ajuste",
+};
+
+const resolucionNcPeriodoLabel: Record<string, string> = {
+  REINTEGRO: "Reintegro",
+  SALDO_FAVOR: "Saldo a favor",
+};
+
+export function AuditoriaNotaCreditoPeriodo({
+  venta,
+  auditoria,
+  errorDetalle,
+}: {
+  venta: VentaDetalle;
+  auditoria: DatosAuditoriaNotaCreditoPeriodo;
+  errorDetalle?: unknown;
+}) {
+  if (errorDetalle) {
+    return (
+      <div
+        className="mt-3 rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
+        role="alert"
+      >
+        No se pudo reconstruir la auditoría de la nota de crédito.
+      </div>
+    );
+  }
+  const fiscal = auditoria.fiscal;
+  const congelada = fiscal.estado === "SNAPSHOT_V3_VALIDADO";
+  const aprobada = congelada && fiscal.lifecycle === "APROBADO";
+  return (
+    <Card className="mt-3 space-y-4 p-4" aria-label="Auditoría de nota de crédito por período">
+      <div>
+        <h4 className="text-sm font-semibold">Auditoría de NC por período</h4>
+        <p className="text-xs text-muted-foreground">
+          Registro de sólo lectura reconstruido desde la nota, su evidencia fiscal y sus movimientos
+          persistidos.
+        </p>
+      </div>
+
+      <dl className="grid gap-3 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-muted-foreground">
+            Período asociado ({congelada ? "snapshot v3" : "intención persistida"})
+          </dt>
+          <dd>
+            {fechaCalendario(fiscal.periodoDesde)} a {fechaCalendario(fiscal.periodoHasta)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Modalidad</dt>
+          <dd>{modalidadNcPeriodoLabel[fiscal.modalidad] ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Resolución comercial</dt>
+          <dd>{resolucionNcPeriodoLabel[venta.nc_resolucion ?? ""] ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Operador ID</dt>
+          <dd>{venta.usuario_id}</dd>
+          <dd className="text-xs text-muted-foreground">
+            Nombre / usuario actual: {auditoria.operador?.nombre ?? "—"} (
+            {auditoria.operador?.username ?? "—"})
+          </dd>
+          <dd className="text-xs text-muted-foreground">{fmtDateTime(venta.created_at)}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs text-muted-foreground">
+            Motivo ({congelada ? "snapshot v3" : "intención persistida"})
+          </dt>
+          <dd className="whitespace-pre-wrap">{fiscal.motivo}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Cliente comercial ID</dt>
+          <dd>{venta.cliente_id}</dd>
+          <dd className="text-xs text-muted-foreground">
+            Razón social / documento actual: {venta.cliente?.razon_social ?? "—"} ·{" "}
+            {fmtDocumento(venta.cliente?.cuit_dni)}
+          </dd>
+        </div>
+        {congelada ? (
+          <div>
+            <dt className="text-xs text-muted-foreground">Receptor fiscal congelado</dt>
+            <dd>{fiscal.receptor.razonSocial}</dd>
+            <dd className="text-xs text-muted-foreground">
+              {[fiscal.receptor.documento, `Letra ${fiscal.receptor.letra}`]
+                .filter(Boolean)
+                .join(" · ")}
+            </dd>
+          </div>
+        ) : null}
+        <div>
+          <dt className="text-xs text-muted-foreground">Estado / fase</dt>
+          <dd>
+            {venta.afip_estado} · {venta.afip_fase ?? "SIN FASE"}
+          </dd>
+        </div>
+        {aprobada ? (
+          <div>
+            <dt className="text-xs text-muted-foreground">CAE</dt>
+            <dd className="font-mono">{venta.cae ?? "Pendiente"}</dd>
+          </div>
+        ) : null}
+        {aprobada && auditoria.evidenciaAutorizacion ? (
+          <div>
+            <dt className="text-xs text-muted-foreground">
+              {auditoria.evidenciaAutorizacion.origen === "EMISION"
+                ? "Autorización directa confirmada"
+                : "CAE recuperado por conciliación"}
+            </dt>
+            <dd>{fmtDateTime(auditoria.evidenciaAutorizacion.confirmadoAt)}</dd>
+          </div>
+        ) : null}
+        {aprobada && venta.nc_efectos_aplicados_at ? (
+          <div>
+            <dt className="text-xs text-muted-foreground">Efectos aplicados el</dt>
+            <dd>{fmtDateTime(venta.nc_efectos_aplicados_at)}</dd>
+          </div>
+        ) : null}
+      </dl>
+
+      {!aprobada ? (
+        <div className="rounded-md border border-warning/40 bg-warning/5 p-3">
+          <h5 className="text-sm font-medium">
+            {congelada ? "Intención pendiente antes del CAE" : "Intención aún no congelada"}
+          </h5>
+          {venta.nc_resolucion === "REINTEGRO" && auditoria.reintegrosIntencion.length ? (
+            <ul className="mt-2 space-y-1 text-sm">
+              {auditoria.reintegrosIntencion.map((reintegro) => (
+                <li key={reintegro.id} className="flex justify-between gap-3">
+                  <span>{reintegro.formaPago}</span>
+                  <span className="font-mono">{fmtMoney(reintegro.monto)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-sm">
+              {venta.nc_resolucion === "SALDO_FAVOR"
+                ? "Se acreditará el saldo a favor del cliente comercial."
+                : "La intención comercial no está disponible."}
+            </p>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Todavía no se aplicaron movimientos comerciales.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Reintegros aplicados
+            </h5>
+            {auditoria.pagosAplicados.length ? (
+              <ul className="mt-2 space-y-1 text-sm">
+                {auditoria.pagosAplicados.map((pago) => (
+                  <li key={pago.id}>
+                    {pago.formaPago}: <span className="font-mono">{fmtMoney(pago.monto)}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {fmtDateTime(pago.createdAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">Sin reintegros de caja.</p>
+            )}
+          </div>
+          <div>
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Stock devuelto
+            </h5>
+            {auditoria.movimientosStock.length ? (
+              <ul className="mt-2 space-y-1 text-sm">
+                {auditoria.movimientosStock.map((movimiento) => (
+                  <li key={movimiento.id}>
+                    Producto ID: {movimiento.productoId} · {fmtNumAuditado(movimiento.cantidad)} u.
+                    ({fmtNumAuditado(movimiento.cantidadAnterior)} →{" "}
+                    {fmtNumAuditado(movimiento.cantidadNueva)})
+                    <span className="block text-xs text-muted-foreground">
+                      Etiqueta actual: {movimiento.etiquetaActual}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {fmtDateTime(movimiento.createdAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">Sin movimientos de stock.</p>
+            )}
+          </div>
+          <div>
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Cuenta corriente
+            </h5>
+            {auditoria.movimientosCuentaCorriente.length ? (
+              <ul className="mt-2 space-y-1 text-sm">
+                {auditoria.movimientosCuentaCorriente.map((movimiento) => (
+                  <li key={movimiento.id}>
+                    {movimiento.tipo} {movimiento.estado}: {fmtMoney(movimiento.monto)}
+                    <span className="block text-xs text-muted-foreground">
+                      {fmtDateTime(movimiento.createdAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">Sin crédito en cuenta corriente.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function fmtNumAuditado(value: number | null): string {
+  return value === null
+    ? "—"
+    : new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(value);
+}
 
 function esRegistro(value: Json | undefined): value is { [key: string]: Json | undefined } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -71,7 +321,7 @@ function descripcionFiscal(venta: VentaDetalle): string | null {
   return `${clase} ${info.letra} ${numeroFiscal(venta.afip_punto_venta, venta.afip_numero)}`;
 }
 
-function detallePago(detalle: Json): string | null {
+function detallePago(detalle: Json | undefined): string | null {
   if (!esRegistro(detalle)) return null;
   const valores = Object.values(detalle)
     .filter(
@@ -98,6 +348,12 @@ export function DialogoDetalleVenta({
   const queryClient = useQueryClient();
   const [imprimiendo, setImprimiendo] = useState(false);
   const [pagoACorregir, setPagoACorregir] = useState<PagoFormaCorregible | null>(null);
+  const esNcPeriodo = Boolean(
+    venta?.tipo_comprobante === "NOTA_CREDITO" &&
+    venta.periodo_asoc_desde &&
+    venta.periodo_asoc_hasta &&
+    venta.nc_periodo_modalidad,
+  );
   const detalleQuery = useQuery({
     queryKey: ["venta-detail", venta?.id],
     enabled: !!venta,
@@ -112,11 +368,15 @@ export function DialogoDetalleVenta({
           return { data, error };
         },
         cargarPagos: async () => {
-          const { data, error } = await supabase
-            .from("venta_pagos")
-            .select("*")
-            .eq("venta_id", venta.id);
-          return { data, error };
+          if (esNcPeriodo) {
+            const respuesta = await supabase
+              .from("venta_pagos")
+              .select("id,venta_id,forma_pago,monto,created_at,caja_sesion_id")
+              .eq("venta_id", venta.id);
+            return respuesta as unknown as { data: PagoVenta[] | null; error: ErrorLecturaSegura };
+          }
+          const respuesta = await supabase.from("venta_pagos").select("*").eq("venta_id", venta.id);
+          return respuesta as { data: PagoVenta[] | null; error: ErrorLecturaSegura };
         },
       });
     },
@@ -185,9 +445,21 @@ export function DialogoDetalleVenta({
     }
   };
 
-  const receptor = venta ? leerReceptorFiscalCongelado(venta.afip_snapshot) : null;
-  const comprobanteAsociado = venta ? leerComprobanteAsociadoFiscal(venta.afip_snapshot) : null;
+  const receptor = venta?.fiscalPresentacion.receptor ?? null;
+  const comprobanteAsociado = venta?.fiscalPresentacion.comprobanteAsociado ?? null;
   const fiscal = venta ? descripcionFiscal(venta) : null;
+  const datosAuditoriaNcPeriodo: DatosAuditoriaNotaCreditoPeriodo | null =
+    venta?.auditoriaPeriodo && detalle
+      ? {
+          ...venta.auditoriaPeriodo,
+          pagosAplicados: detalle.pagos.map((pago) => ({
+            id: pago.id,
+            formaPago: pago.forma_pago,
+            monto: Number(pago.monto),
+            createdAt: pago.created_at,
+          })),
+        }
+      : null;
 
   return (
     <>
@@ -271,7 +543,7 @@ export function DialogoDetalleVenta({
                     </p>
                   ) : null}
                 </div>
-                {receptor ? (
+                {receptor && !esNcPeriodo ? (
                   <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
                     <strong>Receptor fiscal de la emisión:</strong> {receptor.razonSocial}
                     <p className="text-xs text-muted-foreground">
@@ -323,6 +595,37 @@ export function DialogoDetalleVenta({
                   </div>
                 ) : null}
               </div>
+
+              {esNcPeriodo ? (
+                detalleQuery.isPending ? (
+                  <div className="flex min-h-16 items-center justify-center gap-2" role="status">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span className="text-sm text-muted-foreground">
+                      Reconstruyendo auditoría de la nota…
+                    </span>
+                  </div>
+                ) : detalleQuery.error || !venta.auditoriaPeriodo ? (
+                  <div
+                    className="rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
+                    role="alert"
+                  >
+                    No se pudo reconstruir la auditoría de la nota de crédito.
+                  </div>
+                ) : datosAuditoriaNcPeriodo ? (
+                  <AuditoriaNotaCreditoPeriodo
+                    venta={venta}
+                    auditoria={datosAuditoriaNcPeriodo}
+                    errorDetalle={detalleQuery.error}
+                  />
+                ) : (
+                  <div
+                    className="rounded-md border border-destructive/35 bg-destructive/5 p-3 text-sm text-destructive"
+                    role="alert"
+                  >
+                    No se pudo reconstruir la auditoría de la nota de crédito.
+                  </div>
+                )
+              ) : null}
 
               {detalleQuery.isPending ? (
                 <div className="flex min-h-24 items-center justify-center gap-2" role="status">

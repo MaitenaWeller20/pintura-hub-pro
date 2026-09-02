@@ -1,14 +1,7 @@
-import {
-  condicionIvaReceptorId,
-  cuitValido,
-  type CondicionIva,
-  type Letra,
-} from "./codigos";
+import { condicionIvaReceptorId, cuitValido, type CondicionIva, type Letra } from "./codigos";
 import type { TotalesFiscales } from "./iva";
-import {
-  validarReceptorFiscalConfirmado,
-  type ReceptorFiscalConfirmado,
-} from "./receptor";
+import { validarReceptorFiscalConfirmado, type ReceptorFiscalConfirmado } from "./receptor";
+import type { ModalidadNcPeriodo } from "./nota-credito-periodo";
 
 export type EmisorSnapshotFiscal = {
   razon_social: string;
@@ -317,7 +310,44 @@ export type SnapshotFiscalV2 = {
 export type SnapshotFiscalV2Input = Omit<SnapshotFiscalV2, "hash" | "version">;
 type SnapshotFiscalV2Body = Omit<SnapshotFiscalV2, "hash">;
 
-type JsonCanonico = null | boolean | string | number | JsonCanonico[] | { [key: string]: JsonCanonico };
+export type PeriodoAsocSnapshotFiscal = { desde: string; hasta: string };
+export type VentaSnapshotFiscalV3 = Omit<SnapshotFiscalV2["venta"], "condicionVenta">;
+
+export type SnapshotFiscalV3 = Omit<
+  SnapshotFiscalV2,
+  "version" | "hash" | "venta" | "origen" | "comprobanteOriginalId" | "cbtesAsoc"
+> & {
+  version: 3;
+  hash: string;
+  venta: VentaSnapshotFiscalV3;
+  origen: "PERIODO_ASOCIADO";
+  comprobanteOriginalId: null;
+  cbtesAsoc: [];
+  periodoAsoc: PeriodoAsocSnapshotFiscal;
+  notaCredito: {
+    modalidad: ModalidadNcPeriodo;
+    motivo: string;
+  };
+};
+
+export type SnapshotFiscalV3Input = Omit<
+  SnapshotFiscalV3,
+  "hash" | "version" | "venta" | "origen" | "comprobanteOriginalId" | "cbtesAsoc"
+> & {
+  venta: VentaSnapshotFiscalV3 & {
+    condicionVenta?: SnapshotFiscalV2["venta"]["condicionVenta"];
+  };
+};
+type SnapshotFiscalV3Body = Omit<SnapshotFiscalV3, "hash">;
+export type SnapshotFiscalPersistido = SnapshotFiscalV2 | SnapshotFiscalV3;
+
+type JsonCanonico =
+  | null
+  | boolean
+  | string
+  | number
+  | JsonCanonico[]
+  | { [key: string]: JsonCanonico };
 
 const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DECIMAL_DOS = /^(0|[1-9][0-9]{0,11})\.[0-9]{2}$/;
@@ -477,7 +507,9 @@ function clonarCanonico(
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value) || !Number.isSafeInteger(value) || Object.is(value, -0)) {
-      throw new Error("Los números JSON del snapshot deben ser enteros seguros, finitos y canónicos.");
+      throw new Error(
+        "Los números JSON del snapshot deben ser enteros seguros, finitos y canónicos.",
+      );
     }
     return value;
   }
@@ -525,7 +557,11 @@ function clonarCanonico(
         }
         result.push(clonarCanonico(descriptor.value, stack, null, ordenarArrays));
       }
-      if (ordenarArrays && key && ["items", "alicuotasIva", "tributos", "cbtesAsoc"].includes(key)) {
+      if (
+        ordenarArrays &&
+        key &&
+        ["items", "alicuotasIva", "tributos", "cbtesAsoc"].includes(key)
+      ) {
         result.sort((a, b) => compararDominio(key, a, b));
       }
       return result;
@@ -572,23 +608,24 @@ function serializarNormalizado(value: JsonCanonico): string {
 }
 
 export function serializarSnapshotFiscal(valueWithoutHash: unknown): string {
-  if (esRegistro(valueWithoutHash) && Object.prototype.hasOwnProperty.call(valueWithoutHash, "hash")) {
+  if (
+    esRegistro(valueWithoutHash) &&
+    Object.prototype.hasOwnProperty.call(valueWithoutHash, "hash")
+  ) {
     throw new Error("serializarSnapshotFiscal recibe el valor sin hash.");
   }
   return serializarNormalizado(clonarCanonico(valueWithoutHash, new WeakSet(), null, true));
 }
 
 const SHA256_K = Uint32Array.from([
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-  0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-  0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-  0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-  0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-  0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-  0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-  0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-  0xc67178f2,
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ]);
 
 function rotateRight(value: number, bits: number): number {
@@ -608,8 +645,7 @@ export function sha256HexUtf8(value: string): string {
   view.setUint32(paddedLength - 4, bitLength >>> 0, false);
 
   const hash = Uint32Array.from([
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
   ]);
   const words = new Uint32Array(64);
   for (let offset = 0; offset < paddedLength; offset += 64) {
@@ -681,7 +717,8 @@ function texto(value: unknown, label: string, nullable = false): string | null {
 
 function uuid(value: unknown, label: string, nullable = false): string | null {
   const result = texto(value, label, nullable);
-  if (result !== null && !UUID_CANONICO.test(result)) throw new Error(`${label} debe ser UUID canónico.`);
+  if (result !== null && !UUID_CANONICO.test(result))
+    throw new Error(`${label} debe ser UUID canónico.`);
   return result;
 }
 
@@ -752,15 +789,38 @@ function ordenado<T>(values: readonly T[], compare: (a: T, b: T) => number): boo
   return values.every((value, index) => index === 0 || compare(values[index - 1], value) <= 0);
 }
 
-function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: boolean): SnapshotFiscalV2Body {
+function validarCuerpoV2(
+  value: Record<string, unknown>,
+  exigirOrdenCanonico: boolean,
+): SnapshotFiscalV2Body {
   clavesExactas(
     value,
     [
-      "version", "venta", "items", "emisor", "sucursal", "receptor", "identidad", "letra",
-      "concepto", "fechaComprobante", "importeNeto", "importeExento", "importeNoGravado",
-      "importeIva", "importeTributos", "importeTotal", "alicuotasIva", "tributos", "moneda",
-      "cotizacion", "ivaContenido", "otrosImpuestosNacionalesIndirectos", "origen",
-      "comprobanteOriginalId", "cbtesAsoc",
+      "version",
+      "venta",
+      "items",
+      "emisor",
+      "sucursal",
+      "receptor",
+      "identidad",
+      "letra",
+      "concepto",
+      "fechaComprobante",
+      "importeNeto",
+      "importeExento",
+      "importeNoGravado",
+      "importeIva",
+      "importeTributos",
+      "importeTotal",
+      "alicuotasIva",
+      "tributos",
+      "moneda",
+      "cotizacion",
+      "ivaContenido",
+      "otrosImpuestosNacionalesIndirectos",
+      "origen",
+      "comprobanteOriginalId",
+      "cbtesAsoc",
     ],
     "SnapshotFiscalV2",
   );
@@ -774,13 +834,13 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   );
   uuid(venta.id, "venta.id");
   texto(venta.numeroComercial, "venta.numeroComercial");
-  if (!['VENTA', 'NOTA_CREDITO'].includes(String(venta.tipoComprobante))) {
+  if (!["VENTA", "NOTA_CREDITO"].includes(String(venta.tipoComprobante))) {
     if (venta.tipoComprobante === "NOTA_DEBITO") {
       throw new Error("La nota de débito nueva queda fuera de alcance.");
     }
     throw new Error("venta.tipoComprobante no está soportado por snapshot v2.");
   }
-  if (!['CONTADO', 'CTA_CTE'].includes(String(venta.condicionVenta))) {
+  if (!["CONTADO", "CTA_CTE"].includes(String(venta.condicionVenta))) {
     throw new Error("venta.condicionVenta es desconocida.");
   }
   instante(venta.fechaComercial, "venta.fechaComercial");
@@ -788,7 +848,17 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   const emisor = objeto(value.emisor, "emisor");
   clavesExactas(
     emisor,
-    ["id", "razonSocial", "nombreFantasia", "cuit", "domicilioFiscal", "condicionIva", "ingresosBrutos", "inicioActividades", "telefono"],
+    [
+      "id",
+      "razonSocial",
+      "nombreFantasia",
+      "cuit",
+      "domicilioFiscal",
+      "condicionIva",
+      "ingresosBrutos",
+      "inicioActividades",
+      "telefono",
+    ],
     "emisor",
   );
   uuid(emisor.id, "emisor.id");
@@ -822,16 +892,22 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   if (!cuitFiscalSnapshotValido(identidad.emisorCuit)) {
     throw new Error("identidad.emisorCuit debe ser un CUIT canónico válido de 11 dígitos.");
   }
-  if (identidad.emisorCuit !== emisor.cuit) throw new Error("El CUIT de identidad no coincide con el emisor.");
+  if (identidad.emisorCuit !== emisor.cuit)
+    throw new Error("El CUIT de identidad no coincide con el emisor.");
   entero(identidad.puntoVenta, "identidad.puntoVenta", 1, 99_999);
   entero(identidad.cbteTipo, "identidad.cbteTipo", 1, 9_999);
-  if (!['PRODUCCION', 'HOMOLOGACION'].includes(String(identidad.modo))) throw new Error("identidad.modo inválido.");
-  if (typeof identidad.simulado !== "boolean") throw new Error("identidad.simulado debe ser booleano.");
-  if (!['PRODUCCION', 'HOMOLOGACION', 'SIMULADA'].includes(String(identidad.validez))) throw new Error("identidad.validez inválida.");
+  if (!["PRODUCCION", "HOMOLOGACION"].includes(String(identidad.modo)))
+    throw new Error("identidad.modo inválido.");
+  if (typeof identidad.simulado !== "boolean")
+    throw new Error("identidad.simulado debe ser booleano.");
+  if (!["PRODUCCION", "HOMOLOGACION", "SIMULADA"].includes(String(identidad.validez)))
+    throw new Error("identidad.validez inválida.");
   const validezEsperada = identidad.simulado ? "SIMULADA" : identidad.modo;
-  if (identidad.validez !== validezEsperada) throw new Error("Modo, simulación y validez son incoherentes.");
+  if (identidad.validez !== validezEsperada)
+    throw new Error("Modo, simulación y validez son incoherentes.");
 
-  if (!['A', 'B', 'C'].includes(String(value.letra))) throw new Error("La letra fiscal es desconocida.");
+  if (!["A", "B", "C"].includes(String(value.letra)))
+    throw new Error("La letra fiscal es desconocida.");
   if (value.concepto !== 1) throw new Error("El rollout actual exige Concepto=1.");
   fecha(value.fechaComprobante, "fechaComprobante");
 
@@ -841,11 +917,15 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   const importeIva = centavos(value.importeIva, "importeIva");
   const importeTributos = centavos(value.importeTributos, "importeTributos");
   const importeTotal = centavos(value.importeTotal, "importeTotal", true);
-  if (importeNeto + importeExento + importeNoGravado + importeIva + importeTributos !== importeTotal) {
+  if (
+    importeNeto + importeExento + importeNoGravado + importeIva + importeTributos !==
+    importeTotal
+  ) {
     throw new Error("El total fiscal no coincide con neto, exento, no gravado, IVA y tributos.");
   }
 
-  if (!Array.isArray(value.items) || value.items.length === 0) throw new Error("items debe contener al menos una línea.");
+  if (!Array.isArray(value.items) || value.items.length === 0)
+    throw new Error("items debe contener al menos una línea.");
   const itemIds = new Set<string>();
   let itemsNeto = 0n;
   let itemsIva = 0n;
@@ -855,7 +935,19 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     const item = objeto(rawItem, "item");
     clavesExactas(
       item,
-      ["id", "productoId", "codigo", "descripcion", "cantidad", "precioUnitarioSinIva", "descuentoPorcentaje", "ivaPorcentaje", "subtotalNeto", "importeIva", "subtotalTotal"],
+      [
+        "id",
+        "productoId",
+        "codigo",
+        "descripcion",
+        "cantidad",
+        "precioUnitarioSinIva",
+        "descuentoPorcentaje",
+        "ivaPorcentaje",
+        "subtotalNeto",
+        "importeIva",
+        "subtotalTotal",
+      ],
       "item",
     );
     const id = uuid(item.id, "item.id")!;
@@ -899,7 +991,10 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   if (itemsNeto !== importeNeto + importeExento + importeNoGravado || itemsIva !== importeIva) {
     throw new Error("Los items no coinciden con el neto/exento/no gravado/IVA de cabecera.");
   }
-  if (exigirOrdenCanonico && !ordenado(value.items as JsonCanonico[], (a, b) => compararDominio("items", a, b))) {
+  if (
+    exigirOrdenCanonico &&
+    !ordenado(value.items as JsonCanonico[], (a, b) => compararDominio("items", a, b))
+  ) {
     throw new Error("items no respeta el orden canónico.");
   }
 
@@ -940,7 +1035,10 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   if (alicuotaIds.size !== gruposIvaEsperados.size) {
     throw new Error("El desglose de IVA tiene alícuotas faltantes o adicionales.");
   }
-  if (exigirOrdenCanonico && !ordenado(value.alicuotasIva as JsonCanonico[], (a, b) => compararDominio("alicuotasIva", a, b))) {
+  if (
+    exigirOrdenCanonico &&
+    !ordenado(value.alicuotasIva as JsonCanonico[], (a, b) => compararDominio("alicuotasIva", a, b))
+  ) {
     throw new Error("alicuotasIva no respeta el orden canónico.");
   }
 
@@ -949,27 +1047,49 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   let tributosTotal = 0n;
   for (const rawTributo of value.tributos) {
     const tributo = objeto(rawTributo, "tributo");
-    clavesExactas(tributo, ["id", "descripcion", "baseImponible", "alicuota", "importe"], "tributo");
+    clavesExactas(
+      tributo,
+      ["id", "descripcion", "baseImponible", "alicuota", "importe"],
+      "tributo",
+    );
     const id = entero(tributo.id, "tributo.id", 1, 9999);
     const descripcion = texto(tributo.descripcion, "tributo.descripcion")!;
     const base = centavos(tributo.baseImponible, "tributo.baseImponible");
     const tasa = porcentaje(tributo.alicuota, "tributo.alicuota");
     const importe = centavos(tributo.importe, "tributo.importe");
-    if (base === 0n && tasa === 0n && importe === 0n) throw new Error("Un tributo vacío no se envía a ARCA.");
+    if (base === 0n && tasa === 0n && importe === 0n)
+      throw new Error("Un tributo vacío no se envía a ARCA.");
     const domainKey = `${id}\u0000${descripcion}\u0000${tributo.baseImponible}\u0000${tributo.alicuota}\u0000${tributo.importe}`;
-    if (tributoKeys.has(domainKey)) throw new Error("Los tributos no pueden repetir su clave de dominio.");
+    if (tributoKeys.has(domainKey))
+      throw new Error("Los tributos no pueden repetir su clave de dominio.");
     tributoKeys.add(domainKey);
     tributosTotal += importe;
   }
-  if (tributosTotal !== importeTributos) throw new Error("Los tributos no coinciden con la cabecera.");
-  if (exigirOrdenCanonico && !ordenado(value.tributos as JsonCanonico[], (a, b) => compararDominio("tributos", a, b))) {
+  if (tributosTotal !== importeTributos)
+    throw new Error("Los tributos no coinciden con la cabecera.");
+  if (
+    exigirOrdenCanonico &&
+    !ordenado(value.tributos as JsonCanonico[], (a, b) => compararDominio("tributos", a, b))
+  ) {
     throw new Error("tributos no respeta el orden canónico.");
   }
 
   const receptor = objeto(value.receptor, "receptor");
   clavesExactas(
     receptor,
-    ["razonSocial", "domicilio", "tipoDocumento", "numeroDocumento", "docTipoArca", "docNroArca", "condicionIva", "origen", "origenId", "verificadoArcaAt", "condicionIvaReceptorId"],
+    [
+      "razonSocial",
+      "domicilio",
+      "tipoDocumento",
+      "numeroDocumento",
+      "docTipoArca",
+      "docNroArca",
+      "condicionIva",
+      "origen",
+      "origenId",
+      "verificadoArcaAt",
+      "condicionIvaReceptorId",
+    ],
     "receptor",
   );
   const { condicionIvaReceptorId: receptorCondicionId, ...receptorBase } = receptor;
@@ -983,32 +1103,34 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
   validarReceptorFiscalConfirmado(receptorBase, Number(importeTotal) / 100);
   instante(receptor.verificadoArcaAt, "receptor.verificadoArcaAt", true);
   const condicionId = condicionIvaReceptorId(receptor.condicionIva as CondicionIva);
-  if (receptorCondicionId !== condicionId) throw new Error("La condición IVA del receptor no coincide con su id ARCA.");
+  if (receptorCondicionId !== condicionId)
+    throw new Error("La condición IVA del receptor no coincide con su id ARCA.");
 
   const letra = value.letra as Letra;
   const esperada =
     receptor.condicionIva === "RESPONSABLE_INSCRIPTO" || receptor.condicionIva === "MONOTRIBUTO"
       ? "A"
       : "B";
-  if (letra !== esperada) throw new Error("La letra no coincide con la condición IVA del receptor.");
+  if (letra !== esperada)
+    throw new Error("La letra no coincide con la condición IVA del receptor.");
   const tiposFactura: Record<Letra, number> = { A: 1, B: 6, C: 11 };
   const tiposNc: Record<Letra, number> = { A: 3, B: 8, C: 13 };
   const tipoEsperado = venta.tipoComprobante === "VENTA" ? tiposFactura[letra] : tiposNc[letra];
   if (identidad.cbteTipo !== tipoEsperado) throw new Error("La letra y el CbteTipo no coinciden.");
 
-  if (value.moneda !== "PES" || value.cotizacion !== "1.000000" || !DECIMAL_SEIS.test(String(value.cotizacion))) {
+  if (
+    value.moneda !== "PES" ||
+    value.cotizacion !== "1.000000" ||
+    !DECIMAL_SEIS.test(String(value.cotizacion))
+  ) {
     throw new Error("El rollout actual exige moneda PES y cotización 1.000000 positiva.");
   }
   const ivaContenido = centavos(value.ivaContenido, "ivaContenido");
-  centavos(
-    value.otrosImpuestosNacionalesIndirectos,
-    "otrosImpuestosNacionalesIndirectos",
-  );
+  centavos(value.otrosImpuestosNacionalesIndirectos, "otrosImpuestosNacionalesIndirectos");
   const ivaContenidoEsperado =
-    letra === "B" && receptor.condicionIva === "CONSUMIDOR_FINAL"
-      ? importeIva
-      : 0n;
-  if (ivaContenido !== ivaContenidoEsperado) throw new Error("IVA Contenido no coincide con el comprobante.");
+    letra === "B" && receptor.condicionIva === "CONSUMIDOR_FINAL" ? importeIva : 0n;
+  if (ivaContenido !== ivaContenidoEsperado)
+    throw new Error("IVA Contenido no coincide con el comprobante.");
 
   if (!Array.isArray(value.cbtesAsoc)) throw new Error("cbtesAsoc debe ser un array.");
   const asocKeys = new Set<string>();
@@ -1026,17 +1148,26 @@ function validarCuerpoV2(value: Record<string, unknown>, exigirOrdenCanonico: bo
     if (asocKeys.has(domainKey)) throw new Error("Las asociaciones no pueden repetirse.");
     asocKeys.add(domainKey);
   }
-  if (exigirOrdenCanonico && !ordenado(value.cbtesAsoc as JsonCanonico[], (a, b) => compararDominio("cbtesAsoc", a, b))) {
+  if (
+    exigirOrdenCanonico &&
+    !ordenado(value.cbtesAsoc as JsonCanonico[], (a, b) => compararDominio("cbtesAsoc", a, b))
+  ) {
     throw new Error("cbtesAsoc no respeta el orden canónico.");
   }
   if (venta.tipoComprobante === "VENTA") {
-    if (value.origen !== "VENTA" || value.comprobanteOriginalId !== null || value.cbtesAsoc.length !== 0) {
+    if (
+      value.origen !== "VENTA" ||
+      value.comprobanteOriginalId !== null ||
+      value.cbtesAsoc.length !== 0
+    ) {
       throw new Error("Una factura ordinaria no admite comprobante original ni asociaciones.");
     }
   } else {
-    if (value.origen !== "COMPROBANTE_ORIGINAL") throw new Error("La NC debe provenir del comprobante original.");
+    if (value.origen !== "COMPROBANTE_ORIGINAL")
+      throw new Error("La NC debe provenir del comprobante original.");
     uuid(value.comprobanteOriginalId, "comprobanteOriginalId");
-    if (value.cbtesAsoc.length !== 1) throw new Error("La NC automática exige exactamente una asociación.");
+    if (value.cbtesAsoc.length !== 1)
+      throw new Error("La NC automática exige exactamente una asociación.");
     const asoc = value.cbtesAsoc[0] as Record<string, unknown>;
     if (
       asoc.tipo !== tiposFactura[letra] ||
@@ -1064,7 +1195,9 @@ export function crearSnapshotFiscalV2(input: SnapshotFiscalV2Input): SnapshotFis
     (Object.prototype.hasOwnProperty.call(input, "version") ||
       Object.prototype.hasOwnProperty.call(input, "hash"))
   ) {
-    throw new Error("SnapshotFiscalV2Input contiene claves desconocidas: version/hash son internas.");
+    throw new Error(
+      "SnapshotFiscalV2Input contiene claves desconocidas: version/hash son internas.",
+    );
   }
   const normalized = clonarCanonico(input, new WeakSet(), null, true);
   const body = validarCuerpoV2(
@@ -1079,13 +1212,38 @@ export function validarSnapshotFiscalV2(value: unknown): SnapshotFiscalV2 {
   const cloned = clonarCanonico(value, new WeakSet(), null, false);
   const snapshot = objeto(cloned, "SnapshotFiscalV2 persistido");
   if (snapshot.version !== 2) throw new Error("El snapshot persistido debe ser versión 2.");
-  clavesExactas(snapshot, [
-    "version", "hash", "venta", "items", "emisor", "sucursal", "receptor", "identidad", "letra",
-    "concepto", "fechaComprobante", "importeNeto", "importeExento", "importeNoGravado",
-    "importeIva", "importeTributos", "importeTotal", "alicuotasIva", "tributos", "moneda",
-    "cotizacion", "ivaContenido", "otrosImpuestosNacionalesIndirectos", "origen",
-    "comprobanteOriginalId", "cbtesAsoc",
-  ], "SnapshotFiscalV2 persistido");
+  clavesExactas(
+    snapshot,
+    [
+      "version",
+      "hash",
+      "venta",
+      "items",
+      "emisor",
+      "sucursal",
+      "receptor",
+      "identidad",
+      "letra",
+      "concepto",
+      "fechaComprobante",
+      "importeNeto",
+      "importeExento",
+      "importeNoGravado",
+      "importeIva",
+      "importeTributos",
+      "importeTotal",
+      "alicuotasIva",
+      "tributos",
+      "moneda",
+      "cotizacion",
+      "ivaContenido",
+      "otrosImpuestosNacionalesIndirectos",
+      "origen",
+      "comprobanteOriginalId",
+      "cbtesAsoc",
+    ],
+    "SnapshotFiscalV2 persistido",
+  );
   if (typeof snapshot.hash !== "string" || !SHA256_HEX.test(snapshot.hash)) {
     throw new Error("El hash del snapshot v2 debe ser SHA-256 hexadecimal.");
   }
@@ -1094,4 +1252,290 @@ export function validarSnapshotFiscalV2(value: unknown): SnapshotFiscalV2 {
   const recalculated = calcularHashSnapshotFiscal(body);
   if (hash !== recalculated) throw new Error("El hash del snapshot v2 no coincide con sus datos.");
   return congelarProfundo(snapshot as unknown as SnapshotFiscalV2);
+}
+
+const CLAVES_CUERPO_V3 = [
+  "version",
+  "venta",
+  "items",
+  "emisor",
+  "sucursal",
+  "receptor",
+  "identidad",
+  "letra",
+  "concepto",
+  "fechaComprobante",
+  "importeNeto",
+  "importeExento",
+  "importeNoGravado",
+  "importeIva",
+  "importeTributos",
+  "importeTotal",
+  "alicuotasIva",
+  "tributos",
+  "moneda",
+  "cotizacion",
+  "ivaContenido",
+  "otrosImpuestosNacionalesIndirectos",
+  "origen",
+  "comprobanteOriginalId",
+  "cbtesAsoc",
+  "periodoAsoc",
+  "notaCredito",
+] as const;
+
+function esEspacioMotivoFiscal(value: string): boolean {
+  const codePoint = value.codePointAt(0)!;
+  return (codePoint >= 0x09 && codePoint <= 0x0d) || codePoint === 0x20;
+}
+
+function longitudMotivoFiscal(value: string): number {
+  const codePoints = [...value];
+  let desde = 0;
+  let hasta = codePoints.length;
+  while (desde < hasta && esEspacioMotivoFiscal(codePoints[desde])) desde += 1;
+  while (hasta > desde && esEspacioMotivoFiscal(codePoints[hasta - 1])) hasta -= 1;
+  return hasta - desde;
+}
+
+function validarCuerpoV3(
+  value: Record<string, unknown>,
+  exigirOrdenCanonico: boolean,
+): SnapshotFiscalV3Body {
+  clavesExactas(value, CLAVES_CUERPO_V3, "SnapshotFiscalV3");
+  if (value.version !== 3) throw new Error("El snapshot fiscal debe ser versión 3.");
+  if (value.origen !== "PERIODO_ASOCIADO") {
+    throw new Error("El snapshot v3 debe tener origen PERIODO_ASOCIADO.");
+  }
+  if (value.comprobanteOriginalId !== null) {
+    throw new Error("El snapshot v3 por período no admite comprobante original.");
+  }
+  if (!Array.isArray(value.cbtesAsoc) || value.cbtesAsoc.length !== 0) {
+    throw new Error("El snapshot v3 por período exige CbtesAsoc vacío.");
+  }
+
+  const periodo = objeto(value.periodoAsoc, "periodoAsoc");
+  clavesExactas(periodo, ["desde", "hasta"], "periodoAsoc");
+  const desde = fecha(periodo.desde, "periodoAsoc.desde");
+  const hasta = fecha(periodo.hasta, "periodoAsoc.hasta");
+  const fechaEmision = fecha(value.fechaComprobante, "fechaComprobante");
+  if (desde > hasta) throw new Error("El período asociado no puede estar invertido.");
+  if (hasta > fechaEmision) {
+    throw new Error("El período asociado no puede terminar después de la fecha de emisión.");
+  }
+
+  const notaCredito = objeto(value.notaCredito, "notaCredito");
+  clavesExactas(notaCredito, ["modalidad", "motivo"], "notaCredito");
+  if (!["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"].includes(String(notaCredito.modalidad))) {
+    throw new Error("notaCredito.modalidad es desconocida.");
+  }
+  if (typeof notaCredito.motivo !== "string") {
+    throw new Error("notaCredito.motivo debe ser texto.");
+  }
+  const motivo = notaCredito.motivo;
+  const longitudMotivo = longitudMotivoFiscal(motivo);
+  if (longitudMotivo < 5 || longitudMotivo > 500) {
+    throw new Error("notaCredito.motivo debe tener entre 5 y 500 code points útiles.");
+  }
+
+  const venta = objeto(value.venta, "venta");
+  clavesExactas(venta, ["id", "numeroComercial", "tipoComprobante", "fechaComercial"], "venta v3");
+  if (venta.tipoComprobante !== "NOTA_CREDITO") {
+    throw new Error("El snapshot v3 por período exige tipoComprobante NOTA_CREDITO.");
+  }
+  const identidad = objeto(value.identidad, "identidad");
+  const tiposNc: Record<Letra, number> = { A: 3, B: 8, C: 13 };
+  if (!["A", "B", "C"].includes(String(value.letra))) {
+    throw new Error("La letra fiscal es desconocida.");
+  }
+  if (identidad.cbteTipo !== tiposNc[value.letra as Letra]) {
+    throw new Error("La NC por período exige CbteTipo estándar 3, 8 o 13 acorde con su letra.");
+  }
+
+  const emisor = objeto(value.emisor, "emisor");
+  if (
+    (value.letra === "C" && emisor.condicionIva !== "MONOTRIBUTO") ||
+    (value.letra !== "C" && emisor.condicionIva !== "RESPONSABLE_INSCRIPTO")
+  ) {
+    throw new Error("La letra de la NC no coincide con la condición IVA del emisor.");
+  }
+  if (value.importeTributos !== "0.00" || value.otrosImpuestosNacionalesIndirectos !== "0.00") {
+    throw new Error("El snapshot v3 por período no admite tributos.");
+  }
+  if (!Array.isArray(value.tributos) || value.tributos.length !== 0) {
+    throw new Error("El snapshot v3 por período exige tributos vacío.");
+  }
+  if (!Array.isArray(value.items)) throw new Error("items debe ser un array.");
+  if (notaCredito.modalidad === "DEVOLUCION_PRODUCTOS") {
+    if (
+      value.items.length === 0 ||
+      value.items.some((item) => !esRegistro(item) || typeof item.productoId !== "string")
+    ) {
+      throw new Error("La devolución de productos exige líneas con productoId.");
+    }
+  } else if (
+    value.items.length !== 1 ||
+    !esRegistro(value.items[0]) ||
+    value.items[0].productoId !== null
+  ) {
+    throw new Error("La bonificación o ajuste exige una sola línea de concepto libre.");
+  }
+
+  // El cuerpo v2 permanece cerrado. Esta proyección sólo adapta las dos
+  // diferencias de asociación de v3 para reutilizar sus validadores de
+  // decimales, CUIT, receptor, identidad, líneas y totales sin relajarlo.
+  const letraValidacion =
+    value.letra === "C"
+      ? ["RESPONSABLE_INSCRIPTO", "MONOTRIBUTO"].includes(
+          String(objeto(value.receptor, "receptor").condicionIva),
+        )
+        ? "A"
+        : "B"
+      : (value.letra as Letra);
+  const identidadValidacion = {
+    ...identidad,
+    cbteTipo: tiposNc[letraValidacion],
+  };
+  const cuerpoV2: Record<string, unknown> = {
+    ...value,
+    version: 2,
+    venta: { ...venta, condicionVenta: "CONTADO" },
+    emisor: value.letra === "C" ? { ...emisor, condicionIva: "RESPONSABLE_INSCRIPTO" } : emisor,
+    identidad: identidadValidacion,
+    letra: letraValidacion,
+    ivaContenido:
+      letraValidacion === "B" &&
+      objeto(value.receptor, "receptor").condicionIva === "CONSUMIDOR_FINAL"
+        ? value.importeIva
+        : "0.00",
+    origen: "COMPROBANTE_ORIGINAL",
+    comprobanteOriginalId: "00000000-0000-4000-8000-000000000001",
+    cbtesAsoc: [
+      {
+        tipo: letraValidacion === "A" ? 1 : 6,
+        puntoVenta: identidad.puntoVenta,
+        numero: 1,
+        cuit: identidad.emisorCuit,
+        fecha: fechaEmision,
+      },
+    ],
+  };
+  delete cuerpoV2.periodoAsoc;
+  delete cuerpoV2.notaCredito;
+  validarCuerpoV2(cuerpoV2, exigirOrdenCanonico);
+
+  if (value.letra === "C" && value.ivaContenido !== "0.00") {
+    throw new Error("Una NC C no admite IVA Contenido.");
+  }
+  return value as unknown as SnapshotFiscalV3Body;
+}
+
+function ordenarCuerpoV3(body: SnapshotFiscalV3Body): SnapshotFiscalV3Body {
+  return {
+    version: 3,
+    venta: {
+      id: body.venta.id,
+      numeroComercial: body.venta.numeroComercial,
+      tipoComprobante: body.venta.tipoComprobante,
+      fechaComercial: body.venta.fechaComercial,
+    },
+    items: body.items,
+    emisor: body.emisor,
+    sucursal: body.sucursal,
+    receptor: body.receptor,
+    identidad: body.identidad,
+    letra: body.letra,
+    concepto: body.concepto,
+    fechaComprobante: body.fechaComprobante,
+    importeNeto: body.importeNeto,
+    importeExento: body.importeExento,
+    importeNoGravado: body.importeNoGravado,
+    importeIva: body.importeIva,
+    importeTributos: body.importeTributos,
+    importeTotal: body.importeTotal,
+    alicuotasIva: body.alicuotasIva,
+    tributos: body.tributos,
+    moneda: body.moneda,
+    cotizacion: body.cotizacion,
+    ivaContenido: body.ivaContenido,
+    otrosImpuestosNacionalesIndirectos: body.otrosImpuestosNacionalesIndirectos,
+    origen: "PERIODO_ASOCIADO",
+    comprobanteOriginalId: null,
+    cbtesAsoc: [],
+    periodoAsoc: body.periodoAsoc,
+    notaCredito: body.notaCredito,
+  };
+}
+
+export function crearSnapshotFiscalV3(input: SnapshotFiscalV3Input): SnapshotFiscalV3 {
+  if (
+    esRegistro(input) &&
+    ["version", "hash", "origen", "comprobanteOriginalId", "cbtesAsoc"].some((key) =>
+      Object.prototype.hasOwnProperty.call(input, key),
+    )
+  ) {
+    throw new Error("SnapshotFiscalV3Input contiene claves internas desconocidas.");
+  }
+  const normalized = objeto(
+    clonarCanonico(input, new WeakSet(), null, true),
+    "SnapshotFiscalV3Input",
+  );
+  const ventaInput = objeto(normalized.venta, "venta v3 input");
+  const incluyeCondicionVenta = Object.prototype.hasOwnProperty.call(ventaInput, "condicionVenta");
+  clavesExactas(
+    ventaInput,
+    [
+      "id",
+      "numeroComercial",
+      "tipoComprobante",
+      "fechaComercial",
+      ...(incluyeCondicionVenta ? (["condicionVenta"] as const) : []),
+    ],
+    "venta v3 input",
+  );
+  if (
+    incluyeCondicionVenta &&
+    !["CONTADO", "CTA_CTE"].includes(String(ventaInput.condicionVenta))
+  ) {
+    throw new Error("venta.condicionVenta de entrada es desconocida.");
+  }
+  const { condicionVenta: _condicionVentaComercial, ...ventaFiscal } = ventaInput;
+  const body = validarCuerpoV3(
+    {
+      ...normalized,
+      venta: ventaFiscal,
+      version: 3,
+      origen: "PERIODO_ASOCIADO",
+      comprobanteOriginalId: null,
+      cbtesAsoc: [],
+    },
+    true,
+  );
+  const ordered = ordenarCuerpoV3(body);
+  const hash = calcularHashSnapshotFiscal(ordered);
+  const { version, ...rest } = ordered;
+  return congelarProfundo({ version, hash, ...rest } as SnapshotFiscalV3);
+}
+
+export function validarSnapshotFiscalV3(value: unknown): SnapshotFiscalV3 {
+  const cloned = clonarCanonico(value, new WeakSet(), null, false);
+  const snapshot = objeto(cloned, "SnapshotFiscalV3 persistido");
+  if (snapshot.version !== 3) throw new Error("El snapshot persistido debe ser versión 3.");
+  clavesExactas(snapshot, [...CLAVES_CUERPO_V3, "hash"], "SnapshotFiscalV3 persistido");
+  if (typeof snapshot.hash !== "string" || !SHA256_HEX.test(snapshot.hash)) {
+    throw new Error("El hash del snapshot v3 debe ser SHA-256 hexadecimal.");
+  }
+  const { hash, ...body } = snapshot;
+  validarCuerpoV3(body, true);
+  if (hash !== calcularHashSnapshotFiscal(body)) {
+    throw new Error("El hash del snapshot v3 no coincide con sus datos.");
+  }
+  return congelarProfundo(snapshot as unknown as SnapshotFiscalV3);
+}
+
+export function validarSnapshotFiscalPersistido(value: unknown): SnapshotFiscalPersistido {
+  const version = esRegistro(value) ? value.version : undefined;
+  if (version === 2) return validarSnapshotFiscalV2(value);
+  if (version === 3) return validarSnapshotFiscalV3(value);
+  throw new Error("La versión del snapshot fiscal no está soportada.");
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   autorizarAdministradorFiscal,
+  autorizarContextoVentas,
   autorizarContextoColaFiscal,
+  autorizarLecturaVenta,
   evaluarPermisoFiscal,
 } from "./permiso.server";
 
@@ -103,6 +105,183 @@ describe("permiso fiscal server", () => {
         confirmaVentaAntigua: false,
       }),
     ).toThrow(mensaje);
+  });
+});
+
+describe("lectura user-bound del detalle de Ventas", () => {
+  it("deja leer al empleado con sección Ventas aunque no tenga capacidad fiscal", async () => {
+    await expect(
+      autorizarLecturaVenta({
+        userId: "empleado",
+        ventaId: "venta-visible",
+        lecturas: {
+          cargarVentaVisible: async () => ({ id: "venta-visible", sucursalId: "sucursal-a" }),
+          consultarEsAdmin: async () => false,
+          cargarPerfil: async () => ({
+            activo: true,
+            sucursalId: "sucursal-a",
+            secciones: ["ventas"],
+          }),
+        },
+      }),
+    ).resolves.toEqual({ ventaId: "venta-visible", sucursalId: "sucursal-a", esAdmin: false });
+  });
+
+  it("falla antes de cualquier lectura privilegiada cuando RLS no muestra la venta", async () => {
+    const orden: string[] = [];
+    await expect(
+      autorizarLecturaVenta({
+        userId: "empleado",
+        ventaId: "venta-ajena",
+        lecturas: {
+          cargarVentaVisible: async () => {
+            orden.push("venta-user-bound");
+            return null;
+          },
+          consultarEsAdmin: async () => {
+            orden.push("rol");
+            return false;
+          },
+          cargarPerfil: async () => {
+            orden.push("perfil");
+            return { activo: true, sucursalId: "sucursal-a", secciones: ["ventas"] };
+          },
+        },
+      }),
+    ).rejects.toThrow("Venta no encontrada o no visible para el operador.");
+    expect(orden).toEqual(["venta-user-bound"]);
+  });
+
+  it.each([
+    [{ activo: true, sucursalId: "sucursal-b", secciones: ["ventas"] }, /sucursal activa/i],
+    [{ activo: true, sucursalId: "sucursal-a", secciones: ["stock"] }, /sección Ventas/i],
+    [{ activo: false, sucursalId: "sucursal-a", secciones: ["ventas"] }, /inactivo/i],
+  ])("rechaza un perfil fuera del ámbito de lectura", async (perfil, mensaje) => {
+    await expect(
+      autorizarLecturaVenta({
+        userId: "empleado",
+        ventaId: "venta-visible",
+        lecturas: {
+          cargarVentaVisible: async () => ({ id: "venta-visible", sucursalId: "sucursal-a" }),
+          consultarEsAdmin: async () => false,
+          cargarPerfil: async () => perfil,
+        },
+      }),
+    ).rejects.toThrow(mensaje);
+  });
+
+  it("mantiene al admin activo autorizado sin filtros de sección o sucursal", async () => {
+    await expect(
+      autorizarLecturaVenta({
+        userId: "admin",
+        ventaId: "venta-otra-sucursal",
+        lecturas: {
+          cargarVentaVisible: async () => ({
+            id: "venta-otra-sucursal",
+            sucursalId: "sucursal-b",
+          }),
+          consultarEsAdmin: async () => true,
+          cargarPerfil: async () => ({ activo: true, sucursalId: null, secciones: [] }),
+        },
+      }),
+    ).resolves.toEqual({
+      ventaId: "venta-otra-sucursal",
+      sucursalId: "sucursal-b",
+      esAdmin: true,
+    });
+  });
+
+  it("no convierte la lectura en permiso para previsualizar ni emitir", () => {
+    const perfilSinCapacidad = { activo: true, puedeFacturar: false, sucursalId: "sucursal-a" };
+    for (const accion of ["PREVISUALIZAR", "EMITIR"] as const) {
+      expect(() =>
+        evaluarPermisoFiscal({
+          ...base,
+          perfil: perfilSinCapacidad,
+          accion,
+          confirmaVentaAntigua: false,
+        }),
+      ).toThrow(/capacidad fiscal/i);
+    }
+  });
+});
+
+describe("contexto user-bound de listados de Ventas", () => {
+  const lecturas = (
+    overrides: Partial<{
+      esAdmin: boolean;
+      perfil: {
+        activo: boolean;
+        puedeFacturar: boolean;
+        sucursalId: string | null;
+        secciones: string[] | null;
+      } | null;
+    }> = {},
+  ) => ({
+    consultarEsAdmin: async () => overrides.esAdmin ?? false,
+    cargarPerfil: async () =>
+      overrides.perfil ?? {
+        activo: true,
+        puedeFacturar: false,
+        sucursalId: "sucursal-a",
+        secciones: ["ventas"],
+      },
+  });
+
+  it("permite listar ventas al operador de la sección aunque no pueda facturar", async () => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "empleado",
+        exigirCapacidadFiscal: false,
+        lecturas: lecturas(),
+      }),
+    ).resolves.toEqual({ userId: "empleado", esAdmin: false, sucursalId: "sucursal-a" });
+  });
+
+  it("exige capacidad fiscal para seleccionar el original de una NC", async () => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "empleado",
+        exigirCapacidadFiscal: true,
+        lecturas: lecturas(),
+      }),
+    ).rejects.toThrow(/capacidad fiscal/i);
+  });
+
+  it.each([
+    [
+      { activo: true, puedeFacturar: true, sucursalId: "sucursal-a", secciones: ["stock"] },
+      /sección Ventas/i,
+    ],
+    [
+      { activo: false, puedeFacturar: true, sucursalId: "sucursal-a", secciones: ["ventas"] },
+      /inactivo/i,
+    ],
+    [
+      { activo: true, puedeFacturar: true, sucursalId: null, secciones: ["ventas"] },
+      /sucursal activa/i,
+    ],
+  ])("rechaza un empleado fuera del ámbito comercial", async (perfil, mensaje) => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "empleado",
+        exigirCapacidadFiscal: false,
+        lecturas: lecturas({ perfil }),
+      }),
+    ).rejects.toThrow(mensaje);
+  });
+
+  it("mantiene al admin activo sin forzar sucursal ni capacidad fiscal", async () => {
+    await expect(
+      autorizarContextoVentas({
+        userId: "admin",
+        exigirCapacidadFiscal: true,
+        lecturas: lecturas({
+          esAdmin: true,
+          perfil: { activo: true, puedeFacturar: false, sucursalId: null, secciones: [] },
+        }),
+      }),
+    ).resolves.toEqual({ userId: "admin", esAdmin: true, sucursalId: null });
   });
 });
 

@@ -8,6 +8,7 @@ import {
 } from "./impresion";
 import { esPngDataUrlFiscal, qrAfipDataUrlObligatorio, urlQrAfip } from "./qr";
 import { crearSnapshotFiscalV2, type SnapshotFiscalV2 } from "./snapshot";
+import { crearSnapshotFiscalV3Fixture } from "./snapshot-v3.test-fixture";
 import { resolverDatosFiscalesComprobanteDesdeFila } from "../fiscal.functions";
 
 const fixture = JSON.parse(
@@ -48,10 +49,39 @@ function filaAprobada(snapshot = crearSnapshot()) {
   };
 }
 
+function filaAprobadaV3() {
+  const snapshot = crearSnapshotFiscalV3Fixture();
+  return {
+    ...filaAprobada(),
+    id: snapshot.venta.id,
+    afip_snapshot: snapshot,
+    afip_snapshot_hash: snapshot.hash,
+    afip_emisor_cuit: snapshot.identidad.emisorCuit,
+    afip_punto_venta: snapshot.identidad.puntoVenta,
+    afip_cbte_tipo: snapshot.identidad.cbteTipo,
+    afip_numero: snapshot.identidad.numero,
+    afip_modo: snapshot.identidad.modo,
+    afip_simulado: snapshot.identidad.simulado,
+    afip_validez: snapshot.identidad.validez,
+    afip_fecha_comprobante: snapshot.fechaComprobante,
+    afip_imp_total: snapshot.importeTotal,
+  };
+}
+
 const QR_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAklEQVR4AewaftIAAAMaSURBVOXBW6qlWBQAwUxx/lPOrgUtbET7eB9FfxghED9QMVQ+qXhKZVR8ovJdGy+38XI7i4qnVFYVQ+VQcUVlVHyHyqhYVTylMjZebueCyp2KKypnKquKlcqh4orKV6ncqVhtvNzOL6k4UxkVT6msKv6mjZfb+WUqd1TuqIyKlcqo+Bs2Xm7j5XYuVHyVyqg4qAyVVcVQOVQMlZ+qeGrj5XYWKn9DxVB5qmKonKmMipXKV2283F7xGyq+quKg8l9U7lR818bL7SqHiqEyKu6orCruqIyKoTIqPqk4U7miMirOVEbFUBkbLycQJxVD5aziisqouKMyKu6ojIqVyqFipbKquKOy2ni5jZfbeaDioPKUyqpiqPyEylMqq4qhMjZebq84qKwqhsqh4orKJyqjYqgcKobKJxVDZVQMlaFyVrGqGBsvt/NFKquKOxVPqTylMiqGyqriE5Wx8XI7F1RGxVnFSmWl8n+p+ERltfFyu8pZxScqo2KlcqgYKqNiqIyKg8qoGCqj4qziuyqGyth4uY2XE4hvqBgqq4qDypWKoXKoGCqjYqjcqRgqq4qnNl5u54GKg8pQGRVD5axiqDxVcaXioHKl4imVsfFy9gc3VO5UfKIyKobKJxVDZVQMlbOKobKqOFO5svFyAvFBxZnKqmKoHCquqIyKg8qqYqVyqBgqo+KOyqhYqYyNl7M/+EDlrOKnVA4VV1Q+qRgqo+KpjZfbeDmBOKkYKr+pYqjcqbii8hMVQ2VUjI2Xsz/4BSqfVAyVUXFQWVUMlVFxUBkVV1TuVAyVsfFyu8pPVKwqzlSGyqi4UzFUnlIZFWcV/2Xj5XYWFU+prCqGylnFSmVUnKmMiqEyVO5UPKUyKsbGy+1cULlT8VTFSuVOxZWKoXKm8onKqLiy8XIbL7fzF6mMilFxR2VUrFRGxUFlVTFU7qiMiqEyNl5u55eojIqDylC5UvEdFVcqhsqhYqWy2ng5gfhXxVMqo2KlcqgYKqPijsqq4o7KqFip3Km4svFyOwuV71IZFXdU7lQMlZXKHZVVxVA5VFxRGRsv9w+XWOO73oYUWAAAAABJRU5ErkJggg==";
 
 describe("preparación fiscal v2 para impresión", () => {
+  it("conserva la descripción personalizada congelada para el ticket", () => {
+    const snapshot = crearSnapshot((input) => {
+      input.items[0]!.descripcion = "Base 10 L (Código 1234)";
+    });
+
+    const preparado = prepararDatosFiscalesImpresos(filaAprobada(snapshot));
+
+    expect(preparado.lineas[0]?.descripcion).toBe("Base 10 L (Código 1234)");
+  });
+
   it("usa sólo el receptor y la fecha fiscal congelados, no el comprador ni la fecha comercial", () => {
     const snapshot = crearSnapshot((input) => {
       input.venta.fechaComercial = "2024-01-02T15:00:00.000Z";
@@ -146,6 +176,43 @@ describe("preparación fiscal v2 para impresión", () => {
         expect.objectContaining({ codigo: "COMPROBANTE_FISCAL_INCONSISTENTE" }),
       );
     }
+  });
+});
+
+describe("preparación fiscal v3 para impresión", () => {
+  it("deriva período, modalidad y motivo sólo del snapshot v3 validado", () => {
+    const preparado = prepararDatosFiscalesImpresos({
+      ...filaAprobadaV3(),
+      periodo_asoc_desde: "1999-01-01",
+      periodo_asoc_hasta: "1999-12-31",
+      nc_periodo_modalidad: "BONIFICACION_AJUSTE",
+      motivo_nota_credito: "dato vivo adulterado",
+    });
+
+    expect(preparado).toMatchObject({
+      origen: "SNAPSHOT_V3",
+      nota_credito_periodo: {
+        periodo_desde: "2026-08-01",
+        periodo_hasta: "2026-08-15",
+        modalidad: "DEVOLUCION_PRODUCTOS",
+        motivo: "Devolución de productos del período",
+      },
+    });
+    expect(JSON.stringify(preparado)).not.toMatch(/1999|dato vivo adulterado/);
+  });
+
+  it("falla cerrado si el snapshot v3 fue adulterado aunque las columnas vivas parezcan válidas", () => {
+    const fila = filaAprobadaV3();
+    const snapshot = structuredClone(fila.afip_snapshot);
+    snapshot.notaCredito.motivo = "Motivo adulterado después del CAE";
+
+    expect(() =>
+      prepararDatosFiscalesImpresos({
+        ...fila,
+        afip_snapshot: snapshot,
+        motivo_nota_credito: "Motivo de columna mutable",
+      }),
+    ).toThrowError(expect.objectContaining({ codigo: "SNAPSHOT_FISCAL_INVALIDO" }));
   });
 });
 
@@ -460,6 +527,20 @@ describe("fachada de lectura fiscal", () => {
     });
 
     expect(resultado).toMatchObject({ origen: "SNAPSHOT_V2", qr: QR_PNG });
+    expect(lecturasLegacy).toBe(0);
+  });
+
+  it("para v3 prepara, exige QR y jamás consulta datos fiscales vivos", async () => {
+    let lecturasLegacy = 0;
+    const resultado = await resolverDatosFiscalesComprobanteDesdeFila(filaAprobadaV3(), {
+      cargarLegacy: async () => {
+        lecturasLegacy += 1;
+        throw new Error("no debe leerse");
+      },
+      generarQr: async () => QR_PNG,
+    });
+
+    expect(resultado).toMatchObject({ origen: "SNAPSHOT_V3", qr: QR_PNG });
     expect(lecturasLegacy).toBe(0);
   });
 

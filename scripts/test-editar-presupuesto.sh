@@ -12,15 +12,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-DB="${DB:-supabase_db_local}"
+PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
+DB="${DB:-supabase_db_${PROJECT_ID}}"
 psql_run() { docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAq; }
 
 ok=0; fallas=0
 paso()  { printf '  \033[32m✓\033[0m %s\n' "$1"; ok=$((ok+1)); }
 fallo() { printf '  \033[31m✗\033[0m %s\n' "$1"; fallas=$((fallas+1)); }
 
-ADMIN=$(psql_run <<<"SELECT user_id FROM public.user_roles WHERE role='admin' LIMIT 1;")
-[ -n "$ADMIN" ] || { echo "No hay ningún admin en la base local."; exit 1; }
+ADMIN='a5110000-0000-4000-8000-000000000001'
 
 A='dddddddd-1111-0000-0000-00000000000a'
 B='dddddddd-1111-0000-0000-00000000000b'
@@ -30,6 +30,20 @@ B='dddddddd-1111-0000-0000-00000000000b'
 preludio() {
 cat <<SQL
 BEGIN;
+INSERT INTO auth.users (
+  id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at
+) VALUES (
+  '$ADMIN','00000000-0000-0000-0000-000000000000',
+  'authenticated','authenticated','t1-editar-presupuesto@test.local','x',
+  now(),now(),now()
+);
+UPDATE public.profiles
+   SET username='t1_editar_presupuesto',activo=true,
+       sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='OHIGGINS')
+ WHERE id='$ADMIN';
+INSERT INTO public.user_roles(user_id,role) VALUES ('$ADMIN','admin');
+INSERT INTO public.profile_sucursales(profile_id,sucursal_id)
+SELECT '$ADMIN',id FROM public.sucursales WHERE codigo='OHIGGINS';
 SET LOCAL request.jwt.claims TO '{"sub":"$ADMIN","role":"authenticated"}';
 SET LOCAL client_min_messages TO WARNING;
 
@@ -119,11 +133,53 @@ SELECT precio_lista_sin_iva::text||'/'||iva_porcentaje::text FROM public.presupu
  WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "1000.00/21.00"
 
 echo
+echo "== La descripción congelada =="
+
+corre "omitir descripción conserva el texto histórico" "
+UPDATE public.presupuesto_items SET descripcion='Base histórica (Código 1234)'
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';
+$EDITAR_A3_B1);
+SELECT descripcion FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "Basehistórica(Código1234)"
+
+corre "repreciar cambia precio e IVA pero no descripción" "
+UPDATE public.presupuesto_items SET descripcion='Base histórica (Código 1234)'
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';
+UPDATE public.productos SET precio_sin_iva=5000, iva_porcentaje=10.5 WHERE id='$A';
+$EDITAR_A3_B1, true);
+SELECT descripcion||'|'||precio_lista_sin_iva::text||'|'||iva_porcentaje::text
+  FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "Basehistórica(Código1234)|5000.00|10.50"
+
+corre "una descripción explícita se normaliza" "
+SELECT * FROM public.editar_presupuesto(
+  (SELECT presupuesto_id FROM _p),
+  jsonb_build_array(
+    jsonb_build_object('producto_id','$A','cantidad',1,'descuento_porcentaje',0,
+                       'descripcion','  Base 10 L   (Código 5678)  '),
+    jsonb_build_object('producto_id','$B','cantidad',1,'descuento_porcentaje',0)));
+SELECT descripcion FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "Base10L(Código5678)"
+
+echo
 echo "== Lo que tiene que rechazar =="
 
 rechaza "un presupuesto ya convertido" "
+INSERT INTO public.clientes(id,razon_social,tipo,activo)
+VALUES ('b5110000-0000-4000-8000-000000000001','Cliente conversión T1','CONSUMIDOR_FINAL',true);
+INSERT INTO public.ventas(
+  id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
+  condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
+  observaciones,afip_estado,afip_version
+)
+SELECT
+  'e5110000-0000-4000-8000-000000000001',p.sucursal_id,
+  'b5110000-0000-4000-8000-000000000001','$ADMIN','T1-VTA-CONVERTIDA','VENTA',
+  'CTA_CTE',1,0,1,0,'PENDIENTE','Fixture presupuesto convertido','SIN_FACTURAR',0
+FROM public.presupuestos p WHERE p.id=(SELECT presupuesto_id FROM _p);
 UPDATE public.presupuestos SET estado='CONVERTIDO',
-       venta_id=(SELECT id FROM public.ventas LIMIT 1) WHERE id=(SELECT presupuesto_id FROM _p);
+       venta_id='e5110000-0000-4000-8000-000000000001'
+ WHERE id=(SELECT presupuesto_id FROM _p);
 $EDITAR_A3_B1);" "ya se convirtió"
 
 rechaza "un presupuesto anulado" "

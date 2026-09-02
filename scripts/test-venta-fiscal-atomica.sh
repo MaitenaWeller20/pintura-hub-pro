@@ -4,7 +4,11 @@ cd "$(dirname "$0")/.."
 
 PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
 DB="${DB:-supabase_db_${PROJECT_ID}}"
-PSQL=(docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1)
+PARITY_INPUT="$(jq -c '.input' test/fixtures/fiscal-snapshot-parity-v2.json)"
+PSQL=(
+  docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1
+  -v "parity_input=$PARITY_INPUT"
+)
 
 "${PSQL[@]}" <<'SQL'
 BEGIN;
@@ -407,7 +411,7 @@ SELECT pg_temp.assert_true(
 CREATE TEMP TABLE t_budget AS
 SELECT * FROM public.crear_presupuesto(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":2}]'::jsonb,
+  '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":2,"descripcion":"Producto fiscal (Código T4)"}]'::jsonb,
   'b4000000-0000-0000-0000-000000000001','T4 CLIENTE',NULL,'T4-PRESUPUESTO'
 );
 SELECT pg_temp.capture_effects('before_budget_conversion');
@@ -421,12 +425,21 @@ SELECT pg_temp.capture_effects('after_budget_conversion');
 SELECT pg_temp.assert_true(
   (SELECT v.tipo_comprobante='VENTA' AND v.afip_estado='SIN_FACTURAR'
        AND p.estado='CONVERTIDO' AND p.venta_id=v.id
+       AND p.cliente_id='b4000000-0000-0000-0000-000000000001'
+       AND p.conversion_payload_hash~'^[0-9a-f]{64}$'
+       AND bs.cliente_id=v.cliente_id
        AND v.idempotency_key=
            pg_catalog.md5('presupuesto:'||p.id::text)::uuid
      FROM t_budget_sale bs
      JOIN public.ventas v ON v.id=bs.venta_id
      JOIN public.presupuestos p ON p.id=(SELECT presupuesto_id FROM t_budget)),
   'la conversión crea una venta neutral y marca el presupuesto una vez'
+);
+SELECT pg_temp.assert_true(
+  (SELECT i.descripcion='Producto fiscal (Código T4)'
+     FROM public.venta_items AS i
+    WHERE i.venta_id=(SELECT venta_id FROM t_budget_sale)),
+  'la conversión neutral conserva la descripción congelada del presupuesto'
 );
 SELECT pg_temp.assert_true(
   (SELECT a.ventas_count=b.ventas_count+1
@@ -447,8 +460,9 @@ SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
 );
 SELECT pg_temp.capture_effects('after_budget_replay');
 SELECT pg_temp.assert_true(
-  (SELECT r.venta_id=s.venta_id FROM t_budget_replay r CROSS JOIN t_budget_sale s),
-  'reintentar la conversión devuelve la misma venta'
+  (SELECT r.venta_id=s.venta_id AND r.cliente_id=s.cliente_id
+     FROM t_budget_replay r CROSS JOIN t_budget_sale s),
+  'reintentar la conversión devuelve la misma venta y receptor efectivo'
 );
 SELECT pg_temp.assert_effects_equal(
   'after_budget_conversion','after_budget_replay',
@@ -517,23 +531,54 @@ UPDATE public.ventas v
        afip_error='rechazo T4',afip_error_clase='ARCA',afip_error_codigo='T4'
   FROM t_collection_sales s
  WHERE s.state='ERROR_CORREGIBLE' AND v.id=s.venta_id;
+
+-- Los estados obligatorios usan evidencia v2 canónica: la frontera persistida
+-- rechaza hashes declarativos y snapshots reducidos aun para el owner.
+CREATE TEMP TABLE t_collection_fiscal_evidence(
+  state text PRIMARY KEY,
+  punto_venta integer NOT NULL,
+  numero integer NOT NULL,
+  snapshot jsonb NOT NULL
+);
+WITH evidence(state,punto_venta,numero) AS (
+  VALUES ('RECONCILIAR',995,995001),('APROBADO',996,996001)
+), bodies AS (
+  SELECT
+    e.*,
+    (:'parity_input'::jsonb - 'hash') || jsonb_build_object(
+      'identidad',
+      (:'parity_input'::jsonb->'identidad') || jsonb_build_object(
+        'puntoVenta',e.punto_venta,
+        'numero',e.numero
+      )
+    ) AS body
+  FROM evidence e
+)
+INSERT INTO t_collection_fiscal_evidence(state,punto_venta,numero,snapshot)
+SELECT
+  state,punto_venta,numero,
+  body || jsonb_build_object('hash',public.fiscal_snapshot_hash(body))
+FROM bodies;
+
 UPDATE public.ventas v
    SET afip_estado='RECONCILIAR',afip_version=2,
-       afip_emisor_cuit='30714199664',afip_punto_venta=995,afip_cbte_tipo=6,
-       afip_numero=995001,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
-       afip_fecha_comprobante='2026-08-22',afip_imp_total=1210,
-       afip_snapshot='{"version":2,"caso":"reconciliar"}',
-       afip_snapshot_hash=repeat('b',64)
+       afip_emisor_cuit='30714199664',afip_punto_venta=e.punto_venta,afip_cbte_tipo=6,
+       afip_numero=e.numero,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
+       afip_fecha_comprobante='2026-08-22',afip_imp_total=1380,
+       afip_snapshot=e.snapshot,
+       afip_snapshot_hash=e.snapshot->>'hash'
   FROM t_collection_sales s
+  JOIN t_collection_fiscal_evidence e ON e.state=s.state
  WHERE s.state='RECONCILIAR' AND v.id=s.venta_id;
 UPDATE public.ventas v
    SET afip_estado='APROBADO',afip_version=2,
-       afip_emisor_cuit='30714199664',afip_punto_venta=996,afip_cbte_tipo=6,
-       afip_numero=996001,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
-       afip_fecha_comprobante='2026-08-22',afip_imp_total=1210,
-       afip_snapshot='{"version":2,"caso":"aprobado"}',
-       afip_snapshot_hash=repeat('c',64),cae='CAE-T4-COBRO',cae_vencimiento='2026-09-01'
+       afip_emisor_cuit='30714199664',afip_punto_venta=e.punto_venta,afip_cbte_tipo=6,
+       afip_numero=e.numero,afip_modo='PRODUCCION',afip_validez='PRODUCCION',
+       afip_fecha_comprobante='2026-08-22',afip_imp_total=1380,
+       afip_snapshot=e.snapshot,
+       afip_snapshot_hash=e.snapshot->>'hash',cae='CAE-T4-COBRO',cae_vencimiento='2026-09-01'
   FROM t_collection_sales s
+  JOIN t_collection_fiscal_evidence e ON e.state=s.state
  WHERE s.state='APROBADO' AND v.id=s.venta_id;
 
 -- Los replays de estados con evidencia tampoco pueden inicializarlos de nuevo.
@@ -775,10 +820,8 @@ $$;
 
 -- FACTURA_A/B/C legacy sin CAE ni evidencia usa la misma acción CANCELAR y no
 -- crea una venta-NC paralela.
-UPDATE public.settings
-   SET facturacion_receptor_v2_enabled=false,
-       facturacion_legacy_writer_enabled=true
- WHERE id=true;
+-- El writer legacy ya está retirado por un CHECK durable. Estas filas históricas
+-- prueban CANCELAR sin reabrir un flag que producción no admite.
 INSERT INTO public.clientes(
   id,razon_social,tipo,condicion_cta_cte,limite_credito,activo
 ) VALUES (
@@ -789,24 +832,30 @@ CREATE TEMP TABLE t_legacy_cancel(tipo public.tipo_comprobante PRIMARY KEY,venta
 INSERT INTO t_legacy_cancel
 SELECT 'FACTURA_A',venta_id FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  'b4000000-0000-0000-0000-000000000055','FACTURA_A','CTA_CTE',
+  'b4000000-0000-0000-0000-000000000055','VENTA','CTA_CTE',
   '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
   '[]'::jsonb,0,'T4-CANCEL-LEGACY-A',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000055');
 INSERT INTO t_legacy_cancel
 SELECT 'FACTURA_B',venta_id FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  'b4000000-0000-0000-0000-000000000055','FACTURA_B','CTA_CTE',
+  'b4000000-0000-0000-0000-000000000055','VENTA','CTA_CTE',
   '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
   '[]'::jsonb,0,'T4-CANCEL-LEGACY-B',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000056');
 INSERT INTO t_legacy_cancel
 SELECT 'FACTURA_C',venta_id FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  'b4000000-0000-0000-0000-000000000055','FACTURA_C','CTA_CTE',
+  'b4000000-0000-0000-0000-000000000055','VENTA','CTA_CTE',
   '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
   '[]'::jsonb,0,'T4-CANCEL-LEGACY-C',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000057');
+ALTER TABLE public.ventas DISABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
+UPDATE public.ventas AS v
+   SET tipo_comprobante=x.tipo,afip_estado='PENDIENTE'
+  FROM t_legacy_cancel AS x
+ WHERE x.venta_id=v.id;
+ALTER TABLE public.ventas ENABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
 CREATE TEMP TABLE t_legacy_cancel_before AS
 SELECT
   (SELECT count(*) FROM public.ventas) AS ventas_count,
@@ -844,12 +893,16 @@ SELECT pg_temp.assert_true(
 CREATE TEMP TABLE t_legacy_evidence AS
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  'b4000000-0000-0000-0000-000000000055','FACTURA_B','CTA_CTE',
+  'b4000000-0000-0000-0000-000000000055','VENTA','CTA_CTE',
   '[{"producto_id":"c4000000-0000-0000-0000-000000000001","cantidad":1}]'::jsonb,
   '[]'::jsonb,0,'T4-CANCEL-LEGACY-EVIDENCIA',NULL,NULL,NULL,
   'e4000000-0000-0000-0000-000000000058');
-UPDATE public.ventas SET afip_numero=123,afip_emisor_cuit='30714199664'
+ALTER TABLE public.ventas DISABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
+UPDATE public.ventas
+   SET tipo_comprobante='FACTURA_B',afip_estado='PENDIENTE',
+       afip_numero=123,afip_emisor_cuit='30714199664'
  WHERE id=(SELECT venta_id FROM t_legacy_evidence);
+ALTER TABLE public.ventas ENABLE TRIGGER trg_ventas_fiscales_legacy_retirado;
 DO $$
 BEGIN
   BEGIN
@@ -1071,7 +1124,8 @@ SELECT
   'f4000000-0000-0000-0000-000000000060',v.sucursal_id,v.cliente_id,v.usuario_id,
   'T4-NC-EN-CURSO','NOTA_CREDITO','CONTADO',-82.64,-17.36,0,-100,0,
   'PENDIENTE','T4 NC en curso para límite',v.id,'EMITIENDO',2,
-  'e4000000-0000-0000-0000-000000000063',now(),'{"version":2}'::jsonb,repeat('e',64)
+  'e4000000-0000-0000-0000-000000000063',now(),
+  v.afip_snapshot,v.afip_snapshot_hash
 FROM public.ventas v WHERE v.id=(SELECT venta_id FROM t_approved_original);
 CREATE TEMP TABLE t_before_nc_limit AS
 SELECT v.estado,v.venta_anulada_por,
@@ -1169,6 +1223,23 @@ SELECT pg_temp.assert_true(
   ),
   'los importes de la NC tienen magnitud positiva para serializarlos a ARCA con ABS'
 );
+
+CREATE TEMP TABLE t_nc_v2_regression_before AS
+SELECT
+  o.afip_snapshot::text AS original_snapshot_bytes,
+  o.afip_snapshot_hash AS original_snapshot_hash,
+  pg_catalog.jsonb_build_array(
+    o.estado,o.venta_anulada_por,o.total,o.total_pagado,o.estado_pago,
+    nc.estado,nc.total,nc.total_pagado,nc.estado_pago,
+    (SELECT count(*) FROM public.stock_movimientos m
+      WHERE m.referencia_id IN (o.id,nc.id)),
+    (SELECT count(*) FROM public.venta_pagos p WHERE p.venta_id IN (o.id,nc.id)),
+    (SELECT count(*) FROM public.cuenta_corriente_movimientos c
+      WHERE c.venta_id IN (o.id,nc.id))
+  ) AS comercial
+FROM public.ventas nc
+JOIN public.ventas o ON o.id=nc.afip_cbte_asoc_id
+WHERE nc.id=(SELECT nc_id FROM t_nc_result);
 
 -- La frontera fiscal debe derivar la NC del original, no aceptar un snapshot
 -- autoconsistente pero inventado por el caller.
@@ -1438,6 +1509,24 @@ SELECT pg_temp.assert_true(
     WHERE nc.id=(SELECT nc_id FROM t_nc_result)),
   'RESERVAR acepta la NC con receptor, identidad y CbtesAsoc heredados'
 );
+SELECT pg_temp.assert_true((
+  SELECT nc.afip_snapshot->>'version'='2'
+     AND o.afip_snapshot::text=b.original_snapshot_bytes
+     AND o.afip_snapshot_hash=b.original_snapshot_hash
+     AND pg_catalog.jsonb_build_array(
+       o.estado,o.venta_anulada_por,o.total,o.total_pagado,o.estado_pago,
+       nc.estado,nc.total,nc.total_pagado,nc.estado_pago,
+       (SELECT count(*) FROM public.stock_movimientos m
+         WHERE m.referencia_id IN (o.id,nc.id)),
+       (SELECT count(*) FROM public.venta_pagos p WHERE p.venta_id IN (o.id,nc.id)),
+       (SELECT count(*) FROM public.cuenta_corriente_movimientos c
+         WHERE c.venta_id IN (o.id,nc.id))
+     )=b.comercial
+    FROM public.ventas nc
+    JOIN public.ventas o ON o.id=nc.afip_cbte_asoc_id
+    CROSS JOIN t_nc_v2_regression_before b
+   WHERE nc.id=(SELECT nc_id FROM t_nc_result)
+),'la reversión total vinculada conserva snapshot original byte a byte, v2 y comercio');
 
 -- Homologación/simulación y legado incompleto jamás originan una NC productiva.
 CREATE TEMP TABLE t_incompatible(kind text PRIMARY KEY,venta_id uuid);
@@ -1547,7 +1636,7 @@ SELECT pg_temp.task9_hasta_request(venta_id,pv,token) FROM t_task9_paths;
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_task9_paths WHERE kind='APROBAR'),'RESPUESTA_RECIBIDA',
   (SELECT token FROM t_task9_paths WHERE kind='APROBAR'),
-  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[]}}'::jsonb
+  '{"expected_version":3,"respuesta_resumen":{"tipo":"EMISION","resultado":"A","fuente":"FECAESolicitar","rechazo_confirmado":false,"observaciones":[],"cae":"74123456789011","cae_vencimiento":"2026-09-01","emitido_at":"2026-08-22T18:00:00.000Z"}}'::jsonb
 );
 SELECT * FROM public.transicionar_emision_fiscal(
   (SELECT venta_id FROM t_task9_paths WHERE kind='APROBAR'),'APROBAR',
@@ -1569,7 +1658,8 @@ SELECT * FROM public.transicionar_emision_fiscal(
                      WHERE id=(SELECT venta_id FROM t_task9_paths WHERE kind='RECUPERAR')),
     'respuesta_resumen',jsonb_build_object(
       'tipo','CONSULTA_ARCA','resultado','COINCIDE','fuente','FECompConsultar',
-      'coincidencia_completa',true,'observaciones','[]'::jsonb
+      'coincidencia_completa',true,'observaciones','[]'::jsonb,
+      'cae','74123456789012','cae_vencimiento',NULL
     )
   )
 );
@@ -1623,6 +1713,8 @@ SELECT pg_temp.assert_true(
   (SELECT count(*)=1 AND bool_and(p.prosecdef)
           AND bool_and(pg_get_function_identity_arguments(p.oid)=
             'p_presupuesto_id uuid, p_cliente_id uuid, p_condicion_venta condicion_venta, p_pagos jsonb, p_idempotency_key uuid')
+          AND bool_and(pg_get_function_result(p.oid)=
+            'TABLE(venta_id uuid, numero text, es_cta_cte boolean, cliente_id uuid)')
      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND p.proname='convertir_presupuesto_en_venta_neutral'
   ),
@@ -1639,8 +1731,8 @@ SELECT pg_temp.assert_true(
   NOT has_function_privilege('public','public.next_comprobante_numero(uuid,tipo_comprobante)','execute')
   AND NOT has_function_privilege('anon','public.next_comprobante_numero(uuid,tipo_comprobante)','execute')
   AND NOT has_function_privilege('authenticated','public.next_comprobante_numero(uuid,tipo_comprobante)','execute')
-  AND has_function_privilege('service_role','public.next_comprobante_numero(uuid,tipo_comprobante)','execute'),
-  'next_comprobante_numero queda cerrado a JWT de usuario y sólo conserva compatibilidad backend legacy'
+  AND NOT has_function_privilege('service_role','public.next_comprobante_numero(uuid,tipo_comprobante)','execute'),
+  'next_comprobante_numero queda owner-only tras retirar el backend legacy'
 );
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1 AND bool_and(p.prosecdef)
@@ -1868,6 +1960,9 @@ echo "✓ replay concurrente espera el lock y observa el estado comercial confir
 # Dos anulaciones reales compiten por el mismo original. La segunda debe
 # esperar el lock, observar ANULADA y no crear una segunda NC.
 "${PSQL[@]}" <<'SQL'
+BEGIN;
+ALTER TABLE public.ventas
+  DISABLE TRIGGER trg_ventas_snapshot_fiscal_persistido_obligatorio;
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
@@ -1930,6 +2025,9 @@ UPDATE public.ventas
          afip_snapshot,'{hash}',to_jsonb(public.fiscal_snapshot_hash(afip_snapshot))
        )
  WHERE id='f4000000-0000-0000-0000-000000000112';
+ALTER TABLE public.ventas
+  ENABLE TRIGGER trg_ventas_snapshot_fiscal_persistido_obligatorio;
+COMMIT;
 SQL
 
 docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
@@ -2000,6 +2098,9 @@ echo "✓ dos anulaciones concurrentes crean exactamente una NC"
 # Una reserva de NC comparte el lock del original. Mientras otra sesión invalida
 # el vínculo de anulación, la reserva debe esperar y luego fallar cerrada.
 "${PSQL[@]}" <<'SQL'
+BEGIN;
+ALTER TABLE public.ventas
+  DISABLE TRIGGER trg_ventas_snapshot_fiscal_persistido_obligatorio;
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,total,total_pagado,estado_pago,
@@ -2074,11 +2175,19 @@ UPDATE public.ventas
          afip_snapshot,'{hash}',to_jsonb(public.fiscal_snapshot_hash(afip_snapshot))
        )
  WHERE id='f4000000-0000-0000-0000-000000000110';
+ALTER TABLE public.ventas
+  ENABLE TRIGGER trg_ventas_snapshot_fiscal_persistido_obligatorio;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a4000000-0000-0000-0000-000000000101","role":"authenticated"}',
+  true
+);
 SELECT * FROM public.transicionar_emision_fiscal(
   'f4000000-0000-0000-0000-000000000111','RECLAMAR',
   'e4000000-0000-0000-0000-000000000111',
   '{"expected_version":0,"lease_segundos":300}'::jsonb
 );
+COMMIT;
 SQL
 
 docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
@@ -2109,6 +2218,11 @@ fi
 
 if NC_RACE_OUTPUT="$({
   docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq <<'SQL'
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a4000000-0000-0000-0000-000000000101","role":"authenticated"}',
+  false
+);
 WITH base AS (
   SELECT (o.afip_snapshot-'hash') || jsonb_build_object(
     'venta',jsonb_build_object(

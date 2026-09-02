@@ -43,8 +43,8 @@ describe("descarga fail-closed del detalle de venta", () => {
     ],
     ["APROBADO sin CAE", { cae: null, afip_estado: "APROBADO", tipo_comprobante: "VENTA" }],
     [
-      "snapshot sin CAE",
-      { cae: null, afip_estado: "ERROR_CORREGIBLE", afip_snapshot: { version: 2 } },
+      "identidad fiscal sin CAE",
+      { cae: null, afip_estado: "ERROR_CORREGIBLE", afip_emisor_cuit: "30714199664" },
     ],
   ])("%s obliga la lectura fiscal", (_caso, venta) => {
     expect(requiereDatosFiscalesVenta(venta)).toBe(true);

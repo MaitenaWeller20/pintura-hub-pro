@@ -142,7 +142,7 @@ const filaColaSchema = z
     afip_estado: estadoSchema,
     afip_fase: z.enum(fasesCola).nullable(),
     afip_legacy_incompleto: z.boolean(),
-    claim_vencido: z.boolean(),
+    reclamo_vencido: z.boolean(),
     venta_antigua: z.boolean(),
     afip_validez: z.enum(["PRODUCCION", "HOMOLOGACION", "SIMULADA"]).nullable(),
     afip_punto_venta: z.number().int().nullable(),
@@ -150,6 +150,12 @@ const filaColaSchema = z
     afip_numero: z.number().int().nullable(),
     cae: z.string().nullable(),
     cae_vencimiento: fechaSchema.nullable(),
+    periodo_asoc_desde: fechaSchema.nullable(),
+    periodo_asoc_hasta: fechaSchema.nullable(),
+    nc_periodo_modalidad: z.enum(["DEVOLUCION_PRODUCTOS", "BONIFICACION_AJUSTE"]).nullable(),
+    motivo_nota_credito: z.string().nullable(),
+    nc_resolucion: z.enum(["REINTEGRO", "SALDO_FAVOR"]).nullable(),
+    nc_efectos_aplicados_at: z.string().datetime({ offset: true }).nullable(),
     tab: tabSchema,
   })
   .strict();
@@ -205,9 +211,40 @@ const favoritosSchema = z.array(favoritoSchema);
 const listarFavoritosInputSchema = z.object({ sucursal_id: z.string().uuid().optional() }).strict();
 const guardarFavoritoInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
 const desactivarFavoritoInputSchema = z.object({ receptor_id: z.string().uuid() }).strict();
+const detalleNcPeriodoInputSchema = z.object({ venta_id: z.string().uuid() }).strict();
+
+const detalleNcPeriodoSchema = z
+  .object({
+    neto: z.string(),
+    iva: z.string(),
+    total: z.string(),
+    concepto: z.string().nullable(),
+    alicuotas: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          base: z.string(),
+          porcentaje: z.string(),
+          iva: z.string(),
+        })
+        .strict(),
+    ),
+    reintegros: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          orden: z.number().int().nonnegative(),
+          formaPago: z.string(),
+          monto: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
 
 export type ColaFiscalFila = z.infer<typeof filaColaSchema>;
 export type ReceptorFiscalFavorito = z.infer<typeof favoritoSchema>;
+export type DetalleNcPeriodoAutoritativo = z.infer<typeof detalleNcPeriodoSchema>;
 
 type ContextoAutorizado = ContextoColaFiscal;
 
@@ -235,6 +272,37 @@ function proyeccionSegura<T>(schema: z.ZodType<T>, value: unknown): T {
   return parsed.data;
 }
 
+const CLAVE_RESERVADA_COLA = /snapshot|hash|claim|idempotency|payload|raw|secret|service_role/i;
+
+function claveReservadaRecursiva(
+  value: unknown,
+  visitados: WeakSet<object> = new WeakSet(),
+): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  if (visitados.has(value)) return null;
+  visitados.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const encontrada = claveReservadaRecursiva(item, visitados);
+      if (encontrada) return encontrada;
+    }
+    return null;
+  }
+  for (const [clave, child] of Object.entries(value)) {
+    if (CLAVE_RESERVADA_COLA.test(clave)) return clave;
+    const encontrada = claveReservadaRecursiva(child, visitados);
+    if (encontrada) return encontrada;
+  }
+  return null;
+}
+
+function exigirSalidaColaSinClavesReservadas(value: unknown): void {
+  const clave = claveReservadaRecursiva(value);
+  if (clave) {
+    throw new Error(`La salida de la cola contiene la clave reservada ${clave}.`);
+  }
+}
+
 export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
   return {
     async listarColaFiscal(userId: string, rawInput: unknown) {
@@ -242,21 +310,20 @@ export function crearServicioColaFiscal(deps: DependenciasColaFiscal) {
       await exigirRolloutV2(deps);
       const contexto = await deps.autorizar(userId);
       const sucursalId = contexto.esAdmin ? input.sucursal_id : (contexto.sucursalId ?? undefined);
-      const respuesta = proyeccionSegura(
-        respuestaRpcSchema,
-        await deps.consultarCola({
-          p_tab: input.tab,
-          p_page: input.venta_id ? 1 : input.page,
-          p_page_size: input.pageSize,
-          p_desde: input.desde,
-          p_hasta: input.hasta,
-          p_sucursal_id: sucursalId,
-          p_emisor_id: input.emisor_id,
-          p_documento: input.documento,
-          p_estado: input.estado,
-          p_venta_id: input.venta_id,
-        }),
-      )[0];
+      const respuestaCruda = await deps.consultarCola({
+        p_tab: input.tab,
+        p_page: input.venta_id ? 1 : input.page,
+        p_page_size: input.pageSize,
+        p_desde: input.desde,
+        p_hasta: input.hasta,
+        p_sucursal_id: sucursalId,
+        p_emisor_id: input.emisor_id,
+        p_documento: input.documento,
+        p_estado: input.estado,
+        p_venta_id: input.venta_id,
+      });
+      exigirSalidaColaSinClavesReservadas(respuestaCruda);
+      const respuesta = proyeccionSegura(respuestaRpcSchema, respuestaCruda)[0];
 
       return {
         filas: respuesta.filas,
@@ -310,15 +377,20 @@ function lecturasContexto(supabase: SupabaseClient<Database>): LecturasContextoC
     async cargarPerfil(userId) {
       const { data, error } = await supabase
         .from("profiles")
-        .select("activo,puede_facturar,sucursal_id")
+        .select("activo,puede_facturar,puede_emitir_nc_periodo,sucursal_id")
         .eq("id", userId)
         .maybeSingle();
       if (error) throw new Error("No se pudo verificar el perfil fiscal.");
-      return data
+      const perfil = data as unknown as {
+        activo: boolean;
+        puede_facturar: boolean;
+        sucursal_id: string | null;
+      } | null;
+      return perfil
         ? {
-            activo: data.activo,
-            puedeFacturar: data.puede_facturar,
-            sucursalId: data.sucursal_id,
+            activo: perfil.activo,
+            puedeFacturar: perfil.puede_facturar,
+            sucursalId: perfil.sucursal_id,
           }
         : null;
     },
@@ -411,6 +483,89 @@ export const listarReceptoresFiscales = createServerFn({ method: "GET" })
       data,
     ),
   );
+
+/** Lectura acotada de la intención persistida; nunca recompone el editor del navegador. */
+export const leerDetalleNcPeriodoFiscal = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((value: unknown) =>
+    parsearEntradaFiscal(detalleNcPeriodoInputSchema, value, "CONSULTA"),
+  )
+  .handler(async ({ data, context }) => {
+    // `ventas` ya no expone SELECT directo a `authenticated`. Reutilizar la
+    // RPC exacta de la cola conserva en PostgreSQL el scope admin/sucursal y
+    // evita abrir una lectura lateral sólo para este diálogo.
+    const cola = await crearServicioColaFiscal(
+      dependenciasSupabase(context.supabase),
+    ).listarColaFiscal(context.userId, {
+      tab: "pendientes",
+      page: 1,
+      pageSize: 1,
+      venta_id: data.venta_id,
+    });
+    const venta = cola.filas[0];
+    const consultaReintegros = (
+      context.supabase as unknown as {
+        from(table: string): {
+          select(columns: string): {
+            eq(
+              column: string,
+              value: string,
+            ): {
+              order(column: string): Promise<{
+                data:
+                  | { id: string; orden: number; forma_pago: string; monto: string | number }[]
+                  | null;
+                error: unknown;
+              }>;
+            };
+          };
+        };
+      }
+    )
+      .from("nota_credito_periodo_reintegros")
+      .select("id,orden,forma_pago,monto")
+      .eq("venta_id", data.venta_id)
+      .order("orden");
+    const [{ data: items, error: itemsError }, { data: reintegros, error: reintegrosError }] =
+      await Promise.all([
+        context.supabase
+          .from("venta_items")
+          .select("id,descripcion,subtotal_sin_iva,iva_porcentaje,iva_monto")
+          .eq("venta_id", data.venta_id)
+          .order("id"),
+        consultaReintegros,
+      ]);
+    if (itemsError || reintegrosError || !venta || !venta.nc_periodo_modalidad) {
+      throw new Error("No se pudo leer la intención fiscal por período.");
+    }
+    const neto = (items ?? []).reduce(
+      (total, item) => total + Math.abs(Number(item.subtotal_sin_iva)),
+      0,
+    );
+    const iva = (items ?? []).reduce((total, item) => total + Math.abs(Number(item.iva_monto)), 0);
+    const detalle = {
+      neto: String(neto),
+      iva: String(iva),
+      total: String(Math.abs(Number(venta.total))),
+      concepto:
+        venta.nc_periodo_modalidad === "BONIFICACION_AJUSTE"
+          ? (items?.[0]?.descripcion ?? null)
+          : null,
+      alicuotas: (items ?? []).map((item) => ({
+        id: item.id,
+        base: String(Math.abs(Number(item.subtotal_sin_iva))),
+        porcentaje: String(item.iva_porcentaje),
+        iva: String(Math.abs(Number(item.iva_monto))),
+      })),
+      reintegros: (reintegros ?? []).map((reintegro) => ({
+        id: reintegro.id,
+        orden: reintegro.orden,
+        formaPago: reintegro.forma_pago,
+        monto: String(Math.abs(Number(reintegro.monto))),
+      })),
+    };
+    return detalleNcPeriodoSchema.parse(detalle);
+  });
 
 export const guardarReceptorFiscal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

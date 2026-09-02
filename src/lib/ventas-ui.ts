@@ -2,6 +2,66 @@ import type { SelectorReceptorFiscal } from "./fiscal/receptor";
 import { CBTE_INFO } from "./fiscal/codigos";
 import { requiereConfirmacionVentaDemorada } from "./fiscal/fecha";
 
+export type ModoNotaNueva = {
+  esNotaCreditoInterna: boolean;
+  muestraSelectorComprobante: boolean;
+  camposEditables: boolean;
+  permiteAsociacionFiscalManual: boolean;
+  redirigeAColaFiscal: boolean;
+};
+
+/**
+ * Separa el alta manual de la anulación fiscal. En v2 una NC creada desde este
+ * formulario siempre es interna; la NC fiscal asociada sólo nace en
+ * `anular_venta` desde el comprobante original.
+ */
+export function modoNotaNueva({
+  tipoComprobante,
+  facturacionV2Habilitada,
+  comprobanteAsociadoId,
+}: {
+  tipoComprobante: string;
+  facturacionV2Habilitada: boolean;
+  comprobanteAsociadoId: string | null;
+}): ModoNotaNueva {
+  if (tipoComprobante === "NOTA_CREDITO") {
+    if (facturacionV2Habilitada) {
+      return {
+        esNotaCreditoInterna: true,
+        muestraSelectorComprobante: false,
+        camposEditables: true,
+        permiteAsociacionFiscalManual: false,
+        redirigeAColaFiscal: false,
+      };
+    }
+    return {
+      esNotaCreditoInterna: !comprobanteAsociadoId,
+      muestraSelectorComprobante: true,
+      camposEditables: true,
+      permiteAsociacionFiscalManual: true,
+      redirigeAColaFiscal: false,
+    };
+  }
+
+  if (tipoComprobante === "NOTA_DEBITO") {
+    return {
+      esNotaCreditoInterna: false,
+      muestraSelectorComprobante: true,
+      camposEditables: true,
+      permiteAsociacionFiscalManual: true,
+      redirigeAColaFiscal: false,
+    };
+  }
+
+  return {
+    esNotaCreditoInterna: false,
+    muestraSelectorComprobante: false,
+    camposEditables: true,
+    permiteAsociacionFiscalManual: false,
+    redirigeAColaFiscal: false,
+  };
+}
+
 export type ReceptorFiscalCongeladoListado = {
   razonSocial: string;
   tipoDocumento: string | null;

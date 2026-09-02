@@ -28,11 +28,11 @@
 - Modify: `src/lib/ventas-ui.ts`
 - Modify: `src/lib/ventas-ui.test.ts`
 
-- [ ] Escribir pruebas para una función pura `modoNotaNueva`: NC manual v2 es interna, sin selector de factura, editable y sin emisión; factura/recibo conservan su flujo; asociación fiscal v2 no es un modo elegible desde alta manual.
-- [ ] Ejecutar `npx vitest run src/lib/ventas-ui.test.ts` y confirmar la falla por contrato ausente.
-- [ ] Implementar el discriminante mínimo que concentre estas decisiones y evite condicionales contradictorios en la ruta.
-- [ ] Repetir la prueba hasta verde.
-- [ ] Commit: `test: definir modo de nota de crédito interna`.
+- [x] Escribir pruebas para una función pura `modoNotaNueva`: NC manual v2 es interna, sin selector de factura, editable y sin emisión; factura/recibo conservan su flujo; asociación fiscal v2 no es un modo elegible desde alta manual.
+- [x] Ejecutar `npx vitest run src/lib/ventas-ui.test.ts` y confirmar la falla por contrato ausente.
+- [x] Implementar el discriminante mínimo que concentre estas decisiones y evite condicionales contradictorios en la ruta.
+- [x] Repetir la prueba hasta verde.
+- [x] Commit: `test: definir modo de nota de crédito interna`.
 
 ### Task 2: Corregir el cerco del escritor v2
 
@@ -81,4 +81,3 @@
 - [ ] Ejecutar todos los scripts fiscales modificados y los contratos de anulación vecinos.
 - [ ] Revisar `git diff --check`, `git status --short` y el diff completo contra la especificación.
 - [ ] Commit: `test: verificar nota de crédito interna y fiscal`.
-

@@ -6,6 +6,7 @@ import {
   describirCaeLegacy,
   leerComprobanteAsociadoFiscal,
   leerReceptorFiscalCongelado,
+  modoNotaNueva,
   opcionesCierreVenta,
   puedeOfrecerEmisionLegacy,
   receptorFiscalDifiereDelComprador,
@@ -31,6 +32,65 @@ const FLAGS_MANTENIMIENTO = {
   facturacionV2Habilitada: false,
   facturacionLegacyHabilitada: false,
 } as const;
+
+describe("modo de una nota nueva", () => {
+  it("trata la nota de crédito manual v2 como interna, editable y sin emisión", () => {
+    expect(
+      modoNotaNueva({
+        tipoComprobante: "NOTA_CREDITO",
+        facturacionV2Habilitada: true,
+        comprobanteAsociadoId: "una-asociacion-vieja",
+      }),
+    ).toEqual({
+      esNotaCreditoInterna: true,
+      muestraSelectorComprobante: false,
+      camposEditables: true,
+      permiteAsociacionFiscalManual: false,
+      redirigeAColaFiscal: false,
+    });
+  });
+
+  it("conserva la asociación opcional del flujo legacy", () => {
+    expect(
+      modoNotaNueva({
+        tipoComprobante: "NOTA_CREDITO",
+        facturacionV2Habilitada: false,
+        comprobanteAsociadoId: "",
+      }),
+    ).toEqual({
+      esNotaCreditoInterna: true,
+      muestraSelectorComprobante: true,
+      camposEditables: true,
+      permiteAsociacionFiscalManual: true,
+      redirigeAColaFiscal: false,
+    });
+  });
+
+  it("no convierte una venta común ni una nota de débito en NC interna", () => {
+    expect(
+      modoNotaNueva({
+        tipoComprobante: "VENTA",
+        facturacionV2Habilitada: true,
+        comprobanteAsociadoId: null,
+      }),
+    ).toMatchObject({
+      esNotaCreditoInterna: false,
+      muestraSelectorComprobante: false,
+      permiteAsociacionFiscalManual: false,
+    });
+    expect(
+      modoNotaNueva({
+        tipoComprobante: "NOTA_DEBITO",
+        facturacionV2Habilitada: false,
+        comprobanteAsociadoId: null,
+      }),
+    ).toMatchObject({
+      esNotaCreditoInterna: false,
+      muestraSelectorComprobante: true,
+      permiteAsociacionFiscalManual: true,
+    });
+  });
+});
 
 describe("decisión de cierre de venta", () => {
   it("ofrece los dos cierres únicamente para la venta neutral con capacidad fiscal", () => {

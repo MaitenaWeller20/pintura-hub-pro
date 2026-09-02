@@ -368,7 +368,9 @@ test("flag apagado oculta sólo el camino por período y conserva la venta ordin
       page.getByText("Sin factura puntual — asociar por período", { exact: true }),
     ).toHaveCount(0);
     await expect(page.getByText("Revertir una factura específica", { exact: true })).toBeVisible();
-    await expect(page.getByText("Nota interna — sin informar a ARCA", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Nota interna — sin informar a ARCA", { exact: true }),
+    ).toBeVisible();
     await page.getByRole("combobox", { name: /Tipo comprobante/i }).click();
     await page.getByRole("option", { name: "Venta" }).click();
     await expect(page.getByTestId("registrar-y-facturar")).toBeVisible();

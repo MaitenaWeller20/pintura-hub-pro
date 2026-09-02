@@ -435,7 +435,9 @@ export function resumirCierreVenta(input: {
 }
 
 export type ResultadoColaVenta =
-  "venta_creada_factura_pendiente" | "venta_creada_requiere_revision" | "factura_aprobada";
+  | "venta_creada_factura_pendiente"
+  | "venta_creada_requiere_revision"
+  | "factura_aprobada";
 
 export function resultadoColaDespuesDeEmision(
   estado:

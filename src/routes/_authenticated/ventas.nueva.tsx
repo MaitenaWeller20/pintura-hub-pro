@@ -485,7 +485,6 @@ function NuevaVenta() {
     }
     // El cambio de permisos/rollout invalida el camino; el handler limpia datos
     // copiados que ya no deben sobrevivir al modo disponible.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caminoNotaCredito, esNotaCreditoV2, puedeCrearNcPeriodo]);
 
   // Al cambiar de cliente, limpio lo que era específico del cliente anterior: la
@@ -750,7 +749,9 @@ function NuevaVenta() {
   const navegarACola = (
     ventaId: string,
     resultado:
-      "venta_creada_factura_pendiente" | "venta_creada_requiere_revision" | "factura_aprobada",
+      | "venta_creada_factura_pendiente"
+      | "venta_creada_requiere_revision"
+      | "factura_aprobada",
   ) => {
     navegacionFiscalRef.current = true;
     window.location.assign(

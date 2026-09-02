@@ -510,7 +510,11 @@ function VentasList() {
         ))}
       </DataTable>
 
-      <DialogoDetalleVenta venta={verVenta} onClose={() => setVerVenta(null)} />
+      <DialogoDetalleVenta
+        venta={verVenta}
+        puedeCorregirPagos={cu?.isAdmin === true}
+        onClose={() => setVerVenta(null)}
+      />
 
       <Dialog
         open={!!anularDlg}

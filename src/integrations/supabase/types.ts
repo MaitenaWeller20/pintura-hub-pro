@@ -2819,10 +2819,98 @@ export type Database = {
           },
         ]
       }
+      venta_pago_correcciones: {
+        Row: {
+          caja_sesion_id: string | null
+          corregida_en: string
+          corregida_por: string
+          detalle_anterior: Json
+          detalle_nuevo: Json
+          forma_pago_anterior: Database["public"]["Enums"]["forma_pago"]
+          forma_pago_nueva: Database["public"]["Enums"]["forma_pago"]
+          id: number
+          monto: number
+          motivo: string
+          venta_id: string
+          venta_pago_id: string
+          version_anterior: number
+          version_nueva: number
+        }
+        Insert: {
+          caja_sesion_id?: string | null
+          corregida_en?: string
+          corregida_por: string
+          detalle_anterior: Json
+          detalle_nuevo: Json
+          forma_pago_anterior: Database["public"]["Enums"]["forma_pago"]
+          forma_pago_nueva: Database["public"]["Enums"]["forma_pago"]
+          id?: never
+          monto: number
+          motivo: string
+          venta_id: string
+          venta_pago_id: string
+          version_anterior: number
+          version_nueva: number
+        }
+        Update: {
+          caja_sesion_id?: string | null
+          corregida_en?: string
+          corregida_por?: string
+          detalle_anterior?: Json
+          detalle_nuevo?: Json
+          forma_pago_anterior?: Database["public"]["Enums"]["forma_pago"]
+          forma_pago_nueva?: Database["public"]["Enums"]["forma_pago"]
+          id?: never
+          monto?: number
+          motivo?: string
+          venta_id?: string
+          venta_pago_id?: string
+          version_anterior?: number
+          version_nueva?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venta_pago_correcciones_caja_sesion_id_fkey"
+            columns: ["caja_sesion_id"]
+            isOneToOne: false
+            referencedRelation: "caja_sesiones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venta_pago_correcciones_corregida_por_fkey"
+            columns: ["corregida_por"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venta_pago_correcciones_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venta_pago_correcciones_venta_id_fkey"
+            columns: ["venta_id"]
+            isOneToOne: false
+            referencedRelation: "ventas_saldo_pendiente"
+            referencedColumns: ["venta_id"]
+          },
+          {
+            foreignKeyName: "venta_pago_correcciones_venta_pago_id_fkey"
+            columns: ["venta_pago_id"]
+            isOneToOne: false
+            referencedRelation: "venta_pagos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       venta_pagos: {
         Row: {
           caja_sesion_id: string | null
           cobro_idempotency_key: string | null
+          correccion_version: number
           created_at: string
           detalle: Json
           forma_pago: Database["public"]["Enums"]["forma_pago"]
@@ -2833,6 +2921,7 @@ export type Database = {
         Insert: {
           caja_sesion_id?: string | null
           cobro_idempotency_key?: string | null
+          correccion_version?: number
           created_at?: string
           detalle?: Json
           forma_pago: Database["public"]["Enums"]["forma_pago"]
@@ -2843,6 +2932,7 @@ export type Database = {
         Update: {
           caja_sesion_id?: string | null
           cobro_idempotency_key?: string | null
+          correccion_version?: number
           created_at?: string
           detalle?: Json
           forma_pago?: Database["public"]["Enums"]["forma_pago"]
@@ -3462,6 +3552,22 @@ export type Database = {
           total_contado: number
           total_diferencia: number
           total_esperado: number
+        }[]
+      }
+      corregir_forma_pago_venta: {
+        Args: {
+          p_forma_pago_nueva: Database["public"]["Enums"]["forma_pago"]
+          p_motivo: string
+          p_venta_pago_id: string
+          p_version_esperada: number
+        }
+        Returns: {
+          caja_correccion_version: number
+          caja_sesion_id: string
+          correccion_version: number
+          forma_pago: Database["public"]["Enums"]["forma_pago"]
+          pago_id: string
+          venta_id: string
         }[]
       }
       clave_nombre: { Args: { v: string }; Returns: string }

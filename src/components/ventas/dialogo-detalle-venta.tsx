@@ -1,8 +1,8 @@
 import { useState, type RefObject } from "react";
 import { Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Loader2, Printer } from "lucide-react";
+import { Loader2, PencilLine, Printer } from "lucide-react";
 import { toast } from "sonner";
 
 import { DataTable } from "@/components/app/data-table";
@@ -36,9 +36,17 @@ import type { VentaSeguraOperador } from "@/lib/ventas-proyeccion";
 
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
+import { DialogoCorregirFormaPago, type PagoFormaCorregible } from "./dialogo-corregir-forma-pago";
+import {
+  HistorialCorreccionesPago,
+  type CorreccionPagoVisible,
+} from "./historial-correcciones-pago";
 
 type ItemVenta = Database["public"]["Tables"]["venta_items"]["Row"];
 type PagoVenta = Database["public"]["Tables"]["venta_pagos"]["Row"];
+type CorreccionPago = Database["public"]["Tables"]["venta_pago_correcciones"]["Row"] & {
+  editor: { nombre_completo: string | null; username: string } | null;
+};
 
 export type VentaDetalle = VentaSeguraOperador & {
   cliente?: { razon_social: string | null; cuit_dni: string | null } | null;
@@ -78,14 +86,18 @@ export function DialogoDetalleVenta({
   venta,
   onClose,
   permitirDescarga = true,
+  puedeCorregirPagos = false,
   returnFocusRef,
 }: {
   venta: VentaDetalle | null;
   onClose(): void;
   permitirDescarga?: boolean;
+  puedeCorregirPagos?: boolean;
   returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }) {
+  const queryClient = useQueryClient();
   const [imprimiendo, setImprimiendo] = useState(false);
+  const [pagoACorregir, setPagoACorregir] = useState<PagoFormaCorregible | null>(null);
   const detalleQuery = useQuery({
     queryKey: ["venta-detail", venta?.id],
     enabled: !!venta,
@@ -109,7 +121,36 @@ export function DialogoDetalleVenta({
       });
     },
   });
+  const correccionesQuery = useQuery({
+    queryKey: ["venta-pago-correcciones", venta?.id],
+    enabled: !!venta && puedeCorregirPagos,
+    queryFn: async () => {
+      if (!venta) return [];
+      const { data, error } = await supabase
+        .from("venta_pago_correcciones")
+        .select(
+          "id,venta_pago_id,venta_id,caja_sesion_id,corregida_por,corregida_en,motivo,version_anterior,version_nueva,monto,forma_pago_anterior,forma_pago_nueva,detalle_anterior,detalle_nuevo,editor:profiles!venta_pago_correcciones_corregida_por_fkey(nombre_completo,username)",
+        )
+        .eq("venta_id", venta.id)
+        .order("corregida_en", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as unknown as CorreccionPago[];
+    },
+  });
   const detalle = detalleQuery.data;
+  const correcciones: CorreccionPagoVisible[] = (correccionesQuery.data ?? []).map(
+    (correccion) => ({
+      id: correccion.id,
+      corregidaEn: correccion.corregida_en,
+      corregidaPor:
+        correccion.editor?.nombre_completo || correccion.editor?.username || "Administrador",
+      motivo: correccion.motivo,
+      formaAnterior: correccion.forma_pago_anterior,
+      formaNueva: correccion.forma_pago_nueva,
+      monto: Number(correccion.monto),
+      versionNueva: correccion.version_nueva,
+    }),
+  );
   const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
 
   const imprimir = async () => {
@@ -149,271 +190,336 @@ export function DialogoDetalleVenta({
   const fiscal = venta ? descripcionFiscal(venta) : null;
 
   return (
-    <Dialog open={!!venta} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="max-h-[calc(100dvh-1rem)] max-w-3xl sm:max-h-[calc(100dvh-2rem)]"
-        data-testid="dialogo-detalle-venta"
-        onCloseAutoFocus={(event) => {
-          if (!returnFocusRef?.current) return;
-          event.preventDefault();
-          returnFocusRef.current.focus();
+    <>
+      <Dialog
+        open={!!venta}
+        onOpenChange={(open) => {
+          if (open) return;
+          setPagoACorregir(null);
+          onClose();
         }}
       >
-        {venta ? (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-center sm:justify-between">
-                <span>Venta {venta.numero_comprobante}</span>
-                {permitirDescarga ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={imprimir}
-                    disabled={
-                      imprimiendo ||
-                      detalleQuery.isPending ||
-                      detalleQuery.isFetching ||
-                      !!detalleQuery.error ||
-                      !detalle
-                    }
-                    className="min-h-11 sm:min-h-9"
-                  >
-                    {imprimiendo ? (
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Printer className="mr-1 h-4 w-4" />
-                    )}
-                    PDF
-                  </Button>
-                ) : null}
-              </DialogTitle>
-              <DialogDescription>
-                Detalle comercial, pagos y estado fiscal de la venta seleccionada.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-              <div>
-                <strong>Fecha comercial:</strong> {fmtDateTime(venta.fecha)}
-              </div>
-              <div>
-                <strong>Sucursal:</strong> {venta.sucursal?.nombre}
-              </div>
-              <div>
-                <strong>Comprador:</strong> {venta.cliente?.razon_social}
-                <br />
-                <span className="text-xs text-muted-foreground">
-                  {fmtDocumento(venta.cliente?.cuit_dni)}
-                </span>
-              </div>
-              <div className="space-y-1">
-                <strong>Estado fiscal:</strong> <EstadoFiscalPill estado={venta.afip_estado} />
-                <div className="mt-1">
-                  <ValidezFiscal validez={venta.afip_validez} estado={venta.afip_estado} compacta />
-                </div>
-                {fiscal ? <p className="font-medium">{fiscal}</p> : null}
-                {venta.afip_fecha_comprobante ? (
-                  <p className="text-xs text-muted-foreground">
-                    Fecha fiscal: {venta.afip_fecha_comprobante.split("-").reverse().join("/")}
-                  </p>
-                ) : null}
-              </div>
-              {receptor ? (
-                <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
-                  <strong>Receptor fiscal de la emisión:</strong> {receptor.razonSocial}
-                  <p className="text-xs text-muted-foreground">
-                    {[receptor.tipoDocumento, receptor.numeroDocumento, receptor.condicionIva]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Domicilio fiscal: {receptor.domicilio ?? "no informado"}
-                  </p>
-                </div>
-              ) : null}
-              {comprobanteAsociado ? (
-                <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
-                  <strong>Comprobante fiscal asociado:</strong> {comprobanteAsociado.titulo}{" "}
-                  {comprobanteAsociado.letra}
-                  <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-4">
-                    <div>
-                      <dt className="text-muted-foreground">CbteTipo</dt>
-                      <dd className="font-mono">{comprobanteAsociado.tipo}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Punto de venta</dt>
-                      <dd className="font-mono">
-                        {String(comprobanteAsociado.puntoVenta).padStart(5, "0")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Número</dt>
-                      <dd className="font-mono">
-                        {String(comprobanteAsociado.numero).padStart(8, "0")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Fecha</dt>
-                      <dd>{comprobanteAsociado.fecha.split("-").reverse().join("/")}</dd>
-                    </div>
-                  </dl>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    CUIT emisor {comprobanteAsociado.cuit}. La nota conserva esta referencia y el
-                    receptor fiscal del original; no se pueden editar.
-                  </p>
-                </div>
-              ) : (venta.tipo_comprobante === "NOTA_CREDITO" ||
-                  venta.tipo_comprobante === "NOTA_DEBITO") &&
-                venta.afip_cbte_asoc_id ? (
-                <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm sm:col-span-2">
-                  La asociación fiscal exacta se congela y se muestra al emitir la nota.
-                </div>
-              ) : null}
-            </div>
-
-            {detalleQuery.isPending ? (
-              <div className="flex min-h-24 items-center justify-center gap-2" role="status">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                <span className="text-sm text-muted-foreground">Cargando detalle completo…</span>
-              </div>
-            ) : detalleQuery.error ? (
-              <div
-                className="space-y-3 rounded-lg border border-destructive/35 bg-destructive/5 p-4"
-                role="alert"
-                data-testid="error-detalle-venta"
-              >
-                <p className="text-sm font-medium text-destructive">
-                  {mensajeErrorFiscal(detalleQuery.error, "CONSULTA")}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  La descarga permanece deshabilitada hasta recuperar ítems y pagos.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 min-w-11"
-                    onClick={() => void detalleQuery.refetch()}
-                    disabled={detalleQuery.isFetching}
-                  >
-                    {detalleQuery.isFetching ? (
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" />
-                    ) : null}
-                    Reintentar
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="min-h-11 min-w-11"
-                    onClick={onClose}
-                  >
-                    Cerrar
-                  </Button>
-                </div>
-              </div>
-            ) : detalle ? (
-              <>
-                <div className="mt-2">
-                  <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
-                    {detalle.items.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-mono text-xs">{item.codigo}</TableCell>
-                        <TableCell>{item.descripcion}</TableCell>
-                        <TableCell className="text-right">{item.cantidad}</TableCell>
-                        <TableCell className="text-right font-mono">
-                          {fmtMoney(item.precio_unitario_sin_iva)}
-                        </TableCell>
-                        <TableCell className="text-right font-mono">
-                          {fmtMoney(item.subtotal_con_iva)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </DataTable>
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Card className="p-3">
-                    <h4 className="mb-2 text-sm font-semibold">Pagos</h4>
-                    {venta.condicion_venta === "CTA_CTE" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Venta a cuenta corriente. Los cobros se registran en{" "}
-                        <Link to="/cuentas-corrientes" className="text-primary underline">
-                          Cuentas Corrientes
-                        </Link>
-                        .
-                      </p>
-                    ) : detalle.pagos.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">Sin pagos registrados.</p>
-                    ) : (
-                      <ul className="space-y-1 text-sm">
-                        {detalle.pagos.map((pago) => {
-                          const descripcion = detallePago(pago.detalle);
-                          return (
-                            <li key={pago.id} className="flex justify-between gap-3">
-                              <span>
-                                {formaPagoLabel[pago.forma_pago]}
-                                {descripcion ? ` (${descripcion})` : ""}
-                              </span>
-                              <span className="font-mono">{fmtMoney(pago.monto)}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </Card>
-                  <Card className="p-3">
-                    <h4 className="mb-2 text-sm font-semibold">Totales</h4>
-                    <ul className="space-y-1 text-sm">
-                      <li className="flex justify-between">
-                        <span>Subtotal:</span>
-                        <span className="font-mono">{fmtMoney(venta.subtotal_sin_iva)}</span>
-                      </li>
-                      <li className="flex justify-between">
-                        <span>IVA:</span>
-                        <span className="font-mono">{fmtMoney(venta.iva_total)}</span>
-                      </li>
-                      <li className="flex justify-between">
-                        <span>Percepciones:</span>
-                        <span className="font-mono">{fmtMoney(venta.percepciones)}</span>
-                      </li>
-                      <li className="mt-1 flex justify-between border-t border-border pt-1 font-bold">
-                        <span>TOTAL:</span>
-                        <span className="font-mono">{fmtMoney(venta.total)}</span>
-                      </li>
-                      {venta.condicion_venta === "CTA_CTE" ? (
-                        <li className="flex justify-between text-warning">
-                          <span>Condición:</span>
-                          <span>A cuenta corriente</span>
-                        </li>
+        <DialogContent
+          className="max-h-[calc(100dvh-1rem)] max-w-3xl sm:max-h-[calc(100dvh-2rem)]"
+          data-testid="dialogo-detalle-venta"
+          onCloseAutoFocus={(event) => {
+            if (!returnFocusRef?.current) return;
+            event.preventDefault();
+            returnFocusRef.current.focus();
+          }}
+        >
+          {venta ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-center sm:justify-between">
+                  <span>Venta {venta.numero_comprobante}</span>
+                  {permitirDescarga ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={imprimir}
+                      disabled={
+                        imprimiendo ||
+                        detalleQuery.isPending ||
+                        detalleQuery.isFetching ||
+                        !!detalleQuery.error ||
+                        !detalle
+                      }
+                      className="min-h-11 sm:min-h-9"
+                    >
+                      {imprimiendo ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
                       ) : (
-                        <>
-                          <li className="flex justify-between text-success">
-                            <span>Pagado:</span>
-                            <span className="font-mono">{fmtMoney(venta.total_pagado)}</span>
-                          </li>
-                          {Number(venta.total) - Number(venta.total_pagado) > 0.01 ? (
-                            <li className="flex justify-between text-destructive">
-                              <span>Pendiente:</span>
-                              <span className="font-mono">
-                                {fmtMoney(Number(venta.total) - Number(venta.total_pagado))}
-                              </span>
-                            </li>
-                          ) : null}
-                        </>
+                        <Printer className="mr-1 h-4 w-4" />
                       )}
-                    </ul>
-                  </Card>
+                      PDF
+                    </Button>
+                  ) : null}
+                </DialogTitle>
+                <DialogDescription>
+                  Detalle comercial, pagos y estado fiscal de la venta seleccionada.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <strong>Fecha comercial:</strong> {fmtDateTime(venta.fecha)}
                 </div>
-              </>
-            ) : null}
-            {venta.observaciones ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                <strong>Obs:</strong> {venta.observaciones}
-              </p>
-            ) : null}
-          </>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+                <div>
+                  <strong>Sucursal:</strong> {venta.sucursal?.nombre}
+                </div>
+                <div>
+                  <strong>Comprador:</strong> {venta.cliente?.razon_social}
+                  <br />
+                  <span className="text-xs text-muted-foreground">
+                    {fmtDocumento(venta.cliente?.cuit_dni)}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <strong>Estado fiscal:</strong> <EstadoFiscalPill estado={venta.afip_estado} />
+                  <div className="mt-1">
+                    <ValidezFiscal
+                      validez={venta.afip_validez}
+                      estado={venta.afip_estado}
+                      compacta
+                    />
+                  </div>
+                  {fiscal ? <p className="font-medium">{fiscal}</p> : null}
+                  {venta.afip_fecha_comprobante ? (
+                    <p className="text-xs text-muted-foreground">
+                      Fecha fiscal: {venta.afip_fecha_comprobante.split("-").reverse().join("/")}
+                    </p>
+                  ) : null}
+                </div>
+                {receptor ? (
+                  <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
+                    <strong>Receptor fiscal de la emisión:</strong> {receptor.razonSocial}
+                    <p className="text-xs text-muted-foreground">
+                      {[receptor.tipoDocumento, receptor.numeroDocumento, receptor.condicionIva]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Domicilio fiscal: {receptor.domicilio ?? "no informado"}
+                    </p>
+                  </div>
+                ) : null}
+                {comprobanteAsociado ? (
+                  <div className="rounded-md border border-border bg-muted/30 p-3 sm:col-span-2">
+                    <strong>Comprobante fiscal asociado:</strong> {comprobanteAsociado.titulo}{" "}
+                    {comprobanteAsociado.letra}
+                    <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-4">
+                      <div>
+                        <dt className="text-muted-foreground">CbteTipo</dt>
+                        <dd className="font-mono">{comprobanteAsociado.tipo}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Punto de venta</dt>
+                        <dd className="font-mono">
+                          {String(comprobanteAsociado.puntoVenta).padStart(5, "0")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Número</dt>
+                        <dd className="font-mono">
+                          {String(comprobanteAsociado.numero).padStart(8, "0")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Fecha</dt>
+                        <dd>{comprobanteAsociado.fecha.split("-").reverse().join("/")}</dd>
+                      </div>
+                    </dl>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      CUIT emisor {comprobanteAsociado.cuit}. La nota conserva esta referencia y el
+                      receptor fiscal del original; no se pueden editar.
+                    </p>
+                  </div>
+                ) : (venta.tipo_comprobante === "NOTA_CREDITO" ||
+                    venta.tipo_comprobante === "NOTA_DEBITO") &&
+                  venta.afip_cbte_asoc_id ? (
+                  <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm sm:col-span-2">
+                    La asociación fiscal exacta se congela y se muestra al emitir la nota.
+                  </div>
+                ) : null}
+              </div>
+
+              {detalleQuery.isPending ? (
+                <div className="flex min-h-24 items-center justify-center gap-2" role="status">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <span className="text-sm text-muted-foreground">Cargando detalle completo…</span>
+                </div>
+              ) : detalleQuery.error ? (
+                <div
+                  className="space-y-3 rounded-lg border border-destructive/35 bg-destructive/5 p-4"
+                  role="alert"
+                  data-testid="error-detalle-venta"
+                >
+                  <p className="text-sm font-medium text-destructive">
+                    {mensajeErrorFiscal(detalleQuery.error, "CONSULTA")}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    La descarga permanece deshabilitada hasta recuperar ítems y pagos.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 min-w-11"
+                      onClick={() => void detalleQuery.refetch()}
+                      disabled={detalleQuery.isFetching}
+                    >
+                      {detalleQuery.isFetching ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : null}
+                      Reintentar
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="min-h-11 min-w-11"
+                      onClick={onClose}
+                    >
+                      Cerrar
+                    </Button>
+                  </div>
+                </div>
+              ) : detalle ? (
+                <>
+                  <div className="mt-2">
+                    <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
+                      {detalle.items.map((item) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-xs">{item.codigo}</TableCell>
+                          <TableCell>{item.descripcion}</TableCell>
+                          <TableCell className="text-right">{item.cantidad}</TableCell>
+                          <TableCell className="text-right font-mono">
+                            {fmtMoney(item.precio_unitario_sin_iva)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {fmtMoney(item.subtotal_con_iva)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </DataTable>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Card className="p-3">
+                      <h4 className="mb-2 text-sm font-semibold">Pagos</h4>
+                      {venta.condicion_venta === "CTA_CTE" ? (
+                        <p className="text-xs text-muted-foreground">
+                          Venta a cuenta corriente. Los cobros se registran en{" "}
+                          <Link to="/cuentas-corrientes" className="text-primary underline">
+                            Cuentas Corrientes
+                          </Link>
+                          .
+                        </p>
+                      ) : detalle.pagos.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Sin pagos registrados.</p>
+                      ) : (
+                        <ul className="space-y-2 text-sm">
+                          {detalle.pagos.map((pago) => {
+                            const descripcion = detallePago(pago.detalle);
+                            const puedeCorregirEstePago =
+                              puedeCorregirPagos &&
+                              venta.estado === "ACTIVA" &&
+                              Number(pago.monto) > 0 &&
+                              pago.forma_pago !== "CTA_CTE";
+                            return (
+                              <li key={pago.id} className="rounded-md border border-border p-2">
+                                <div className="flex justify-between gap-3">
+                                  <span>
+                                    {formaPagoLabel[pago.forma_pago]}
+                                    {descripcion ? ` (${descripcion})` : ""}
+                                  </span>
+                                  <span className="font-mono tabular-nums">
+                                    {fmtMoney(pago.monto)}
+                                  </span>
+                                </div>
+                                {puedeCorregirEstePago ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="mt-1 min-h-9 px-2 text-xs"
+                                    onClick={() => setPagoACorregir(pago)}
+                                    aria-label={`Corregir forma de pago de ${fmtMoney(pago.monto)}`}
+                                  >
+                                    <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Corregir forma
+                                  </Button>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                      {puedeCorregirPagos && correccionesQuery.isPending ? (
+                        <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                          Cargando auditoría…
+                        </p>
+                      ) : null}
+                      {puedeCorregirPagos && correccionesQuery.isError ? (
+                        <p className="mt-3 text-xs text-destructive" role="alert">
+                          No se pudo cargar el historial de formas de pago.
+                        </p>
+                      ) : null}
+                      <HistorialCorreccionesPago correcciones={correcciones} />
+                    </Card>
+                    <Card className="p-3">
+                      <h4 className="mb-2 text-sm font-semibold">Totales</h4>
+                      <ul className="space-y-1 text-sm">
+                        <li className="flex justify-between">
+                          <span>Subtotal:</span>
+                          <span className="font-mono">{fmtMoney(venta.subtotal_sin_iva)}</span>
+                        </li>
+                        <li className="flex justify-between">
+                          <span>IVA:</span>
+                          <span className="font-mono">{fmtMoney(venta.iva_total)}</span>
+                        </li>
+                        <li className="flex justify-between">
+                          <span>Percepciones:</span>
+                          <span className="font-mono">{fmtMoney(venta.percepciones)}</span>
+                        </li>
+                        <li className="mt-1 flex justify-between border-t border-border pt-1 font-bold">
+                          <span>TOTAL:</span>
+                          <span className="font-mono">{fmtMoney(venta.total)}</span>
+                        </li>
+                        {venta.condicion_venta === "CTA_CTE" ? (
+                          <li className="flex justify-between text-warning">
+                            <span>Condición:</span>
+                            <span>A cuenta corriente</span>
+                          </li>
+                        ) : (
+                          <>
+                            <li className="flex justify-between text-success">
+                              <span>Pagado:</span>
+                              <span className="font-mono">{fmtMoney(venta.total_pagado)}</span>
+                            </li>
+                            {Number(venta.total) - Number(venta.total_pagado) > 0.01 ? (
+                              <li className="flex justify-between text-destructive">
+                                <span>Pendiente:</span>
+                                <span className="font-mono">
+                                  {fmtMoney(Number(venta.total) - Number(venta.total_pagado))}
+                                </span>
+                              </li>
+                            ) : null}
+                          </>
+                        )}
+                      </ul>
+                    </Card>
+                  </div>
+                </>
+              ) : null}
+              {venta.observaciones ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  <strong>Obs:</strong> {venta.observaciones}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      {venta && pagoACorregir ? (
+        <DialogoCorregirFormaPago
+          pago={pagoACorregir}
+          numeroVenta={venta.numero_comprobante}
+          onClose={() => setPagoACorregir(null)}
+          onSaved={async () => {
+            await Promise.all([
+              detalleQuery.refetch(),
+              correccionesQuery.refetch(),
+              queryClient.invalidateQueries({ queryKey: ["ventas"] }),
+              queryClient.invalidateQueries({ queryKey: ["caja-historial"] }),
+              queryClient.invalidateQueries({ queryKey: ["caja-correcciones"] }),
+              queryClient.invalidateQueries({ queryKey: ["caja-esperado"] }),
+            ]);
+            setPagoACorregir(null);
+          }}
+        />
+      ) : null}
+    </>
   );
 }

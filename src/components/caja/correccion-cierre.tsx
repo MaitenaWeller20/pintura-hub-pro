@@ -23,7 +23,8 @@ import {
   mensajeErrorCorreccionCaja,
   validarCorreccionCierre,
 } from "@/lib/cierre-caja";
-import { fmtDateTime, fmtMoney } from "@/lib/format";
+import { leerCorreccionFormaPagoCaja } from "@/lib/correccion-forma-pago";
+import { fmtDateTime, fmtMoney, formaPagoLabel } from "@/lib/format";
 
 export type CierreCajaCorregible = Database["public"]["Tables"]["caja_sesiones"]["Row"];
 
@@ -36,7 +37,12 @@ const ETIQUETA_CAMPO: Record<string, string> = {
   efectivo_contado: "Efectivo contado",
   efectivo_dejado: "Efectivo dejado",
   notas: "Observaciones",
+  forma_pago_venta: "Forma de pago de venta",
 };
+
+function etiquetaFormaPago(forma: string): string {
+  return formaPagoLabel[forma as keyof typeof formaPagoLabel] ?? forma.replaceAll("_", " ");
+}
 
 function esRegistro(value: Json | undefined): value is { [key: string]: Json | undefined } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -382,65 +388,105 @@ export function DialogoHistorialCorrecciones({
           </Alert>
         ) : historial.data?.length ? (
           <div className="space-y-3">
-            {historial.data.map((correccion) => (
-              <article key={correccion.id} className="rounded-lg border border-border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold">
-                      Versión {correccion.version_nueva} ·{" "}
-                      {correccion.editor?.nombre_completo ||
-                        correccion.editor?.username ||
-                        "Administrador"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {fmtDateTime(correccion.corregida_en)}
-                    </p>
+            {historial.data.map((correccion) => {
+              const cambioPago = leerCorreccionFormaPagoCaja(correccion);
+              return (
+                <article key={correccion.id} className="rounded-lg border border-border p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold">
+                        Versión {correccion.version_nueva} ·{" "}
+                        {correccion.editor?.nombre_completo ||
+                          correccion.editor?.username ||
+                          "Administrador"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {fmtDateTime(correccion.corregida_en)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {correccion.campos_modificados.map((campo) => (
+                        <Badge key={campo} variant="outline">
+                          {ETIQUETA_CAMPO[campo] ?? campo}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {correccion.campos_modificados.map((campo) => (
-                      <Badge key={campo} variant="outline">
-                        {ETIQUETA_CAMPO[campo] ?? campo}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
 
-                <p className="mt-3 rounded-md bg-muted/40 p-2 text-sm">
-                  <span className="font-semibold">Motivo:</span> {correccion.motivo}
-                </p>
-                <div className="mt-3 space-y-2">
-                  <ComparacionImporte
-                    etiqueta="Efectivo contado"
-                    anterior={efectivoContadoSnapshot(correccion.valores_anteriores)}
-                    nuevo={efectivoContadoSnapshot(correccion.valores_nuevos)}
-                  />
-                  <ComparacionImporte
-                    etiqueta="Efectivo dejado"
-                    anterior={numeroSnapshot(correccion.valores_anteriores, "efectivo_dejado")}
-                    nuevo={numeroSnapshot(correccion.valores_nuevos, "efectivo_dejado")}
-                  />
-                  <ComparacionImporte
-                    etiqueta="Diferencia total"
-                    anterior={numeroSnapshot(correccion.valores_anteriores, "total_diferencia")}
-                    nuevo={numeroSnapshot(correccion.valores_nuevos, "total_diferencia")}
-                  />
-                </div>
-                {correccion.campos_modificados.includes("notas") ? (
-                  <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                    <div className="rounded-md border border-border p-2">
-                      <span className="font-semibold text-muted-foreground">
-                        Observación anterior
-                      </span>
-                      <p className="mt-1">{notasSnapshot(correccion.valores_anteriores)}</p>
+                  <p className="mt-3 rounded-md bg-muted/40 p-2 text-sm">
+                    <span className="font-semibold">Motivo:</span> {correccion.motivo}
+                  </p>
+                  {cambioPago ? (
+                    <div className="mt-3 space-y-3">
+                      <div className="rounded-md border border-border bg-muted/20 p-3 text-sm">
+                        <p className="font-semibold">Pago de venta corregido</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span>{etiquetaFormaPago(cambioPago.formaAnterior)}</span>
+                          <ArrowRight
+                            className="h-3.5 w-3.5 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                          <span className="font-semibold">
+                            {etiquetaFormaPago(cambioPago.formaNueva)}
+                          </span>
+                          <span className="ml-auto font-mono tabular-nums">
+                            {fmtMoney(cambioPago.monto)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Venta {cambioPago.ventaId.slice(0, 8)}… · el cierre se recalculó sin
+                          modificar el importe del pago ni el fondo dejado.
+                        </p>
+                      </div>
+                      <ComparacionImporte
+                        etiqueta="Efectivo contado"
+                        anterior={efectivoContadoSnapshot(correccion.valores_anteriores)}
+                        nuevo={efectivoContadoSnapshot(correccion.valores_nuevos)}
+                      />
+                      <ComparacionImporte
+                        etiqueta="Diferencia total"
+                        anterior={numeroSnapshot(correccion.valores_anteriores, "total_diferencia")}
+                        nuevo={numeroSnapshot(correccion.valores_nuevos, "total_diferencia")}
+                      />
                     </div>
-                    <div className="rounded-md border border-border p-2">
-                      <span className="font-semibold text-muted-foreground">Observación nueva</span>
-                      <p className="mt-1">{notasSnapshot(correccion.valores_nuevos)}</p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      <ComparacionImporte
+                        etiqueta="Efectivo contado"
+                        anterior={efectivoContadoSnapshot(correccion.valores_anteriores)}
+                        nuevo={efectivoContadoSnapshot(correccion.valores_nuevos)}
+                      />
+                      <ComparacionImporte
+                        etiqueta="Efectivo dejado"
+                        anterior={numeroSnapshot(correccion.valores_anteriores, "efectivo_dejado")}
+                        nuevo={numeroSnapshot(correccion.valores_nuevos, "efectivo_dejado")}
+                      />
+                      <ComparacionImporte
+                        etiqueta="Diferencia total"
+                        anterior={numeroSnapshot(correccion.valores_anteriores, "total_diferencia")}
+                        nuevo={numeroSnapshot(correccion.valores_nuevos, "total_diferencia")}
+                      />
                     </div>
-                  </div>
-                ) : null}
-              </article>
-            ))}
+                  )}
+                  {correccion.campos_modificados.includes("notas") ? (
+                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div className="rounded-md border border-border p-2">
+                        <span className="font-semibold text-muted-foreground">
+                          Observación anterior
+                        </span>
+                        <p className="mt-1">{notasSnapshot(correccion.valores_anteriores)}</p>
+                      </div>
+                      <div className="rounded-md border border-border p-2">
+                        <span className="font-semibold text-muted-foreground">
+                          Observación nueva
+                        </span>
+                        <p className="mt-1">{notasSnapshot(correccion.valores_nuevos)}</p>
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">

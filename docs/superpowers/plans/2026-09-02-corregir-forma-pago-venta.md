@@ -41,17 +41,17 @@
 - Create: `scripts/test-corregir-forma-pago-venta.sh`
 - Create: `supabase/migrations/20260902120000_corregir_forma_pago_venta.sql`
 
-- [ ] Crear un test SQL/REST que demuestre inicialmente que no existen `venta_pagos.correccion_version`, `venta_pago_correcciones` ni `corregir_forma_pago_venta`.
-- [ ] Cubrir en el test: rechazo no-admin; venta anulada; pago cero/negativo; método `CTA_CTE`; mismo método; motivo inválido; versión obsoleta; actualización feliz sin caja cerrada; auditoría inmutable; concurrencia/versionado; caja cerrada con pago directo y con caja heredada desde venta; rollback total ante error de recálculo.
-- [ ] Ejecutar el script contra la base local de pruebas y conservar la falla esperada.
-- [ ] Agregar `correccion_version integer NOT NULL DEFAULT 0 CHECK (correccion_version >= 0)` a `venta_pagos`.
-- [ ] Crear `venta_pago_correcciones` con pago, venta, caja efectiva nullable, administrador, fecha, motivo, versiones anterior/nueva, monto, forma/detalle anterior y nueva. Habilitar RLS de lectura solo para admin y bloquear `UPDATE`/`DELETE` mediante trigger.
-- [ ] Implementar `public.corregir_forma_pago_venta(p_venta_pago_id uuid, p_forma_pago_nueva forma_pago, p_motivo text, p_version_esperada integer)` como `security definer`, con `search_path` fijo, validación de `auth.uid()`/admin y bloqueos de fila.
-- [ ] Después de cambiar el pago, si la caja efectiva está cerrada, adquirir el bloqueo/advisory usado por caja, llamar `caja_esperado`, reconstruir `esperado`, `contado`, `diferencia` y totales según la especificación, incrementar la versión del cierre e insertar `caja_cierre_correcciones` con `campos_modificados = ARRAY['forma_pago_venta']` y metadatos del pago en los snapshots JSON.
-- [ ] Revocar ejecución pública, concederla únicamente a `authenticated`/`service_role`, y asegurar que el cliente no pueda escribir directamente tablas de auditoría.
-- [ ] Aplicar migraciones en la base local y ejecutar `bash scripts/test-corregir-forma-pago-venta.sh` hasta verde.
-- [ ] Ejecutar los contratos de caja existentes relevantes: `bash scripts/test-correccion-cierre.sh`, `bash scripts/test-caja-r11.sh` y `bash scripts/test-caja-sesion-en-pagos.sh` si están presentes.
-- [ ] Commit: `feat: auditar corrección de forma de pago`.
+- [x] Crear un test SQL/REST que demuestre inicialmente que no existen `venta_pagos.correccion_version`, `venta_pago_correcciones` ni `corregir_forma_pago_venta`.
+- [x] Cubrir en el test: rechazo no-admin; venta anulada; pago cero/negativo; método `CTA_CTE`; mismo método; motivo inválido; versión obsoleta; actualización feliz sin caja cerrada; auditoría inmutable; concurrencia/versionado; caja cerrada con pago directo y con caja heredada desde venta; rollback total ante error de recálculo.
+- [x] Ejecutar el script contra la base local de pruebas y conservar la falla esperada.
+- [x] Agregar `correccion_version integer NOT NULL DEFAULT 0 CHECK (correccion_version >= 0)` a `venta_pagos`.
+- [x] Crear `venta_pago_correcciones` con pago, venta, caja efectiva nullable, administrador, fecha, motivo, versiones anterior/nueva, monto, forma/detalle anterior y nueva. Habilitar RLS de lectura solo para admin y bloquear `UPDATE`/`DELETE` mediante trigger.
+- [x] Implementar `public.corregir_forma_pago_venta(p_venta_pago_id uuid, p_forma_pago_nueva forma_pago, p_motivo text, p_version_esperada integer)` como `security definer`, con `search_path` fijo, validación de `auth.uid()`/admin y bloqueos de fila.
+- [x] Después de cambiar el pago, si la caja efectiva está cerrada, adquirir el bloqueo/advisory usado por caja, llamar `caja_esperado`, reconstruir `esperado`, `contado`, `diferencia` y totales según la especificación, incrementar la versión del cierre e insertar `caja_cierre_correcciones` con `campos_modificados = ARRAY['forma_pago_venta']` y metadatos del pago en los snapshots JSON.
+- [x] Revocar ejecución pública, concederla únicamente a `authenticated`, y asegurar que el cliente no pueda escribir directamente tablas de auditoría.
+- [x] Aplicar migraciones en la base local y ejecutar `bash scripts/test-corregir-forma-pago-venta.sh` hasta verde.
+- [x] Ejecutar los contratos de caja existentes relevantes presentes: corrección auditada, concurrencia de cierre y concurrencia de caja.
+- [x] Commit: `feat: auditar corrección de forma de pago`.
 
 ### Task 3: Tipos y UI administrativa
 

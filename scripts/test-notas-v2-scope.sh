@@ -97,6 +97,9 @@ INSERT INTO public.productos(
 INSERT INTO public.stock_sucursal(producto_id,sucursal_id,cantidad)
 SELECT 'b1300000-0000-4000-8000-000000000002',s.id,10
   FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
+-- Factura histórica mínima usada sólo para probar el cerco de asociación. El
+-- writer legacy vigente ya no permite crearla por el trigger de producción.
+SET LOCAL session_replication_role=replica;
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
@@ -108,6 +111,7 @@ SELECT
   'a1300000-0000-4000-8000-000000000001','T13-ORIGINAL','FACTURA_A',
   'CTA_CTE',100,21,0,121,0,'PENDIENTE','T13-ND-ORIGINAL','PENDIENTE'
 FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
+SET LOCAL session_replication_role=origin;
 
 CREATE OR REPLACE FUNCTION pg_temp.huella_comercial_notas()
 RETURNS text
@@ -146,6 +150,55 @@ UPDATE public.settings
 
 SET LOCAL ROLE authenticated;
 
+CREATE TEMP TABLE t_v2_nc_interna AS
+SELECT * FROM public.crear_venta(
+  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
+  'b1300000-0000-4000-8000-000000000001','NOTA_CREDITO','CTA_CTE',
+  '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb,
+  '[]'::jsonb,0,'T13-NC-V2-INTERNA',NULL,NULL,NULL,
+  'd1300000-0000-4000-8000-000000000000'
+);
+
+RESET ROLE;
+SELECT pg_temp.assert_true(
+  EXISTS (
+    SELECT 1
+      FROM public.ventas AS v
+      JOIN t_v2_nc_interna AS creada ON creada.venta_id=v.id
+     WHERE v.tipo_comprobante='NOTA_CREDITO'
+       AND v.afip_cbte_asoc_id IS NULL
+       AND v.afip_estado='NO_APLICA'
+       AND v.cae IS NULL
+       AND v.afip_numero IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM public.emision_fiscal_intentos AS e
+          WHERE e.venta_id=v.id
+       )
+  ),
+  'v2 permite una NC manual sin factura y la deja estrictamente interna'
+);
+SELECT pg_temp.assert_true(
+  EXISTS (
+    SELECT 1
+      FROM public.cuenta_corriente_movimientos AS cc
+      JOIN t_v2_nc_interna AS creada ON creada.venta_id=cc.venta_id
+     WHERE cc.tipo='CREDITO' AND cc.estado='CONFIRMADO'
+  ),
+  'la NC interna v2 conserva sus efectos comerciales de cuenta corriente'
+);
+
+CREATE TEMP TABLE t_despues_nc_interna AS
+SELECT
+  pg_temp.huella_comercial_notas() AS huella,
+  (SELECT count(*) FROM public.ventas) AS ventas,
+  (SELECT count(*) FROM public.venta_items) AS items,
+  (SELECT count(*) FROM public.venta_pagos) AS pagos,
+  (SELECT count(*) FROM public.stock_movimientos) AS stock,
+  (SELECT count(*) FROM public.caja_movimientos) AS caja,
+  (SELECT count(*) FROM public.cuenta_corriente_movimientos) AS deuda,
+  (SELECT COALESCE(sum(ultimo_numero),0) FROM public.comprobante_secuencias) AS numeradores;
+
+SET LOCAL ROLE authenticated;
 DO $$
 BEGIN
   BEGIN
@@ -153,11 +206,11 @@ BEGIN
       (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
       'b1300000-0000-4000-8000-000000000001','NOTA_CREDITO','CTA_CTE',
       '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb,
-      '[]'::jsonb,0,'T13-NC-V2-NO-DEBE-PERSISTIR',NULL,NULL,
+      '[]'::jsonb,0,'T13-NC-V2-ASOCIADA-NO-DEBE-PERSISTIR',NULL,NULL,
       'c1300000-0000-4000-8000-000000000001',
-      'd1300000-0000-4000-8000-000000000000'
+      'd1300000-0000-4000-8000-000000000001'
     );
-    RAISE EXCEPTION 'FALLO: la RPC aceptó una NC directa durante v2';
+    RAISE EXCEPTION 'FALLO: la RPC aceptó una NC v2 asociada directa';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'FALLO:%' THEN RAISE; END IF;
     IF SQLERRM NOT ILIKE '%nota de crédito v2 se crea exclusivamente mediante anular_venta%' THEN
@@ -176,7 +229,7 @@ BEGIN
       '[{"producto_id":null,"descripcion":"Recargo diferido","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":21}]'::jsonb,
       '[]'::jsonb,0,'T13-ND-NO-DEBE-PERSISTIR',NULL,NULL,
       'c1300000-0000-4000-8000-000000000001',
-      'd1300000-0000-4000-8000-000000000001'
+      'd1300000-0000-4000-8000-000000000002'
     );
     RAISE EXCEPTION 'FALLO: la RPC aceptó una ND durante v2';
   EXCEPTION WHEN OTHERS THEN
@@ -192,9 +245,13 @@ RESET ROLE;
 
 SELECT pg_temp.assert_true(
   NOT EXISTS (
-    SELECT 1 FROM public.ventas WHERE observaciones='T13-ND-NO-DEBE-PERSISTIR'
+    SELECT 1 FROM public.ventas
+     WHERE observaciones IN (
+       'T13-NC-V2-ASOCIADA-NO-DEBE-PERSISTIR',
+       'T13-ND-NO-DEBE-PERSISTIR'
+     )
   ),
-  'la llamada directa no persiste una ND'
+  'las llamadas directas no persisten una NC v2 asociada ni una ND'
 );
 SELECT pg_temp.assert_true(
   (SELECT (a.ventas,a.items,a.pagos,a.stock,a.caja,a.deuda,a.numeradores)
@@ -206,12 +263,12 @@ SELECT pg_temp.assert_true(
            (SELECT count(*) FROM public.caja_movimientos),
            (SELECT count(*) FROM public.cuenta_corriente_movimientos),
            (SELECT COALESCE(sum(ultimo_numero),0) FROM public.comprobante_secuencias))
-     FROM t_antes AS a),
-  'el rechazo conserva venta, ítems, pagos, stock, caja, deuda y numeradores'
+     FROM t_despues_nc_interna AS a),
+  'los rechazos conservan la NC interna y no agregan efectos comerciales'
 );
 SELECT pg_temp.assert_true(
-  (SELECT huella=pg_temp.huella_comercial_notas() FROM t_antes),
-  'NC/ND v2 conservan la huella exacta de ventas, ítems, pagos, stock, caja, deuda y numeradores'
+  (SELECT huella=pg_temp.huella_comercial_notas() FROM t_despues_nc_interna),
+  'NC asociada/ND rechazadas conservan la huella posterior a la NC interna'
 );
 
 UPDATE public.settings
@@ -237,8 +294,8 @@ BEGIN
         '[]'::jsonb,0,'T13-NOTA-MANTENIMIENTO-NO-DEBE-PERSISTIR',NULL,NULL,
         'c1300000-0000-4000-8000-000000000001',
         CASE WHEN v_tipo='NOTA_CREDITO'
-          THEN 'd1300000-0000-4000-8000-000000000010'::uuid
-          ELSE 'd1300000-0000-4000-8000-000000000011'::uuid
+          THEN 'd1300000-0000-4000-8000-000000000020'::uuid
+          ELSE 'd1300000-0000-4000-8000-000000000021'::uuid
         END
       );
       RAISE EXCEPTION 'FALLO: la RPC aceptó % con ambos writers apagados',v_tipo;
@@ -254,56 +311,41 @@ $$;
 RESET ROLE;
 
 SELECT pg_temp.assert_true(
-  (SELECT huella=pg_temp.huella_comercial_notas() FROM t_antes),
-  'mantenimiento rechaza NC/ND sin alterar la huella comercial exacta'
+  (SELECT huella=pg_temp.huella_comercial_notas() FROM t_despues_nc_interna),
+  'mantenimiento rechaza notas asociadas sin alterar la NC interna existente'
 );
 
-UPDATE public.settings
-   SET facturacion_receptor_v2_enabled=false,
-       facturacion_legacy_writer_enabled=true
- WHERE id=true;
-
 SET LOCAL ROLE authenticated;
-
-CREATE TEMP TABLE t_legacy_nc AS
+CREATE TEMP TABLE t_nc_interna_sin_writer AS
 SELECT * FROM public.crear_venta(
   (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
   'b1300000-0000-4000-8000-000000000001','NOTA_CREDITO','CTA_CTE',
   '[{"producto_id":"b1300000-0000-4000-8000-000000000002","cantidad":1}]'::jsonb,
-  '[]'::jsonb,0,'T13-NC-LEGACY-PERMITIDA',NULL,NULL,
-  'c1300000-0000-4000-8000-000000000001',
-  'd1300000-0000-4000-8000-000000000012'
-);
-
-CREATE TEMP TABLE t_legacy_nd AS
-SELECT * FROM public.crear_venta(
-  (SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),
-  'b1300000-0000-4000-8000-000000000001','NOTA_DEBITO','CTA_CTE',
-  '[{"producto_id":null,"descripcion":"Recargo legacy","cantidad":1,"precio_unitario_sin_iva":100,"iva_porcentaje":21}]'::jsonb,
-  '[]'::jsonb,0,'T13-ND-LEGACY-PERMITIDA',NULL,NULL,
-  'c1300000-0000-4000-8000-000000000001',
-  'd1300000-0000-4000-8000-000000000002'
+  '[]'::jsonb,0,'T13-NC-INTERNA-SIN-WRITER',NULL,NULL,NULL,
+  'd1300000-0000-4000-8000-000000000010'
 );
 RESET ROLE;
 SELECT pg_temp.assert_true(
   EXISTS (
     SELECT 1
       FROM public.ventas AS v
-      JOIN t_legacy_nc AS creada ON creada.venta_id=v.id
-     WHERE v.tipo_comprobante='NOTA_CREDITO'
-       AND v.observaciones='T13-NC-LEGACY-PERMITIDA'
+      JOIN t_nc_interna_sin_writer AS creada ON creada.venta_id=v.id
+     WHERE v.afip_cbte_asoc_id IS NULL
+       AND v.afip_estado='NO_APLICA'
+       AND v.cae IS NULL
   ),
-  'el writer legacy conserva la NC mientras v2 está desactivado'
+  'la NC interna no depende de que haya un escritor fiscal habilitado'
 );
+
 SELECT pg_temp.assert_true(
   EXISTS (
     SELECT 1
-      FROM public.ventas AS v
-      JOIN t_legacy_nd AS creada ON creada.venta_id=v.id
-     WHERE v.tipo_comprobante='NOTA_DEBITO'
-       AND v.observaciones='T13-ND-LEGACY-PERMITIDA'
+      FROM pg_catalog.pg_constraint AS c
+     WHERE c.conrelid='public.settings'::regclass
+       AND c.conname='ck_settings_legacy_writer_retirado'
+       AND pg_catalog.pg_get_constraintdef(c.oid) ILIKE '%NOT facturacion_legacy_writer_enabled%'
   ),
-  'el writer legacy conserva la ND mientras v2 está desactivado'
+  'el writer fiscal legacy permanece retirado; la excepción sólo habilita NC internas'
 );
 
 ROLLBACK;

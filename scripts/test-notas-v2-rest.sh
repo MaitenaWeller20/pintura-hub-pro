@@ -12,6 +12,8 @@ ORIGINAL_ID="c1310000-0000-4000-8000-000000000001"
 PRODUCTO_ID="b1310000-0000-4000-8000-000000000002"
 NC_ID="d1310000-0000-4000-8000-000000000001"
 ND_ID="d1310000-0000-4000-8000-000000000002"
+NC_ASOCIADA_ID="d1310000-0000-4000-8000-000000000003"
+NC_SIN_WRITER_ID="d1310000-0000-4000-8000-000000000004"
 SUCURSAL_ID=""
 SEQ_NC_EXISTIA="0"
 SEQ_NC_ANTES="0"
@@ -20,14 +22,14 @@ SEQ_ND_ANTES="0"
 
 q() { "${PSQL[@]}" -qAtc "$1"; }
 
-for herramienta in curl docker jq node supabase; do
+for herramienta in curl docker jq node npx; do
   command -v "$herramienta" >/dev/null || {
     echo "Falta la herramienta local requerida: $herramienta" >&2
     exit 1
   }
 done
 
-STATUS_ENV="$(supabase status -o env 2>/dev/null)"
+STATUS_ENV="$(npx supabase status -o env 2>/dev/null)"
 API_URL="$(sed -n 's/^API_URL="\([^"]*\)"/\1/p' <<<"$STATUS_ENV")"
 ANON_KEY="$(sed -n 's/^ANON_KEY="\([^"]*\)"/\1/p' <<<"$STATUS_ENV")"
 JWT_SECRET="$(sed -n 's/^JWT_SECRET="\([^"]*\)"/\1/p' <<<"$STATUS_ENV")"
@@ -57,12 +59,17 @@ UPDATE public.settings
    SET facturacion_receptor_v2_enabled=('$V2_ANTES'='1'),
        facturacion_legacy_writer_enabled=('$LEGACY_ANTES'='1')
  WHERE id=true;
-DELETE FROM public.emision_fiscal_intentos WHERE venta_id IN ('$ORIGINAL_ID','$ND_ID');
+DELETE FROM public.emision_fiscal_intentos
+ WHERE venta_id IN (
+   SELECT id FROM public.ventas
+    WHERE id='$ORIGINAL_ID'
+       OR idempotency_key IN ('$NC_ID','$ND_ID','$NC_ASOCIADA_ID','$NC_SIN_WRITER_ID')
+ );
 CREATE TEMP TABLE IF NOT EXISTS pg_temp.ventas_notas_rest AS
 SELECT id FROM public.ventas
  WHERE id='$ORIGINAL_ID'
-    OR idempotency_key IN ('$NC_ID','$ND_ID')
-    OR observaciones LIKE 'T13-%-REST-NO-DEBE-PERSISTIR';
+    OR idempotency_key IN ('$NC_ID','$ND_ID','$NC_ASOCIADA_ID','$NC_SIN_WRITER_ID')
+    OR observaciones LIKE 'T13-%-REST%';
 DELETE FROM public.cuenta_corriente_movimientos
  WHERE venta_id IN (SELECT id FROM pg_temp.ventas_notas_rest);
 DELETE FROM public.stock_movimientos
@@ -108,7 +115,7 @@ cleanup() {
   restaurar_secuencias
   local secuencias=$?
   local residuos
-  residuos="$(q "SELECT (SELECT count(*) FROM auth.users WHERE id='$USUARIO_ID') + (SELECT count(*) FROM public.clientes WHERE id='$CLIENTE_ID') + (SELECT count(*) FROM public.productos WHERE id='$PRODUCTO_ID') + (SELECT count(*) FROM public.ventas WHERE id='$ORIGINAL_ID' OR idempotency_key IN ('$NC_ID','$ND_ID'))" 2>/dev/null)"
+  residuos="$(q "SELECT (SELECT count(*) FROM auth.users WHERE id='$USUARIO_ID') + (SELECT count(*) FROM public.clientes WHERE id='$CLIENTE_ID') + (SELECT count(*) FROM public.productos WHERE id='$PRODUCTO_ID') + (SELECT count(*) FROM public.ventas WHERE id='$ORIGINAL_ID' OR idempotency_key IN ('$NC_ID','$ND_ID','$NC_ASOCIADA_ID','$NC_SIN_WRITER_ID'))" 2>/dev/null)"
   local auditoria=$?
   rm -r "$TMP_DIR"
   local temporal=$?
@@ -149,6 +156,7 @@ INSERT INTO public.productos(
 );
 INSERT INTO public.stock_sucursal(producto_id,sucursal_id,cantidad)
 SELECT '$PRODUCTO_ID',s.id,10 FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
+SET session_replication_role=replica;
 INSERT INTO public.ventas(
   id,sucursal_id,cliente_id,usuario_id,numero_comprobante,tipo_comprobante,
   condicion_venta,subtotal_sin_iva,iva_total,percepciones,total,total_pagado,
@@ -157,6 +165,7 @@ INSERT INTO public.ventas(
 SELECT '$ORIGINAL_ID',s.id,'$CLIENTE_ID','$USUARIO_ID','T13-REST-ORIGINAL','FACTURA_A',
        'CTA_CTE',100,21,0,121,0,'PENDIENTE','T13-REST-ND-ORIGINAL','PENDIENTE'
   FROM public.sucursales AS s ORDER BY s.numero LIMIT 1;
+SET session_replication_role=origin;
 UPDATE public.settings
    SET facturacion_receptor_v2_enabled=true,
        facturacion_legacy_writer_enabled=false
@@ -198,11 +207,11 @@ NODE
 } 2>/dev/null)"
 
 payload_nota() {
-  local tipo="$1" idempotencia="$2" observacion="$3"
+  local tipo="$1" idempotencia="$2" observacion="$3" asociado="${4:-}"
   jq -nc \
   --arg sucursal "$(q "SELECT id FROM public.sucursales ORDER BY numero LIMIT 1")" \
   --arg cliente "$CLIENTE_ID" --arg producto "$PRODUCTO_ID" \
-  --arg original "$ORIGINAL_ID" --arg idempotencia "$idempotencia" \
+  --arg original "$asociado" --arg idempotencia "$idempotencia" \
   --arg tipo "$tipo" --arg observacion "$observacion" '
   {
     p_sucursal_id:$sucursal,p_cliente_id:$cliente,p_tipo_comprobante:$tipo,
@@ -212,12 +221,14 @@ payload_nota() {
       else [{producto_id:null,descripcion:"Recargo REST",cantidad:1,precio_unitario_sin_iva:100,iva_porcentaje:21}]
       end),
     p_pagos:[],p_percepciones:0,p_observaciones:$observacion,
-    p_nombre_obra:null,p_fecha:null,p_cbte_asoc_id:$original,p_idempotency_key:$idempotencia
+    p_nombre_obra:null,p_fecha:null,
+    p_cbte_asoc_id:(if $original=="" then null else $original end),
+    p_idempotency_key:$idempotencia
   }'
 }
 
 post_nota_rechazada() {
-  local nombre="$1" tipo="$2" idempotencia="$3" observacion="$4" mensaje="$5"
+  local nombre="$1" tipo="$2" idempotencia="$3" observacion="$4" mensaje="$5" asociado="${6:-}"
   local http_code
   http_code="$(curl --silent --show-error --connect-timeout 1 --max-time 5 \
     --output "$TMP_DIR/${nombre}.json" --write-out '%{http_code}' \
@@ -225,7 +236,7 @@ post_nota_rechazada() {
     --header "apikey: $ANON_KEY" \
     --header "Authorization: Bearer $JWT" \
     --header "Content-Type: application/json" \
-    --data "$(payload_nota "$tipo" "$idempotencia" "$observacion")")"
+    --data "$(payload_nota "$tipo" "$idempotencia" "$observacion" "$asociado")")"
   if [[ "$http_code" -lt 400 || "$http_code" -ge 500 ]]; then
     echo "✗ $nombre esperaba rechazo 4xx y obtuvo HTTP $http_code" >&2
     exit 1
@@ -238,20 +249,61 @@ post_nota_rechazada() {
   echo "✓ $nombre rechazada por REST autenticado local (HTTP $http_code)"
 }
 
+post_nc_interna_aceptada() {
+  local nombre="$1" idempotencia="$2" observacion="$3"
+  local http_code
+  http_code="$(curl --silent --show-error --connect-timeout 1 --max-time 5 \
+    --output "$TMP_DIR/${nombre}.json" --write-out '%{http_code}' \
+    --request POST "${API_URL%/}/rest/v1/rpc/crear_venta" \
+    --header "apikey: $ANON_KEY" \
+    --header "Authorization: Bearer $JWT" \
+    --header "Content-Type: application/json" \
+    --data "$(payload_nota "NOTA_CREDITO" "$idempotencia" "$observacion" "")")"
+  if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+    echo "✗ $nombre esperaba éxito y obtuvo HTTP $http_code: $(jq -r '.message // .' "$TMP_DIR/${nombre}.json")" >&2
+    exit 1
+  fi
+  jq -e 'type=="array" and length==1 and .[0].venta_id!=null' \
+    "$TMP_DIR/${nombre}.json" >/dev/null || {
+    echo "✗ $nombre no devolvió la venta creada" >&2
+    exit 1
+  }
+  echo "✓ $nombre aceptada por REST autenticado local (HTTP $http_code)"
+}
+
+post_nc_interna_aceptada \
+  "NC v2 interna" "$NC_ID" "T13-NC-REST-INTERNA"
+NC_CREADA_ID="$(q "SELECT id FROM public.ventas WHERE idempotency_key='$NC_ID'")"
+[[ -n "$NC_CREADA_ID" ]] || {
+  echo "✗ la NC interna REST no quedó persistida" >&2
+  exit 1
+}
+[[ "$(q "SELECT (afip_cbte_asoc_id IS NULL AND afip_estado='NO_APLICA' AND cae IS NULL AND afip_numero IS NULL)::text FROM public.ventas WHERE id='$NC_CREADA_ID'")" == "true" ]] || {
+  echo "✗ la NC manual REST no quedó interna/sin CAE" >&2
+  exit 1
+}
+[[ "$(q "SELECT count(*) FROM public.emision_fiscal_intentos WHERE venta_id='$NC_CREADA_ID'")" == "0" ]] || {
+  echo "✗ la NC interna REST entró en la cola fiscal" >&2
+  exit 1
+}
+DESPUES_NC="$(estado_comercial)"
+
 post_nota_rechazada \
-  "NC v2 directa" "NOTA_CREDITO" "$NC_ID" \
-  "T13-NC-REST-NO-DEBE-PERSISTIR" \
-  "nota de crédito v2 se crea exclusivamente mediante anular_venta"
+  "NC v2 asociada directa" "NOTA_CREDITO" "$NC_ASOCIADA_ID" \
+  "T13-NC-ASOCIADA-REST-NO-DEBE-PERSISTIR" \
+  "nota de crédito v2 se crea exclusivamente mediante anular_venta" \
+  "$ORIGINAL_ID"
 post_nota_rechazada \
   "ND v2 directa" "NOTA_DEBITO" "$ND_ID" \
   "T13-ND-REST-NO-DEBE-PERSISTIR" \
-  "nota de débito nueva queda fuera de alcance fiscal"
-[[ "$(estado_comercial)" == "$ANTES" ]] || {
-  echo "✗ el rechazo REST modificó venta, ítems, pagos, stock, caja, deuda o secuencia" >&2
+  "nota de débito nueva queda fuera de alcance fiscal" \
+  "$ORIGINAL_ID"
+[[ "$(estado_comercial)" == "$DESPUES_NC" ]] || {
+  echo "✗ el rechazo REST modificó la NC interna o agregó efectos" >&2
   exit 1
 }
-[[ "$(q "SELECT count(*) FROM public.ventas WHERE idempotency_key IN ('$NC_ID','$ND_ID') OR observaciones LIKE 'T13-%-REST-NO-DEBE-PERSISTIR'")" == "0" ]] || {
-  echo "✗ el rechazo REST dejó una NC/ND" >&2
+[[ "$(q "SELECT count(*) FROM public.ventas WHERE idempotency_key IN ('$NC_ASOCIADA_ID','$ND_ID') OR observaciones IN ('T13-NC-ASOCIADA-REST-NO-DEBE-PERSISTIR','T13-ND-REST-NO-DEBE-PERSISTIR')")" == "0" ]] || {
+  echo "✗ el rechazo REST dejó una NC asociada o ND" >&2
   exit 1
 }
 
@@ -261,17 +313,17 @@ UPDATE public.settings
        facturacion_legacy_writer_enabled=false
  WHERE id=true;
 SQL
-post_nota_rechazada \
-  "NC en mantenimiento" "NOTA_CREDITO" "$NC_ID" \
-  "T13-NC-REST-NO-DEBE-PERSISTIR" \
-  "escritor fiscal legacy está deshabilitado"
+post_nc_interna_aceptada \
+  "NC interna sin writer" "$NC_SIN_WRITER_ID" "T13-NC-SIN-WRITER-REST"
+DESPUES_NC_SIN_WRITER="$(estado_comercial)"
 post_nota_rechazada \
   "ND en mantenimiento" "NOTA_DEBITO" "$ND_ID" \
   "T13-ND-REST-NO-DEBE-PERSISTIR" \
-  "escritor fiscal legacy está deshabilitado"
-[[ "$(estado_comercial)" == "$ANTES" ]] || {
-  echo "✗ mantenimiento REST alteró la huella comercial exacta" >&2
+  "escritor fiscal legacy está deshabilitado" \
+  "$ORIGINAL_ID"
+[[ "$(estado_comercial)" == "$DESPUES_NC_SIN_WRITER" ]] || {
+  echo "✗ el rechazo de ND en mantenimiento alteró las NC internas" >&2
   exit 1
 }
 
-echo "✓ REST no deja mutaciones comerciales ni avanza la secuencia"
+echo "✓ REST distingue NC interna de NC fiscal/ND sin mutaciones parciales"

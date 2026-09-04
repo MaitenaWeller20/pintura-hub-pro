@@ -450,6 +450,15 @@ describe("comprobante sin CAE (documento interno)", () => {
     expect(texto).toContain("Documento interno");
     expect(texto).not.toContain("Comprobante Autorizado");
   });
+
+  it("muestra precio final y descuento sin separar el IVA en documentos internos", () => {
+    expect(texto).toContain("P. unit. final");
+    expect(texto).toContain("$ 605,00");
+    expect(texto).not.toContain("P. unit. s/IVA");
+    expect(texto).not.toContain("Neto gravado");
+    expect(texto).not.toContain("IVA 21,00%");
+    expect(texto).toContain("Productos (IVA incluido)");
+  });
 });
 
 describe("comprobantes largos", () => {

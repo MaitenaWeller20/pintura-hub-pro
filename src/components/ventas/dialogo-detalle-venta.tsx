@@ -23,6 +23,7 @@ import type { Database, Json } from "@/integrations/supabase/types";
 import { fmtDocumento } from "@/lib/documento";
 import { datosFiscalesComprobante } from "@/lib/fiscal.functions";
 import { CBTE_INFO } from "@/lib/fiscal/codigos";
+import { conIva, round2 } from "@/lib/fiscal/iva";
 import {
   generarComprobantePdf,
   numeroFiscal,
@@ -36,6 +37,7 @@ import type { DetalleVentaFiscalPresentacion } from "@/lib/fiscal/detalle-venta-
 import { prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
 import { DialogoCorregirFormaPago, type PagoFormaCorregible } from "./dialogo-corregir-forma-pago";
+import { DialogoCorregirPreciosRemito } from "./dialogo-corregir-precios-remito";
 import {
   HistorialCorreccionesPago,
   type CorreccionPagoVisible,
@@ -337,17 +339,20 @@ export function DialogoDetalleVenta({
   onClose,
   permitirDescarga = true,
   puedeCorregirPagos = false,
+  onVentaActualizada,
   returnFocusRef,
 }: {
   venta: VentaDetalle | null;
   onClose(): void;
   permitirDescarga?: boolean;
   puedeCorregirPagos?: boolean;
+  onVentaActualizada?: () => Promise<void> | void;
   returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const queryClient = useQueryClient();
   const [imprimiendo, setImprimiendo] = useState(false);
   const [pagoACorregir, setPagoACorregir] = useState<PagoFormaCorregible | null>(null);
+  const [corrigiendoPrecios, setCorrigiendoPrecios] = useState(false);
   const esNcPeriodo = Boolean(
     venta?.tipo_comprobante === "NOTA_CREDITO" &&
     venta.periodo_asoc_desde &&
@@ -398,6 +403,13 @@ export function DialogoDetalleVenta({
     },
   });
   const detalle = detalleQuery.data;
+  const puedeCorregirPrecios = Boolean(
+    venta &&
+    detalle &&
+    venta.estado === "ACTIVA" &&
+    venta.condicion_venta === "CTA_CTE" &&
+    (venta.tipo_comprobante === "REMITO" || venta.tipo_comprobante === "REMITO_OBRA"),
+  );
   const correcciones: CorreccionPagoVisible[] = (correccionesQuery.data ?? []).map(
     (correccion) => ({
       id: correccion.id,
@@ -468,6 +480,7 @@ export function DialogoDetalleVenta({
         onOpenChange={(open) => {
           if (open) return;
           setPagoACorregir(null);
+          setCorrigiendoPrecios(false);
           onClose();
         }}
       >
@@ -669,15 +682,42 @@ export function DialogoDetalleVenta({
                 </div>
               ) : detalle ? (
                 <>
-                  <div className="mt-2">
-                    <DataTable columns={["Cód.", "Descripción", "Cant.", "P. unit.", "Subtotal"]}>
+                  <div className="mt-2 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-muted-foreground">IVA incluido</p>
+                      {puedeCorregirPrecios ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="min-h-9"
+                          onClick={() => setCorrigiendoPrecios(true)}
+                        >
+                          <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
+                          Corregir precios y descuentos
+                        </Button>
+                      ) : null}
+                    </div>
+                    <DataTable
+                      columns={[
+                        "Cód.",
+                        "Descripción",
+                        "Cant.",
+                        "P. unit. final",
+                        "Desc. %",
+                        "Subtotal",
+                      ]}
+                    >
                       {detalle.items.map((item) => (
                         <TableRow key={item.id}>
                           <TableCell className="font-mono text-xs">{item.codigo}</TableCell>
                           <TableCell>{item.descripcion}</TableCell>
                           <TableCell className="text-right">{item.cantidad}</TableCell>
                           <TableCell className="text-right font-mono">
-                            {fmtMoney(item.precio_unitario_sin_iva)}
+                            {fmtMoney(conIva(item.precio_unitario_sin_iva, item.iva_porcentaje))}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {Number(item.descuento_porcentaje)}%
                           </TableCell>
                           <TableCell className="text-right font-mono">
                             {fmtMoney(item.subtotal_con_iva)}
@@ -755,12 +795,12 @@ export function DialogoDetalleVenta({
                       <h4 className="mb-2 text-sm font-semibold">Totales</h4>
                       <ul className="space-y-1 text-sm">
                         <li className="flex justify-between">
-                          <span>Subtotal:</span>
-                          <span className="font-mono">{fmtMoney(venta.subtotal_sin_iva)}</span>
-                        </li>
-                        <li className="flex justify-between">
-                          <span>IVA:</span>
-                          <span className="font-mono">{fmtMoney(venta.iva_total)}</span>
+                          <span>Productos (IVA incluido):</span>
+                          <span className="font-mono">
+                            {fmtMoney(
+                              round2(Number(venta.subtotal_sin_iva) + Number(venta.iva_total)),
+                            )}
+                          </span>
                         </li>
                         <li className="flex justify-between">
                           <span>Percepciones:</span>
@@ -820,6 +860,25 @@ export function DialogoDetalleVenta({
               queryClient.invalidateQueries({ queryKey: ["caja-esperado"] }),
             ]);
             setPagoACorregir(null);
+          }}
+        />
+      ) : null}
+      {venta && detalle && corrigiendoPrecios ? (
+        <DialogoCorregirPreciosRemito
+          ventaId={venta.id}
+          numeroRemito={venta.numero_comprobante}
+          versionEsperada={venta.correccion_precios_version}
+          items={detalle.items}
+          onClose={() => setCorrigiendoPrecios(false)}
+          onSaved={async () => {
+            await Promise.all([
+              detalleQuery.refetch(),
+              queryClient.invalidateQueries({ queryKey: ["ventas"] }),
+              queryClient.invalidateQueries({ queryKey: ["cuentas-corrientes"] }),
+              queryClient.invalidateQueries({ queryKey: ["cuenta-corriente"] }),
+            ]);
+            await onVentaActualizada?.();
+            setCorrigiendoPrecios(false);
           }}
         />
       ) : null}

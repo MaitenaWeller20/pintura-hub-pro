@@ -17,6 +17,7 @@ import {
   type DatosFiscalesPreparados,
   type ItemComprobante,
 } from "./impresion";
+import { conIva } from "./iva";
 import { exigirPngDataUrlFiscal } from "./qr";
 
 export type {
@@ -312,8 +313,9 @@ export function generarComprobantePdf(
   // --------------------------------------------------------------------- ítems
   // En clase C no se discrimina IVA (AFIP lo prohíbe), así que el papel tampoco
   // muestra ni la columna ni el desglose: sólo importes finales.
-  const cabecera = esC
-    ? ["Código", "Descripción", "Cant.", "P. unit.", "Desc.", "Importe"]
+  const muestraPrecioFinal = esC || !fiscal;
+  const cabecera = muestraPrecioFinal
+    ? ["Código", "Descripción", "Cant.", "P. unit. final", "Desc.", "Importe"]
     : ["Código", "Descripción", "Cant.", "P. unit. s/IVA", "Desc.", "IVA", "Importe"];
 
   autoTable(doc, {
@@ -324,10 +326,14 @@ export function generarComprobantePdf(
         i.codigo ?? "",
         i.descripcion ?? "",
         fmtNum(abs(i.cantidad)),
-        money(i.precio_unitario_sin_iva),
+        money(
+          muestraPrecioFinal
+            ? conIva(i.precio_unitario_sin_iva, i.iva_porcentaje)
+            : i.precio_unitario_sin_iva,
+        ),
         `${fmtNum(i.descuento_porcentaje ?? 0)}%`,
       ];
-      return esC
+      return muestraPrecioFinal
         ? [...base, money(i.subtotal_con_iva)]
         : [...base, `${fmtNum(i.iva_porcentaje ?? 0)}%`, money(i.subtotal_con_iva)];
     }),
@@ -345,11 +351,13 @@ export function generarComprobantePdf(
   const exento = abs(t?.exento);
   const noGravado = abs(t?.no_gravado);
   const percepciones = abs(t?.tributos ?? venta.percepciones);
-  const cantidadLineasDetalle = esC
-    ? t
-      ? 1 + (exento > 0 ? 1 : 0) + (noGravado > 0 ? 1 : 0)
-      : 1
-    : 1 + (exento > 0 ? 1 : 0) + (noGravado > 0 ? 1 : 0) + (t?.alicuotas?.length || 1);
+  const cantidadLineasDetalle = !fiscal
+    ? 1
+    : esC
+      ? t
+        ? 1 + (exento > 0 ? 1 : 0) + (noGravado > 0 ? 1 : 0)
+        : 1
+      : 1 + (exento > 0 ? 1 : 0) + (noGravado > 0 ? 1 : 0) + (t?.alicuotas?.length || 1);
   const cantidadLineasTotales = cantidadLineasDetalle + (percepciones > 0 ? 1 : 0) + 1;
   let yt = asegurarEspacio(finTabla + 6, cantidadLineasTotales * 4.5 + 4);
   const xEtiqueta = 130;
@@ -362,7 +370,12 @@ export function generarComprobantePdf(
   };
 
   doc.setFontSize(8);
-  if (esC) {
+  if (!fiscal) {
+    linea(
+      "Productos (IVA incluido)",
+      money(Number(venta.subtotal_sin_iva) + Number(venta.iva_total)),
+    );
+  } else if (esC) {
     // Clase C: subtotal y conceptos no gravados, sin discriminar IVA.
     if (t) {
       linea("Subtotal", money(t.neto));

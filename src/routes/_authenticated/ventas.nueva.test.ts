@@ -291,6 +291,38 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ruta real de Nueva venta para NC por período", () => {
+  it("edita el precio unitario final con IVA y conserva el neto fiscal al guardar", async () => {
+    renderRuta();
+
+    fireEvent.change(screen.getByTestId("venta-buscar-producto"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+
+    expect(screen.getByRole("columnheader", { name: "P. unit. final" })).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "IVA" })).toBeNull();
+    expect(screen.getByText("IVA incluido")).toBeTruthy();
+
+    const precioFinal = screen.getByLabelText("Precio final de P-1") as HTMLInputElement;
+    expect(precioFinal.value).toBe("121");
+    fireEvent.change(precioFinal, { target: { value: "242" } });
+
+    await elegirCliente();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago" }));
+    fireEvent.click(screen.getByTestId("registrar-sin-facturar"));
+
+    await waitFor(() => expect(dobles.crearVenta).toHaveBeenCalledOnce());
+    expect(dobles.crearVenta.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        items: [
+          {
+            producto_id: PRODUCTO_ID,
+            precio_unitario_sin_iva: 200,
+            descuento_porcentaje: 0,
+          },
+        ],
+      },
+    });
+  });
+
   it("deriva la misma descripción personalizada para preview y creación", async () => {
     renderRuta();
 

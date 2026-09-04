@@ -313,9 +313,7 @@ function VentasList() {
         Sucursal: v.sucursal?.nombre,
         Comprador: v.cliente?.razon_social,
         ...camposExportacionReceptorFiscal(v),
-        Subtotal: v.subtotal_sin_iva,
-        IVA: v.iva_total,
-        Total: v.total,
+        "Total final (IVA incluido)": v.total,
         Pagado: v.total_pagado,
         Estado: v.estado_pago,
         // R12.b: forma(s) de pago. Cta cte no tiene venta_pagos (se cobra por cobranzas).
@@ -566,6 +564,7 @@ function VentasList() {
         venta={verVenta}
         puedeCorregirPagos={cu?.isAdmin === true}
         onClose={() => setVerVenta(null)}
+        onVentaActualizada={() => (verVenta ? cargarDetalle(verVenta.id) : undefined)}
       />
 
       <Dialog

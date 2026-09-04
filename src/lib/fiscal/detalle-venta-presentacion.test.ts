@@ -60,6 +60,7 @@ describe("DTO cerrado del detalle fiscal", () => {
       fecha: snapshot.venta.fechaComercial,
       created_at: "2026-08-20T13:00:00.000Z",
       condicion_venta: "CONTADO",
+      correccion_precios_version: 2,
       subtotal_sin_iva: -1000,
       iva_total: -360,
       percepciones: 0,
@@ -190,6 +191,7 @@ describe("DTO cerrado del detalle fiscal", () => {
       comprobanteAsociado: null,
     });
     expect(dto.auditoriaPeriodo?.fiscal).toEqual(fiscalEsperado);
+    expect(dto.correccion_precios_version).toBe(2);
     expect(clavesReservadas(dto)).toEqual([]);
     expect(JSON.stringify(dto)).not.toContain("diagnóstico SQL prohibido");
     expect(JSON.stringify(dto)).not.toContain("prohibido");

@@ -36,7 +36,7 @@ import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { crearVenta, listarComprobantesOriginalesVenta } from "@/lib/ventas.functions";
 import { calcTotalesComprobante } from "@/lib/ventas-totales";
-import { round2 } from "@/lib/fiscal/iva";
+import { conIva, round2 } from "@/lib/fiscal/iva";
 import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
 import { EditorPagos, type PagoVentaEditable } from "@/components/ventas/editor-pagos";
 import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
@@ -89,6 +89,11 @@ interface ItemRow {
 // Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja).
 // R2.a: la "Factura interna" YA NO está acá — es un documento interno de contado.
 const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA"]);
+
+function netoDesdePrecioFinal(precioFinal: number | null, ivaPorcentaje: number): number | null {
+  if (precioFinal === null) return null;
+  return round2(precioFinal / (1 + ivaPorcentaje / 100));
+}
 
 function NuevaVenta() {
   const { data: cu } = useCurrentUser();
@@ -1140,12 +1145,11 @@ function NuevaVenta() {
         <SectionCard title="Totales" className={esNcPeriodo ? "hidden" : undefined}>
           <div className="space-y-1 text-sm">
             <div className="flex justify-between">
-              <span>Subtotal:</span>
-              <span className="font-mono">{fmtMoney(totales.sub)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>IVA:</span>
-              <span className="font-mono">{fmtMoney(totales.iva)}</span>
+              <span>Productos:</span>
+              <div className="text-right">
+                <span className="font-mono">{fmtMoney(round2(totales.sub + totales.iva))}</span>
+                <p className="text-[11px] text-muted-foreground">IVA incluido</p>
+              </div>
             </div>
             <div className="flex justify-between items-center gap-2">
               <Label className="text-sm m-0">Percepciones:</Label>
@@ -1314,7 +1318,7 @@ function NuevaVenta() {
                       </span>
                     </div>
                     <div className="pl-30 text-xs text-muted-foreground">
-                      {fmtMoney(p.precio_sin_iva)} s/IVA · IVA {p.iva_porcentaje}%
+                      {fmtMoney(conIva(p.precio_sin_iva, p.iva_porcentaje))} final · IVA incluido
                       {yaEsta && " · ya está en el comprobante"}
                     </div>
                   </button>
@@ -1345,9 +1349,8 @@ function NuevaVenta() {
                     <TableHead>Código</TableHead>
                     <TableHead>Descripción</TableHead>
                     <TableHead>Cant.</TableHead>
-                    <TableHead>P. unit s/IVA</TableHead>
+                    <TableHead>P. unit. final</TableHead>
                     <TableHead>Desc. %</TableHead>
-                    <TableHead>IVA</TableHead>
                     <TableHead className="text-right">Subtotal</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -1424,8 +1427,15 @@ function NuevaVenta() {
                         <TableCell>
                           <NumberInput
                             className="h-8 w-28"
-                            value={it.precio_unitario_sin_iva}
-                            onValueChange={(v) => updateItem(i, "precio_unitario_sin_iva", v)}
+                            aria-label={`Precio final de ${it.codigo}`}
+                            value={conIva(precioEfectivo, it.iva_porcentaje)}
+                            onValueChange={(v) =>
+                              updateItem(
+                                i,
+                                "precio_unitario_sin_iva",
+                                netoDesdePrecioFinal(v, it.iva_porcentaje),
+                              )
+                            }
                             disabled={camposNotaBloqueados}
                           />
                           {pisado && (
@@ -1433,7 +1443,7 @@ function NuevaVenta() {
                               className="text-[10px] text-warning mt-0.5"
                               title="El precio fue modificado a mano"
                             >
-                              lista: {fmtMoney(it.precio_lista)}
+                              lista: {fmtMoney(conIva(it.precio_lista, it.iva_porcentaje))}
                             </div>
                           )}
                         </TableCell>
@@ -1445,7 +1455,6 @@ function NuevaVenta() {
                             disabled={camposNotaBloqueados}
                           />
                         </TableCell>
-                        <TableCell className="text-xs">{it.iva_porcentaje}%</TableCell>
                         <TableCell className="text-right font-mono">{fmtMoney(sub)}</TableCell>
                         <TableCell>
                           <Button

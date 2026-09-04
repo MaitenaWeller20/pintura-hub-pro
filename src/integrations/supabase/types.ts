@@ -2183,6 +2183,82 @@ export type Database = {
           },
         ];
       };
+      remito_precio_correcciones: {
+        Row: {
+          corregida_en: string;
+          corregida_por: string;
+          id: number;
+          items_anteriores: Json;
+          items_nuevos: Json;
+          iva_anterior: number;
+          iva_nuevo: number;
+          motivo: string;
+          subtotal_anterior: number;
+          subtotal_nuevo: number;
+          total_anterior: number;
+          total_nuevo: number;
+          venta_id: string;
+          version_anterior: number;
+          version_nueva: number;
+        };
+        Insert: {
+          corregida_en?: string;
+          corregida_por: string;
+          id?: never;
+          items_anteriores: Json;
+          items_nuevos: Json;
+          iva_anterior: number;
+          iva_nuevo: number;
+          motivo: string;
+          subtotal_anterior: number;
+          subtotal_nuevo: number;
+          total_anterior: number;
+          total_nuevo: number;
+          venta_id: string;
+          version_anterior: number;
+          version_nueva: number;
+        };
+        Update: {
+          corregida_en?: string;
+          corregida_por?: string;
+          id?: never;
+          items_anteriores?: Json;
+          items_nuevos?: Json;
+          iva_anterior?: number;
+          iva_nuevo?: number;
+          motivo?: string;
+          subtotal_anterior?: number;
+          subtotal_nuevo?: number;
+          total_anterior?: number;
+          total_nuevo?: number;
+          venta_id?: string;
+          version_anterior?: number;
+          version_nueva?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "remito_precio_correcciones_corregida_por_fkey";
+            columns: ["corregida_por"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "remito_precio_correcciones_venta_id_fkey";
+            columns: ["venta_id"];
+            isOneToOne: false;
+            referencedRelation: "ventas";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "remito_precio_correcciones_venta_id_fkey";
+            columns: ["venta_id"];
+            isOneToOne: false;
+            referencedRelation: "ventas_saldo_pendiente";
+            referencedColumns: ["venta_id"];
+          },
+        ];
+      };
       remitos: {
         Row: {
           aprobado_por: string | null;
@@ -3159,6 +3235,7 @@ export type Database = {
           caja_sesion_id: string | null;
           cliente_id: string;
           condicion_venta: Database["public"]["Enums"]["condicion_venta"];
+          correccion_precios_version: number;
           created_at: string;
           estado: Database["public"]["Enums"]["estado_venta"];
           estado_pago: Database["public"]["Enums"]["estado_pago"];
@@ -3220,6 +3297,7 @@ export type Database = {
           caja_sesion_id?: string | null;
           cliente_id: string;
           condicion_venta?: Database["public"]["Enums"]["condicion_venta"];
+          correccion_precios_version?: number;
           created_at?: string;
           estado?: Database["public"]["Enums"]["estado_venta"];
           estado_pago?: Database["public"]["Enums"]["estado_pago"];
@@ -3281,6 +3359,7 @@ export type Database = {
           caja_sesion_id?: string | null;
           cliente_id?: string;
           condicion_venta?: Database["public"]["Enums"]["condicion_venta"];
+          correccion_precios_version?: number;
           created_at?: string;
           estado?: Database["public"]["Enums"]["estado_venta"];
           estado_pago?: Database["public"]["Enums"]["estado_pago"];
@@ -3917,6 +3996,22 @@ export type Database = {
           p_motivo: string;
         };
         Returns: string;
+      };
+      corregir_precios_remito: {
+        Args: {
+          p_items: Json;
+          p_motivo: string;
+          p_venta_id: string;
+          p_version_esperada: number;
+        };
+        Returns: {
+          correccion_precios_version: number;
+          iva_total: number;
+          percepciones: number;
+          subtotal_sin_iva: number;
+          total: number;
+          venta_id: string;
+        }[];
       };
       crear_borrador_ingreso: {
         Args: {

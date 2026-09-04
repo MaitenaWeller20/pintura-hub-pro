@@ -134,32 +134,22 @@ function ReportesPage() {
 
   const exportarVentas = (formato: "xlsx" | "pdf") => {
     const rows = ventas.map((v) => ({
-      Comprobante: v.numero_comprobante,
-      Fecha: fmtDateTime(v.fecha),
-      Sucursal: v.sucursal?.nombre,
-      Cliente: v.cliente?.razon_social,
-      "Total final (IVA incluido)": v.total,
+      Comprobante: v.numero_comprobante, Fecha: fmtDateTime(v.fecha), Sucursal: v.sucursal?.nombre,
+      Cliente: v.cliente?.razon_social, Subtotal: v.subtotal_sin_iva, IVA: v.iva_total, Total: v.total,
     }));
     if (formato === "xlsx") {
       const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Ventas");
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Ventas");
       XLSX.writeFile(wb, `ventas-${desde}-${hasta}.xlsx`);
     } else {
       const doc = new jsPDF();
-      doc.setFontSize(14);
-      doc.text(`CasaForma — Ventas ${desde} → ${hasta}`, 14, 16);
+      doc.setFontSize(14); doc.text(`CasaForma — Ventas ${desde} → ${hasta}`, 14, 16);
       autoTable(doc, {
         startY: 22,
-        head: [
-          ["Comprob.", "Fecha", "Sucursal", "Cliente", "Total final (IVA incluido)"],
-        ],
+        head: [["Comprob.", "Fecha", "Sucursal", "Cliente", "Subtotal", "IVA", "Total"]],
         body: ventas.map((v) => [
-          v.numero_comprobante,
-          fmtDateTime(v.fecha),
-          v.sucursal?.nombre,
-          v.cliente?.razon_social,
-          fmtMoney(v.total),
+          v.numero_comprobante, fmtDateTime(v.fecha), v.sucursal?.nombre, v.cliente?.razon_social,
+          fmtMoney(v.subtotal_sin_iva), fmtMoney(v.iva_total), fmtMoney(v.total),
         ]),
         styles: { fontSize: 7 },
       });

@@ -585,31 +585,36 @@ UPDATE public.caja_sesiones
    SET estado='CERRADA',cerrada_en=now(),
        cerrada_por='a5200000-0000-4000-8000-000000000001'
  WHERE id='d5200000-0000-4000-8000-000000000002';
-DO $$
-DECLARE v_marker constant text := 'T2_CAJA_NO_FALLO';
-BEGIN
-  BEGIN
-    PERFORM * FROM public.convertir_presupuesto_en_venta_neutral(
-      (SELECT presupuesto_id FROM t_sin_caja),NULL,'CONTADO',
-      '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
-    );
-    RAISE EXCEPTION '%',v_marker;
-  EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM=v_marker OR SQLERRM NOT LIKE '%caja abierta%sucursal del presupuesto%' THEN RAISE; END IF;
-  END;
-END;
-$$;
+CREATE TEMP TABLE t_sin_caja_sale AS
+SELECT * FROM public.convertir_presupuesto_en_venta_neutral(
+  (SELECT presupuesto_id FROM t_sin_caja),NULL,'CONTADO',
+  '[{"forma_pago":"EFECTIVO","monto":121}]'::jsonb,NULL
+);
 SELECT pg_temp.assert_true(
-  (SELECT count(*)=0 FROM public.caja_sesiones AS cs
+  (SELECT count(*)=1 FROM public.caja_sesiones AS cs
     JOIN public.sucursales AS s ON s.id=cs.sucursal_id
    WHERE s.codigo='GENERALPAZ' AND cs.estado='ABIERTA')
   AND (SELECT count(*)=1 FROM public.caja_sesiones AS cs
        JOIN public.sucursales AS s ON s.id=cs.sucursal_id
       WHERE s.codigo='OHIGGINS' AND cs.estado='ABIERTA')
-  AND (SELECT estado='ABIERTO' AND venta_id IS NULL
-       FROM public.presupuestos WHERE id=(SELECT presupuesto_id FROM t_sin_caja)),
-  'una caja de otra sucursal no sirve y la conversión no autoabre la correcta'
+  AND (SELECT p.estado='CONVERTIDO'
+              AND p.venta_id=sale.venta_id
+              AND v.caja_sesion_id=cs.id
+              AND cs.abierta_por='a5200000-0000-4000-8000-000000000001'
+         FROM public.presupuestos AS p
+         CROSS JOIN t_sin_caja_sale AS sale
+         JOIN public.ventas AS v ON v.id=sale.venta_id
+         JOIN public.caja_sesiones AS cs ON cs.id=v.caja_sesion_id
+        WHERE p.id=(SELECT presupuesto_id FROM t_sin_caja)
+          AND cs.sucursal_id=p.sucursal_id
+          AND cs.estado='ABIERTA'),
+  'la primera conversión abre una sola caja en la sucursal del presupuesto y queda vinculada'
 );
+UPDATE public.caja_sesiones AS cs
+   SET estado='CERRADA',cerrada_en=now(),
+       cerrada_por='a5200000-0000-4000-8000-000000000001'
+ WHERE cs.estado='ABIERTA'
+   AND cs.sucursal_id=(SELECT id FROM public.sucursales WHERE codigo='GENERALPAZ');
 UPDATE public.caja_sesiones
    SET estado='ABIERTA',cerrada_en=NULL,cerrada_por=NULL
  WHERE id='d5200000-0000-4000-8000-000000000002';
@@ -1307,8 +1312,8 @@ DROP TRIGGER aaa_t2_pausar_venta_directa ON public.ventas;
 DROP FUNCTION public._t2_pausar_venta_directa_20260830();
 SQL
 
-# Si cerrar_caja obtiene FOR UPDATE primero, la conversión debe esperar, observar
-# la caja cerrada y fallar sin autoabrir una sesión distinta.
+# Si cerrar_caja obtiene FOR UPDATE primero, la conversión debe esperar al cierre
+# y después abrir una sesión nueva dentro de su propia transacción.
 docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atq \
   >"$LOCK_DIR/cierre.out" 2>"$LOCK_DIR/cierre.err" <<'SQL' &
 BEGIN;
@@ -1361,8 +1366,8 @@ set -e
 wait "$LOCK_PID"
 LOCK_PID=""
 
-if [[ "$CONVERSION_STATUS" -eq 0 ]] || [[ "$CONVERSION_OUT" != *"caja abierta"* ]]; then
-  echo "FALLO: la conversión concurrente no falló por caja cerrada: $CONVERSION_OUT" >&2
+if [[ "$CONVERSION_STATUS" -ne 0 ]] || [[ "$CONVERSION_OUT" != *"OHI-VTA-"* ]]; then
+  echo "FALLO: la conversión no esperó el cierre y autoabrió la caja siguiente: $CONVERSION_OUT" >&2
   exit 1
 fi
 
@@ -1380,9 +1385,9 @@ BEGIN
      WHERE id='f5200000-0000-4000-8000-000000000204'
        AND estado='ABIERTO' AND venta_id IS NULL
   ) THEN
-    RAISE EXCEPTION 'FALLO: el cierre concurrente dejó una caja nueva, una venta o un presupuesto convertido';
+    RAISE EXCEPTION 'FALLO: el rollback concurrente dejó una caja nueva, una venta o un presupuesto convertido';
   END IF;
-  RAISE NOTICE '✓ el cierre que gana la carrera no deja venta huérfana ni autoabre otra caja';
+  RAISE NOTICE '✓ la conversión espera al cierre, autoabre la caja siguiente y revierte todos sus efectos';
 END;
 $$;
 SQL

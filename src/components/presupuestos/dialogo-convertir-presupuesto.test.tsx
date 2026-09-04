@@ -202,15 +202,18 @@ describe("diálogo de conversión de presupuesto", () => {
     expect((screen.getByTestId("conv-y-facturar") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("muestra la caja abierta y bloquea ambas acciones cuando no hay caja", async () => {
+  it("avisa que la caja se abrirá y permite convertir la primera operación del día", async () => {
     const { caja: _caja, ...preflight } = PREFLIGHT_ABIERTO;
     dobles.preflight.mockResolvedValue({ ...preflight, caja: null });
     renderDialogo();
 
     expect(await screen.findByText("Sucursal: General Paz")).toBeTruthy();
-    expect(screen.getByText("No hay caja abierta")).toBeTruthy();
-    expect((screen.getByTestId("conv-confirmar") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("conv-y-facturar") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("La caja se abrirá automáticamente al convertir.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Agregar pago completo" }));
+
+    expect((screen.getByTestId("conv-confirmar") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("conv-y-facturar") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("muestra un error seguro y bloquea ambas acciones si falla el preflight", async () => {
@@ -537,7 +540,7 @@ describe("diálogo de conversión de presupuesto", () => {
         caja: null,
       });
     });
-    await screen.findByText("No hay caja abierta");
+    await screen.findByText("La caja se abrirá automáticamente al convertir.");
     expect((screen.getByTestId("conv-confirmar") as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(screen.getByTestId("conv-confirmar"));
@@ -571,7 +574,7 @@ describe("diálogo de conversión de presupuesto", () => {
   });
 
   it.each([
-    ["caja", "CAJA_NO_DISPONIBLE", "La caja de esta sucursal ya no está abierta"],
+    ["caja", "CAJA_NO_DISPONIBLE", "No se pudo abrir o confirmar la caja de esta sucursal"],
     [
       "mantenimiento",
       "MANTENIMIENTO",

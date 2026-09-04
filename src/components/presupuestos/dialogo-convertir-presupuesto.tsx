@@ -72,7 +72,7 @@ function mensajeErrorConversion(cause: unknown): string {
   if (cause instanceof ErrorConversionSegura) {
     switch (cause.codigo) {
       case "CAJA_NO_DISPONIBLE":
-        return "La caja de esta sucursal ya no está abierta. Abrila y volvé a intentar.";
+        return "No se pudo abrir o confirmar la caja de esta sucursal. Volvé a intentar.";
       case "PRESUPUESTO_SIN_ACCESO":
         return "No se pudo leer el presupuesto o no tenés acceso.";
       case "CONSUMIDOR_FINAL_INVALIDO":
@@ -172,14 +172,14 @@ export function DialogoConvertirPresupuesto({
   const saldo = Math.round((total - pagadoAhora + Number.EPSILON) * 100) / 100;
   const mantenimiento = !facturacionV2Habilitada && !facturacionLegacyHabilitada;
   const preflightCargando = preflight.isPending || preflight.isFetching;
-  const cajaConfirmada = !preflightCargando && !preflight.error && !!preflight.data?.caja;
+  const preflightConfirmado = !preflightCargando && !preflight.error && !!preflight.data;
   const receptorValido =
     receptor === "CONSUMIDOR_FINAL"
       ? facturacionV2Habilitada && !facturacionLegacyHabilitada
       : !!clienteId;
   const puedeConvertir =
     receptorValido &&
-    cajaConfirmada &&
+    preflightConfirmado &&
     !mantenimiento &&
     (condicion === "CTA_CTE" || facturacionLegacyHabilitada || pagadoAhora >= 0.01);
 
@@ -408,13 +408,8 @@ export function DialogoConvertirPresupuesto({
                     ? "Confirmando caja abierta…"
                     : preflight.data?.caja
                       ? `Caja abierta desde ${fmtDateTime(preflight.data.caja.abiertaDesde)}`
-                      : "No hay caja abierta"}
+                      : "La caja se abrirá automáticamente al convertir."}
                 </p>
-                {!preflightCargando && preflight.data && !preflight.data.caja ? (
-                  <p className="text-muted-foreground">
-                    Abrí la caja de esta sucursal antes de convertir el presupuesto.
-                  </p>
-                ) : null}
               </div>
             </div>
 

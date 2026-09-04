@@ -4,7 +4,7 @@
 
 La conversión permite que un presupuesto sin ficha de cliente cree una venta de contado contra el único cliente genérico global. El presupuesto conserva `cliente_id = NULL`; la venta guarda el cliente efectivo devuelto por el servidor. La sucursal, la caja, los ítems, el pago, el stock y la vinculación del presupuesto se confirman en una única operación idempotente.
 
-Esta función comercial no autoabre cajas. Si la sucursal del presupuesto no tiene exactamente una caja abierta, la conversión se bloquea y el operador debe abrirla por el circuito normal de Caja. El escritor fiscal legacy sigue retirado y no debe reactivarse como rollback.
+Esta función comercial usa la misma apertura automática que una venta normal. Si la sucursal del presupuesto no tiene caja abierta, la conversión crea una dentro de su misma transacción; si luego falla cualquier validación, también revierte esa apertura. El escritor fiscal legacy sigue retirado y no debe reactivarse como rollback.
 
 La conversión tampoco cambia la identidad fiscal del emisor. No hace falta crear, copiar ni renovar ningún certificado ARCA adicional para habilitarla. Si después se factura la venta, se usa la configuración fiscal que ya corresponde a su sucursal.
 
@@ -50,7 +50,7 @@ SELECT s.id AS sucursal_id,
  ORDER BY s.nombre;
 ```
 
-Para convertir un presupuesto, su sucursal debe mostrar `cajas_abiertas = 1`. La interfaz presenta esa sucursal y `abierta_desde`; nunca abre una sesión por su cuenta.
+La interfaz presenta la sucursal y `abierta_desde` cuando ya existe una sesión. Si muestra cero cajas, informa que la sesión se abrirá automáticamente al convertir. La RPC serializa la apertura por sucursal y comprueba que la venta quede vinculada a esa misma sesión.
 
 ### Flags y retiro legacy
 
@@ -87,9 +87,9 @@ nuevas. Este release no incorpora ni presume ese puente.
 La secuencia operativa es:
 
 1. Ejecutar la matriz SQL y de aplicación en una instancia local reiniciada.
-   Repetir las historias en homologación con caja abierta por el circuito
-   normal y ARCA en modo de prueba; no usar certificados ni endpoints reales
-   para la prueba automatizada.
+   Repetir las historias en homologación tanto con caja abierta como sin caja
+   previa, y con ARCA en modo de prueba; no usar certificados ni endpoints
+   reales para la prueba automatizada.
 2. En producción y todavía sin mutar esquema, ejecutar los preflight de este
    documento: confirmar exactamente un Consumidor Final global elegible,
    revisar la cardinalidad de cajas de cada sucursal candidata y registrar el

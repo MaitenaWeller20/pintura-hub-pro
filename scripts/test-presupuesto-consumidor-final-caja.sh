@@ -757,6 +757,13 @@ SELECT pg_temp.assert_true(
   'la RPC revoca PUBLIC/anon y concede sólo authenticated/service_role'
 );
 SELECT pg_temp.assert_true(
+  NOT has_function_privilege('public','public.caja_sesion_actual(uuid)','execute')
+  AND NOT has_function_privilege('anon','public.caja_sesion_actual(uuid)','execute')
+  AND NOT has_function_privilege('authenticated','public.caja_sesion_actual(uuid)','execute')
+  AND has_function_privilege('service_role','public.caja_sesion_actual(uuid)','execute'),
+  'el helper de apertura automática permanece interno para los clientes'
+);
+SELECT pg_temp.assert_true(
   NOT has_function_privilege('public','public._crear_venta_core_20260823(uuid,uuid,tipo_comprobante,condicion_venta,jsonb,jsonb,numeric,text,text,timestamptz,uuid,uuid)','execute')
   AND NOT has_function_privilege('anon','public._crear_venta_core_20260823(uuid,uuid,tipo_comprobante,condicion_venta,jsonb,jsonb,numeric,text,text,timestamptz,uuid,uuid)','execute')
   AND NOT has_function_privilege('authenticated','public._crear_venta_core_20260823(uuid,uuid,tipo_comprobante,condicion_venta,jsonb,jsonb,numeric,text,text,timestamptz,uuid,uuid)','execute')

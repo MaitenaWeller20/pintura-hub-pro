@@ -34,7 +34,7 @@ import {
   type ConversionPresupuestoInput,
 } from "@/lib/ventas.functions";
 import { esFalloTransporteAmbiguo } from "@/lib/transport-ambiguity";
-import type { CodigoErrorOperacion } from "@/lib/operacion-comercial-segura";
+import { mensajeErrorOperacion, type ErrorOperacionSegura } from "@/lib/operacion-comercial-segura";
 
 type PresupuestoConvertible = {
   id: string;
@@ -59,7 +59,7 @@ function mensajeErrorPreflight(): string {
 }
 
 class ErrorConversionSegura extends Error {
-  constructor(readonly codigo: CodigoErrorOperacion) {
+  constructor(readonly error: ErrorOperacionSegura) {
     super("Error de conversión clasificado por el servidor.");
     this.name = "ErrorConversionSegura";
   }
@@ -70,7 +70,15 @@ function mensajeErrorConversion(cause: unknown): string {
     return "No se pudo confirmar si la venta se creó. Reintentá: se usará la misma operación y no se duplicará.";
   }
   if (cause instanceof ErrorConversionSegura) {
-    switch (cause.codigo) {
+    switch (cause.error.codigo) {
+      case "STOCK_INSUFICIENTE": {
+        const stock = cause.error.stock;
+        const cantidad = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 });
+        const motivo = stock
+          ? `Stock insuficiente para el producto ${stock.codigoProducto}: hay ${cantidad.format(stock.disponible)} y necesitás ${cantidad.format(stock.solicitado)} en esta sucursal. Revisá el stock antes de volver a intentar.`
+          : mensajeErrorOperacion("STOCK_INSUFICIENTE");
+        return `${motivo} No se creó la venta ni se registró ningún cobro.`;
+      }
       case "CAJA_NO_DISPONIBLE":
         return "No se pudo abrir o confirmar la caja de esta sucursal. Volvé a intentar.";
       case "PRESUPUESTO_SIN_ACCESO":
@@ -229,7 +237,7 @@ export function DialogoConvertirPresupuesto({
         facturarAhoraEstableRef.current = facturarAhora;
       }
       const respuesta = await convertir({ data: entrada });
-      if (!respuesta.ok) throw new ErrorConversionSegura(respuesta.error.codigo);
+      if (!respuesta.ok) throw new ErrorConversionSegura(respuesta.error);
       const resultado = respuesta.valor;
       return {
         ciclo,

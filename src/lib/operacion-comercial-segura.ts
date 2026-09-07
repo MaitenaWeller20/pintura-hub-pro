@@ -1,4 +1,6 @@
 export const MENSAJES_ERROR_OPERACION = {
+  STOCK_INSUFICIENTE:
+    "No se puede crear la venta porque no hay stock suficiente. Revisá el stock de los productos en esta sucursal.",
   CAJA_NO_DISPONIBLE: "La caja de esta sucursal ya no está abierta. Abrila y volvé a intentar.",
   CLIENTE_INVALIDO: "El cliente no existe, está inactivo o no es válido para esta operación.",
   PRESUPUESTO_NO_EDITABLE:
@@ -17,6 +19,7 @@ export type CodigoErrorOperacion = keyof typeof MENSAJES_ERROR_OPERACION;
 export type ErrorOperacionSegura = Readonly<{
   codigo: CodigoErrorOperacion;
   mensaje: (typeof MENSAJES_ERROR_OPERACION)[CodigoErrorOperacion];
+  stock?: Readonly<{ codigoProducto: string; disponible: number; solicitado: number }>;
 }>;
 export type ResultadoOperacionSegura<T> =
   | Readonly<{ ok: true; valor: T }>
@@ -43,6 +46,7 @@ function mensajeCausa(cause: unknown): string {
 
 export function codigoSeguroParaError(cause: unknown): CodigoErrorOperacion {
   const mensaje = mensajeCausa(cause).toLocaleLowerCase("es");
+  if (mensaje.startsWith("stock insuficiente de ")) return "STOCK_INSUFICIENTE";
   if (/presupuesto inexistente|presupuesto no encontrado|sin acceso|otra sucursal/.test(mensaje)) {
     return "PRESUPUESTO_SIN_ACCESO";
   }
@@ -84,6 +88,21 @@ function registrarPredeterminado(ambito: AmbitoOperacionComercial, cause: unknow
   console.error(`[${ambito}] operación rechazada en servidor`, cause);
 }
 
+function detalleStockInsuficiente(cause: unknown): ErrorOperacionSegura["stock"] {
+  // Extraemos sólo código y cantidades del RAISE comercial. La descripción de
+  // una conversión contiene un marcador interno y nunca debe llegar al usuario.
+  const partes =
+    /^Stock insuficiente de [^\r\n]+ \(([^()\r\n]{1,80})\): hay (-?\d{1,12}(?:\.\d{1,2})?), se piden (\d{1,12}(?:\.\d{1,2})?)$/i.exec(
+      mensajeCausa(cause),
+    );
+  if (!partes) return undefined;
+  return {
+    codigoProducto: partes[1],
+    disponible: Number(partes[2]),
+    solicitado: Number(partes[3]),
+  };
+}
+
 export async function ejecutarOperacionComercialSegura<T>(
   ambito: AmbitoOperacionComercial,
   ejecutar: () => Promise<T>,
@@ -94,6 +113,10 @@ export async function ejecutarOperacionComercialSegura<T>(
   } catch (cause) {
     registrar(ambito, cause);
     const codigo = codigoSeguroParaError(cause);
-    return { ok: false, error: { codigo, mensaje: mensajeErrorOperacion(codigo) } };
+    const stock = codigo === "STOCK_INSUFICIENTE" ? detalleStockInsuficiente(cause) : undefined;
+    return {
+      ok: false,
+      error: { codigo, mensaje: mensajeErrorOperacion(codigo), ...(stock ? { stock } : {}) },
+    };
   }
 }

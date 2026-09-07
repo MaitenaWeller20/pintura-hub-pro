@@ -21,6 +21,62 @@ function valoresRecursivos(value: unknown, vistos = new Set<unknown>()): string[
 }
 
 describe("frontera cerrada de operaciones comerciales", () => {
+  it("conserva código y cantidades del rechazo real de stock sin exponer el marcador interno", async () => {
+    const resultado = await ejecutarOperacionComercialSegura(
+      "CONVERTIR_PRESUPUESTO",
+      async () => {
+        throw new Error(
+          "Stock insuficiente de __presupuesto_item__:ee83cdd3e3a64dfb82afc83db9176e5b (113.01.123): hay 0.00, se piden 2.00",
+        );
+      },
+      vi.fn(),
+    );
+    expect(resultado).toEqual({
+      ok: false,
+      error: {
+        codigo: "STOCK_INSUFICIENTE",
+        mensaje: expect.stringContaining("stock"),
+        stock: { codigoProducto: "113.01.123", disponible: 0, solicitado: 2 },
+      },
+    });
+    expect(JSON.stringify(resultado)).not.toContain("__presupuesto_item__");
+    expect(JSON.stringify(resultado)).not.toContain("ee83cdd3");
+  });
+
+  it("reconoce stock antes que palabras de otras validaciones en la descripción", async () => {
+    const resultado = await ejecutarOperacionComercialSegura(
+      "CONVERTIR_PRESUPUESTO",
+      async () => {
+        throw {
+          message: "Stock insuficiente de Pintura consumidor final (P-1): hay -1.50, se piden 2.25",
+        };
+      },
+      vi.fn(),
+    );
+    expect(resultado).toMatchObject({
+      ok: false,
+      error: {
+        codigo: "STOCK_INSUFICIENTE",
+        stock: { codigoProducto: "P-1", disponible: -1.5, solicitado: 2.25 },
+      },
+    });
+  });
+
+  it("usa un mensaje de stock seguro si el detalle no tiene el formato esperado", async () => {
+    const resultado = await ejecutarOperacionComercialSegura(
+      "CONVERTIR_PRESUPUESTO",
+      async () => {
+        throw new Error("Stock insuficiente de producto: detalle interno inesperado");
+      },
+      vi.fn(),
+    );
+    expect(resultado).toEqual({
+      ok: false,
+      error: { codigo: "STOCK_INSUFICIENTE", mensaje: expect.stringContaining("stock") },
+    });
+    expect(JSON.stringify(resultado)).not.toContain("detalle interno");
+  });
+
   it("devuelve un éxito cerrado sin alterar el valor", async () => {
     await expect(
       ejecutarOperacionComercialSegura("CREAR_PRESUPUESTO", async () => ({ numero: "P-1" })),

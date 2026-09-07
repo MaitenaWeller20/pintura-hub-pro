@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DialogoConvertirPresupuesto } from "./dialogo-convertir-presupuesto";
+import { ejecutarOperacionComercialSegura } from "@/lib/operacion-comercial-segura";
 
 const PRESUPUESTO_ID = "10000000-0000-4000-8000-000000000001";
 const CLIENTE_PRESUPUESTO_ID = "20000000-0000-4000-8000-000000000001";
@@ -165,6 +166,39 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("diálogo de conversión de presupuesto", () => {
+  it.each(["conv-confirmar", "conv-y-facturar"])(
+    "%s explica el rechazo de stock del servidor y mantiene abierto el presupuesto sin facturar",
+    async (boton) => {
+      const rechazo = await ejecutarOperacionComercialSegura(
+        "CONVERTIR_PRESUPUESTO",
+        async () => {
+          throw new Error(
+            "Stock insuficiente de __presupuesto_item__:ee83cdd3e3a64dfb82afc83db9176e5b (113.01.123): hay 0.00, se piden 2.00",
+          );
+        },
+        vi.fn(),
+      );
+      dobles.convertir.mockResolvedValueOnce(rechazo);
+      const props = renderDialogo();
+      await prepararPago();
+      fireEvent.click(screen.getByTestId(boton));
+
+      const alerta = await screen.findByRole("alert");
+      expect(alerta.textContent).toContain(
+        "Stock insuficiente para el producto 113.01.123: hay 0 y necesitás 2",
+      );
+      expect(alerta.textContent).toContain("No se creó la venta ni se registró ningún cobro");
+      expect(alerta.textContent).not.toContain("__presupuesto_item__");
+      expect(props.onConvertida).not.toHaveBeenCalled();
+      expect(props.onOpenChange).not.toHaveBeenCalled();
+      expect((screen.getByTestId(boton) as HTMLButtonElement).disabled).toBe(false);
+
+      // Después de corregir el stock, se puede reintentar desde el mismo diálogo.
+      fireEvent.click(screen.getByTestId(boton));
+      await waitFor(() => expect(props.onConvertida).toHaveBeenCalledTimes(1));
+    },
+  );
+
   it("inicia un presupuesto anónimo como Consumidor final, sin picker ni cuenta corriente", async () => {
     renderDialogo();
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  calcularCierreDesdeRetiro,
   calcularCorreccionCierre,
   calcularEfectivoCierre,
   generarCierreCajaPdf,
@@ -18,6 +19,24 @@ function textoDelPdf(doc: ReturnType<typeof generarCierreCajaPdf>): string {
 }
 
 describe("cierre de efectivo", () => {
+  it("calcula el saldo que queda en caja a partir del efectivo retirado", () => {
+    expect(calcularCierreDesdeRetiro(421_581.07, 421_581.07, 400_000)).toEqual({
+      diferencia: 0,
+      retirado: 400_000,
+      dejado: 21_581.07,
+      retiroValido: true,
+    });
+  });
+
+  it("rechaza retirar más efectivo del que se contó", () => {
+    expect(calcularCierreDesdeRetiro(100_000, 80_000, 90_000)).toEqual({
+      diferencia: -20_000,
+      retirado: 90_000,
+      dejado: -10_000,
+      retiroValido: false,
+    });
+  });
+
   // Rompería si el retiro se confundiera otra vez con un faltante de caja.
   it("separa retiro, efectivo dejado y diferencia real", () => {
     expect(calcularEfectivoCierre(125_933.17, 125_933.17, 25_933.17)).toEqual({
@@ -168,7 +187,7 @@ describe("PDF del cierre", () => {
 
     expect(texto).toContain("Efectivo retirado al cierre");
     expect(texto).toContain("100.000,00");
-    expect(texto).toContain("Efectivo dejado para mañana");
+    expect(texto).toContain("Saldo de efectivo que queda en caja");
     expect(texto).toContain("25.933,17");
   });
 });

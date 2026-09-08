@@ -167,6 +167,24 @@ export function calcularEfectivoCierre(esperado: number, contado: number, dejado
   };
 }
 
+export function calcularCierreDesdeRetiro(esperado: number, contado: number, retirado: number) {
+  const contadoRedondeado = redondearCentavos(contado);
+  const retiradoRedondeado = redondearCentavos(retirado);
+  const dejado = redondearCentavos(contadoRedondeado - retiradoRedondeado);
+
+  return {
+    diferencia: redondearCentavos(contadoRedondeado - esperado),
+    retirado: retiradoRedondeado,
+    dejado,
+    retiroValido:
+      Number.isFinite(contado) &&
+      Number.isFinite(retirado) &&
+      contadoRedondeado >= 0 &&
+      retiradoRedondeado >= 0 &&
+      dejado >= 0,
+  };
+}
+
 function detalleCobranza(cobranza: CobranzaCierre) {
   const detalle =
     cobranza.detalle && typeof cobranza.detalle === "object" && !Array.isArray(cobranza.detalle)
@@ -251,7 +269,7 @@ export function generarCierreCajaPdf({
   doc.setFontSize(10);
   doc.text(`Efectivo contado antes de retirar: ${fmtMoney(efectivoContado)}`, 14, y);
   doc.text(`Efectivo retirado al cierre: ${fmtMoney(retirado)}`, 14, y + 6);
-  doc.text(`Efectivo dejado para mañana: ${fmtMoney(efectivoDejado)}`, 14, y + 12);
+  doc.text(`Saldo de efectivo que queda en caja: ${fmtMoney(efectivoDejado)}`, 14, y + 12);
   y += 12;
 
   if (sesion.notas) {

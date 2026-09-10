@@ -213,4 +213,37 @@ DELETE FROM public.precio_operaciones
  WHERE idempotency_key::text ~ '^(1{8}|2{8}|3{8}|4{8}|5{8}|6{8}|7{8})-';
 SQL
 
+# La ficha nueva nace en 0%. El formulario envía ese 0 explícitamente también
+# para empleados, así que el guard debe permitir el valor seguro pero seguir
+# reservando cualquier descuento comercial real para administradores.
+alta_cero=$($PSQL -tAc "
+BEGIN;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub',(SELECT id::text FROM auth.users WHERE email='empleado@local.test'),
+                    'role','authenticated')::text, true);
+INSERT INTO public.proveedores (razon_social, descuento_porcentaje)
+VALUES ('TEST EMPLEADO CERO', 0);
+SELECT descuento_porcentaje FROM public.proveedores
+ WHERE razon_social='TEST EMPLEADO CERO';
+ROLLBACK;" 2>&1 || true)
+if [[ "$(echo "$alta_cero" | grep -E '^[[:space:]]*0([.]00)?[[:space:]]*$' | tail -1 | tr -d ' ')" =~ ^0([.]00)?$ ]]; then
+  echo "  ✓ un empleado puede crear un proveedor con 0%"
+else
+  echo "  ✗ un empleado no pudo crear un proveedor con 0% — $alta_cero"; fallos=$((fallos+1))
+fi
+
+alta_descuento=$($PSQL -tAc "
+BEGIN;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub',(SELECT id::text FROM auth.users WHERE email='empleado@local.test'),
+                    'role','authenticated')::text, true);
+INSERT INTO public.proveedores (razon_social, descuento_porcentaje)
+VALUES ('TEST EMPLEADO DESCUENTO', 1);
+ROLLBACK;" 2>&1 || true)
+if echo "$alta_descuento" | grep -q "administrador"; then
+  echo "  ✓ un empleado no puede crear un proveedor con descuento"
+else
+  echo "  ✗ un empleado PUDO crear un proveedor con descuento — $alta_descuento"; fallos=$((fallos+1))
+fi
+
 if [[ $fallos -eq 0 ]]; then echo -e "\n✅ Todo verde.\n"; else echo -e "\n❌ $fallos fallo(s).\n"; exit 1; fi

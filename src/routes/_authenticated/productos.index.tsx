@@ -38,6 +38,7 @@ import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney } from "@/lib/format";
 import {
+  DESCUENTO_PROVEEDOR_DEFAULT,
   MARKUP_DEFAULT,
   OPERACION_LABEL,
   ORIGEN_AYUDA,
@@ -129,7 +130,9 @@ function Productos() {
     queryFn: async () => (await supabase.from("settings").select("*").maybeSingle()).data,
   });
   const markupDefault = Number(settings?.markup_default_porcentaje ?? MARKUP_DEFAULT);
-  const descuentoProveedor = Number(settings?.descuento_proveedor_porcentaje ?? 42);
+  const descuentoProveedor = Number(
+    settings?.descuento_proveedor_porcentaje ?? DESCUENTO_PROVEEDOR_DEFAULT,
+  );
 
   // Paginado explícito: PostgREST corta en 1000 filas sin avisar, así que esta
   // pantalla mostraba "1000 de 1000" teniendo 1133 productos. El orden tiene que

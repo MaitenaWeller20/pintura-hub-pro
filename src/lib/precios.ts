@@ -21,8 +21,8 @@
 
 /** Markup del negocio. Sólo se usa si `settings.markup_default_porcentaje` no está disponible. */
 export const MARKUP_DEFAULT = 30;
-/** Descuento comercial de Quimex. Sólo se usa si `settings` no está disponible. */
-export const DESCUENTO_PROVEEDOR_DEFAULT = 42;
+/** Sin descuento: fallback seguro cuando no hay producto, proveedor ni settings. */
+export const DESCUENTO_PROVEEDOR_DEFAULT = 0;
 /** Las únicas alícuotas que acepta AFIP (y el CHECK de la tabla). */
 export const ALICUOTAS_IVA = [0, 2.5, 5, 10.5, 21, 27] as const;
 
@@ -59,12 +59,12 @@ const num = (v: unknown, def: number): number => {
  * El descuento comercial que corresponde aplicarle a un producto.
  *
  * Escalera: **el del producto, si no el del proveedor, si no el global de
- * settings, si no el del negocio.** Es la misma forma que ya tiene el markup
+ * settings, si no 0%.** Es la misma forma que ya tiene el markup
  * (`producto ?? settings ?? default`), para no inventar un concepto nuevo.
  *
  * El escalón del PRODUCTO se agregó el 04/08/2026: la clienta avisó que "no
  * todos es el 42%". Quimex publica una lista sola pero no descuenta igual todos
- * los renglones, así que el descuento no es una propiedad del proveedor.
+ * los renglones, así que existe además el override por producto.
  *
  * Pregunta por `null`, NO por falsy: un descuento de **0 es válido** —comprarle a
  * un proveedor a precio de lista, sin descuento— y no puede caer al global. Es el

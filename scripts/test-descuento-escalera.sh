@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# La escalera del descuento: producto ?? proveedor ?? settings ?? 42
+# La escalera del descuento: producto ?? proveedor ?? settings ?? 0
 #
 # Existe en DOS lados —`descuentoEfectivo` en TypeScript y el COALESCE de
 # `cambiar_precios_masivo` en SQL— y los dos tienen que dar el mismo número.
@@ -35,6 +35,7 @@ CASOS=(
   "0|20|30|1000.00"
   "NULL|0|30|1000.00"
   "42|NULL|30|580.00"
+  "NULL|NULL|0|1000.00"
 )
 
 echo "== La escalera del descuento en SQL, con una lista de \$1.000 =="

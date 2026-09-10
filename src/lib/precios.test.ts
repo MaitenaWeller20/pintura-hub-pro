@@ -32,13 +32,14 @@ describe("costoDeLista", () => {
   it("tolera basura", () => {
     expect(costoDeLista(null, DESCUENTO)).toBe(0);
     expect(costoDeLista("", DESCUENTO)).toBe(0);
-    // Sin descuento válido cae al del negocio, no a 0% (que inflaría el costo).
-    expect(costoDeLista(LISTA, null)).toBe(COSTO);
+    // Sin descuento válido compra a precio de lista: un proveedor nuevo no
+    // puede heredar silenciosamente el 42% comercial de Quimex.
+    expect(costoDeLista(LISTA, null)).toBe(LISTA);
   });
 });
 
 describe("descuentoEfectivo", () => {
-  const GLOBAL = { descuento_proveedor_porcentaje: 42 };
+  const GLOBAL = { descuento_proveedor_porcentaje: 0 };
 
   // EL CASO QUE PIDIÓ LA CLIENTA: "no todos es el 42%". Quimex manda una lista
   // sola y no descuenta igual todos los renglones.
@@ -55,22 +56,24 @@ describe("descuentoEfectivo", () => {
     ).toBe(35);
   });
 
-  it("sin descuento propio hereda el global", () => {
-    expect(descuentoEfectivo(null, { descuento_porcentaje: null }, GLOBAL)).toBe(42);
-    expect(descuentoEfectivo(null, null, GLOBAL)).toBe(42);
+  it("un proveedor nuevo sin descuento configurado usa 0%", () => {
+    expect(descuentoEfectivo(null, { descuento_porcentaje: null }, GLOBAL)).toBe(0);
+    expect(descuentoEfectivo(null, null, GLOBAL)).toBe(0);
   });
 
   // Un producto (o un proveedor) al que se le compra a precio de lista, sin
   // descuento. Si esto cayera al global, su costo quedaría 42% más barato.
   it("un descuento de 0 es válido y NO cae al escalón de abajo", () => {
-    expect(descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_porcentaje: 35 }, GLOBAL)).toBe(0);
+    expect(
+      descuentoEfectivo({ descuento_porcentaje: 0 }, { descuento_porcentaje: 35 }, GLOBAL),
+    ).toBe(0);
     expect(descuentoEfectivo(null, { descuento_porcentaje: 0 }, GLOBAL)).toBe(0);
     expect(descuentoEfectivo(null, null, { descuento_proveedor_porcentaje: 0 })).toBe(0);
   });
 
-  it("sin nada cargado usa el del negocio", () => {
+  it("sin nada cargado usa 0%", () => {
     expect(descuentoEfectivo(null, null, null)).toBe(DESCUENTO_PROVEEDOR_DEFAULT);
-    expect(DESCUENTO_PROVEEDOR_DEFAULT).toBe(42);
+    expect(DESCUENTO_PROVEEDOR_DEFAULT).toBe(0);
   });
 
   // La escalera completa, escalón por escalón. Es el contrato que el COALESCE
@@ -79,7 +82,7 @@ describe("descuentoEfectivo", () => {
     [10, 20, 30, 10],
     [null, 20, 30, 20],
     [null, null, 30, 30],
-    [null, null, null, 42],
+    [null, null, null, 0],
     [0, 20, 30, 0],
     [null, 0, 30, 0],
     [null, null, 0, 0],
@@ -396,8 +399,8 @@ describe("simularOperacion — el espejo de la RPC", () => {
   it("marca cambia=false cuando la operación no toca nada", () => {
     const p = {
       precio_lista: 10000,
-      precio_fabrica: 5800,
-      precio_sin_iva: 7540,
+      precio_fabrica: 10000,
+      precio_sin_iva: 13000,
       iva_porcentaje: 21,
       markup_porcentaje: 30,
     };

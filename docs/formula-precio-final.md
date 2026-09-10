@@ -184,7 +184,8 @@ precio_final = costo × (1 + margen) × 1,21      ← markup = margen
 Idénticas. Las diferencias son sólo de **configuración**, y son tres:
 
 1. **El descuento.** Hay que poner **29,0848%** en el proveedor
-   (`proveedores.descuento_porcentaje`). El default del sistema es 42%.
+   (`proveedores.descuento_porcentaje`). El default del sistema es 0% (sin
+   descuento); el 42% de Quimex vive en la ficha de ese proveedor.
 2. **El markup por tramos.** El sistema tiene **un markup por producto** (o uno
    global), no una escala. Dos caminos posibles:
    - **(a)** con la tabla de escalas a la vista, cargar el markup que le toca a

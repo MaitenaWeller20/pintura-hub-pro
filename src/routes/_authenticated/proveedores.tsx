@@ -31,6 +31,7 @@ import { coincideDocumento, fmtDocumento, soloDigitos } from "@/lib/documento";
 import { errorDocumentoLegible } from "@/lib/duplicado-documento";
 import { validarCuitDni } from "@/lib/fiscal/codigos";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { DESCUENTO_PROVEEDOR_DEFAULT } from "@/lib/precios";
 
 export const Route = createFileRoute("/_authenticated/proveedores")({
   component: ProveedoresPage,
@@ -159,7 +160,7 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
       direccion: "",
       condicion_cta_cte: false,
       activo: true,
-      descuento_porcentaje: null,
+      descuento_porcentaje: DESCUENTO_PROVEEDOR_DEFAULT,
     },
   );
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -239,7 +240,7 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
           <div className="col-span-2">
             <Label>
               Descuento comercial %{" "}
-              <span className="text-xs text-muted-foreground">(vacío = usa el general)</span>
+              <span className="text-xs text-muted-foreground">(0 = sin descuento)</span>
             </Label>
             <Input
               type="number"
@@ -249,7 +250,10 @@ function ProveedorDialog({ open, onClose, editing, onSaved }: any) {
               value={form.descuento_porcentaje ?? ""}
               disabled={!cu?.isAdmin}
               onChange={(e) =>
-                set("descuento_porcentaje", e.target.value === "" ? null : Number(e.target.value))
+                set(
+                  "descuento_porcentaje",
+                  e.target.value === "" ? DESCUENTO_PROVEEDOR_DEFAULT : Number(e.target.value),
+                )
               }
             />
             <p className="text-[11px] text-muted-foreground mt-1">

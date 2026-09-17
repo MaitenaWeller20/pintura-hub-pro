@@ -226,7 +226,7 @@ function NuevaVenta() {
     const q = prodQuery.trim().toLowerCase();
     if (!q) return productosCatalogo;
     const coinciden = productosCatalogo.filter(
-      (p: any) =>
+      (p) =>
         p.codigo?.toLowerCase().includes(q) ||
         p.nombre?.toLowerCase().includes(q) ||
         p.proveedor?.razon_social?.toLowerCase().includes(q),
@@ -757,7 +757,9 @@ function NuevaVenta() {
   const navegarACola = (
     ventaId: string,
     resultado:
-      "venta_creada_factura_pendiente" | "venta_creada_requiere_revision" | "factura_aprobada",
+      | "venta_creada_factura_pendiente"
+      | "venta_creada_requiere_revision"
+      | "factura_aprobada",
   ) => {
     navegacionFiscalRef.current = true;
     window.location.assign(

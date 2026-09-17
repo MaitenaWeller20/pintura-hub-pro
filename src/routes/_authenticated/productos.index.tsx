@@ -877,8 +877,9 @@ function ProductoDialog({
       if (faltante) throw new Error(faltante);
 
       const proveedorNombre =
-        proveedores?.find((proveedor: any) => proveedor.id === form.proveedor_id)?.razon_social ??
-        "ese proveedor";
+        proveedores?.find(
+          (proveedor: { id: string; razon_social?: string }) => proveedor.id === form.proveedor_id,
+        )?.razon_social ?? "ese proveedor";
       const payload = {
         codigo: String(form.codigo).trim(),
         nombre: String(form.nombre).trim(),

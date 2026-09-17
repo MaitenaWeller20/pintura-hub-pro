@@ -24,6 +24,14 @@ if (url && !PLACEHOLDER_SECRETO.test(url)) {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       errores.push(`${NOMBRE_URL} debe usar HTTP o HTTPS.`);
     }
+    if (
+      esDeploymentVercel &&
+      (parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "[::1]")
+    ) {
+      errores.push(`${NOMBRE_URL} no puede apuntar a un entorno local en Vercel.`);
+    }
   } catch {
     errores.push(`${NOMBRE_URL} debe ser una URL HTTP o HTTPS válida.`);
   }

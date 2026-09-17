@@ -42,6 +42,17 @@ test("rechaza un deployment de Vercel sin configuración pública de Supabase", 
   assert.match(resultado.stderr, /VITE_SUPABASE_PUBLISHABLE_KEY.*obligatoria/i);
 });
 
+test("rechaza una URL local de Supabase en un deployment de Vercel", () => {
+  const resultado = ejecutarValidador({
+    VERCEL: "1",
+    VITE_SUPABASE_URL: "http://127.0.0.1:54321",
+    VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_prueba",
+  });
+
+  assert.notEqual(resultado.status, 0);
+  assert.match(resultado.stderr, /VITE_SUPABASE_URL.*local.*Vercel/i);
+});
+
 test("acepta una URL HTTPS y una clave publicable reales", () => {
   const resultado = ejecutarValidador({
     VERCEL: "1",

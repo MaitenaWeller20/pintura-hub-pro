@@ -9,7 +9,9 @@ import {
   ejecutarListadoComprobantesOriginalesSeguro,
   ejecutarListadoVentasSeguro,
   ejecutarLecturaOriginalFiscalAutorizada,
+  listadoVentasInputSchema,
   normalizarConversion,
+  rangoFechasListadoVentas,
   ventaInputSchema,
 } from "./ventas.functions";
 
@@ -379,11 +381,31 @@ describe("fachadas cerradas de lectura de ventas", () => {
     cae: "CAE",
   };
 
+  it("valida y convierte el rango comercial completo según horario argentino", () => {
+    expect(
+      listadoVentasInputSchema.parse({ fecha_desde: "2026-09-17", fecha_hasta: "2026-09-17" }),
+    ).toEqual({ fecha_desde: "2026-09-17", fecha_hasta: "2026-09-17" });
+    expect(
+      rangoFechasListadoVentas({ fechaDesde: "2026-09-17", fechaHasta: "2026-09-17" }),
+    ).toEqual({
+      fechaDesdeUtc: "2026-09-17T03:00:00.000Z",
+      fechaHastaExclusivaUtc: "2026-09-18T03:00:00.000Z",
+    });
+    expect(() =>
+      listadoVentasInputSchema.parse({ fecha_desde: "2026-09-18", fecha_hasta: "2026-09-17" }),
+    ).toThrow();
+  });
+
   it("autoriza y carga por RLS antes de leer evidencia de listado en un único batch", async () => {
     const orden: string[] = [];
     const ventas = [{ id: original.id, cliente: null, sucursal: null, pagos: [] }];
     const resultado = await ejecutarListadoVentasSeguro(
-      { sucursalId: "sucursal-inyectada", estadoPago: null },
+      {
+        sucursalId: "sucursal-inyectada",
+        estadoPago: null,
+        fechaDesdeUtc: "2026-09-17T03:00:00.000Z",
+        fechaHastaExclusivaUtc: "2026-09-18T03:00:00.000Z",
+      },
       {
         autorizar: async () => {
           orden.push("autorizar");
@@ -392,6 +414,8 @@ describe("fachadas cerradas de lectura de ventas", () => {
         cargarVisibles: async (filtros) => {
           orden.push("rls");
           expect(filtros.sucursalId).toBe("sucursal-a");
+          expect(filtros.fechaDesdeUtc).toBe("2026-09-17T03:00:00.000Z");
+          expect(filtros.fechaHastaExclusivaUtc).toBe("2026-09-18T03:00:00.000Z");
           return ventas;
         },
         cargarEvidencias: async (ids) => {
@@ -409,7 +433,12 @@ describe("fachadas cerradas de lectura de ventas", () => {
     const cargarEvidencias = vi.fn();
     await expect(
       ejecutarListadoVentasSeguro(
-        { sucursalId: null, estadoPago: null },
+        {
+          sucursalId: null,
+          estadoPago: null,
+          fechaDesdeUtc: null,
+          fechaHastaExclusivaUtc: null,
+        },
         {
           autorizar: async () => {
             throw new Error("sin sección");

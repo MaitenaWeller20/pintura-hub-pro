@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
   Select,
@@ -134,6 +135,8 @@ function VentasList() {
   const qc = useQueryClient();
   const [sucFilter, setSucFilter] = useState("");
   const [pagoFilter, setPagoFilter] = useState("all");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
   const [q, setQ] = useState("");
   const [verVenta, setVerVenta] = useState<VentaDetalle | null>(null);
   const [detalleCargandoId, setDetalleCargandoId] = useState<string | null>(null);
@@ -171,14 +174,16 @@ function VentasList() {
   });
 
   const { data: ventas = [], isLoading: loadingVentas } = useQuery({
-    queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
-    enabled: !!cu,
+    queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter, fechaDesde, fechaHasta],
+    enabled: !!cu && (!fechaDesde || !fechaHasta || fechaDesde <= fechaHasta),
     queryFn: () =>
       listarVentasFn({
         data: {
           sucursal_id: sucFilter || undefined,
           estado_pago:
             pagoFilter === "all" ? undefined : (pagoFilter as "PAGADO" | "PARCIAL" | "PENDIENTE"),
+          fecha_desde: fechaDesde || undefined,
+          fecha_hasta: fechaHasta || undefined,
         },
       }),
   });
@@ -385,7 +390,52 @@ function VentasList() {
               <SelectItem value="PENDIENTE">Pendiente</SelectItem>
             </SelectContent>
           </Select>
+          <div className="space-y-1">
+            <Label htmlFor="ventas-fecha-desde" className="text-xs">
+              Desde
+            </Label>
+            <Input
+              id="ventas-fecha-desde"
+              type="date"
+              value={fechaDesde}
+              max={fechaHasta || undefined}
+              onChange={(e) => setFechaDesde(e.target.value)}
+              className="w-auto"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="ventas-fecha-hasta" className="text-xs">
+              Hasta
+            </Label>
+            <Input
+              id="ventas-fecha-hasta"
+              type="date"
+              value={fechaHasta}
+              min={fechaDesde || undefined}
+              onChange={(e) => setFechaHasta(e.target.value)}
+              className="w-auto"
+            />
+          </div>
+          {(fechaDesde || fechaHasta) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-end"
+              onClick={() => {
+                setFechaDesde("");
+                setFechaHasta("");
+              }}
+            >
+              Limpiar fechas
+            </Button>
+          )}
         </div>
+        {fechaDesde && fechaHasta && fechaDesde > fechaHasta && (
+          <p className="mt-2 text-xs text-destructive">
+            La fecha desde no puede ser posterior a la fecha hasta.
+          </p>
+        )}
       </SectionCard>
 
       <DataTable

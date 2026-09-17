@@ -92,7 +92,9 @@ function NuevoPresupuesto() {
       const filas = ((
         await supabase
           .from("productos")
-          .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
+          .select(
+            "id, codigo, nombre, precio_sin_iva, iva_porcentaje, proveedor:proveedores(razon_social)",
+          )
           .or(filtro)
           .eq("activo", true)
           .eq("archivado", false)
@@ -280,6 +282,9 @@ function NuevoPresupuesto() {
               >
                 <span className="font-mono text-xs w-32 shrink-0">{p.codigo}</span>
                 <span className="truncate flex-1">{p.nombre}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {p.proveedor?.razon_social ?? "Sin proveedor"}
+                </span>
                 <span className="font-mono text-xs">
                   {fmtMoney(conIva(p.precio_sin_iva, p.iva_porcentaje))}
                 </span>

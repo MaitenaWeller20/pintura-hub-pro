@@ -147,7 +147,9 @@ function EditarPresupuesto() {
       const filas = ((
         await supabase
           .from("productos")
-          .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
+          .select(
+            "id, codigo, nombre, precio_sin_iva, iva_porcentaje, proveedor:proveedores(razon_social)",
+          )
           .or(filtro)
           .eq("activo", true)
           .eq("archivado", false)
@@ -390,6 +392,9 @@ function EditarPresupuesto() {
               >
                 <span className="font-mono text-xs w-32 shrink-0">{r.codigo}</span>
                 <span className="truncate flex-1">{r.nombre}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {r.proveedor?.razon_social ?? "Sin proveedor"}
+                </span>
                 <span className="font-mono text-xs">
                   {fmtMoney(conIva(r.precio_sin_iva, r.iva_porcentaje))}
                 </span>

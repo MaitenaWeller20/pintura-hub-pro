@@ -37,6 +37,7 @@ import {
 } from "@/lib/importar-productos";
 import { DESCUENTO_PROVEEDOR_DEFAULT, MARKUP_DEFAULT, descuentoEfectivo } from "@/lib/precios";
 import { traerTodo } from "@/lib/supabase-paginado";
+import { claveProductoProveedor, productoGuardadoParaProveedor } from "@/lib/productos-identidad";
 import { fmtMoney } from "@/lib/format";
 import { toast } from "sonner";
 import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
@@ -86,11 +87,13 @@ function ImportarProductos() {
   // descuento propio.
   const [descuentoGlobal, setDescuentoGlobal] = useState<number>(DESCUENTO_PROVEEDOR_DEFAULT);
   const [markupDef, setMarkupDef] = useState<number>(MARKUP_DEFAULT);
-  // Lo que ya está en el catálogo, por código: el sugerido y el markup propio de
-  // cada producto (ver calcularFila). Paginado, porque PostgREST corta en 1000 sin
+  // Lo que ya está en el catálogo, por proveedor + código: el sugerido y el markup
+  // propio de cada producto (ver calcularFila). Paginado, porque PostgREST corta en 1000 sin
   // avisar y el catálogo tiene más: sin paginar, los últimos productos importarían
   // con el cálculo equivocado y nadie se enteraría.
-  const [guardados, setGuardados] = useState<Map<string, ProductoGuardado>>(new Map());
+  const [guardados, setGuardados] = useState<
+    Map<string, ProductoGuardado & { id: string; proveedor_id: string | null }>
+  >(new Map());
   // "cargando" | "listo" | "error": si falla, el botón queda deshabilitado y hace
   // falta decir QUÉ pasó y ofrecer reintentar. Antes el error y la carga eran el
   // mismo estado, así que un corte de red de dos segundos dejaba el botón muerto
@@ -128,6 +131,7 @@ function ImportarProductos() {
     setCatalogo("cargando");
     try {
       const { filas, truncado } = await traerTodo<{
+        id: string;
         codigo: string;
         precio_sugerido_publico: number | null;
         markup_porcentaje: number | null;
@@ -140,7 +144,7 @@ function ImportarProductos() {
         const { data, error, count } = await supabase
           .from("productos")
           .select(
-            "codigo, precio_sugerido_publico, markup_porcentaje, descuento_porcentaje, precio_sin_iva, activo, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
+            "id, codigo, precio_sugerido_publico, markup_porcentaje, descuento_porcentaje, precio_sin_iva, activo, proveedor_id, proveedor:proveedores(descuento_porcentaje)",
             { count: "exact" },
           )
           .order("codigo")
@@ -150,16 +154,16 @@ function ImportarProductos() {
       setGuardados(
         new Map(
           filas.map((p) => [
-            // Indexado por el código YA recortado: la fila de la planilla se
-            // busca con `codigo.trim()` (que es además lo que se va a guardar).
-            // Sin esto, un código con un espacio de más en la base no encontraba
-            // su sugerido y el precio se degradaba al cálculo por costo.
-            String(p.codigo ?? "").trim(),
+            // El proveedor forma parte de la identidad: COP y QUIMEX pueden usar
+            // el mismo código sin compartir precios ni descuentos. El código va
+            // recortado porque eso mismo es lo que se persiste.
+            claveProductoProveedor(p.codigo, p.proveedor_id),
             {
+              id: p.id,
+              proveedor_id: p.proveedor_id,
               precio_sugerido_publico:
                 p.precio_sugerido_publico == null ? null : Number(p.precio_sugerido_publico),
               markup_porcentaje: p.markup_porcentaje == null ? null : Number(p.markup_porcentaje),
-              proveedor_id: p.proveedor_id ?? null,
               // El propio del producto. Gana siempre, incluso si la pantalla
               // eligió proveedor para todo el archivo.
               descuento_porcentaje:
@@ -246,6 +250,10 @@ function ImportarProductos() {
   };
 
   const confirmar = async () => {
+    if (!proveedorId) {
+      toast.error("Elegí el proveedor de la lista antes de importar.");
+      return;
+    }
     setBusy(true);
     const errs: Array<{ row: number; msg: string }> = [];
     // Cache categorías/marcas
@@ -326,7 +334,7 @@ function ImportarProductos() {
 
         // Toda la cadena de precios vive en src/lib/precios.ts. Acá sólo se traduce
         // la fila y se decide qué se escribe.
-        const g = guardados.get(codigo);
+        const g = productoGuardadoParaProveedor(guardados, codigo, proveedorId);
         const f = calcularFila(
           r,
           mapping,
@@ -395,8 +403,8 @@ function ImportarProductos() {
           // que antes: el IVA pasó a ser un DIVISOR (el sugerido viene c/IVA), así
           // que un valor basura ya no ensucia la vista, corrompe lo que se factura.
           iva_porcentaje: f.iva_porcentaje,
-          // Sólo si se eligió uno: si no, no se pisa el que el producto ya tenía.
-          ...(proveedorId ? { proveedor_id: proveedorId } : {}),
+          // Obligatorio: junto con el código identifica qué producto se actualiza.
+          proveedor_id: proveedorId,
           ...(mapping.categoria ? { categoria_id: cat_id ?? null } : {}),
           ...(mapping.marca ? { marca_id: mk_id ?? null } : {}),
           ...(mapping.unidad_medida
@@ -418,9 +426,11 @@ function ImportarProductos() {
         };
         // Deliberadamente NO se escribe stock_sucursal acá: la lista de precios no
         // trae stock (ver el comentario del encabezado del archivo).
-        const { error } = await supabase
-          .from("productos")
-          .upsert(payload, { onConflict: "codigo" });
+        const consulta =
+          g?.id && g.proveedor_id == null
+            ? supabase.from("productos").update(payload).eq("id", g.id)
+            : supabase.from("productos").upsert(payload, { onConflict: "proveedor_id,codigo" });
+        const { error } = await consulta;
         if (error) throw error;
       } catch (e: any) {
         errs.push({ row: i + 2, msg: e.message });
@@ -443,13 +453,14 @@ function ImportarProductos() {
 
   // La vista previa calcula lo mismo que la importación, con la misma función:
   // lo que se ve es lo que se guarda.
-  // Con proveedor elegido para el archivo manda el descuento de la pantalla; sin
-  // proveedor elegido, cada producto usa el de SU proveedor. El descuento PROPIO
-  // del producto le gana a los dos y por eso no se anula acá.
+  // El proveedor del archivo es obligatorio y manda su descuento de pantalla.
+  // El descuento PROPIO del producto le gana igual: pertenece a ese renglón.
   const guardadoDe = (codigo: string) => {
-    const g = guardados.get(codigo);
+    const g = proveedorId
+      ? productoGuardadoParaProveedor(guardados, codigo, proveedorId)
+      : undefined;
     if (!g) return undefined;
-    return proveedorId ? { ...g, descuento_proveedor_porcentaje: null } : g;
+    return { ...g, descuento_proveedor_porcentaje: null };
   };
   const paramsPrecio = {
     descuento: Number(descuento) || 0,
@@ -464,7 +475,7 @@ function ImportarProductos() {
             return calcularFila(r, mapping, paramsPrecio, guardadoDe(codigo));
           }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, mapping, guardados, paramsPrecio.descuento, paramsPrecio.markupDefault],
+    [rows, mapping, guardados, proveedorId, paramsPrecio.descuento, paramsPrecio.markupDefault],
   );
   const previa = calculadas.slice(0, 10);
   const resumen = useMemo(() => {
@@ -581,7 +592,7 @@ function ImportarProductos() {
                 <Select
                   value={proveedorId || "__none__"}
                   onValueChange={(v) => {
-                    const id = v === "__none__" ? "" : v;
+                    const id = v;
                     setProveedorId(id);
                     // El descuento del proveedor elegido se carga solo, pero queda
                     // editable: la lista de hoy puede venir con otro. SIEMPRE se
@@ -603,7 +614,9 @@ function ImportarProductos() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__none__">— (no cambiar el proveedor)</SelectItem>
+                    <SelectItem value="__none__" disabled>
+                      Elegí un proveedor
+                    </SelectItem>
                     {proveedores.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.razon_social}
@@ -612,9 +625,8 @@ function ImportarProductos() {
                   </SelectContent>
                 </Select>
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Todos los productos de este archivo van a quedar con este proveedor. Sirve para
-                  después poder filtrarlos y moverles los precios juntos. Si no elegís ninguno,{" "}
-                  <strong>no se toca</strong> el proveedor que ya tengan.
+                  Es obligatorio porque un mismo código puede existir en proveedores distintos. La
+                  importación actualiza únicamente los productos de este proveedor.
                 </p>
               </div>
               <div>
@@ -747,7 +759,9 @@ function ImportarProductos() {
             <Button
               className="mt-3"
               onClick={confirmar}
-              disabled={busy || !mapping.codigo || !mapping.nombre || catalogo !== "listo"}
+              disabled={
+                busy || !proveedorId || !mapping.codigo || !mapping.nombre || catalogo !== "listo"
+              }
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               {busy ? `Importando… ${progreso + 1} de ${rows.length}` : "Confirmar importación"}
@@ -757,6 +771,10 @@ function ImportarProductos() {
                 Puede tardar unos minutos. <strong>No cierres esta pestaña</strong>: si se corta a
                 la mitad, van a quedar productos con el precio nuevo y otros con el viejo. Si eso
                 pasa, volvé a subir el mismo archivo — importar dos veces no duplica nada.
+              </p>
+            ) : !proveedorId ? (
+              <p className="text-xs text-warning mt-2">
+                Elegí el proveedor al que pertenece esta lista.
               </p>
             ) : !mapping.codigo || !mapping.nombre ? (
               <p className="text-xs text-muted-foreground mt-2">

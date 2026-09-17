@@ -208,7 +208,7 @@ function NuevaVenta() {
         const { data, error, count } = await supabase
           .from("productos")
           .select(
-            "id,codigo,nombre,precio_sin_iva,iva_porcentaje,stock_sucursal(cantidad,sucursal_id)",
+            "id,codigo,nombre,precio_sin_iva,iva_porcentaje,proveedor:proveedores(razon_social),stock_sucursal(cantidad,sucursal_id)",
             { count: "exact" },
           )
           .eq("activo", true)
@@ -226,7 +226,10 @@ function NuevaVenta() {
     const q = prodQuery.trim().toLowerCase();
     if (!q) return productosCatalogo;
     const coinciden = productosCatalogo.filter(
-      (p: any) => p.codigo?.toLowerCase().includes(q) || p.nombre?.toLowerCase().includes(q),
+      (p: any) =>
+        p.codigo?.toLowerCase().includes(q) ||
+        p.nombre?.toLowerCase().includes(q) ||
+        p.proveedor?.razon_social?.toLowerCase().includes(q),
     );
     // Con 1572 productos, "blanco" matchea 161: por código el que se busca
     // queda sepultado. Primero lo que arranca con lo tipeado.
@@ -754,9 +757,7 @@ function NuevaVenta() {
   const navegarACola = (
     ventaId: string,
     resultado:
-      | "venta_creada_factura_pendiente"
-      | "venta_creada_requiere_revision"
-      | "factura_aprobada",
+      "venta_creada_factura_pendiente" | "venta_creada_requiere_revision" | "factura_aprobada",
   ) => {
     navegacionFiscalRef.current = true;
     window.location.assign(
@@ -1319,6 +1320,7 @@ function NuevaVenta() {
                     </div>
                     <div className="pl-30 text-xs text-muted-foreground">
                       {fmtMoney(conIva(p.precio_sin_iva, p.iva_porcentaje))} final · IVA incluido
+                      {` · Proveedor: ${p.proveedor?.razon_social ?? "sin proveedor"}`}
                       {yaEsta && " · ya está en el comprobante"}
                     </div>
                   </button>

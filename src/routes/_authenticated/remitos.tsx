@@ -493,7 +493,7 @@ function RemitoDialog({ open, remito = null, onClose, onSaved }: any) {
       const filas = ((
         await supabase
           .from("productos")
-          .select("id,codigo,nombre")
+          .select("id,codigo,nombre,proveedor:proveedores(razon_social)")
           .eq("archivado", false)
           .or(filtro)
           .order("codigo")
@@ -659,7 +659,10 @@ function RemitoDialog({ open, remito = null, onClose, onSaved }: any) {
                   >
                     <span className="w-28 shrink-0 font-mono text-xs">{p.codigo}</span>
                     <span className="truncate">{p.nombre}</span>
-                    {yaEsta && <span className="ml-auto shrink-0 text-xs">ya está</span>}
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                      {p.proveedor?.razon_social ?? "Sin proveedor"}
+                    </span>
+                    {yaEsta && <span className="shrink-0 text-xs">ya está</span>}
                   </button>
                 );
               })}

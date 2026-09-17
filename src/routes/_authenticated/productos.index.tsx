@@ -53,6 +53,7 @@ import {
   simularOperacion,
 } from "@/lib/precios";
 import { activables, motivoNoActivar, type ProductoActivable } from "@/lib/productos-activar";
+import { faltanteAltaProducto, mensajeErrorProducto } from "@/lib/productos-identidad";
 import { uuidv4 } from "@/lib/uuid";
 import { toast } from "sonner";
 import {
@@ -191,7 +192,7 @@ function Productos() {
           return false;
         if (
           q &&
-          !`${p.codigo} ${p.nombre} ${p.marca?.nombre ?? ""}`
+          !`${p.codigo} ${p.nombre} ${p.marca?.nombre ?? ""} ${p.proveedor?.razon_social ?? ""}`
             .toLowerCase()
             .includes(q.toLowerCase())
         )
@@ -481,7 +482,7 @@ function Productos() {
       <SectionCard>
         <div className="flex flex-wrap gap-2 items-center">
           <Input
-            placeholder="Buscar por código, nombre o marca…"
+            placeholder="Buscar por código, nombre, marca o proveedor…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="max-w-xs"
@@ -868,9 +869,19 @@ function ProductoDialog({
 
   const m = useMutation({
     mutationFn: async () => {
-      const payload = {
+      const faltante = faltanteAltaProducto({
         codigo: form.codigo,
         nombre: form.nombre,
+        proveedorId: form.proveedor_id,
+      });
+      if (faltante) throw new Error(faltante);
+
+      const proveedorNombre =
+        proveedores?.find((proveedor: any) => proveedor.id === form.proveedor_id)?.razon_social ??
+        "ese proveedor";
+      const payload = {
+        codigo: String(form.codigo).trim(),
+        nombre: String(form.nombre).trim(),
         categoria_id: form.categoria_id,
         marca_id: form.marca_id,
         proveedor_id: form.proveedor_id || null,
@@ -902,10 +913,14 @@ function ProductoDialog({
       };
       if (editing) {
         const { error } = await supabase.from("productos").update(payload).eq("id", editing.id);
-        if (error) throw error;
+        if (error) {
+          throw new Error(mensajeErrorProducto(error, { codigo: payload.codigo, proveedorNombre }));
+        }
       } else {
         const { error } = await supabase.from("productos").insert(payload);
-        if (error) throw error;
+        if (error) {
+          throw new Error(mensajeErrorProducto(error, { codigo: payload.codigo, proveedorNombre }));
+        }
       }
     },
     onSuccess: () => {
@@ -1006,11 +1021,11 @@ function ProductoDialog({
             </Select>
           </div>
           <div>
-            <Label>Proveedor</Label>
+            <Label>Proveedor *</Label>
             <Select
               value={form.proveedor_id ?? "__none__"}
               onValueChange={(v) => {
-                const id = v === "__none__" ? null : v;
+                const id = v;
                 // Cambiar de proveedor cambia el descuento, y con él el costo.
                 const prov = proveedores?.find((x: any) => x.id === id) ?? null;
                 // El descuento propio del producto le gana igual al del
@@ -1031,7 +1046,9 @@ function ProductoDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">— (sin proveedor)</SelectItem>
+                <SelectItem value="__none__" disabled>
+                  Elegí un proveedor
+                </SelectItem>
                 {(proveedores ?? []).map((p: any) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.razon_social}

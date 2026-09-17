@@ -34,6 +34,7 @@ import {
   type ResultadoOperacionSegura,
 } from "./operacion-comercial-segura";
 import { COLUMNAS_VENTA_SEGURAS, proyectarListadoVentasSeguro } from "./ventas-proyeccion";
+import { rangeToUtc } from "./dates";
 
 const itemEntradaSchema = z
   .object({
@@ -166,7 +167,12 @@ export type ComprobanteOriginalSeguro = Pick<
   ColumnaOriginalSegura
 > & { tiene_snapshot_persistido: boolean };
 
-type FiltrosListadoVentas = { sucursalId: string | null; estadoPago: string | null };
+type FiltrosListadoVentas = {
+  sucursalId: string | null;
+  estadoPago: string | null;
+  fechaDesdeUtc: string | null;
+  fechaHastaExclusivaUtc: string | null;
+};
 type EvidenciaListado = { id: string; afip_snapshot: unknown };
 type EvidenciaOriginal = EvidenciaListado & { afip_snapshot_hash: string | null };
 
@@ -182,6 +188,8 @@ export async function ejecutarListadoVentasSeguro(
   const filtros = {
     sucursalId: contexto.esAdmin ? input.sucursalId : contexto.sucursalId,
     estadoPago: input.estadoPago,
+    fechaDesdeUtc: input.fechaDesdeUtc,
+    fechaHastaExclusivaUtc: input.fechaHastaExclusivaUtc,
   };
   const visibles = await deps.cargarVisibles(filtros);
   if (visibles.length === 0) return [];
@@ -297,12 +305,32 @@ async function autorizarOriginalFiscal(supabase: ClienteVentas, userId: string, 
   });
 }
 
-const listadoVentasInputSchema = z
+const fechaLocalSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+export const listadoVentasInputSchema = z
   .object({
     sucursal_id: z.string().uuid().optional(),
     estado_pago: z.enum(["PAGADO", "PARCIAL", "PENDIENTE"]).optional(),
+    fecha_desde: fechaLocalSchema.optional(),
+    fecha_hasta: fechaLocalSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ fecha_desde, fecha_hasta }) => !fecha_desde || !fecha_hasta || fecha_desde <= fecha_hasta,
+    { message: "La fecha desde no puede ser posterior a la fecha hasta." },
+  );
+
+export function rangoFechasListadoVentas(input: {
+  fechaDesde: string | null;
+  fechaHasta: string | null;
+}): Pick<FiltrosListadoVentas, "fechaDesdeUtc" | "fechaHastaExclusivaUtc"> {
+  return {
+    fechaDesdeUtc: input.fechaDesde ? rangeToUtc(input.fechaDesde, input.fechaDesde).gte : null,
+    fechaHastaExclusivaUtc: input.fechaHasta
+      ? rangeToUtc(input.fechaHasta, input.fechaHasta).lt
+      : null,
+  };
+}
 
 export const listarVentasSeguras = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -312,6 +340,10 @@ export const listarVentasSeguras = createServerFn({ method: "GET" })
       {
         sucursalId: data.sucursal_id ?? null,
         estadoPago: data.estado_pago ?? null,
+        ...rangoFechasListadoVentas({
+          fechaDesde: data.fecha_desde ?? null,
+          fechaHasta: data.fecha_hasta ?? null,
+        }),
       },
       {
         autorizar: () => autorizarConsultaVentas(context.supabase, context.userId, false),
@@ -330,6 +362,10 @@ export const listarVentasSeguras = createServerFn({ method: "GET" })
               "estado_pago",
               filtros.estadoPago as Database["public"]["Enums"]["estado_pago"],
             );
+          }
+          if (filtros.fechaDesdeUtc) consulta = consulta.gte("fecha", filtros.fechaDesdeUtc);
+          if (filtros.fechaHastaExclusivaUtc) {
+            consulta = consulta.lt("fecha", filtros.fechaHastaExclusivaUtc);
           }
           const { data: ventas, error } = await consulta;
           if (error) throw new Error("No se pudo cargar el listado de ventas autorizado.");

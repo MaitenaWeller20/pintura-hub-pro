@@ -305,7 +305,13 @@ async function autorizarOriginalFiscal(supabase: ClienteVentas, userId: string, 
   });
 }
 
-const fechaLocalSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const fechaLocalSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((fecha) => {
+    const instante = new Date(`${fecha}T00:00:00.000Z`);
+    return !Number.isNaN(instante.getTime()) && instante.toISOString().slice(0, 10) === fecha;
+  }, "La fecha no es válida.");
 
 export const listadoVentasInputSchema = z
   .object({

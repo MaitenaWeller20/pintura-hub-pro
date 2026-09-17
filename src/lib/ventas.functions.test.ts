@@ -394,6 +394,8 @@ describe("fachadas cerradas de lectura de ventas", () => {
     expect(() =>
       listadoVentasInputSchema.parse({ fecha_desde: "2026-09-18", fecha_hasta: "2026-09-17" }),
     ).toThrow();
+    expect(() => listadoVentasInputSchema.parse({ fecha_desde: "2026-02-31" })).toThrow();
+    expect(() => listadoVentasInputSchema.parse({ fecha_hasta: "2026-13-01" })).toThrow();
   });
 
   it("autoriza y carga por RLS antes de leer evidencia de listado en un único batch", async () => {

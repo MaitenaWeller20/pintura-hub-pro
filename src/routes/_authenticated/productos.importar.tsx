@@ -148,6 +148,9 @@ function ImportarProductos() {
             { count: "exact" },
           )
           .order("codigo")
+          // El código puede repetirse entre proveedores. El id completa un orden
+          // estable para que la paginación no saltee ni repita filas en el corte.
+          .order("id")
           .range(desde, hasta);
         return { data, error, count };
       });
@@ -426,12 +429,36 @@ function ImportarProductos() {
         };
         // Deliberadamente NO se escribe stock_sucursal acá: la lista de precios no
         // trae stock (ver el comentario del encabezado del archivo).
-        const consulta =
-          g?.id && g.proveedor_id == null
-            ? supabase.from("productos").update(payload).eq("id", g.id)
-            : supabase.from("productos").upsert(payload, { onConflict: "proveedor_id,codigo" });
-        const { error } = await consulta;
-        if (error) throw error;
+        if (g?.id && g.proveedor_id == null) {
+          // Los productos históricos sin proveedor se adoptan una sola vez. La
+          // condición se verifica en la base (no sólo en el catálogo cacheado),
+          // porque dos importaciones abiertas podrían intentar adoptar la misma
+          // fila para proveedores distintos.
+          const adopcion = await supabase
+            .from("productos")
+            .update(payload)
+            .eq("id", g.id)
+            .is("proveedor_id", null)
+            .select("id")
+            .maybeSingle();
+
+          if (adopcion.error && adopcion.error.code !== "23505") throw adopcion.error;
+
+          // Si otra importación ya la adoptó, o creó este mismo código para el
+          // proveedor elegido, se escribe sobre la identidad correcta sin mover
+          // el producto que ya quedó asociado al otro proveedor.
+          if (!adopcion.data) {
+            const { error } = await supabase
+              .from("productos")
+              .upsert(payload, { onConflict: "proveedor_id,codigo" });
+            if (error) throw error;
+          }
+        } else {
+          const { error } = await supabase
+            .from("productos")
+            .upsert(payload, { onConflict: "proveedor_id,codigo" });
+          if (error) throw error;
+        }
       } catch (e: any) {
         errs.push({ row: i + 2, msg: e.message });
       }

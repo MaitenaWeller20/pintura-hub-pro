@@ -48,6 +48,27 @@ describe("entrada de venta neutral", () => {
     ).toThrow();
   });
 
+  it("acepta QR y Canje por separado, sin habilitar Mercado Pago en cobros nuevos", () => {
+    for (const forma_pago of ["QR", "CANJE"]) {
+      expect(
+        ventaInputSchema.parse({
+          ...VENTA_BASE,
+          pagos: [{ forma_pago, monto: 121, detalle: {} }],
+        }).pagos[0].forma_pago,
+      ).toBe(forma_pago);
+    }
+    const pagoHistorico = [{ forma_pago: "MERCADO_PAGO", monto: 121, detalle: {} }];
+    expect(() => ventaInputSchema.parse({ ...VENTA_BASE, pagos: pagoHistorico })).toThrow();
+    expect(
+      ventaInputSchema.parse({
+        ...VENTA_BASE,
+        tipo_comprobante: "NOTA_CREDITO",
+        cbte_asoc_id: "78000000-0000-4000-8000-000000000001",
+        pagos: pagoHistorico,
+      }).pagos[0].forma_pago,
+    ).toBe("MERCADO_PAGO");
+  });
+
   it("normaliza sólo la descripción presente sin alterar los datos comerciales", () => {
     const parsed = ventaInputSchema.parse({
       ...VENTA_BASE,
@@ -519,6 +540,23 @@ describe("fence del conversor de presupuesto", () => {
     pagos: [{ forma_pago: "EFECTIVO" as const, monto: 121, detalle: {} }],
     idempotency_key: "76000000-0000-4000-8000-000000000001",
   };
+
+  it("acepta QR y Canje al convertir, y rechaza Mercado Pago", () => {
+    for (const forma_pago of ["QR", "CANJE"]) {
+      expect(
+        conversionPresupuestoInputSchema.parse({
+          ...inputV2,
+          pagos: [{ forma_pago, monto: 121, detalle: {} }],
+        }).pagos[0].forma_pago,
+      ).toBe(forma_pago);
+    }
+    expect(() =>
+      conversionPresupuestoInputSchema.parse({
+        ...inputV2,
+        pagos: [{ forma_pago: "MERCADO_PAGO", monto: 121, detalle: {} }],
+      }),
+    ).toThrow();
+  });
 
   it("exige cliente_id en ambas entradas y sólo V2 admite null", () => {
     expect(conversionPresupuestoInputSchema.parse({ ...inputV2, cliente_id: null })).toMatchObject({

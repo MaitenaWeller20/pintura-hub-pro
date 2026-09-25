@@ -1,11 +1,6 @@
-export const FORMAS_PAGO_CORREGIBLES = [
-  "EFECTIVO",
-  "TRANSFERENCIA",
-  "TARJETA_DEBITO",
-  "TARJETA_CREDITO",
-  "MERCADO_PAGO",
-  "CHEQUE",
-] as const;
+import { formasCobro } from "./format";
+
+export const FORMAS_PAGO_CORREGIBLES = formasCobro;
 
 export type FormaPagoCorregible = (typeof FORMAS_PAGO_CORREGIBLES)[number];
 

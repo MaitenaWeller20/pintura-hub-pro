@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, formasEgreso } from "@/lib/format";
 import { ALICUOTAS_SOPORTADAS } from "@/lib/fiscal/codigos";
 import {
   calcularTotalesNotaCreditoPeriodo,
@@ -47,14 +47,7 @@ type CampoErrorNcPeriodo =
   | "reintegros";
 export type EstadoIntentoNcPeriodo = "IDLE" | "ENVIANDO" | "AMBIGUO";
 
-const FORMAS_REINTEGRO: readonly FormaPagoReintegro[] = [
-  "EFECTIVO",
-  "TRANSFERENCIA",
-  "TARJETA_DEBITO",
-  "TARJETA_CREDITO",
-  "MERCADO_PAGO",
-  "CHEQUE",
-];
+const FORMAS_REINTEGRO: readonly FormaPagoReintegro[] = formasEgreso;
 
 const ETIQUETA_FORMA: Record<FormaPagoReintegro, string> = {
   EFECTIVO: "Efectivo",

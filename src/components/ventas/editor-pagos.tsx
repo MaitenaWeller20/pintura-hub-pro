@@ -10,15 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formaPagoLabel } from "@/lib/format";
+import { formaPagoLabel, formasCobro } from "@/lib/format";
 
-export type FormaPagoVenta =
-  | "EFECTIVO"
-  | "TRANSFERENCIA"
-  | "TARJETA_DEBITO"
-  | "TARJETA_CREDITO"
-  | "MERCADO_PAGO"
-  | "CHEQUE";
+export type FormaPagoVenta = (typeof formasCobro)[number] | "MERCADO_PAGO";
 
 export type PagoVentaEditable = {
   id: string;
@@ -27,9 +21,7 @@ export type PagoVentaEditable = {
   detalle: Record<string, unknown>;
 };
 
-const FORMAS_PAGO = Object.entries(formaPagoLabel).filter(
-  (entry): entry is [FormaPagoVenta, string] => entry[0] !== "CTA_CTE",
-);
+const FORMAS_PAGO = formasCobro.map((forma) => [forma, formaPagoLabel[forma]] as const);
 
 function textoDetalle(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -108,6 +100,9 @@ export function EditorPagos({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      {pago.forma_pago === "MERCADO_PAGO" ? (
+                        <SelectItem value="MERCADO_PAGO">Mercado Pago (histórico)</SelectItem>
+                      ) : null}
                       {FORMAS_PAGO.map(([value, label]) => (
                         <SelectItem key={value} value={value}>
                           {label}

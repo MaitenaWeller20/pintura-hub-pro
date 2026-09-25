@@ -36,6 +36,8 @@ export const Route = createFileRoute("/_authenticated/reportes")({
 const MEDIO_COLOR: Record<string, string> = {
   EFECTIVO: "var(--color-chart-3)", TRANSFERENCIA: "var(--color-chart-2)",
   TARJETA_CREDITO: "var(--color-chart-1)", TARJETA_DEBITO: "var(--color-chart-4)",
+  QR: "var(--color-primary)",
+  CANJE: "var(--color-chart-5)",
   MERCADO_PAGO: "var(--color-chart-5)", CHEQUE: "var(--color-muted-foreground)",
 };
 const medioColor = (x: string) => MEDIO_COLOR[x] ?? "var(--color-muted-foreground)";

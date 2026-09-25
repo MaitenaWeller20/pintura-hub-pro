@@ -9,19 +9,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { formasCobro } from "./format";
 
 const cobranzaSchema = z.object({
   cliente_id: z.string().uuid(),
   sucursal_id: z.string().uuid(),
   monto: z.number().positive(),
-  forma_pago: z.enum([
-    "EFECTIVO",
-    "TRANSFERENCIA",
-    "TARJETA_DEBITO",
-    "TARJETA_CREDITO",
-    "MERCADO_PAGO",
-    "CHEQUE",
-  ]),
+  forma_pago: z.enum(formasCobro),
   detalle: z.record(z.string(), z.any()).default({}),
   observaciones: z.string().optional().nullable(),
 });

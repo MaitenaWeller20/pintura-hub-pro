@@ -30,7 +30,14 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import {
+  fmtMoney,
+  fmtDate,
+  fmtDateTime,
+  formaPagoLabel,
+  formasCobro,
+  formasEgreso,
+} from "@/lib/format";
 import {
   calcularCierreDesdeRetiro,
   calcularEfectivoCierre,
@@ -43,8 +50,8 @@ export const Route = createFileRoute("/_authenticated/arqueo")({
   component: ArqueoPage,
 });
 
-// Formas de pago que son plata en la caja (todas menos cuenta corriente).
-const FORMAS = ["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"] as const;
+// Formas registradas en caja; incluye Mercado Pago para movimientos históricos.
+const FORMAS = [...formasCobro, "MERCADO_PAGO"] as const;
 type CajaForma = { entra: number; sale: number; neto: number };
 type SucursalResumen = { id: string; nombre: string };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
@@ -327,13 +334,23 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Registrar movimiento de caja</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Registrar movimiento de caja</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Tipo</Label>
-              <Select value={tipo} onValueChange={setTipo}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <Select
+                value={tipo}
+                onValueChange={(value) => {
+                  setTipo(value);
+                  setForma("EFECTIVO");
+                }}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="GASTO">Gasto (sale plata)</SelectItem>
                   <SelectItem value="RETIRO">Retiro a tesorería</SelectItem>
@@ -344,8 +361,16 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
             <div>
               <Label>Forma</Label>
               <Select value={forma} onValueChange={setForma}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{FORMAS.map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(tipo === "INGRESO" ? formasCobro : formasEgreso).map((f) => (
+                    <SelectItem key={f} value={f}>
+                      {formaPagoLabel[f]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
           </div>
@@ -355,12 +380,21 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
           </div>
           <div>
             <Label>Descripción (para qué fue)</Label>
-            <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Ej: flete, pago proveedor, retiro al banco" className="mt-1" />
+            <Input
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Ej: flete, pago proveedor, retiro al banco"
+              className="mt-1"
+            />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={m.isPending || !monto || !desc.trim()}>Registrar</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={() => m.mutate()} disabled={m.isPending || !monto || !desc.trim()}>
+            Registrar
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

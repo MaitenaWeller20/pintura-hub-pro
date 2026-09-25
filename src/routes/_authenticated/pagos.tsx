@@ -224,7 +224,8 @@ function PagosPage() {
         <StatCard label="Efectivo" value={fmtMoney(resumen.efectivoBruto)} icon={Coins} tone="warning"
           trend={trend(resumen.efectivoBruto, resumenPrev.efectivoBruto)} hint="cobrado en efectivo" />
         <StatCard label="Electrónico" value={fmtMoney(resumen.electronicoBruto)} icon={CreditCard} tone="info"
-          trend={trend(resumen.electronicoBruto, resumenPrev.electronicoBruto)} hint="transf. + tarjetas + QR + MP histórico + cheque" />
+          trend={trend(resumen.electronicoBruto, resumenPrev.electronicoBruto)}
+          hint="transf. + tarjetas + QR + MP histórico + cheque" />
         <StatCard label="Devoluciones" value={fmtMoney(resumen.devoluciones)} icon={Receipt} tone="destructive"
           trend={trend(resumen.devoluciones, resumenPrev.devoluciones)} hint="notas de crédito del período" />
       </div>

@@ -118,8 +118,16 @@ function CtaCtePage() {
         <TabsContent value="clientes">
           <Card className="p-3 mb-4">
             <div className="flex flex-wrap items-center gap-3">
-              <Input placeholder="Buscar cliente…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
-              <Select value={saldoFiltro} onValueChange={(v) => setSaldoFiltro(v as typeof saldoFiltro)}>
+              <Input
+                placeholder="Buscar cliente…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                className="max-w-sm"
+              />
+              <Select
+                value={saldoFiltro}
+                onValueChange={(v) => setSaldoFiltro(v as typeof saldoFiltro)}
+              >
                 <SelectTrigger className="w-44" data-testid="filtro-saldo">
                   <SelectValue />
                 </SelectTrigger>
@@ -164,12 +172,27 @@ function CtaCtePage() {
                   <TableCell className="font-medium">{c.razon_social}</TableCell>
                   <TableCell className="font-mono text-xs">{fmtDocumento(c.cuit_dni)}</TableCell>
                   <TableCell className="text-right font-mono">{fmtMoney(c.total_debe)}</TableCell>
-                  <TableCell className="text-right font-mono text-success">{fmtMoney(c.total_pagado)}</TableCell>
-                  <TableCell className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : "text-muted-foreground"}`}>
-                    {fmtMoney(saldo)}{saldo < -0.01 && " (a favor)"}
+                  <TableCell className="text-right font-mono text-success">
+                    {fmtMoney(c.total_pagado)}
+                  </TableCell>
+                  <TableCell
+                    className={`text-right font-mono font-semibold ${saldo > 0.01 ? "text-destructive" : saldo < -0.01 ? "text-success" : "text-muted-foreground"}`}
+                  >
+                    {fmtMoney(saldo)}
+                    {saldo < -0.01 && " (a favor)"}
                   </TableCell>
                   <TableCell>
-                    <Button size="sm" variant="outline" onClick={() => setSel({ id: c.cliente_id, razon_social: c.razon_social, cuit_dni: c.cuit_dni })}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setSel({
+                          id: c.cliente_id,
+                          razon_social: c.razon_social,
+                          cuit_dni: c.cuit_dni,
+                        })
+                      }
+                    >
                       <Receipt className="h-3.5 w-3.5 mr-1" /> Ver
                     </Button>
                   </TableCell>
@@ -189,12 +212,24 @@ function CtaCtePage() {
       </Tabs>
 
       {sel && (
-        <DetalleCliente cliente={sel} onClose={() => setSel(null)}
-          onPagar={() => setOpenPago(true)} />
+        <DetalleCliente
+          cliente={sel}
+          onClose={() => setSel(null)}
+          onPagar={() => setOpenPago(true)}
+        />
       )}
       {sel && (
-        <PagoDialog open={openPago} onClose={() => setOpenPago(false)} cliente={sel}
-          onSaved={() => { qc.invalidateQueries({ queryKey: ["ctacte-saldos"] }); qc.invalidateQueries({ queryKey: ["ctacte-cliente", sel.id] }); qc.invalidateQueries({ queryKey: ["ctacte-resumen", sel.id] }); setOpenPago(false); }} />
+        <PagoDialog
+          open={openPago}
+          onClose={() => setOpenPago(false)}
+          cliente={sel}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["ctacte-saldos"] });
+            qc.invalidateQueries({ queryKey: ["ctacte-cliente", sel.id] });
+            qc.invalidateQueries({ queryKey: ["ctacte-resumen", sel.id] });
+            setOpenPago(false);
+          }}
+        />
       )}
     </div>
   );
@@ -323,8 +358,8 @@ function CobrarSaldoDialog({ venta, onClose, onSaved }: any) {
             <Label>Cuánto cobrás</Label>
             <NumberInput value={monto} onValueChange={setMonto} data-testid="cobro-monto" />
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Saldo: <strong>{fmtMoney(venta.saldo)}</strong>. No se puede cobrar de más: el vuelto se
-              da en el mostrador.
+              Saldo: <strong>{fmtMoney(venta.saldo)}</strong>. No se puede cobrar de más: el vuelto
+              se da en el mostrador.
             </p>
             {excede && <p className="text-xs text-destructive">Es más que el saldo.</p>}
           </div>
@@ -335,13 +370,11 @@ function CobrarSaldoDialog({ venta, onClose, onSaved }: any) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {formasCobro.map(
-                  (k) => (
-                    <SelectItem key={k} value={k}>
-                      {formaPagoLabel[k] ?? k}
-                    </SelectItem>
-                  ),
-                )}
+                {formasCobro.map((k) => (
+                  <SelectItem key={k} value={k}>
+                    {formaPagoLabel[k] ?? k}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -520,32 +553,62 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Pagar a proveedor · {proveedor.razon_social}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Pagar a proveedor · {proveedor.razon_social}</DialogTitle>
+        </DialogHeader>
         <SectionCard title="Datos del pago">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {cu?.isAdmin && (
-              <div className="col-span-2"><Label>Sucursal (caja de donde sale)</Label>
+              <div className="col-span-2">
+                <Label>Sucursal (caja de donde sale)</Label>
                 <Select value={sucId} onValueChange={setSucId}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar…" /></SelectTrigger>
-                  <SelectContent>{sucs.map((s: any) => (<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}</SelectContent>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sucs.map((s: any) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
             )}
-            <div><Label>Monto *</Label><NumberInput value={monto} onValueChange={setMonto} /></div>
-            <div><Label>Forma de pago *</Label>
+            <div>
+              <Label>Monto *</Label>
+              <NumberInput value={monto} onValueChange={setMonto} />
+            </div>
+            <div>
+              <Label>Forma de pago *</Label>
               <Select value={forma} onValueChange={setForma}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {formasEgreso.map((k) => (<SelectItem key={k} value={k}>{formaPagoLabel[k]}</SelectItem>))}
+                  {formasEgreso.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {formaPagoLabel[k]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
-          <p className="text-[11px] text-warning mt-2">Necesitás la caja abierta: el pago sale de la caja.</p>
+          <p className="text-[11px] text-warning mt-2">
+            Necesitás la caja abierta: el pago sale de la caja.
+          </p>
         </SectionCard>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={!effSuc || !monto || monto <= 0 || m.isPending}>Registrar pago</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => m.mutate()}
+            disabled={!effSuc || !monto || monto <= 0 || m.isPending}
+          >
+            Registrar pago
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -563,10 +626,16 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
   // propósito: no filtra qué compró el cliente en otra sucursal).
   const { data: movs = [] } = useQuery({
     queryKey: ["ctacte-cliente", cliente.id],
-    queryFn: async () => ((await supabase.from("cuenta_corriente_movimientos")
-      .select("id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, sucursal:sucursales(nombre)")
-      .eq("cliente_id", cliente.id)
-      .order("created_at", { ascending: false })).data ?? []) as any[],
+    queryFn: async () =>
+      ((
+        await supabase
+          .from("cuenta_corriente_movimientos")
+          .select(
+            "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, sucursal:sucursales(nombre)",
+          )
+          .eq("cliente_id", cliente.id)
+          .order("created_at", { ascending: false })
+      ).data ?? []) as any[],
   });
 
   // Resumen GLOBAL (todas las sucursales) vía RPC SECURITY DEFINER. NO se
@@ -664,9 +733,13 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
 function ItemsVenta({ ventaId }: { ventaId: string }) {
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["venta-items", ventaId],
-    queryFn: async () => ((await supabase.from("venta_items")
-      .select("descripcion, cantidad, precio_unitario_sin_iva, subtotal_con_iva")
-      .eq("venta_id", ventaId)).data ?? []) as any[],
+    queryFn: async () =>
+      ((
+        await supabase
+          .from("venta_items")
+          .select("descripcion, cantidad, precio_unitario_sin_iva, subtotal_con_iva")
+          .eq("venta_id", ventaId)
+      ).data ?? []) as any[],
   });
   if (isLoading) return <div className="px-4 py-2 text-xs text-muted-foreground">Cargando productos…</div>;
   if (items.length === 0) return <div className="px-4 py-2 text-xs text-muted-foreground">Sin productos.</div>;
@@ -722,43 +795,105 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Registrar cobro · {cliente.razon_social}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Registrar cobro · {cliente.razon_social}</DialogTitle>
+        </DialogHeader>
         <SectionCard title="Datos del cobro">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {cu?.isAdmin && (
-            <div className="col-span-2"><Label>Sucursal (caja donde entra)</Label>
-              <Select value={sucId} onValueChange={setSucId}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar…" /></SelectTrigger>
-                <SelectContent>{sucs.map((s: any) => (<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}</SelectContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {cu?.isAdmin && (
+              <div className="col-span-2">
+                <Label>Sucursal (caja donde entra)</Label>
+                <Select value={sucId} onValueChange={setSucId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sucs.map((s: any) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div>
+              <Label>Monto *</Label>
+              <NumberInput value={monto} onValueChange={setMonto} />
+            </div>
+            <div>
+              <Label>Forma de pago *</Label>
+              <Select value={forma} onValueChange={setForma}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {formasCobro.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {formaPagoLabel[k]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
-          )}
-          <div><Label>Monto *</Label><NumberInput value={monto} onValueChange={setMonto} /></div>
-          <div><Label>Forma de pago *</Label>
-            <Select value={forma} onValueChange={setForma}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {formasCobro.map((k) => (<SelectItem key={k} value={k}>{formaPagoLabel[k]}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            {forma === "CHEQUE" && (
+              <>
+                <div>
+                  <Label>Banco</Label>
+                  <Input
+                    value={detalle.banco ?? ""}
+                    onChange={(e) => setDetalle((d) => ({ ...d, banco: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label>Nro cheque</Label>
+                  <Input
+                    value={detalle.numero ?? ""}
+                    onChange={(e) => setDetalle((d) => ({ ...d, numero: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label>Firmante</Label>
+                  <Input
+                    value={detalle.firmante ?? ""}
+                    onChange={(e) => setDetalle((d) => ({ ...d, firmante: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label>Fecha cobro</Label>
+                  <Input
+                    type="date"
+                    value={detalle.fecha_cobro ?? ""}
+                    onChange={(e) => setDetalle((d) => ({ ...d, fecha_cobro: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+            {forma === "TRANSFERENCIA" && (
+              <div className="col-span-2">
+                <Label>Banco / Cuenta</Label>
+                <Input
+                  value={detalle.banco ?? ""}
+                  onChange={(e) => setDetalle((d) => ({ ...d, banco: e.target.value }))}
+                />
+              </div>
+            )}
+            <div className="col-span-2">
+              <Label>Observaciones</Label>
+              <Input value={obs} onChange={(e) => setObs(e.target.value)} />
+            </div>
           </div>
-          {forma === "CHEQUE" && (<>
-            <div><Label>Banco</Label><Input value={detalle.banco ?? ""} onChange={(e) => setDetalle(d => ({ ...d, banco: e.target.value }))} /></div>
-            <div><Label>Nro cheque</Label><Input value={detalle.numero ?? ""} onChange={(e) => setDetalle(d => ({ ...d, numero: e.target.value }))} /></div>
-            <div><Label>Firmante</Label><Input value={detalle.firmante ?? ""} onChange={(e) => setDetalle(d => ({ ...d, firmante: e.target.value }))} /></div>
-            <div><Label>Fecha cobro</Label><Input type="date" value={detalle.fecha_cobro ?? ""} onChange={(e) => setDetalle(d => ({ ...d, fecha_cobro: e.target.value }))} /></div>
-          </>)}
-          {forma === "TRANSFERENCIA" && (
-            <div className="col-span-2"><Label>Banco / Cuenta</Label><Input value={detalle.banco ?? ""} onChange={(e) => setDetalle(d => ({ ...d, banco: e.target.value }))} /></div>
-          )}
-          <div className="col-span-2"><Label>Observaciones</Label>
-            <Input value={obs} onChange={(e) => setObs(e.target.value)} />
-          </div>
-        </div>
         </SectionCard>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={!effSuc || !monto || monto <= 0 || m.isPending}>Registrar cobro</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => m.mutate()}
+            disabled={!effSuc || !monto || monto <= 0 || m.isPending}
+          >
+            Registrar cobro
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

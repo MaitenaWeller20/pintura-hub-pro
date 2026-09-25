@@ -543,15 +543,19 @@ describe("fence del conversor de presupuesto", () => {
 
   it("acepta QR y Canje al convertir, y rechaza Mercado Pago", () => {
     for (const forma_pago of ["QR", "CANJE"]) {
-      expect(conversionPresupuestoInputSchema.parse({
-        ...inputV2,
-        pagos: [{ forma_pago, monto: 121, detalle: {} }],
-      }).pagos[0].forma_pago).toBe(forma_pago);
+      expect(
+        conversionPresupuestoInputSchema.parse({
+          ...inputV2,
+          pagos: [{ forma_pago, monto: 121, detalle: {} }],
+        }).pagos[0].forma_pago,
+      ).toBe(forma_pago);
     }
-    expect(() => conversionPresupuestoInputSchema.parse({
-      ...inputV2,
-      pagos: [{ forma_pago: "MERCADO_PAGO", monto: 121, detalle: {} }],
-    })).toThrow();
+    expect(() =>
+      conversionPresupuestoInputSchema.parse({
+        ...inputV2,
+        pagos: [{ forma_pago: "MERCADO_PAGO", monto: 121, detalle: {} }],
+      }),
+    ).toThrow();
   });
 
   it("exige cliente_id en ambas entradas y sólo V2 admite null", () => {

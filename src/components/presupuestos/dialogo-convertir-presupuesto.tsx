@@ -3,10 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, Loader2, ReceiptText, Store } from "lucide-react";
 import { ClientePicker } from "@/components/cliente-picker";
-import {
-  EditorPagos,
-  type PagoVentaEditable,
-} from "@/components/ventas/editor-pagos";
+import { EditorPagos, type PagoVentaEditable } from "@/components/ventas/editor-pagos";
 import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
 import { Button } from "@/components/ui/button";
 import {

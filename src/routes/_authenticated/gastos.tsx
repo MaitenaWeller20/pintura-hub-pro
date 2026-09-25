@@ -83,12 +83,22 @@ function GastosPage() {
       <PageHeader
         title="Gastos varios"
         subtitle="Cargá un gasto cotidiano (papel, café, flete). Sale de la caja del día."
-        actions={cu?.isAdmin && (
-          <Select value={sucId} onValueChange={setSucId}>
-            <SelectTrigger className="w-52"><SelectValue placeholder="Mi sucursal" /></SelectTrigger>
-            <SelectContent>{sucs.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}</SelectContent>
-          </Select>
-        )}
+        actions={
+          cu?.isAdmin && (
+            <Select value={sucId} onValueChange={setSucId}>
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="Mi sucursal" />
+              </SelectTrigger>
+              <SelectContent>
+                {sucs.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.nombre}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )
+        }
       />
 
       <SectionCard title="Nuevo gasto">
@@ -106,7 +116,13 @@ function GastosPage() {
             <Label>Forma</Label>
             <Select value={forma} onValueChange={setForma}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>{formasEgreso.map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
+              <SelectContent>
+                {formasEgreso.map((f) => (
+                  <SelectItem key={f} value={f}>
+                    {formaPagoLabel[f]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
           <Button onClick={() => registrar.mutate()} disabled={!puedeGuardar}>Registrar</Button>

@@ -461,10 +461,14 @@ function DetalleProveedor({ proveedor, onClose, onPagar }: any) {
   const { data: cu } = useCurrentUser();
   const { data: movs = [] } = useQuery({
     queryKey: ["prov-cc-mov", proveedor.id],
-    queryFn: async () => ((await supabase.from("proveedor_cc_movimientos")
-      .select("id, created_at, tipo, monto, estado, forma_pago, descripcion, pago_id")
-      .eq("proveedor_id", proveedor.id)
-      .order("created_at", { ascending: false })).data ?? []) as any[],
+    queryFn: async () =>
+      ((
+        await supabase
+          .from("proveedor_cc_movimientos")
+          .select("id, created_at, tipo, monto, estado, forma_pago, descripcion, pago_id")
+          .eq("proveedor_id", proveedor.id)
+          .order("created_at", { ascending: false })
+      ).data ?? []),
   });
   const confirmados = movs.filter((m: any) => m.estado === "CONFIRMADO");
   const debe = confirmados.filter((m: any) => m.tipo === "DEBITO").reduce((a: number, m: any) => a + Number(m.monto), 0);
@@ -566,7 +570,7 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
                     <SelectValue placeholder="Seleccionar…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sucs.map((s: any) => (
+                    {sucs.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.nombre}
                       </SelectItem>
@@ -618,9 +622,12 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
 function DetalleCliente({ cliente, onClose, onPagar }: any) {
   const { data: cu } = useCurrentUser();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = (id: string) => setExpanded((s) => {
-    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
-  });
+  const toggle = (id: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
   // Extracto: libro de movimientos del cliente. OJO: la RLS filtra por sucursal,
   // así que para un cajero NO-admin esta lista muestra solo SU sucursal (a
   // propósito: no filtra qué compró el cliente en otra sucursal).
@@ -635,7 +642,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
           )
           .eq("cliente_id", cliente.id)
           .order("created_at", { ascending: false })
-      ).data ?? []) as any[],
+      ).data ?? []),
   });
 
   // Resumen GLOBAL (todas las sucursales) vía RPC SECURITY DEFINER. NO se
@@ -739,7 +746,7 @@ function ItemsVenta({ ventaId }: { ventaId: string }) {
           .from("venta_items")
           .select("descripcion, cantidad, precio_unitario_sin_iva, subtotal_con_iva")
           .eq("venta_id", ventaId)
-      ).data ?? []) as any[],
+      ).data ?? []),
   });
   if (isLoading) return <div className="px-4 py-2 text-xs text-muted-foreground">Cargando productos…</div>;
   if (items.length === 0) return <div className="px-4 py-2 text-xs text-muted-foreground">Sin productos.</div>;
@@ -773,13 +780,17 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
 
   const effSuc = sucId || cu?.sucursal?.id || "";
   const m = useMutation({
-    mutationFn: async () => cobrarFn({
-      data: {
-        cliente_id: cliente.id, sucursal_id: effSuc,
-        monto: Number(monto || 0), forma_pago: forma as any,
-        detalle, observaciones: obs || null,
-      },
-    }),
+    mutationFn: async () =>
+      cobrarFn({
+        data: {
+          cliente_id: cliente.id,
+          sucursal_id: effSuc,
+          monto: Number(monto || 0),
+          forma_pago: forma as (typeof formasCobro)[number],
+          detalle,
+          observaciones: obs || null,
+        },
+      }),
     onSuccess: (r: any) => {
       const saldo = Number(r?.saldo ?? 0);
       toast.success(
@@ -808,7 +819,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
                     <SelectValue placeholder="Seleccionar…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sucs.map((s: any) => (
+                    {sucs.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.nombre}
                       </SelectItem>

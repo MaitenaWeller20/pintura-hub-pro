@@ -97,6 +97,8 @@ const reintegroIntencionExactoSchema = z
       "TRANSFERENCIA",
       "TARJETA_DEBITO",
       "TARJETA_CREDITO",
+      "QR",
+      "CANJE",
       "MERCADO_PAGO",
       "CHEQUE",
     ]),
@@ -225,7 +227,8 @@ export type PagoBorradorFiscal = {
     | "TRANSFERENCIA"
     | "TARJETA_DEBITO"
     | "TARJETA_CREDITO"
-    | "MERCADO_PAGO"
+    | "QR"
+    | "CANJE"
     | "CHEQUE"
     | "CTA_CTE";
   monto: number;

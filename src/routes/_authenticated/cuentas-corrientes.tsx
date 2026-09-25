@@ -17,7 +17,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
-import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
+import { fmtMoney, fmtDate, formaPagoLabel, formasCobro, formasEgreso } from "@/lib/format";
 import { coincideDocumento, fmtDocumento } from "@/lib/documento";
 import { toast } from "sonner";
 import { Wallet, Receipt, ChevronRight, Loader2 } from "lucide-react";
@@ -335,7 +335,7 @@ function CobrarSaldoDialog({ venta, onClose, onSaved }: any) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"].map(
+                {formasCobro.map(
                   (k) => (
                     <SelectItem key={k} value={k}>
                       {formaPagoLabel[k] ?? k}
@@ -536,7 +536,7 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
               <Select value={forma} onValueChange={setForma}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(formaPagoLabel).filter(([k]) => k !== "CTA_CTE").map(([k, l]) => (<SelectItem key={k} value={k}>{l}</SelectItem>))}
+                  {formasEgreso.map((k) => (<SelectItem key={k} value={k}>{formaPagoLabel[k]}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>
@@ -738,7 +738,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
             <Select value={forma} onValueChange={setForma}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {Object.entries(formaPagoLabel).filter(([k]) => k !== "CTA_CTE").map(([k, l]) => (<SelectItem key={k} value={k}>{l}</SelectItem>))}
+                {formasCobro.map((k) => (<SelectItem key={k} value={k}>{formaPagoLabel[k]}</SelectItem>))}
               </SelectContent>
             </Select>
           </div>

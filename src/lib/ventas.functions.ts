@@ -16,6 +16,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { formasCobro } from "./format";
 import {
   cargarFlagsFacturacionDesdeSupabase,
   decidirEscritorFiscal,
@@ -58,17 +59,13 @@ const itemEntradaSchema = z
   });
 
 const pagoSchema = z.object({
-  forma_pago: z.enum([
-    "EFECTIVO",
-    "TRANSFERENCIA",
-    "TARJETA_DEBITO",
-    "TARJETA_CREDITO",
-    "MERCADO_PAGO",
-    "CHEQUE",
-    "CTA_CTE",
-  ]),
+  forma_pago: z.enum([...formasCobro, "MERCADO_PAGO", "CTA_CTE"]),
   monto: z.number().nonnegative(),
   detalle: z.record(z.string(), z.any()).default({}),
+});
+
+const pagoCobroSchema = pagoSchema.extend({
+  forma_pago: z.enum([...formasCobro, "CTA_CTE"]),
 });
 
 const ventaInputBaseSchema = z.object({
@@ -107,6 +104,17 @@ const ventaInputBaseSchema = z.object({
 });
 
 export const ventaInputSchema = ventaInputBaseSchema.transform((venta, context) => {
+  if (venta.tipo_comprobante !== "NOTA_CREDITO") {
+    venta.pagos.forEach((pago, indice) => {
+      if (pago.forma_pago === "MERCADO_PAGO") {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Mercado Pago ya no está disponible para nuevos cobros.",
+          path: ["pagos", indice, "forma_pago"],
+        });
+      }
+    });
+  }
   // Una NC vinculada V2 no crea sus líneas desde el browser: anular_venta copia
   // la verdad persistida. El parser deja pasar descripciones históricas para no
   // bloquear clientes viejos; el branch V2 las ignora y el legacy las vuelve a
@@ -598,7 +606,7 @@ export const crearVenta = createServerFn({ method: "POST" })
 const conversionBaseSchema = z.object({
   presupuesto_id: z.string().uuid(),
   condicion_venta: z.enum(["CONTADO", "CTA_CTE"]),
-  pagos: z.array(pagoSchema).default([]),
+  pagos: z.array(pagoCobroSchema).default([]),
   idempotency_key: z.string().uuid(),
 });
 

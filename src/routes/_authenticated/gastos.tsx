@@ -16,15 +16,13 @@ import { Label } from "@/components/ui/label";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { fmtMoney, fmtDateTime, formaPagoLabel, formasEgreso } from "@/lib/format";
 import { toast } from "sonner";
 import { Wallet } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/gastos")({
   component: GastosPage,
 });
-
-const FORMAS = ["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"] as const;
 
 function GastosPage() {
   const { data: cu } = useCurrentUser();
@@ -108,7 +106,7 @@ function GastosPage() {
             <Label>Forma</Label>
             <Select value={forma} onValueChange={setForma}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>{FORMAS.map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
+              <SelectContent>{formasEgreso.map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <Button onClick={() => registrar.mutate()} disabled={!puedeGuardar}>Registrar</Button>

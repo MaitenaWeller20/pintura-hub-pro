@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel, formasCobro, formasEgreso } from "@/lib/format";
 import {
   calcularCierreDesdeRetiro,
   calcularEfectivoCierre,
@@ -43,8 +43,8 @@ export const Route = createFileRoute("/_authenticated/arqueo")({
   component: ArqueoPage,
 });
 
-// Formas de pago que son plata en la caja (todas menos cuenta corriente).
-const FORMAS = ["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"] as const;
+// Formas registradas en caja; incluye Mercado Pago para movimientos históricos.
+const FORMAS = [...formasCobro, "MERCADO_PAGO"] as const;
 type CajaForma = { entra: number; sale: number; neto: number };
 type SucursalResumen = { id: string; nombre: string };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
@@ -332,7 +332,7 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Tipo</Label>
-              <Select value={tipo} onValueChange={setTipo}>
+              <Select value={tipo} onValueChange={(value) => { setTipo(value); setForma("EFECTIVO"); }}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="GASTO">Gasto (sale plata)</SelectItem>
@@ -345,7 +345,7 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
               <Label>Forma</Label>
               <Select value={forma} onValueChange={setForma}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{FORMAS.map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
+                <SelectContent>{(tipo === "INGRESO" ? formasCobro : formasEgreso).map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
               </Select>
             </div>
           </div>

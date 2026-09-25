@@ -5,7 +5,6 @@ import { AlertTriangle, Loader2, ReceiptText, Store } from "lucide-react";
 import { ClientePicker } from "@/components/cliente-picker";
 import {
   EditorPagos,
-  type FormaPagoVenta,
   type PagoVentaEditable,
 } from "@/components/ventas/editor-pagos";
 import { ResumenCierreVenta } from "@/components/ventas/resumen-cierre-venta";
@@ -27,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fmtDateTime, fmtMoney, formaPagoLabel } from "@/lib/format";
+import { fmtDateTime, fmtMoney, formaPagoLabel, formasCobro } from "@/lib/format";
 import { preflightConversionPresupuesto } from "@/lib/presupuestos.functions";
 import {
   convertirPresupuestoEnVenta,
@@ -126,7 +125,7 @@ export function DialogoConvertirPresupuesto({
   const [clienteId, setClienteId] = useState(presupuesto.cliente_id ?? "");
   const [tipoLegacy, setTipoLegacy] = useState<"FACTURA_A" | "FACTURA_B">("FACTURA_B");
   const [condicion, setCondicion] = useState<"CONTADO" | "CTA_CTE">("CONTADO");
-  const [formaPagoLegacy, setFormaPagoLegacy] = useState<FormaPagoVenta>("EFECTIVO");
+  const [formaPagoLegacy, setFormaPagoLegacy] = useState<(typeof formasCobro)[number]>("EFECTIVO");
   const [pagos, setPagos] = useState<PagoVentaEditable[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [intentoAmbiguo, setIntentoAmbiguo] = useState(false);
@@ -210,11 +209,16 @@ export function DialogoConvertirPresupuesto({
                 ]
               : pagos
                   .filter((pago) => Number(pago.monto || 0) > 0)
-                  .map((pago) => ({
-                    forma_pago: pago.forma_pago,
-                    monto: Number(pago.monto),
-                    detalle: pago.detalle,
-                  }));
+                  .map((pago) => {
+                    if (pago.forma_pago === "MERCADO_PAGO") {
+                      throw new Error("Mercado Pago ya no está disponible para nuevos cobros.");
+                    }
+                    return {
+                      forma_pago: pago.forma_pago,
+                      monto: Number(pago.monto),
+                      detalle: pago.detalle,
+                    };
+                  });
         entrada = facturacionLegacyHabilitada
           ? ({
               entrada: "LEGACY" as const,
@@ -493,21 +497,14 @@ export function DialogoConvertirPresupuesto({
                   disabled={controlesCongelados}
                   onValueChange={(value) => {
                     if (intentoAmbiguo) return;
-                    setFormaPagoLegacy(value as FormaPagoVenta);
+                    setFormaPagoLegacy(value as (typeof formasCobro)[number]);
                   }}
                 >
                   <SelectTrigger data-testid="conv-forma-pago">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {[
-                      "EFECTIVO",
-                      "TRANSFERENCIA",
-                      "TARJETA_DEBITO",
-                      "TARJETA_CREDITO",
-                      "MERCADO_PAGO",
-                      "CHEQUE",
-                    ].map((forma) => (
+                    {formasCobro.map((forma) => (
                       <SelectItem key={forma} value={forma}>
                         {formaPagoLabel[forma] ?? forma}
                       </SelectItem>

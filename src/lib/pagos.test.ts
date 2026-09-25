@@ -47,6 +47,31 @@ describe("totalesPorMedio", () => {
 });
 
 describe("resumenPagos", () => {
+  it("cuenta QR como cobro electrónico y Canje sólo en el total cobrado", () => {
+    const cobros = normalizarCobros(
+      [
+        {
+          fecha: "2026-07-10T15:00:00Z",
+          numero_comprobante: "OHI-FVTA-0002",
+          sucursal_id: "s1",
+          pagos: [
+            { forma_pago: "QR", monto: 200 },
+            { forma_pago: "CANJE", monto: 300 },
+          ],
+        },
+      ],
+      [],
+    );
+    const resumen = resumenPagos(cobros);
+
+    expect(resumen.totalNeto).toBe(500);
+    expect(resumen.electronicoBruto).toBe(200);
+    expect(totalesPorMedio(cobros)).toEqual([
+      { formaPago: "CANJE", total: 300 },
+      { formaPago: "QR", total: 200 },
+    ]);
+  });
+
   it("net total, ticket excludes devoluciones", () => {
     const r = resumenPagos(normalizarCobros(ventas as any, cobranzas as any));
     expect(r.totalNeto).toBe(1100); // 1000 - 400 + 500

@@ -13,10 +13,12 @@ describe("corrección de forma de pago", () => {
       "TRANSFERENCIA",
       "TARJETA_DEBITO",
       "TARJETA_CREDITO",
-      "MERCADO_PAGO",
+      "QR",
+      "CANJE",
       "CHEQUE",
     ]);
     expect(FORMAS_PAGO_CORREGIBLES).not.toContain("CTA_CTE");
+    expect(FORMAS_PAGO_CORREGIBLES).not.toContain("MERCADO_PAGO");
   });
 
   it("exige un cambio real y un motivo concreto de hasta 1000 caracteres", () => {

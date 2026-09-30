@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { DataTable } from "@/components/app/data-table";
 import { EstadoFiscalPill } from "@/components/fiscal/estado-fiscal-pill";
+import { GuiaEstadoCorregible } from "@/components/fiscal/guia-estado-corregible";
 import { ValidezFiscal } from "@/components/fiscal/validez-fiscal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -34,7 +35,7 @@ import type { DatosFiscalesPreparados } from "@/lib/fiscal/impresion";
 import { fmtDateTime, fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import type { DetalleVentaFiscalPresentacion } from "@/lib/fiscal/detalle-venta-presentacion";
 
-import { prepararDescargaVenta } from "./preparar-descarga-venta";
+import { esComprobanteFiscalSinAutorizar, prepararDescargaVenta } from "./preparar-descarga-venta";
 import { cargarDetalleVentaCompleto } from "./detalle-venta";
 import { DialogoCorregirFormaPago, type PagoFormaCorregible } from "./dialogo-corregir-forma-pago";
 import { DialogoCorregirPreciosRemito } from "./dialogo-corregir-precios-remito";
@@ -458,6 +459,7 @@ export function DialogoDetalleVenta({
   };
 
   const receptor = venta?.fiscalPresentacion.receptor ?? null;
+  const facturaPendiente = venta ? esComprobanteFiscalSinAutorizar(venta) : false;
   const comprobanteAsociado = venta?.fiscalPresentacion.comprobanteAsociado ?? null;
   const fiscal = venta ? descripcionFiscal(venta) : null;
   const datosAuditoriaNcPeriodo: DatosAuditoriaNotaCreditoPeriodo | null =
@@ -498,7 +500,7 @@ export function DialogoDetalleVenta({
               <DialogHeader>
                 <DialogTitle className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-center sm:justify-between">
                   <span>Venta {venta.numero_comprobante}</span>
-                  {permitirDescarga ? (
+                  {permitirDescarga && !facturaPendiente ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -525,6 +527,26 @@ export function DialogoDetalleVenta({
                   Detalle comercial, pagos y estado fiscal de la venta seleccionada.
                 </DialogDescription>
               </DialogHeader>
+
+              {venta.afip_estado === "ERROR_CORREGIBLE" && facturaPendiente ? (
+                <GuiaEstadoCorregible ventaId={venta.id} />
+              ) : facturaPendiente ? (
+                <div
+                  role="status"
+                  className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+                >
+                  <p>
+                    Este comprobante todavía no está autorizado por ARCA. Revisá el estado y
+                    continuá la emisión de esta misma venta; no repitas el cobro.
+                  </p>
+                  <a
+                    className="mt-2 inline-block font-medium text-primary underline underline-offset-2"
+                    href={`/facturacion/cola?venta=${encodeURIComponent(venta.id)}`}
+                  >
+                    Revisar la emisión
+                  </a>
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <div>

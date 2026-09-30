@@ -647,6 +647,29 @@ describe("fachada post-borrador", () => {
 });
 
 describe("detalle readonly de un incidente fiscal", () => {
+  it("traduce el código cerrado del padrón sin exponer el error crudo", () => {
+    const incidente = proyectarIncidenteFiscal(
+      {
+        id: INPUT.venta_id,
+        afip_estado: "ERROR_CORREGIBLE",
+        afip_fase: "PREFLIGHT",
+        afip_error: "SOAPFault secreto que no debe salir",
+        afip_error_clase: "APLICACION",
+        afip_error_codigo: "PADRON_NO_AUTORIZADO",
+        afip_error_fase: "PREFLIGHT",
+        afip_ultimo_error_at: "2026-09-30T14:37:00.000Z",
+      },
+      null,
+    );
+
+    expect(incidente).toMatchObject({
+      estado: "ERROR_CORREGIBLE",
+      codigo: "PADRON_NO_AUTORIZADO",
+      mensaje: { tipo: "ERROR_FISCAL_USUARIO_V1", codigo: "PADRON_NO_AUTORIZADO" },
+    });
+    expect(JSON.stringify(incidente)).not.toContain("SOAPFault secreto");
+  });
+
   it("conserva diferencias únicas del último intento sin exponer el resumen crudo", () => {
     expect(
       proyectarIncidenteFiscal(

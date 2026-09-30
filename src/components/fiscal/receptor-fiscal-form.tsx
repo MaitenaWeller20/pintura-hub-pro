@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { ReceptorFiscalFavorito } from "@/lib/fiscal/cola.functions";
 import type { ReceptorFiscalConfirmado, TipoDocumentoFiscal } from "@/lib/fiscal/receptor";
-import type { CondicionIva } from "@/lib/fiscal/codigos";
+import { cuitValido, type CondicionIva } from "@/lib/fiscal/codigos";
 import { adaptarReceptorFormularioALetra, type LetraSolicitada } from "./dialogo-emision-state";
 import type { CampoReceptorFiscal } from "./dialogo-emision-validacion";
 import { type ClaveConsultaPadron, type EstadoConsultaPadronUi } from "./padron-receptor";
@@ -190,6 +190,7 @@ export function ReceptorFiscalForm({
         : crearReceptorManualVacio(letraSolicitada),
     );
   };
+  const clienteTieneCuit = cuitValido(clienteComercial.documento);
   const condiciones = letraSolicitada
     ? CONDICIONES_POR_LETRA[letraSolicitada]
     : TODAS_LAS_CONDICIONES;
@@ -224,7 +225,11 @@ export function ReceptorFiscalForm({
             <span className="block text-xs text-muted-foreground">
               {letraSolicitada === null
                 ? "La letra se determinará con sus datos fiscales confirmados."
-                : "Sólo para factura B a Consumidor Final sin identificación fiscal."}
+                : clienteTieneCuit
+                  ? "Usa el CUIT del cliente y verifica sus datos en ARCA."
+                  : letraSolicitada === "A"
+                    ? "El cliente no tiene un CUIT válido para factura A."
+                    : "Para factura B a Consumidor Final sin identificación fiscal."}
             </span>
           </span>
         </label>

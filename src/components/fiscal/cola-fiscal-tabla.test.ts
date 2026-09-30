@@ -59,6 +59,7 @@ function renderHtml(accionesHabilitadas: boolean): string {
       puedeEmitirNcPeriodo: true,
       onRetry: vi.fn(),
       onAccion: vi.fn(),
+      onVerIncidente: vi.fn(),
     }),
   );
 }
@@ -74,6 +75,7 @@ function renderVentaAntigua(esAdmin: boolean): string {
       puedeEmitirNcPeriodo: true,
       onRetry: vi.fn(),
       onAccion: vi.fn(),
+      onVerIncidente: vi.fn(),
     }),
   );
 }
@@ -122,6 +124,7 @@ describe("interactividad de filas fiscales", () => {
         puedeEmitirNcPeriodo: false,
         onRetry: vi.fn(),
         onAccion,
+        onVerIncidente: vi.fn(),
       }),
     );
 
@@ -133,5 +136,50 @@ describe("interactividad de filas fiscales", () => {
     ).toBeTruthy();
     fireEvent.click(acciones[1]);
     expect(onAccion).toHaveBeenCalledOnce();
+  });
+
+  it("permite al administrador leer el diagnóstico corregible sin reintentar", () => {
+    const onVerIncidente = vi.fn();
+    const onAccion = vi.fn();
+    renderDom(
+      createElement(ColaFiscalTabla, {
+        filas: [{ ...FILA, afip_estado: "ERROR_CORREGIBLE", tab: "revisar" }],
+        esAdmin: true,
+        loading: false,
+        updating: false,
+        accionesHabilitadas: true,
+        puedeEmitirNcPeriodo: true,
+        onRetry: vi.fn(),
+        onAccion,
+        onVerIncidente,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver diagnóstico" }));
+    expect(onVerIncidente).toHaveBeenCalledWith(
+      expect.objectContaining({ venta_id: FILA.venta_id }),
+      expect.any(HTMLButtonElement),
+    );
+    expect(onAccion).not.toHaveBeenCalled();
+  });
+
+  it("no ofrece el diagnóstico reservado al administrador al empleado", () => {
+    renderDom(
+      createElement(ColaFiscalTabla, {
+        filas: [{ ...FILA, afip_estado: "ERROR_CORREGIBLE", tab: "revisar" }],
+        esAdmin: false,
+        loading: false,
+        updating: false,
+        accionesHabilitadas: true,
+        puedeEmitirNcPeriodo: true,
+        onRetry: vi.fn(),
+        onAccion: vi.fn(),
+        onVerIncidente: vi.fn(),
+      }),
+    );
+
+    expect(screen.queryByRole("button", { name: "Ver diagnóstico" })).toBeNull();
+    expect(screen.getByText("Todavía no hay factura autorizada. Ver qué hacer")).toBeTruthy();
+    expect(screen.getByText(/No hagas otra venta ni vuelvas a cobrar/)).toBeTruthy();
   });
 });

@@ -74,12 +74,39 @@ describe("descarga fail-closed del detalle de venta", () => {
   it("un documento sin autorización fiscal conserva la impresión interna explícita", async () => {
     const cargarFiscal = vi.fn();
     const generar = vi.fn(() => ({ nombre: "venta-interna.pdf" }));
-    const venta = { id: "71000000-0000-4000-8000-000000000002", cae: null };
+    const venta = {
+      id: "71000000-0000-4000-8000-000000000002",
+      tipo_comprobante: "REMITO",
+      afip_estado: "NO_APLICA",
+      cae: null,
+    };
 
     await expect(
       prepararDescargaVenta({ venta, items: [{ id: "item-1" }] }, { cargarFiscal, generar }),
     ).resolves.toEqual({ nombre: "venta-interna.pdf" });
     expect(cargarFiscal).not.toHaveBeenCalled();
     expect(generar).toHaveBeenCalledWith(venta, [{ id: "item-1" }], null);
+  });
+
+  it("no genera un PDF interno para una venta con emisión fiscal corregible", async () => {
+    const cargarFiscal = vi.fn();
+    const generar = vi.fn();
+
+    await expect(
+      prepararDescargaVenta(
+        {
+          venta: {
+            id: "71000000-0000-4000-8000-000000000003",
+            tipo_comprobante: "VENTA",
+            afip_estado: "ERROR_CORREGIBLE",
+            cae: null,
+          },
+          items: [{ id: "item-1" }],
+        },
+        { cargarFiscal, generar },
+      ),
+    ).rejects.toThrow(/todavía no está autorizado/i);
+    expect(cargarFiscal).not.toHaveBeenCalled();
+    expect(generar).not.toHaveBeenCalled();
   });
 });

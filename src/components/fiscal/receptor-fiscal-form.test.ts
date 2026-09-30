@@ -156,10 +156,36 @@ describe("receptor según la letra solicitada", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("Consultando CUIT en ARCA…");
   });
-  it("explica cuándo usar el cliente comercial y cuándo otro receptor", () => {
-    const html = renderFormulario("B");
+  it("ofrece los datos del cliente para factura A sin pedir CUIT ni razón social otra vez", () => {
+    const html = renderToStaticMarkup(
+      createElement(ReceptorFiscalForm as ReceptorFiscalFormConLetra, {
+        value: { origen: "CLIENTE_COMERCIAL" },
+        letraSolicitada: "A",
+        favoritos: [],
+        clienteComercial: {
+          razonSocial: "SOCIEDAD DE BENEFICENCIA",
+          documento: "30-71419966-4",
+          condicionIva: "RESPONSABLE_INSCRIPTO",
+        },
+        confirmaDatosManuales: false,
+        estadoConsultaPadron: { estado: "SIN_CUIT" },
+        claveConsultaPadron: null,
+        disabled: false,
+        onChange: vi.fn(),
+        onConfirmaDatosManuales: vi.fn(),
+      }),
+    );
 
-    expect(html).toContain("Sólo para factura B a Consumidor Final sin identificación fiscal.");
+    expect(html).toContain("Usa el CUIT del cliente y verifica sus datos en ARCA.");
+    expect(html).toContain("SOCIEDAD DE BENEFICENCIA");
+    expect(html).not.toContain('id="receptor-numero-documento"');
+    expect(html).not.toContain('id="receptor-razon-social"');
+  });
+
+  it("explica cuándo se necesita otro receptor si el cliente no tiene CUIT válido", () => {
+    const html = renderFormulario("A", { origen: "CLIENTE_COMERCIAL" });
+
+    expect(html).toContain("El cliente no tiene un CUIT válido para factura A.");
     expect(html).toContain("Ingresá los datos de otra persona o empresa.");
   });
 

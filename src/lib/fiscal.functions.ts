@@ -25,6 +25,7 @@ import {
 } from "./fiscal/impresion";
 import { exigirPngDataUrlFiscal, type QrAfipInput } from "./fiscal/qr";
 import {
+  CODIGOS_ERROR_FISCAL_USUARIO,
   codigoErrorFiscalUsuario,
   parsearEntradaFiscal,
   crearErrorFiscalUsuario,
@@ -345,6 +346,10 @@ function diferenciasIncidente(value: unknown): string[] {
 
 function codigoMensajeIncidente(venta: VentaIncidenteFiscal): CodigoErrorFiscalUsuario {
   if (venta.afip_error_clase === "RECHAZO") return "INCIDENTE_RECHAZO";
+  if (venta.afip_estado === "ERROR_CORREGIBLE" && venta.afip_error_clase === "APLICACION") {
+    const codigo = CODIGOS_ERROR_FISCAL_USUARIO.find((valor) => valor === venta.afip_error_codigo);
+    if (codigo) return codigo;
+  }
   if (venta.afip_estado === "PENDIENTE" || venta.afip_estado === "RECONCILIAR") {
     return "INCIDENTE_PENDIENTE";
   }

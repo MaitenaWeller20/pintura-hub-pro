@@ -623,6 +623,27 @@ describe("selector de letra del diálogo compartido", () => {
     expect(screen.getByDisplayValue("OFICIAL SUCURSAL B")).toBeTruthy();
   });
 
+  it("permite revisar una factura A con el cliente comercial verificado, sin campos manuales", async () => {
+    vi.useFakeTimers();
+    const onConsultarCuit = vi.fn(async () => receptorArca("RAZÓN SOCIAL OFICIAL"));
+    render(createElement(DialogoEmisionFiscal, propsDialogo({ onConsultarCuit })));
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Factura A/i }));
+    expect(
+      (screen.getByRole("radio", { name: /Cliente comercial/i }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.queryByLabelText("CUIT")).toBeNull();
+    expect(screen.queryByLabelText("Razón social")).toBeNull();
+
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+
+    expect(screen.getByDisplayValue("RAZÓN SOCIAL OFICIAL")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Revisar datos fiscales" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
   it("descarta una respuesta tardía de la sucursal anterior con el mismo CUIT", async () => {
     vi.useFakeTimers();
     let resolverA!: (value: ReturnType<typeof receptorArca>) => void;

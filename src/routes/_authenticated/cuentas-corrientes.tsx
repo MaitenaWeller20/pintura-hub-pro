@@ -20,10 +20,11 @@ import { StatusPill } from "@/components/app/status-pill";
 import { fmtMoney, fmtDate, formaPagoLabel, formasCobro, formasEgreso } from "@/lib/format";
 import { coincideDocumento, fmtDocumento } from "@/lib/documento";
 import { toast } from "sonner";
-import { Wallet, Receipt, ChevronRight, Loader2 } from "lucide-react";
+import { Wallet, Receipt, ChevronRight, Loader2, Printer } from "lucide-react";
 import { uuidv4 } from "@/lib/uuid";
 import { useServerFn } from "@tanstack/react-start";
 import { registrarCobranza } from "@/lib/cobranzas.functions";
+import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
 
 export const Route = createFileRoute("/_authenticated/cuentas-corrientes")({
   // Permite entrar directo a la cuenta de un cliente: /cuentas-corrientes?cliente=<id>
@@ -632,6 +633,7 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
 function DetalleCliente({ cliente, onClose, onPagar }: any) {
   const { data: cu } = useCurrentUser();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [imprimiendoId, setImprimiendoId] = useState<string | null>(null);
   const toggle = (id: string) =>
     setExpanded((s) => {
       const n = new Set(s);
@@ -642,19 +644,68 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
   // Extracto: libro de movimientos del cliente. OJO: la RLS filtra por sucursal,
   // así que para un cajero NO-admin esta lista muestra solo SU sucursal (a
   // propósito: no filtra qué compró el cliente en otra sucursal).
-  const { data: movs = [] } = useQuery({
+  const { data: movs = [], error: movsError } = useQuery({
     queryKey: ["ctacte-cliente", cliente.id],
-    queryFn: async () =>
-      (
-        await supabase
-          .from("cuenta_corriente_movimientos")
-          .select(
-            "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, sucursal:sucursales(nombre)",
-          )
-          .eq("cliente_id", cliente.id)
-          .order("created_at", { ascending: false })
-      ).data ?? [],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("cuenta_corriente_movimientos")
+        .select(
+          "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante)",
+        )
+        .eq("cliente_id", cliente.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
   });
+
+  const imprimirRemito = async (movimientoId: string, ventaId: string) => {
+    if (imprimiendoId) return;
+    const ventana = window.open("", "_blank");
+    if (ventana) {
+      ventana.document.title = "Preparando remito";
+      ventana.document.body.textContent = "Preparando remito para imprimir…";
+      ventana.opener = null;
+    }
+    setImprimiendoId(movimientoId);
+    try {
+      const { data: venta, error: ventaError } = await supabase
+        .from("ventas")
+        .select("*, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,telefono)")
+        .eq("id", ventaId)
+        .single();
+      if (ventaError || !venta) throw new Error("No se pudo cargar el remito.");
+      if (
+        venta.cliente_id !== cliente.id ||
+        venta.estado === "ANULADA" ||
+        (venta.tipo_comprobante !== "REMITO" && venta.tipo_comprobante !== "REMITO_OBRA")
+      ) {
+        throw new Error("Este movimiento no corresponde a un remito activo del cliente.");
+      }
+      const { data: items, error: itemsError } = await supabase
+        .from("venta_items")
+        .select("*")
+        .eq("venta_id", ventaId);
+      if (itemsError || !items) throw new Error("No se pudieron cargar los productos del remito.");
+      if (items.length === 0) throw new Error("El remito no tiene productos para imprimir.");
+
+      const { doc, nombre } = generarComprobantePdf(venta, items, null);
+      if (ventana) {
+        doc.autoPrint();
+        const url = URL.createObjectURL(doc.output("blob"));
+        ventana.location.replace(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 300_000);
+      } else {
+        doc.save(nombre);
+        toast.info("Se descargó el remito. Abrilo para imprimirlo.");
+      }
+    } catch (error) {
+      ventana?.close();
+      toast.error(error instanceof Error ? error.message : "No se pudo imprimir el remito.");
+    } finally {
+      setImprimiendoId(null);
+    }
+  };
 
   // Resumen GLOBAL (todas las sucursales) vía RPC SECURITY DEFINER. NO se
   // recomputa desde `movs` (RLS-filtrado): un cajero vería un saldo parcial.
@@ -707,11 +758,15 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
         <DataTable
           columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber"]}
           isEmpty={movs.length === 0}
-          empty={{ text: "Sin movimientos" }}
+          empty={{ text: movsError ? "No se pudieron cargar los movimientos." : "Sin movimientos" }}
         >
           {movs.map((m: any) => {
             const anulado = m.estado === "ANULADO";
             const tieneVenta = m.tipo === "DEBITO" && !!m.venta_id;
+            const esRemito =
+              tieneVenta &&
+              (m.venta?.tipo_comprobante === "REMITO" ||
+                m.venta?.tipo_comprobante === "REMITO_OBRA");
             const abierto = expanded.has(m.id);
             return (
               <Fragment key={m.id}>
@@ -724,6 +779,24 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                         {m.descripcion}
                       </button>
                     ) : m.descripcion}
+                    {esRemito && !anulado && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="ml-2 h-7 gap-1 px-2"
+                        disabled={imprimiendoId !== null}
+                        onClick={() => void imprimirRemito(m.id, m.venta_id)}
+                        aria-label={`Imprimir ${m.descripcion}`}
+                      >
+                        {imprimiendoId === m.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Printer className="h-3.5 w-3.5" />
+                        )}
+                        Imprimir
+                      </Button>
+                    )}
                     {m.forma_pago && <span className="text-xs text-muted-foreground"> · {formaPagoLabel[m.forma_pago] ?? m.forma_pago}</span>}
                     {anulado && <span className="ml-2"><StatusPill tone="neutral">anulado</StatusPill></span>}
                   </TableCell>

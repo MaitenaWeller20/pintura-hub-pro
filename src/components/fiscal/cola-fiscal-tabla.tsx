@@ -12,6 +12,7 @@ import { fmtDate, fmtMoney } from "@/lib/format";
 import type { ColaFiscalFila } from "@/lib/fiscal/cola.functions";
 import { clasificarInteraccionCola, presentarEstadoColaFiscal } from "@/lib/fiscal/cola-ui";
 import { EstadoFiscalPill } from "./estado-fiscal-pill";
+import { GuiaEstadoCorregible } from "./guia-estado-corregible";
 import { ValidezFiscal } from "./validez-fiscal";
 
 function fecha(value: string | null): string {
@@ -211,6 +212,9 @@ export function ColaFiscalTabla({
                     </TableCell>
                     <TableCell className="align-top">
                       <EstadoFiscalPill estado={row.afip_estado} />
+                      {row.afip_estado === "ERROR_CORREGIBLE" ? (
+                        <GuiaEstadoCorregible compacta />
+                      ) : null}
                       <p className="mt-2">
                         <ValidezFiscal
                           validez={row.afip_validez}

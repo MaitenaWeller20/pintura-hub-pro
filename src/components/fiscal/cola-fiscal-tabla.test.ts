@@ -179,5 +179,7 @@ describe("interactividad de filas fiscales", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Ver diagnóstico" })).toBeNull();
+    expect(screen.getByText("Todavía no hay factura autorizada. Ver qué hacer")).toBeTruthy();
+    expect(screen.getByText(/No hagas otra venta ni vuelvas a cobrar/)).toBeTruthy();
   });
 });

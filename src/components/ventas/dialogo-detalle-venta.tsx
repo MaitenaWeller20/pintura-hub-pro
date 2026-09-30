@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { DataTable } from "@/components/app/data-table";
 import { EstadoFiscalPill } from "@/components/fiscal/estado-fiscal-pill";
+import { GuiaEstadoCorregible } from "@/components/fiscal/guia-estado-corregible";
 import { ValidezFiscal } from "@/components/fiscal/validez-fiscal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -527,7 +528,9 @@ export function DialogoDetalleVenta({
                 </DialogDescription>
               </DialogHeader>
 
-              {facturaPendiente ? (
+              {venta.afip_estado === "ERROR_CORREGIBLE" && facturaPendiente ? (
+                <GuiaEstadoCorregible ventaId={venta.id} />
+              ) : facturaPendiente ? (
                 <div
                   role="status"
                   className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"

@@ -123,7 +123,7 @@ export function validarSelectorReceptorFiscal({
       (!condicion || !condicionCompatibleConLetra(condicion, letraSolicitada))
     ) {
       return error(
-        "condicion_iva",
+        value.origen === "CLIENTE_COMERCIAL" ? "cliente_comercial" : "condicion_iva",
         mensajeCodigoErrorFiscalUsuario("CONDICION_FISCAL_INCOMPATIBLE"),
       );
     }
@@ -147,7 +147,7 @@ export function validarSelectorReceptorFiscal({
     if (letraSolicitada === "A") {
       return error(
         "cliente_comercial",
-        "Cliente comercial se factura como Consumidor Final sin identificar y sólo permite factura B. Para una factura A elegí Otro receptor e ingresá su CUIT y condición de IVA.",
+        "El cliente no tiene un CUIT válido para factura A. Cargá un CUIT válido en su ficha o elegí Otro receptor.",
       );
     }
     if (clienteComercial?.documento?.trim()) {

@@ -110,6 +110,27 @@ describe("validación del receptor antes de consultar al servidor", () => {
     expect(resultado).toEqual({ ok: true, selector: { origen: "CLIENTE_COMERCIAL" } });
   });
 
+  it("muestra en la opción del cliente cuando ARCA no confirma condición para A", () => {
+    const resultado = validarSelectorReceptorFiscal({
+      value: { origen: "CLIENTE_COMERCIAL" },
+      confirmaDatosManuales: false,
+      letraSolicitada: "A",
+      clienteComercial: {
+        razonSocial: "Cliente comercial",
+        documento: "30-71419966-4",
+        condicionIva: "RESPONSABLE_INSCRIPTO",
+      },
+      claveConsultaPadron: CLAVE_COMERCIAL,
+      estadoConsultaPadron: {
+        estado: "VERIFICADO",
+        clave: CLAVE_COMERCIAL,
+        receptor: { ...RECEPTOR_ARCA, condicionIvaConfirmada: null },
+      },
+    });
+
+    expect(resultado).toMatchObject({ ok: false, campo: "cliente_comercial" });
+  });
+
   it("no usa un verificado de otra sucursal aunque el CUIT coincida", () => {
     const resultado = validarSelectorReceptorFiscal({
       value: { origen: "CLIENTE_COMERCIAL" },
@@ -277,7 +298,7 @@ describe("validación del receptor antes de consultar al servidor", () => {
 
     expect(resultado).toMatchObject({ ok: false, campo: "confirmacion" });
   });
-  it("impide usar el cliente comercial para factura A antes de consultar al servidor", () => {
+  it("pide un CUIT válido al cliente comercial para factura A", () => {
     const resultado = validarSelectorReceptorFiscal({
       value: { origen: "CLIENTE_COMERCIAL" },
       confirmaDatosManuales: false,
@@ -290,7 +311,7 @@ describe("validación del receptor antes de consultar al servidor", () => {
     });
 
     expect(resultado).toMatchObject({ ok: false, campo: "cliente_comercial" });
-    if (!resultado.ok) expect(resultado.mensaje).toContain("sólo permite factura B");
+    if (!resultado.ok) expect(resultado.mensaje).toContain("no tiene un CUIT válido");
   });
 
   it("explica que un documento comercial necesita tipo fiscal explícito", () => {

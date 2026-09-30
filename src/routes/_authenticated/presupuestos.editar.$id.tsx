@@ -20,7 +20,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
-import { conIva } from "@/lib/fiscal/iva";
+import { conIva, netoDesdePrecioFinal, round2 } from "@/lib/fiscal/iva";
 import {
   filtroProducto,
   ordenarProductosPorRelevancia,
@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
 import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
+import { calcularLineaPresupuesto } from "@/lib/presupuestos-precios";
 import { editarPresupuesto } from "@/lib/presupuestos.functions";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/editar/$id")({
@@ -52,6 +53,8 @@ type Fila = {
   descripcionBase: string;
   /** El precio con el que se presupuestó. null = línea agregada recién. */
   precio_snapshot: number | null;
+  precio_manual_guardado: number | null;
+  precio_manual_editado?: number | null;
   iva_snapshot: number | null;
   /** Lo que vale hoy en el catálogo. */
   precio_hoy: number;
@@ -61,8 +64,16 @@ type Fila = {
 };
 
 /** Espejo exacto de la regla del servidor: snapshot salvo que se repricie. */
-const precioDe = (f: Fila, repreciar: boolean) =>
-  repreciar || f.precio_snapshot === null ? f.precio_hoy : f.precio_snapshot;
+const precioDe = (f: Fila, repreciar: boolean) => {
+  const lista = repreciar || f.precio_snapshot === null ? f.precio_hoy : f.precio_snapshot;
+  const manual =
+    f.precio_manual_editado !== undefined
+      ? f.precio_manual_editado
+      : repreciar
+        ? null
+        : f.precio_manual_guardado;
+  return manual ?? lista;
+};
 const ivaDe = (f: Fila, repreciar: boolean) =>
   repreciar || f.iva_snapshot === null ? f.iva_hoy : f.iva_snapshot;
 
@@ -123,6 +134,8 @@ function EditarPresupuesto() {
         descripcion: i.descripcion,
         descripcionBase: i.descripcion,
         precio_snapshot: Number(i.precio_lista_sin_iva),
+        precio_manual_guardado:
+          i.precio_personalizado_sin_iva == null ? null : Number(i.precio_personalizado_sin_iva),
         iva_snapshot: Number(i.iva_porcentaje),
         // Si el producto ya no está en el catálogo (borrado), lo de hoy es lo
         // que había: sin esto la fila mostraría $0 y el cartel de "cambió de
@@ -175,6 +188,7 @@ function EditarPresupuesto() {
         descripcion: p.nombre,
         descripcionBase: p.nombre,
         precio_snapshot: null, // línea nueva: va al precio de hoy
+        precio_manual_guardado: null,
         iva_snapshot: null,
         precio_hoy: Number(p.precio_sin_iva),
         iva_hoy: Number(p.iva_porcentaje),
@@ -195,16 +209,19 @@ function EditarPresupuesto() {
   );
 
   const totales = useMemo(() => {
-    const r2 = (n: number) => +n.toFixed(2);
     let sub = 0,
       iva = 0;
     for (const f of filas) {
-      const precio = r2(precioDe(f, repreciar) * (1 - Number(f.descuento || 0) / 100));
-      const si = r2(precio * Number(f.cantidad || 0));
-      sub += si;
-      iva += r2((si * ivaDe(f, repreciar)) / 100);
+      const linea = calcularLineaPresupuesto(
+        precioDe(f, repreciar),
+        Number(f.descuento || 0),
+        Number(f.cantidad || 0),
+        ivaDe(f, repreciar),
+      );
+      sub += linea.subtotalSinIva;
+      iva += linea.iva;
     }
-    return { sub: r2(sub), iva: r2(iva), total: r2(sub + iva) };
+    return { sub: round2(sub), iva: round2(iva), total: round2(sub + iva) };
   }, [filas, repreciar]);
 
   const m = useMutation({
@@ -220,6 +237,9 @@ function EditarPresupuesto() {
             producto_id: f.producto_id,
             cantidad: Number(f.cantidad),
             descuento_porcentaje: Number(f.descuento || 0),
+            ...(f.precio_manual_editado !== undefined
+              ? { precio_unitario_sin_iva: f.precio_manual_editado }
+              : {}),
             ...descripcionItemParaPayload(f.descripcion, f.descripcionBase),
           })),
           p_cliente_id: clienteId || undefined,
@@ -316,7 +336,12 @@ function EditarPresupuesto() {
             <Button
               variant={repreciar ? "default" : "outline"}
               size="sm"
-              onClick={() => setRepreciar((v) => !v)}
+              onClick={() => {
+                setRepreciar((v) => !v);
+                setFilas((actual) =>
+                  actual.map((fila) => ({ ...fila, precio_manual_editado: undefined })),
+                );
+              }}
               data-testid="repreciar"
             >
               <RefreshCw className="h-4 w-4 mr-1" />
@@ -411,7 +436,7 @@ function EditarPresupuesto() {
               <TableRow>
                 <TableHead>Código</TableHead>
                 <TableHead>Descripción</TableHead>
-                <TableHead className="text-right">Precio</TableHead>
+                <TableHead>Precio unit. final</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
@@ -429,14 +454,23 @@ function EditarPresupuesto() {
                 filas.map((f) => {
                   const estadoDescripcion = estadoDescripcionItem(f.descripcion, f.descripcionBase);
                   const base = precioDe(f, repreciar);
-                  const precio = +(base * (1 - Number(f.descuento || 0) / 100)).toFixed(2);
+                  const listaVisible = repreciar
+                    ? f.precio_hoy
+                    : (f.precio_snapshot ?? f.precio_hoy);
+                  const iva = ivaDe(f, repreciar);
+                  const linea = calcularLineaPresupuesto(
+                    base,
+                    Number(f.descuento || 0),
+                    Number(f.cantidad || 0),
+                    iva,
+                  );
                   // Sólo si el precio que se está mostrando NO es el de hoy.
                   // Repreciando serían el mismo número dos veces.
-                  const seMovio = !repreciar && f.precio_snapshot !== null && base !== f.precio_hoy;
+                  const seMovio =
+                    !repreciar && f.precio_snapshot !== null && f.precio_snapshot !== f.precio_hoy;
                   // Se muestra con IVA, igual que en el presupuesto que ve el
                   // cliente. Lo que se guarda sigue siendo el neto.
-                  const iva = ivaDe(f, repreciar);
-                  const precioFinal = conIva(precio, iva);
+                  const precioFinal = conIva(linea.precioNeto, iva);
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
@@ -470,13 +504,27 @@ function EditarPresupuesto() {
                           <span className="ml-2 text-[10px] text-muted-foreground">(nuevo)</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {fmtMoney(precioFinal)}
-                        {Number(f.descuento || 0) > 0 && (
-                          <span className="block text-[10px] text-muted-foreground line-through">
-                            {fmtMoney(conIva(base, iva))}
+                      <TableCell className="font-mono text-xs">
+                        <NumberInput
+                          className="h-8 w-28"
+                          aria-label={`Precio final de ${f.codigo}`}
+                          value={conIva(base, iva)}
+                          onValueChange={(valor) =>
+                            upd(f.producto_id, {
+                              precio_manual_editado: netoDesdePrecioFinal(valor, iva),
+                            })
+                          }
+                        />
+                        {Math.abs(base - listaVisible) > 0.005 ? (
+                          <span className="block text-[10px] text-warning">
+                            lista: {fmtMoney(conIva(listaVisible, iva))}
                           </span>
-                        )}
+                        ) : null}
+                        {Number(f.descuento || 0) > 0 ? (
+                          <span className="block text-[10px] text-muted-foreground">
+                            con descuento: {fmtMoney(precioFinal)}
+                          </span>
+                        ) : null}
                         {seMovio && (
                           <span className="block text-[10px] text-muted-foreground">
                             hoy vale {fmtMoney(conIva(f.precio_hoy, f.iva_hoy))}
@@ -486,6 +534,7 @@ function EditarPresupuesto() {
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
+                          aria-label={`Cantidad de ${f.codigo}`}
                           value={f.cantidad}
                           onValueChange={(v) => upd(f.producto_id, { cantidad: v })}
                         />
@@ -493,6 +542,7 @@ function EditarPresupuesto() {
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
+                          aria-label={`Descuento de ${f.codigo}`}
                           value={f.descuento}
                           onValueChange={(v) =>
                             upd(f.producto_id, { descuento: Math.min(Math.max(v ?? 0, 0), 100) })
@@ -500,7 +550,7 @@ function EditarPresupuesto() {
                         />
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(precioFinal * Number(f.cantidad || 0))}
+                        {fmtMoney(linea.total)}
                       </TableCell>
                       <TableCell>
                         <Button

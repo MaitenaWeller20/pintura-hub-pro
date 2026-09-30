@@ -82,16 +82,16 @@ chequear "guarda el precio de lista aparte" "10000.00" \
 chequear "el total es 3 × 9000 + IVA" "32670.00" \
   "$(q "select total::text from public.presupuestos where id='$PRES'")"
 
-echo "── 2. Un precio inventado en el payload se ignora ────────"
+echo "── 2. Un campo de precio ajeno al contrato se ignora ────"
 $PSQL > /dev/null <<SQL
 $(auth admin@local.test)
 SELECT public.crear_presupuesto('$SUC'::uuid,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1,
-    'precio_unitario_sin_iva',1,'precio_sin_iva',1)),
+    'precio_sin_iva',1)),
   NULL, 'Truchito', NULL, 'TEST-PRES');
 SQL
 TRUCHO=$(q "select id::text from public.presupuestos where observaciones='TEST-PRES' and nombre_cliente='Truchito'")
-chequear "el servidor pone el precio real, no el del payload" "10000.00" \
+chequear "el servidor ignora precio_sin_iva y conserva la lista" "10000.00" \
   "$(q "select precio_sin_iva::text from public.presupuesto_items where presupuesto_id='$TRUCHO'")"
 
 echo "── 3. EL PUNTO: convertir usa el precio PRESUPUESTADO ────"

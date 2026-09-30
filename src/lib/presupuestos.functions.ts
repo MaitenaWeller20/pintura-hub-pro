@@ -133,6 +133,7 @@ const itemPresupuestoSchema = z
     producto_id: z.string().uuid(),
     cantidad: z.number().finite().positive(),
     descuento_porcentaje: z.number().finite().min(0).max(100).default(0),
+    precio_unitario_sin_iva: z.number().finite().min(0).max(999999999999.99).nullable().optional(),
     descripcion: descripcionPresupuestoSchema.optional(),
   })
   .strict();

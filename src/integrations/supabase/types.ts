@@ -1346,6 +1346,7 @@ export type Database = {
           iva_monto: number;
           iva_porcentaje: number;
           precio_lista_sin_iva: number;
+          precio_personalizado_sin_iva: number | null;
           precio_sin_iva: number;
           presupuesto_id: string;
           producto_id: string;
@@ -1361,6 +1362,7 @@ export type Database = {
           iva_monto: number;
           iva_porcentaje: number;
           precio_lista_sin_iva: number;
+          precio_personalizado_sin_iva?: number | null;
           precio_sin_iva: number;
           presupuesto_id: string;
           producto_id: string;
@@ -1376,6 +1378,7 @@ export type Database = {
           iva_monto?: number;
           iva_porcentaje?: number;
           precio_lista_sin_iva?: number;
+          precio_personalizado_sin_iva?: number | null;
           precio_sin_iva?: number;
           presupuesto_id?: string;
           producto_id?: string;

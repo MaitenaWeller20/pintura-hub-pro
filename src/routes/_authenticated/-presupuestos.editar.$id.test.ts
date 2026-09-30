@@ -64,6 +64,7 @@ const presupuesto = {
       codigo: "P-1",
       descripcion: DESCRIPCION,
       precio_lista_sin_iva: 100,
+      precio_personalizado_sin_iva: null as number | null,
       precio_sin_iva: 100,
       iva_porcentaje: 21,
       cantidad: 1,
@@ -114,6 +115,7 @@ function componente(route: unknown): ComponentType {
 }
 
 beforeEach(() => {
+  presupuesto.items[0].precio_personalizado_sin_iva = null;
   dobles.navigate.mockReset();
   dobles.invalidateQueries.mockReset();
   dobles.rpc.mockReset().mockResolvedValue({ data: [{ numero: "P-00001" }], error: null });
@@ -126,6 +128,52 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("rutas reales de edición y detalle de presupuesto", () => {
+  it("permite cambiar el precio final de una línea existente", async () => {
+    render(createElement(componente(RutaEditar)));
+
+    const precio = (await screen.findByLabelText("Precio final de P-1")) as HTMLInputElement;
+    expect(precio.value).toBe("121");
+    fireEvent.change(precio, { target: { value: "181.50" } });
+    fireEvent.click(screen.getByTestId("guardar-edicion"));
+
+    await waitFor(() => expect(dobles.editarPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.editarPresupuesto.mock.calls[0]?.[0].data).toMatchObject({
+      p_repreciar: false,
+      p_items: [expect.objectContaining({ precio_unitario_sin_iva: 150 })],
+    });
+  });
+
+  it("mantiene un precio manual guardado al editar otro campo", async () => {
+    presupuesto.items[0].precio_personalizado_sin_iva = 110;
+    render(createElement(componente(RutaEditar)));
+
+    const precio = (await screen.findByLabelText("Precio final de P-1")) as HTMLInputElement;
+    expect(precio.value).toBe("133.1");
+    fireEvent.click(screen.getByTestId("guardar-edicion"));
+
+    await waitFor(() => expect(dobles.editarPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.editarPresupuesto.mock.calls[0]?.[0].data.p_items[0]).not.toHaveProperty(
+      "precio_unitario_sin_iva",
+    );
+  });
+
+  it("actualizar a precios de hoy restablece también un precio manual anterior", async () => {
+    presupuesto.items[0].precio_personalizado_sin_iva = 110;
+    render(createElement(componente(RutaEditar)));
+
+    const precio = (await screen.findByLabelText("Precio final de P-1")) as HTMLInputElement;
+    expect(precio.value).toBe("133.1");
+    fireEvent.click(screen.getByTestId("repreciar"));
+    expect(precio.value).toBe("151.25");
+    fireEvent.click(screen.getByTestId("guardar-edicion"));
+
+    await waitFor(() => expect(dobles.editarPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.editarPresupuesto.mock.calls[0]?.[0].data).toMatchObject({ p_repreciar: true });
+    expect(dobles.editarPresupuesto.mock.calls[0]?.[0].data.p_items[0]).not.toHaveProperty(
+      "precio_unitario_sin_iva",
+    );
+  });
+
   it("carga la descripción congelada y la preserva al cambiar cantidad o repreciar", async () => {
     render(createElement(componente(RutaEditar)));
 
@@ -135,7 +183,7 @@ describe("rutas reales de edición y detalle de presupuesto", () => {
     expect(descripcion.getAttribute("aria-invalid")).not.toBe("true");
 
     const fila = screen.getByTestId("fila-presupuesto");
-    const [, cantidad] = within(fila).getAllByRole("textbox") as HTMLInputElement[];
+    const cantidad = within(fila).getByLabelText("Cantidad de P-1") as HTMLInputElement;
     fireEvent.change(cantidad, { target: { value: "2" } });
     fireEvent.click(screen.getByTestId("repreciar"));
 
@@ -176,5 +224,12 @@ describe("rutas reales de edición y detalle de presupuesto", () => {
 
     expect(screen.getByRole("columnheader", { name: "Descripción" })).toBeTruthy();
     expect(screen.getByText(DESCRIPCION)).toBeTruthy();
+  });
+
+  it("identifica un precio ajustado en el detalle del presupuesto", () => {
+    presupuesto.items[0].precio_personalizado_sin_iva = 110;
+    render(createElement(componente(RutaDetalle)));
+
+    expect(screen.getByText("Precio ajustado")).toBeTruthy();
   });
 });

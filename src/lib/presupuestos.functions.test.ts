@@ -186,6 +186,28 @@ function textoProfundo(value: unknown, vistos = new Set<unknown>()): string {
 }
 
 describe("writers server-side cerrados de presupuesto", () => {
+  it("acepta un precio neto manual en alta y edición, y permite restablecerlo en edición", () => {
+    const item = { ...ALTA_BASE.p_items[0], precio_unitario_sin_iva: 125 };
+    expect(
+      crearPresupuestoInputSchema.parse({ ...ALTA_BASE, p_items: [item] }).p_items[0],
+    ).toMatchObject({ precio_unitario_sin_iva: 125 });
+    expect(
+      editarPresupuestoInputSchema.parse({
+        p_presupuesto_id: presupuestoId,
+        p_repreciar: false,
+        p_items: [{ ...item, precio_unitario_sin_iva: null }],
+      }).p_items[0],
+    ).toMatchObject({ precio_unitario_sin_iva: null });
+    for (const valor of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        crearPresupuestoInputSchema.parse({
+          ...ALTA_BASE,
+          p_items: [{ ...item, precio_unitario_sin_iva: valor }],
+        }),
+      ).toThrow();
+    }
+  });
+
   it("valida entradas estrictas, permite omitir fallback y rechaza custom de 161", () => {
     expect(crearPresupuestoInputSchema.parse(ALTA_BASE).p_items[0]).not.toHaveProperty(
       "descripcion",

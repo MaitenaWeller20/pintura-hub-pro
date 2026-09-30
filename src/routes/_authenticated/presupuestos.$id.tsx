@@ -302,6 +302,9 @@ function DetallePresupuesto() {
                   </TableCell>
                   <TableCell className="text-right font-mono">
                     {fmtMoney(conIva(i.precio_sin_iva, i.iva_porcentaje))}
+                    {i.precio_personalizado_sin_iva != null ? (
+                      <span className="block text-[10px] text-warning">Precio ajustado</span>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
                     {fmtMoney(i.subtotal_con_iva)}

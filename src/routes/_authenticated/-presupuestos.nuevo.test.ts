@@ -81,6 +81,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ruta real de nuevo presupuesto", () => {
+  it("permite cambiar el precio final sin alterar el precio del catálogo", async () => {
+    render(createElement(paginaNuevaPresupuesto()));
+
+    fireEvent.change(screen.getByTestId("buscar-producto-presup"), { target: { value: "P-1" } });
+    fireEvent.click(await screen.findByRole("button", { name: /P-1.*Producto Uno/ }));
+
+    const precio = screen.getByLabelText("Precio final de P-1") as HTMLInputElement;
+    expect(precio.value).toBe("121");
+    fireEvent.change(precio, { target: { value: "151.25" } });
+    expect(screen.getByText(/lista:.*121,00/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(dobles.crearPresupuesto).toHaveBeenCalledOnce());
+    expect(dobles.crearPresupuesto.mock.calls[0]?.[0].data.p_items[0]).toMatchObject({
+      producto_id: PRODUCTO_ID,
+      precio_unitario_sin_iva: 125,
+    });
+  });
+
   it("envía la descripción personalizada de la línea al crear", async () => {
     render(createElement(paginaNuevaPresupuesto()));
 

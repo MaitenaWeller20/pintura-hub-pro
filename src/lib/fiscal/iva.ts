@@ -35,6 +35,15 @@ export const conIva = (
   ivaPorcentaje: number | string | null | undefined,
 ): number => round2(Number(neto ?? 0) * (1 + Number(ivaPorcentaje ?? 0) / 100));
 
+/** Traduce el precio final que escribe el operador al neto unitario persistido. */
+export function netoDesdePrecioFinal(
+  precioFinal: number | null,
+  ivaPorcentaje: number,
+): number | null {
+  if (precioFinal === null) return null;
+  return round2(precioFinal / (1 + ivaPorcentaje / 100));
+}
+
 export interface ItemFiscal {
   cantidad: number;
   precio_unitario_sin_iva: number;

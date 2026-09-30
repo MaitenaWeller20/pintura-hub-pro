@@ -133,6 +133,67 @@ SELECT precio_lista_sin_iva::text||'/'||iva_porcentaje::text FROM public.presupu
  WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "1000.00/21.00"
 
 echo
+echo "== Precio unitario manual =="
+
+EDITAR_MANUAL="SELECT * FROM public.editar_presupuesto(
+  (SELECT presupuesto_id FROM _p),
+  jsonb_build_array(
+    jsonb_build_object('producto_id','$A','cantidad',1,'descuento_porcentaje',0,
+                       'precio_unitario_sin_iva',1500),
+    jsonb_build_object('producto_id','$B','cantidad',1,'descuento_porcentaje',0)),
+  NULL, 'Cliente de prueba', NULL, NULL"
+
+corre "el alta guarda la lista y el precio elegido por separado" "
+CREATE TEMP TABLE _manual ON COMMIT DROP AS
+SELECT * FROM public.crear_presupuesto(
+  (SELECT id FROM public.sucursales WHERE codigo='OHIGGINS'),
+  jsonb_build_array(jsonb_build_object('producto_id','$A','cantidad',1,
+    'descuento_porcentaje',10,'precio_unitario_sin_iva',1250)));
+SELECT precio_lista_sin_iva::text||'/'||precio_personalizado_sin_iva::text||'/'||precio_sin_iva::text
+  FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _manual);" "1000.00/1250.00/1125.00"
+
+corre "editar cambia sólo la línea elegida y conserva la lista" "
+$EDITAR_MANUAL);
+SELECT precio_lista_sin_iva::text||'/'||precio_personalizado_sin_iva::text||'/'||precio_sin_iva::text
+  FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "1000.00/1500.00/1500.00"
+
+corre "cambiar cantidad conserva el precio manual aunque cambie el catálogo" "
+$EDITAR_MANUAL);
+$SUBE_A
+$EDITAR_A3_B1);
+SELECT precio_lista_sin_iva::text||'/'||precio_personalizado_sin_iva::text||'/'||precio_sin_iva::text
+  FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "1000.00/1500.00/1500.00"
+
+corre "actualizar a precios de hoy restablece el precio manual" "
+$EDITAR_MANUAL);
+$SUBE_A
+$EDITAR_A3_B1, true);
+SELECT precio_lista_sin_iva::text||'/'||COALESCE(precio_personalizado_sin_iva::text,'-')||'/'||precio_sin_iva::text
+  FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "5000.00/-/5000.00"
+
+corre "limpiar una línea manual vuelve a su lista congelada" "
+$EDITAR_MANUAL);
+SELECT * FROM public.editar_presupuesto(
+  (SELECT presupuesto_id FROM _p),
+  jsonb_build_array(
+    jsonb_build_object('producto_id','$A','cantidad',1,'descuento_porcentaje',0,
+                       'precio_unitario_sin_iva',NULL),
+    jsonb_build_object('producto_id','$B','cantidad',1,'descuento_porcentaje',0)));
+SELECT COALESCE(precio_personalizado_sin_iva::text,'-')||'/'||precio_sin_iva::text
+  FROM public.presupuesto_items
+ WHERE presupuesto_id=(SELECT presupuesto_id FROM _p) AND producto_id='$A';" "-/1000.00"
+
+rechaza "rechaza un precio manual negativo" "
+SELECT * FROM public.editar_presupuesto(
+  (SELECT presupuesto_id FROM _p),
+  jsonb_build_array(jsonb_build_object('producto_id','$A','cantidad',1,
+    'precio_unitario_sin_iva',-1)));" "Precio unitario inválido"
+
+echo
 echo "== La descripción congelada =="
 
 corre "omitir descripción conserva el texto histórico" "

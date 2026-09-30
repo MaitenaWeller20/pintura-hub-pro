@@ -33,10 +33,11 @@ import {
   ordenarProductosPorRelevancia,
   TOPE_BUSQUEDA_PRODUCTOS,
 } from "@/lib/postgrest";
-import { conIva } from "@/lib/fiscal/iva";
+import { conIva, netoDesdePrecioFinal, round2 } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
 import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
+import { calcularLineaPresupuesto } from "@/lib/presupuestos-precios";
 import { crearPresupuesto } from "@/lib/presupuestos.functions";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
@@ -53,6 +54,7 @@ type Fila = {
   descripcion: string;
   descripcionBase: string;
   precio_lista: number;
+  precio_manual: number | null;
   iva: number;
   cantidad: number | null;
   descuento: number | null;
@@ -120,6 +122,7 @@ function NuevoPresupuesto() {
         descripcion: p.nombre,
         descripcionBase: p.nombre,
         precio_lista: Number(p.precio_sin_iva),
+        precio_manual: null,
         iva: Number(p.iva_porcentaje),
         cantidad: 1,
         descuento: 0,
@@ -132,18 +135,20 @@ function NuevoPresupuesto() {
   const borrar = (id: string) => setFilas((prev) => prev.filter((f) => f.producto_id !== id));
 
   // Espejo del cálculo del servidor, sólo para mostrar el total mientras se carga.
-  // El que manda es `crear_presupuesto`, que recalcula desde el catálogo.
   const totales = useMemo(() => {
-    const r2 = (n: number) => +n.toFixed(2);
     let sub = 0,
       iva = 0;
     for (const f of filas) {
-      const precio = r2(f.precio_lista * (1 - Number(f.descuento || 0) / 100));
-      const si = r2(precio * Number(f.cantidad || 0));
-      sub += si;
-      iva += r2((si * f.iva) / 100);
+      const linea = calcularLineaPresupuesto(
+        f.precio_manual ?? f.precio_lista,
+        Number(f.descuento || 0),
+        Number(f.cantidad || 0),
+        f.iva,
+      );
+      sub += linea.subtotalSinIva;
+      iva += linea.iva;
     }
-    return { sub: r2(sub), iva: r2(iva), total: r2(sub + iva) };
+    return { sub: round2(sub), iva: round2(iva), total: round2(sub + iva) };
   }, [filas]);
 
   const m = useMutation({
@@ -159,6 +164,7 @@ function NuevoPresupuesto() {
             producto_id: f.producto_id,
             cantidad: Number(f.cantidad),
             descuento_porcentaje: Number(f.descuento || 0),
+            ...(f.precio_manual !== null ? { precio_unitario_sin_iva: f.precio_manual } : {}),
             ...descripcionItemParaPayload(f.descripcion, f.descripcionBase),
           })),
           p_cliente_id: clienteId || undefined,
@@ -321,7 +327,7 @@ function NuevoPresupuesto() {
               <TableRow>
                 <TableHead>Código</TableHead>
                 <TableHead>Descripción</TableHead>
-                <TableHead className="text-right">Precio</TableHead>
+                <TableHead>Precio unit. final</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
@@ -338,12 +344,16 @@ function NuevoPresupuesto() {
               ) : (
                 filas.map((f) => {
                   const estadoDescripcion = estadoDescripcionItem(f.descripcion, f.descripcionBase);
-                  const precio = +(f.precio_lista * (1 - Number(f.descuento || 0) / 100)).toFixed(
-                    2,
+                  const base = f.precio_manual ?? f.precio_lista;
+                  const linea = calcularLineaPresupuesto(
+                    base,
+                    Number(f.descuento || 0),
+                    Number(f.cantidad || 0),
+                    f.iva,
                   );
                   // Se muestra con IVA: el presupuesto se cotiza con el precio
                   // final. Lo que se manda a guardar sigue siendo el neto.
-                  const precioFinal = conIva(precio, f.iva);
+                  const precioFinal = conIva(linea.precioNeto, f.iva);
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
@@ -374,17 +384,33 @@ function NuevoPresupuesto() {
                             ))}
                         </p>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {fmtMoney(precioFinal)}
-                        {Number(f.descuento || 0) > 0 && (
-                          <span className="block text-[10px] text-muted-foreground line-through">
-                            {fmtMoney(conIva(f.precio_lista, f.iva))}
+                      <TableCell className="font-mono text-xs">
+                        <NumberInput
+                          className="h-8 w-28"
+                          aria-label={`Precio final de ${f.codigo}`}
+                          value={conIva(base, f.iva)}
+                          onValueChange={(valor) =>
+                            upd(f.producto_id, {
+                              precio_manual: netoDesdePrecioFinal(valor, f.iva),
+                            })
+                          }
+                        />
+                        {f.precio_manual !== null &&
+                        Math.abs(f.precio_manual - f.precio_lista) > 0.005 ? (
+                          <span className="block text-[10px] text-warning">
+                            lista: {fmtMoney(conIva(f.precio_lista, f.iva))}
                           </span>
-                        )}
+                        ) : null}
+                        {Number(f.descuento || 0) > 0 ? (
+                          <span className="block text-[10px] text-muted-foreground">
+                            con descuento: {fmtMoney(precioFinal)}
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
+                          aria-label={`Cantidad de ${f.codigo}`}
                           value={f.cantidad}
                           onValueChange={(v) => upd(f.producto_id, { cantidad: v })}
                         />
@@ -392,6 +418,7 @@ function NuevoPresupuesto() {
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
+                          aria-label={`Descuento de ${f.codigo}`}
                           value={f.descuento}
                           onValueChange={(v) =>
                             upd(f.producto_id, { descuento: Math.min(Math.max(v ?? 0, 0), 100) })
@@ -399,7 +426,7 @@ function NuevoPresupuesto() {
                         />
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(precioFinal * Number(f.cantidad || 0))}
+                        {fmtMoney(linea.total)}
                       </TableCell>
                       <TableCell>
                         <Button

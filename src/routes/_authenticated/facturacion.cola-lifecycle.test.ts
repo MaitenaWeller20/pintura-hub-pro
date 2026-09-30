@@ -306,6 +306,33 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("ciclo montado del diálogo en la ruta de cola", () => {
+  it("consulta el diagnóstico corregible sin disparar la emisión", async () => {
+    dobles.router.search = { tab: "revisar", page: 1 };
+    dobles.listarCola.mockResolvedValue(respuestaCola([filaMovida]));
+    dobles.consultarIncidente.mockResolvedValue({
+      venta_id: VENTA,
+      estado: "ERROR_CORREGIBLE",
+      fase: "PREFLIGHT",
+      clase: "APLICACION",
+      codigo: "PADRON_NO_AUTORIZADO",
+      mensaje: { tipo: "ERROR_FISCAL_USUARIO_V1", codigo: "PADRON_NO_AUTORIZADO" },
+      diferencias: [],
+      legacy: false,
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const PaginaCola = paginaCola();
+    render(createElement(QueryClientProvider, { client: queryClient }, createElement(PaginaCola)));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ver diagnóstico" }));
+    expect(
+      await screen.findByText(/El certificado no está habilitado para consultar el padrón/),
+    ).toBeTruthy();
+    expect(dobles.consultarIncidente).toHaveBeenCalledWith({ data: { venta_id: VENTA } });
+    expect(dobles.emitir).not.toHaveBeenCalled();
+  });
+
   it("conserva el error al pasar de pendientes a revisar y navega recién al cerrar", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

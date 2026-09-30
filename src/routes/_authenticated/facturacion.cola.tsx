@@ -623,6 +623,15 @@ function ColaFiscalPage() {
           accionPendienteId={accion.isPending ? accion.variables?.row.venta_id : null}
           error={cola.error ? mensajeErrorFiscal(cola.error, "CONSULTA") : null}
           onRetry={() => void cola.refetch()}
+          onVerIncidente={(row, disparador) => {
+            returnFocusRef.current = disparador;
+            setIncidenteSeleccionado({
+              ventaId: row.venta_id,
+              numeroComercial: row.numero_comprobante,
+              legacy: false,
+              diferenciasIniciales: [],
+            });
+          }}
           onAccion={(row, nombre, disparador) => {
             if (!accionesHabilitadas) return;
             setErrorAccion(null);

@@ -113,6 +113,7 @@ const ventaRemito = {
 function renderDetalle(
   venta: VentaDetalle = ventaRemito,
   onVentaActualizada: () => Promise<void> | void = vi.fn(),
+  permitirDescarga = false,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -121,7 +122,7 @@ function renderDetalle(
     <QueryClientProvider client={queryClient}>
       <DialogoDetalleVenta
         venta={venta}
-        permitirDescarga={false}
+        permitirDescarga={permitirDescarga}
         onClose={vi.fn()}
         onVentaActualizada={onVentaActualizada}
       />
@@ -148,6 +149,26 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("precios finales y corrección de remitos grabados", () => {
+  it("explica que una venta corregible aún no tiene factura para descargar", async () => {
+    renderDetalle(
+      {
+        ...ventaRemito,
+        numero_comprobante: "GPZ-VTA-0075",
+        tipo_comprobante: "VENTA",
+        condicion_venta: "CONTADO",
+        afip_estado: "ERROR_CORREGIBLE",
+        afip_validez: null,
+      } as VentaDetalle,
+      vi.fn(),
+      true,
+    );
+
+    expect(await screen.findByText("Producto con descuento")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "PDF" })).toBeNull();
+    expect(screen.getByText(/todavía no está autorizado por ARCA/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /revisar la emisión/i })).toBeTruthy();
+  });
+
   it("muestra precio final y descuento, y envía sólo precios al RPC protegido", async () => {
     const onVentaActualizada = vi.fn();
     renderDetalle(ventaRemito, onVentaActualizada);

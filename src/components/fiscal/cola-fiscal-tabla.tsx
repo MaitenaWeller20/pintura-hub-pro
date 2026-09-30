@@ -79,6 +79,7 @@ export function ColaFiscalTabla({
   error,
   onRetry,
   onAccion,
+  onVerIncidente,
 }: {
   filas: ColaFiscalFila[];
   esAdmin: boolean;
@@ -90,6 +91,7 @@ export function ColaFiscalTabla({
   error?: string | null;
   onRetry(): void;
   onAccion(row: ColaFiscalFila, accion: string, disparador: HTMLButtonElement): void;
+  onVerIncidente(row: ColaFiscalFila, disparador: HTMLButtonElement): void;
 }) {
   return (
     <section
@@ -241,6 +243,18 @@ export function ColaFiscalTabla({
                         ) : null}
                         {ejecutandoAccion ? "Procesando…" : accion}
                       </Button>
+                      {esAdmin && row.afip_estado === "ERROR_CORREGIBLE" ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="mt-1 min-h-11 min-w-11"
+                          disabled={!accionesHabilitadas || accionPendienteId != null}
+                          onClick={(event) => onVerIncidente(row, event.currentTarget)}
+                        >
+                          Ver diagnóstico
+                        </Button>
+                      ) : null}
                       {requierePermisoPeriodo ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           Requiere la habilitación y capacidad para NC por período.

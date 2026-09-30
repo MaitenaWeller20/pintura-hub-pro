@@ -1,7 +1,7 @@
 -- Permite cotizar un precio unitario manual sin perder la lista congelada.
 -- La conversión en venta sigue usando presupuesto_items.precio_sin_iva.
 ALTER TABLE public.presupuesto_items
-  ADD COLUMN precio_personalizado_sin_iva numeric(14,2)
+  ADD COLUMN IF NOT EXISTS precio_personalizado_sin_iva numeric(14,2)
   CHECK (precio_personalizado_sin_iva IS NULL OR precio_personalizado_sin_iva >= 0);
 
 -- La lista queda congelada; el precio personalizado es la base antes de descuento.

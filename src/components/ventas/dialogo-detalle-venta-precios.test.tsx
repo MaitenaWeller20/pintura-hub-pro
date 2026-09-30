@@ -165,8 +165,9 @@ describe("precios finales y corrección de remitos grabados", () => {
 
     expect(await screen.findByText("Producto con descuento")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "PDF" })).toBeNull();
-    expect(screen.getByText(/todavía no está autorizado por ARCA/i)).toBeTruthy();
-    expect(screen.getByRole("link", { name: /revisar la emisión/i })).toBeTruthy();
+    expect(screen.getByText(/la factura de esta venta todavía no está autorizada/i)).toBeTruthy();
+    expect(screen.getByText(/No hagas otra venta ni vuelvas a cobrar/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Ir a revisar esta venta" })).toBeTruthy();
   });
 
   it("muestra precio final y descuento, y envía sólo precios al RPC protegido", async () => {

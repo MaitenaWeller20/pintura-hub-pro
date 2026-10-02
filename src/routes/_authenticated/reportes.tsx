@@ -87,7 +87,7 @@ function ReportesPage() {
       const { filas, truncado } = await traerTodo(async (inicio, fin) => {
         let q = supabase.from("venta_pagos").select(`
           id, monto, forma_pago, created_at,
-          venta:ventas!inner(estado, sucursal_id, tipo_comprobante, afip_cbte_asoc_id, cae, afip_estado, afip_simulado, afip_modo)
+          venta:ventas!inner(estado, sucursal_id, tipo_comprobante, afip_cbte_asoc_id, afip_cbte_tipo, cae, afip_estado, afip_simulado, afip_modo, afip_validez)
         `, { count: "exact" }).gte("created_at", gte).lt("created_at", lt)
           .order("created_at", { ascending: false }).order("id", { ascending: false }).range(inicio, fin);
         if (sucId) q = q.eq("venta.sucursal_id", sucId);

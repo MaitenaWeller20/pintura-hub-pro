@@ -1,10 +1,17 @@
+import { loadEnv } from "vite";
+
 const NOMBRE_URL = "VITE_SUPABASE_URL";
 const NOMBRE_CLAVE = "VITE_SUPABASE_PUBLISHABLE_KEY";
 const PLACEHOLDER_SECRETO = /^\[(?:sensitive|redacted|secret)\]$/i;
 
-const url = process.env[NOMBRE_URL]?.trim();
-const clave = process.env[NOMBRE_CLAVE]?.trim();
-const esDeploymentVercel = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_ENV);
+const esBuildVercel = process.env.NITRO_PRESET === "vercel";
+const entornoPublico = esBuildVercel
+  ? loadEnv("production", process.cwd(), "VITE_")
+  : process.env;
+const url = entornoPublico[NOMBRE_URL]?.trim();
+const clave = entornoPublico[NOMBRE_CLAVE]?.trim();
+const esDeploymentVercel =
+  process.env.VERCEL === "1" || Boolean(process.env.VERCEL_ENV) || esBuildVercel;
 const errores = [];
 
 for (const [nombre, valor] of [

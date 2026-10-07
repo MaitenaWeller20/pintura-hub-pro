@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const validador = fileURLToPath(new URL("./validar-entorno-publico-build.mjs", import.meta.url));
 const raizProyecto = fileURLToPath(new URL("../", import.meta.url));
 
-function ejecutarValidador(overrides = {}) {
+function ejecutarValidador(overrides = {}, cwd = raizProyecto) {
   const env = { ...process.env };
   for (const nombre of [
     "VERCEL",
     "VERCEL_ENV",
+    "NITRO_PRESET",
     "VITE_SUPABASE_URL",
     "VITE_SUPABASE_PUBLISHABLE_KEY",
   ]) {
@@ -20,6 +24,7 @@ function ejecutarValidador(overrides = {}) {
   return spawnSync(process.execPath, [validador], {
     encoding: "utf8",
     env: { ...env, ...overrides },
+    cwd,
   });
 }
 
@@ -51,6 +56,22 @@ test("rechaza una URL local de Supabase en un deployment de Vercel", () => {
 
   assert.notEqual(resultado.status, 0);
   assert.match(resultado.stderr, /VITE_SUPABASE_URL.*local.*Vercel/i);
+});
+
+test("rechaza un build:vercel si .env apunta a Supabase local", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "quimex-build-env-"));
+  try {
+    writeFileSync(
+      join(cwd, ".env"),
+      "VITE_SUPABASE_URL=http://127.0.0.1:54321\nVITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_prueba\n",
+    );
+    const resultado = ejecutarValidador({ NITRO_PRESET: "vercel" }, cwd);
+
+    assert.notEqual(resultado.status, 0);
+    assert.match(resultado.stderr, /VITE_SUPABASE_URL.*local.*Vercel/i);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("acepta una URL HTTPS y una clave publicable reales", () => {

@@ -86,6 +86,14 @@ interface ItemRow {
   // de lista, para que la nota espeje la factura y no el precio de hoy.
   desde_factura?: boolean;
 }
+
+interface ClienteSeleccionado {
+  id: string;
+  razon_social: string;
+  cuit_dni: string | null;
+  tipo: string;
+  condicion_cta_cte: boolean;
+}
 // Tipos de comprobante que van a Cuenta Corriente del cliente (no impactan caja).
 // R2.a: la "Factura interna" YA NO está acá — es un documento interno de contado.
 const TIPOS_CTA_CTE = new Set(["REMITO", "REMITO_OBRA"]);
@@ -107,6 +115,7 @@ function NuevaVenta() {
 
   const [sucursalId, setSucursalId] = useState<string>("");
   const [clienteId, setClienteId] = useState<string>("");
+  const [clienteSel, setClienteSel] = useState<ClienteSeleccionado | null>(null);
   const [clienteQuery, setClienteQuery] = useState("");
   const [tipoComp, setTipoComp] = useState<string>("FACTURA_B");
   const [caminoNotaCredito, setCaminoNotaCredito] = useState<CaminoNotaCredito>("REVERSAR_FACTURA");
@@ -181,11 +190,6 @@ function NuevaVenta() {
       return ((await q).data ?? []) as any[];
     },
   });
-  const clienteSel = useMemo(
-    () => clientes.find((c: any) => c.id === clienteId),
-    [clientes, clienteId],
-  );
-
   const { data: favoritosFiscales = [] } = useQuery({
     queryKey: ["receptores-fiscales", effSucursal],
     enabled:
@@ -998,6 +1002,7 @@ function NuevaVenta() {
                         className="w-full text-left p-2 hover:bg-accent rounded text-sm"
                         onClick={() => {
                           setClienteId(c.id);
+                          setClienteSel(c);
                           setShowCli(false);
                         }}
                       >
@@ -1017,6 +1022,12 @@ function NuevaVenta() {
                   </div>
                 </PopoverContent>
               </Popover>
+              {clienteSel && esFiscal ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  CUIT/DNI: {fmtDocumento(clienteSel.cuit_dni)}. Al facturar se usarán los datos de
+                  esta ficha.
+                </p>
+              ) : null}
             </div>
             {esRemitoObra && (
               <div className="col-span-2">
@@ -1485,6 +1496,7 @@ function NuevaVenta() {
       {!esCtaCte && !esNcPeriodo && (
         <SectionCard className="space-y-3">
           <EditorPagos
+            admiteRetenciones={!esNotaCredito}
             pagos={pagos}
             saldo={totales.saldo}
             disabled={camposNotaBloqueados}

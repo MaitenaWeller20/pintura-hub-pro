@@ -31,12 +31,14 @@ export function EditorPagos({
   pagos,
   saldo,
   disabled = false,
+  admiteRetenciones = true,
   emptyMessage = "Sin pagos. Al contado hay que cobrar algo, aunque sea una parte; si se lo lleva sin pagar nada, poné cuenta corriente.",
   onChange,
 }: {
   pagos: PagoVentaEditable[];
   saldo: number;
   disabled?: boolean;
+  admiteRetenciones?: boolean;
   emptyMessage?: string;
   onChange(pagos: PagoVentaEditable[]): void;
 }) {
@@ -103,7 +105,9 @@ export function EditorPagos({
                       {pago.forma_pago === "MERCADO_PAGO" ? (
                         <SelectItem value="MERCADO_PAGO">Mercado Pago (histórico)</SelectItem>
                       ) : null}
-                      {FORMAS_PAGO.map(([value, label]) => (
+                      {FORMAS_PAGO.filter(
+                        ([value]) => admiteRetenciones || value !== "RETENCIONES",
+                      ).map(([value, label]) => (
                         <SelectItem key={value} value={value}>
                           {label}
                         </SelectItem>

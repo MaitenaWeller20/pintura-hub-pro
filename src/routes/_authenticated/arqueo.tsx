@@ -365,7 +365,9 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(tipo === "INGRESO" ? formasCobro : formasEgreso).map((f) => (
+                  {(tipo === "INGRESO"
+                    ? formasCobro.filter((f) => f !== "RETENCIONES")
+                    : formasEgreso).map((f) => (
                     <SelectItem key={f} value={f}>
                       {formaPagoLabel[f]}
                     </SelectItem>

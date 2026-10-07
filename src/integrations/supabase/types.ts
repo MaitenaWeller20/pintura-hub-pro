@@ -4404,6 +4404,7 @@ export type Database = {
         | "TARJETA_CREDITO"
         | "QR"
         | "CANJE"
+        | "RETENCIONES"
         | "MERCADO_PAGO"
         | "CHEQUE"
         | "CTA_CTE";
@@ -4576,6 +4577,7 @@ export const Constants = {
         "TARJETA_CREDITO",
         "QR",
         "CANJE",
+        "RETENCIONES",
         "MERCADO_PAGO",
         "CHEQUE",
         "CTA_CTE",

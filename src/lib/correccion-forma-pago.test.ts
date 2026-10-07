@@ -15,6 +15,7 @@ describe("corrección de forma de pago", () => {
       "TARJETA_CREDITO",
       "QR",
       "CANJE",
+      "RETENCIONES",
       "CHEQUE",
     ]);
     expect(FORMAS_PAGO_CORREGIBLES).not.toContain("CTA_CTE");

@@ -54,6 +54,7 @@ export const formaPagoLabel: Record<string, string> = {
   TARJETA_CREDITO: "Tarjeta Crédito",
   QR: "QR",
   CANJE: "Canje",
+  RETENCIONES: "Retenciones",
   MERCADO_PAGO: "Mercado Pago",
   CHEQUE: "Cheque",
   CTA_CTE: "Cuenta Corriente",
@@ -67,6 +68,7 @@ export const formasCobro = [
   "TARJETA_CREDITO",
   "QR",
   "CANJE",
+  "RETENCIONES",
   "CHEQUE",
 ] as const;
 

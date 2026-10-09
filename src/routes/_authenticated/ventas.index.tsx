@@ -50,19 +50,43 @@ function VentasList() {
     queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[],
   });
 
-  const { data: ventas = [], isLoading: loadingVentas } = useQuery({
+  const { data: ventasResult, isLoading: loadingVentas, error: ventasError } = useQuery({
     queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
     enabled: !!cu,
     queryFn: async () => {
-      let q = supabase.from("ventas").select(`
-        *, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono),
-        pagos:venta_pagos(forma_pago,monto)
-      `).order("fecha", { ascending: false }).limit(200);
-      if (sucFilter) q = q.eq("sucursal_id", sucFilter);
-      if (pagoFilter !== "all") q = q.eq("estado_pago", pagoFilter as any);
-      return (((await q).data) ?? []) as any[];
+      // Los pagos sólo hacen falta al exportar. Incluirlos acá obliga a PostgREST
+      // a resolver la relación y su RLS para cada una de las 200 ventas; si esa
+      // consulta falla, antes se convertía el error en "0 comprobantes".
+      const cargar = async (conRelaciones: boolean) => {
+        let consulta = supabase.from("ventas")
+          .select(conRelaciones
+            ? "*, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono)"
+            : "*")
+          .order("fecha", { ascending: false })
+          .limit(200);
+        if (sucFilter) consulta = consulta.eq("sucursal_id", sucFilter);
+        if (pagoFilter !== "all") consulta = consulta.eq("estado_pago", pagoFilter as any);
+        return consulta;
+      };
+
+      const principal = await cargar(true);
+      if (!principal.error && principal.data?.length) {
+        return { filas: principal.data as any[], aviso: null as string | null };
+      }
+
+      // La consulta simple conserva el listado aunque falle una relación.
+      const simple = await cargar(false);
+      if (simple.error) throw new Error(simple.error.message);
+      const filas = (simple.data ?? []) as any[];
+      return {
+        filas,
+        aviso: filas.length > 0
+          ? `No se pudieron cargar los datos relacionados: ${principal.error?.message ?? "consulta incompleta"}`
+          : null,
+      };
     },
   });
+  const ventas = ventasResult?.filas ?? [];
 
   const filtered = useMemo(() => ventas.filter((v:any) =>
     !q || `${v.numero_comprobante} ${v.cliente?.razon_social ?? ""}`.toLowerCase().includes(q.toLowerCase())
@@ -148,7 +172,24 @@ function VentasList() {
     onError: (e: any) => toast.error(e.message, { duration: 12000 }),
   });
 
-  const exportar = () => {
+  const exportar = async () => {
+    const pagosPorVenta = new Map<string, any[]>();
+    const ids = filtered.map((v: any) => v.id as string);
+    for (let i = 0; i < ids.length; i += 50) {
+      const { data, error } = await supabase
+        .from("venta_pagos")
+        .select("venta_id, forma_pago")
+        .in("venta_id", ids.slice(i, i + 50));
+      if (error) {
+        toast.error(`No se pudo exportar la forma de pago: ${error.message}`);
+        return;
+      }
+      for (const pago of data ?? []) {
+        const existentes = pagosPorVenta.get(pago.venta_id) ?? [];
+        existentes.push(pago);
+        pagosPorVenta.set(pago.venta_id, existentes);
+      }
+    }
     const ws = XLSX.utils.json_to_sheet(
       filtered.map((v: any) => ({
         Comprobante: v.numero_comprobante,
@@ -160,8 +201,8 @@ function VentasList() {
         Pagado: v.total_pagado,
         Estado: v.estado_pago,
         // R12.b: forma(s) de pago. Cta cte no tiene venta_pagos (se cobra por cobranzas).
-        "Forma de pago": v.pagos?.length
-          ? v.pagos
+        "Forma de pago": pagosPorVenta.get(v.id)?.length
+          ? pagosPorVenta.get(v.id)!
               .map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago)
               .join(", ")
           : v.condicion_venta === "CTA_CTE"
@@ -185,6 +226,16 @@ function VentasList() {
           </>
         }
       />
+
+      {(ventasError || ventasResult?.aviso) && (
+        <SectionCard>
+          <p className="text-sm text-destructive">
+            {ventasError
+              ? `No se pudieron cargar los comprobantes: ${ventasError.message}`
+              : ventasResult?.aviso}
+          </p>
+        </SectionCard>
+      )}
 
       <SectionCard>
         <div className="flex flex-wrap gap-2">
@@ -216,7 +267,7 @@ function VentasList() {
           : ["Comprobante", "Tipo", "Fecha", "Cliente", "Total", "Estado", "AFIP", ""]}
         loading={loadingVentas}
         isEmpty={filtered.length === 0}
-        empty={{ text: "No hay comprobantes para este filtro.", icon: <FileSpreadsheet className="h-7 w-7" /> }}
+        empty={{ text: ventasError ? "No se pudieron cargar los comprobantes." : "No hay comprobantes para este filtro.", icon: <FileSpreadsheet className="h-7 w-7" /> }}
       >
         {filtered.map((v:any) => (
           <TableRow key={v.id} className={v.estado === "ANULADA" ? "opacity-50" : ""}>

@@ -125,9 +125,18 @@ export const anularVenta = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
-    const { data: r, error } = await supabase.rpc("anular_venta", {
-      p_venta_id: data.venta_id,
-    });
+    const { data: venta, error: ventaError } = await supabase
+      .from("ventas")
+      .select("tipo_comprobante")
+      .eq("id", data.venta_id)
+      .single();
+    if (ventaError) throw new Error(ventaError.message);
+
+    // Producción tiene anular_venta(uuid, uuid) con su propia idempotencia.
+    // Las NC usan una RPC separada para conservar esa lógica de ventas intacta.
+    const { data: r, error } = venta.tipo_comprobante === "NOTA_CREDITO"
+      ? await supabase.rpc("anular_nota_credito", { p_venta_id: data.venta_id })
+      : await supabase.rpc("anular_venta", { p_venta_id: data.venta_id });
 
     if (error) throw new Error(error.message);
 

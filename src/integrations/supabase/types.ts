@@ -2998,6 +2998,13 @@ export type Database = {
         Returns: Json
       }
       anular_compra: { Args: { p_compra_id: string }; Returns: undefined }
+      anular_nota_credito: {
+        Args: { p_venta_id: string }
+        Returns: {
+          nc_id: string
+          nc_numero: string
+        }[]
+      }
       anular_ingreso_mercaderia: {
         Args: { p_ingreso_id: string; p_motivo?: string }
         Returns: undefined

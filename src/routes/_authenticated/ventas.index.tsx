@@ -20,6 +20,7 @@ import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTri
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { anularVenta } from "@/lib/ventas.functions";
+import { sePuedeAnularVenta } from "@/lib/anulacion-venta";
 import {
   emitirComprobante,
   datosFiscalesComprobante,
@@ -33,42 +34,6 @@ import * as XLSX from "xlsx";
 export const Route = createFileRoute("/_authenticated/ventas/")({
   component: VentasList,
 });
-
-/** Los comprobantes que `anular_venta` acepta. */
-const ANULABLES = [
-  "FACTURA_A",
-  "FACTURA_B",
-  "FACTURA_C",
-  "REMITO",
-  "REMITO_OBRA",
-  "FAC_INTERNA_CTA_CTE",
-];
-
-/**
- * Las notas FISCALES no se anulan: se corrigen con otra nota.
- *
- * La excepción es la nota de crédito INTERNA cargada A MANO —sin CAE y sin
- * factura asociada—, que nunca se declaró a AFIP: no hay nada que rectificar con
- * un documento compensatorio, así que se revierte y listo. Sin esto, una nota
- * cargada por error quedaba para siempre, con el stock ya repuesto y el crédito
- * ya dado, y el único arreglo era SQL a mano contra producción.
- *
- * Quedan afuera las notas internas que generó una ANULACIÓN: esas no son un
- * documento aparte sino la mitad de una anulación que ya devolvió el stock y ya
- * resolvió la plata. Revertirlas descuadraría las dos cosas. Cuáles son las
- * averigua `generadasPorAnulacion` (ver más abajo). El mismo criterio está en
- * `anular_venta`, que es donde manda de verdad: esto sólo evita ofrecer un botón
- * que va a fallar.
- */
-function sePuedeAnular(v: any, generadasPorAnulacion: Set<string>): boolean {
-  if (ANULABLES.includes(v.tipo_comprobante)) return true;
-  return (
-    v.tipo_comprobante === "NOTA_CREDITO" &&
-    !v.cae &&
-    esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) &&
-    !generadasPorAnulacion.has(v.id)
-  );
-}
 
 function VentasList() {
   const { data: cu } = useCurrentUser();
@@ -104,7 +69,7 @@ function VentasList() {
   ), [ventas, q]);
 
   /**
-   * Cuáles de las notas internas en pantalla las generó una ANULACIÓN.
+   * Cuáles de las notas sin CAE real en pantalla las generó una ANULACIÓN.
    *
    * Esas no se pueden anular (ver sePuedeAnular). Va en una consulta aparte y no
    * en un embed de la principal porque PostgREST no resuelve la auto-referencia
@@ -112,29 +77,29 @@ function VentasList() {
    * se cae la pantalla entera. Acá se pregunta al revés y sólo por los ids
    * candidatos, así que es una consulta chica y sólo cuando hace falta.
    */
-  const idsNotasInternas = useMemo(
+  const idsNotasSinCaeReal = useMemo(
     () =>
       ventas
         .filter(
-          (v: any) => v.tipo_comprobante === "NOTA_CREDITO" && !v.cae && !v.afip_cbte_asoc_id,
+          (v: any) => v.tipo_comprobante === "NOTA_CREDITO" && (!v.cae || v.afip_simulado),
         )
         .map((v: any) => v.id as string),
     [ventas],
   );
-  const { data: generadasPorAnulacion = new Set<string>() } = useQuery({
-    queryKey: ["nc-de-anulacion", idsNotasInternas],
-    enabled: idsNotasInternas.length > 0,
+  const { data: generadasPorAnulacion = new Set<string>(), isSuccess: anulacionesConsultadas } = useQuery({
+    queryKey: ["nc-de-anulacion", idsNotasSinCaeReal],
+    enabled: idsNotasSinCaeReal.length > 0,
     queryFn: async () => {
       // De a 50. Un `.in()` con los 200 ids de la página son ~7,4 KB sólo de
       // UUIDs en la URL, y hay proxies que cortan la request line en 8 KB: el
       // día que la lista se llene de notas internas volvería a romperse
       // /ventas, que es justo lo que pasó con el embed que había acá antes.
       const encontradas = new Set<string>();
-      for (let i = 0; i < idsNotasInternas.length; i += 50) {
+      for (let i = 0; i < idsNotasSinCaeReal.length; i += 50) {
         const { data } = await supabase
           .from("ventas")
           .select("venta_anulada_por")
-          .in("venta_anulada_por", idsNotasInternas.slice(i, i + 50));
+          .in("venta_anulada_por", idsNotasSinCaeReal.slice(i, i + 50));
         for (const r of data ?? []) encontradas.add((r as any).venta_anulada_por as string);
       }
       return encontradas;
@@ -150,7 +115,7 @@ function VentasList() {
       if (anulada?.cae && !anulada?.afip_simulado) {
         toast.warning("Venta anulada. Falta emitir la nota de crédito en AFIP.", { duration: 10000 });
       } else {
-        toast.success("Venta anulada");
+        toast.success(anulada?.tipo_comprobante === "NOTA_CREDITO" ? "Nota de crédito anulada" : "Venta anulada");
       }
       qc.invalidateQueries({ queryKey: ["ventas"] });
       setAnularDlg(null);
@@ -291,9 +256,19 @@ function VentasList() {
                     : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
                 </Button>
               )}
-              {v.estado === "ACTIVA" && sePuedeAnular(v, generadasPorAnulacion) && (
-                <Button size="sm" variant="ghost" onClick={()=>setAnularDlg(v)}><Ban className="h-3.5 w-3.5 text-destructive"/></Button>
-              )}
+              {v.estado === "ACTIVA" &&
+                (v.tipo_comprobante !== "NOTA_CREDITO" || anulacionesConsultadas) &&
+                sePuedeAnularVenta(v, generadasPorAnulacion) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title={v.tipo_comprobante === "NOTA_CREDITO" ? "Anular nota de crédito" : "Anular venta"}
+                    aria-label={v.tipo_comprobante === "NOTA_CREDITO" ? "Anular nota de crédito" : "Anular venta"}
+                    onClick={() => setAnularDlg(v)}
+                  >
+                    <Ban className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                )}
             </TableCell>
           </TableRow>
         ))}
@@ -308,14 +283,15 @@ function VentasList() {
               Anular {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? "nota de crédito" : "venta"}
             </DialogTitle>
           </DialogHeader>
-          {/* Anular una nota interna NO genera otra nota: la revierte. Decir lo
+          {/* Anular una nota sin CAE real NO genera otra nota: la revierte. Decir lo
               contrario haría buscar en el listado un comprobante que no existe. */}
           {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? (
             <p className="text-sm">
               ¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se va a revertir
-              todo lo que hizo: sale de nuevo el stock que había devuelto, se le saca el crédito al
-              cliente y la plata devuelta vuelve a la caja de hoy. No se genera ningún comprobante
-              nuevo.
+              todo lo que hizo: sale de nuevo el stock que había devuelto y{" "}
+              {anularDlg?.condicion_venta === "CTA_CTE"
+                ? "se elimina el crédito de la cuenta corriente del cliente. No se mueve la caja."
+                : "la plata devuelta vuelve a la caja de hoy."} No se genera ningún comprobante nuevo.
             </p>
           ) : (
             <p className="text-sm">¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se generará una nota de crédito y se devolverá el stock automáticamente.</p>

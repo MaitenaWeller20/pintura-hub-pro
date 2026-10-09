@@ -679,23 +679,29 @@ function NuevaVenta() {
               )}
             </div>
             <div>
-              <Label>Condición *</Label>
+              <Label>{esNotaCredito ? "Destino de la devolución *" : "Condición *"}</Label>
               <Select
                 value={esFacInterna ? "CONTADO" : esCtaCte ? "CTA_CTE" : condVenta}
                 onValueChange={(v) => setCondVenta(v as any)}
-                disabled={esCtaCte || esFacInterna}
+                disabled={TIPOS_CTA_CTE.has(tipoComp) || esFacInterna}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="CONTADO">Contado</SelectItem>
-                  <SelectItem value="CTA_CTE">Cuenta Corriente</SelectItem>
+                  <SelectItem value="CONTADO">
+                    {esNotaCredito ? "Devolver dinero ahora" : "Contado"}
+                  </SelectItem>
+                  <SelectItem value="CTA_CTE">
+                    {esNotaCredito ? "Acreditar en cuenta corriente" : "Cuenta Corriente"}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               {esCtaCte && (
                 <p className="text-[11px] text-warning mt-1">
-                  No impacta caja. Se cobra después desde Cta Cte.
+                  {esNotaCredito
+                    ? "Descuenta la deuda del cliente y no impacta la caja de hoy."
+                    : "No impacta caja. Se cobra después desde Cta Cte."}
                 </p>
               )}
               {esFacInterna && (
@@ -839,7 +845,9 @@ function NuevaVenta() {
             </div>
             {esNotaCredito && (
               <p className="text-[11px] text-muted-foreground">
-                Es una devolución: baja la deuda del cliente y sale plata de la caja.
+                {esCtaCte
+                  ? "Es un crédito en la cuenta corriente del cliente. No sale plata de la caja."
+                  : "Es una devolución de dinero: sale plata de la caja."}
               </p>
             )}
             {!esCtaCte && (
@@ -1098,15 +1106,17 @@ function NuevaVenta() {
       {!esCtaCte && (
         <SectionCard className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm">Formas de pago</h3>
+            <h3 className="font-semibold text-sm">
+              {esNotaCredito ? "Medios de devolución" : "Formas de pago"}
+            </h3>
             <Button size="sm" variant="outline" onClick={addPago}>
               <Plus className="h-4 w-4 mr-1" /> Agregar pago
             </Button>
           </div>
           {pagos.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              {esCtaCte
-                ? "En cuenta corriente no se cobra ahora: queda como deuda del cliente."
+              {esNotaCredito
+                ? "Indicá cómo le devolvés el dinero. Para descontarlo de su deuda, elegí «Acreditar en cuenta corriente» arriba."
                 : "Sin pagos. Al contado hay que cobrar algo, aunque sea una parte; si se lo lleva sin pagar nada, poné cuenta corriente."}
             </p>
           ) : (

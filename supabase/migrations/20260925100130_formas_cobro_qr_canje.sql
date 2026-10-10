@@ -10,5 +10,5 @@ ALTER TABLE public.cobranzas_cta_cte
   ADD CONSTRAINT chk_cobranza_forma_pago
   CHECK (forma_pago IS NULL OR forma_pago IN (
     'EFECTIVO', 'TRANSFERENCIA', 'TARJETA_DEBITO', 'TARJETA_CREDITO',
-    'QR', 'CANJE', 'MERCADO_PAGO', 'CHEQUE', 'CTA_CTE'
+    'QR', 'CANJE', 'RETENCIONES', 'MERCADO_PAGO', 'CHEQUE', 'CTA_CTE'
   ));

@@ -28,7 +28,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { NumberInput } from "@/components/ui/number-input";
-import { fmtMoney, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
+import { fmtMoney, formaPagoLabel, formasCobro, tipoComprobanteLabel } from "@/lib/format";
 import { filtroNombreODocumento, fmtDocumento } from "@/lib/documento";
 import { ordenarProductosPorRelevancia, TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import { Trash2, Plus, ArrowLeft, AlertTriangle, Loader2, Search } from "lucide-react";
@@ -1136,13 +1136,11 @@ function NuevaVenta() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Object.entries(formaPagoLabel)
-                          .filter(([k]) => k !== "CTA_CTE")
-                          .map(([k, l]) => (
-                            <SelectItem key={k} value={k}>
-                              {l}
-                            </SelectItem>
-                          ))}
+                        {formasCobro.map((k) => (
+                          <SelectItem key={k} value={k}>
+                            {formaPagoLabel[k]}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

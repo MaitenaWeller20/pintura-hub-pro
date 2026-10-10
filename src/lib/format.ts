@@ -44,10 +44,18 @@ export const formaPagoLabel: Record<string, string> = {
   TRANSFERENCIA: "Transferencia",
   TARJETA_DEBITO: "Tarjeta Débito",
   TARJETA_CREDITO: "Tarjeta Crédito",
+  QR: "QR",
+  CANJE: "Canje",
   MERCADO_PAGO: "Mercado Pago",
   CHEQUE: "Cheque",
   CTA_CTE: "Cuenta Corriente",
 };
+
+// Mercado Pago se conserva para mostrar operaciones históricas.
+export const formasCobro = [
+  "EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO",
+  "QR", "CANJE", "CHEQUE",
+] as const;
 
 export const tipoComprobanteLabel: Record<string, string> = {
   FACTURA_A: "Factura A",

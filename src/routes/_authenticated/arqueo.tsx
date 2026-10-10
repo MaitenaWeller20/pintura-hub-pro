@@ -25,7 +25,8 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
+import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel, formasCobro, tipoComprobanteLabel } from "@/lib/format";
+import { calcularCierreEfectivo, construirCierreCajaRpc, efectivoRetiradoRegistrado } from "@/lib/cierre-caja";
 import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -36,13 +37,12 @@ export const Route = createFileRoute("/_authenticated/arqueo")({
 });
 
 // Formas de pago que son plata en la caja (todas menos cuenta corriente).
-const FORMAS = ["EFECTIVO", "TRANSFERENCIA", "TARJETA_DEBITO", "TARJETA_CREDITO", "MERCADO_PAGO", "CHEQUE"] as const;
+const FORMAS = [...formasCobro, "MERCADO_PAGO"] as const;
 type CajaForma = { entra: number; sale: number; neto: number };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
 const TIPO_MOV_LABEL: Record<string, string> = { INGRESO: "Ingreso", GASTO: "Gasto", RETIRO: "Retiro", INICIAL: "Fondo inicial" };
 
-// PDF del cierre de una sesión: esperado/contado/diferencia por forma + efectivo
-// dejado + el detalle de todas las ventas del turno con su forma de pago (R12.a).
+// PDF del cierre: conteo, retiro, saldo y ventas del turno.
 async function pdfCierre(s: any, sucNombre: string) {
   const doc = new jsPDF();
   const W = doc.internal.pageSize.getWidth();
@@ -69,8 +69,12 @@ async function pdfCierre(s: any, sucNombre: string) {
     styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
   });
   let y = (doc as any).lastAutoTable.finalY + 8;
+  const efectivoDejado = Number(s.efectivo_dejado ?? 0);
+  const efectivoRetirado = efectivoRetiradoRegistrado(Number(contado.EFECTIVO ?? 0), efectivoDejado);
   doc.setFontSize(10);
-  doc.text(`Efectivo dejado para mañana: ${fmtMoney(s.efectivo_dejado ?? 0)}`, 14, y);
+  doc.text(`Efectivo retirado: ${fmtMoney(efectivoRetirado)}`, 14, y);
+  doc.text(`Saldo que quedó en caja: ${fmtMoney(efectivoDejado)}`, 14, y + 6);
+  y += 6;
   if (s.notas) { doc.setFontSize(9); doc.text(`Observaciones: ${s.notas}`, 14, y + 6); y += 6; }
 
   // R12.a: detalle de las ventas del turno con su forma de pago. Best-effort: si
@@ -132,7 +136,7 @@ function ArqueoPage() {
     <div>
       <PageHeader
         title="Rendición de caja"
-        subtitle="La caja se abre sola con la primera venta del día. Al cerrar, declarás lo contado y cuánto dejás para mañana."
+        subtitle="La caja se abre sola con la primera venta del día. Al cerrar, declarás lo contado y cuánto efectivo retirás."
         badge={sesion ? <StatusPill tone="success" icon={<LockOpen className="h-3 w-3" />}>Caja abierta</StatusPill>
                       : <StatusPill tone="neutral" icon={<Lock className="h-3 w-3" />}>Sin movimientos hoy</StatusPill>}
         actions={cu?.isAdmin && (
@@ -154,7 +158,7 @@ function ArqueoPage() {
         <SectionCard title="Caja del día">
           <p className="text-sm text-muted-foreground">
             Todavía no hubo movimientos hoy en esta sucursal. La caja se abre sola con la primera venta,
-            cobranza o pago; el fondo inicial es el efectivo que dejaste en el cierre anterior.
+            cobranza o pago; el fondo inicial es el saldo que quedó después del retiro anterior.
           </p>
         </SectionCard>
       )}
@@ -333,7 +337,8 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
   { sesion: any; esperado: Record<string, CajaForma>; onClose: () => void; onClosed: () => void }) {
   const [contado, setContado] = useState<Record<string, number | null>>({});
   const [notas, setNotas] = useState("");
-  const [efectivoDejado, setEfectivoDejado] = useState<number | null>(null);
+  const [efectivoRetirado, setEfectivoRetirado] = useState<number | null>(null);
+  const cierreEfectivo = calcularCierreEfectivo(contado.EFECTIVO ?? null, efectivoRetirado);
 
   const cerrar = useMutation({
     mutationFn: async () => {
@@ -341,11 +346,13 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
       // las formas las completa cerrar_caja con el esperado que recalcula en la
       // misma transacción, así no hay diferencia fantasma por una carrera con un
       // esperado cacheado (ver migración 20260721160000).
-      const payload: Record<string, number> = { EFECTIVO: Number(contado.EFECTIVO ?? 0) };
-      const { error } = await supabase.rpc("cerrar_caja", {
-        p_sesion_id: sesion.id, p_contado: payload, p_notas: notas || undefined,
-        p_efectivo_dejado: Number(efectivoDejado || 0),
+      const payload = construirCierreCajaRpc({
+        sesionId: sesion.id,
+        efectivoContado: contado.EFECTIVO ?? null,
+        efectivoRetirado,
+        notas,
       });
+      const { error } = await supabase.rpc("cerrar_caja", payload);
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Caja cerrada"); onClosed(); },
@@ -398,13 +405,21 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           })}
         </div>
         <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
-          <Label className="font-medium">Efectivo que dejás en la caja para mañana</Label>
+          <Label className="font-medium">Efectivo que sacás de la caja</Label>
           <div className="flex items-center gap-2 mt-1">
-            <NumberInput value={efectivoDejado ?? null} onValueChange={setEfectivoDejado} className="h-9 w-40 text-right" />
+            <NumberInput value={efectivoRetirado} onValueChange={setEfectivoRetirado} className="h-9 w-40 text-right" />
             <p className="text-[11px] text-muted-foreground">
-              Será el fondo inicial del próximo turno. El resto del efectivo se retira. Si no dejás nada, poné 0.
+              Se descuenta del efectivo contado. Si no sacás dinero, poné 0.
             </p>
           </div>
+          {cierreEfectivo.error ? (
+            <p role="alert" className="mt-2 text-xs text-destructive">{cierreEfectivo.error}</p>
+          ) : cierreEfectivo.efectivoDejado !== null ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Queda en caja: <strong className="text-foreground">{fmtMoney(cierreEfectivo.efectivoDejado)}</strong>.
+              Ese será el fondo inicial del próximo turno.
+            </p>
+          ) : null}
         </div>
         <div className="mt-2">
           <Label>Observaciones</Label>
@@ -413,7 +428,7 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending || contado.EFECTIVO == null}>
+          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending || !cierreEfectivo.valido}>
             <Lock className="h-4 w-4 mr-1" /> Confirmar cierre
           </Button>
         </DialogFooter>
@@ -441,7 +456,8 @@ function Historial({ sucId, sucNombre }: { sucId: string; sucNombre: string }) {
           <TableHead className="text-right">Esperado</TableHead>
           <TableHead className="text-right">Contado</TableHead>
           <TableHead className="text-right">Diferencia</TableHead>
-          <TableHead className="text-right">Dejado</TableHead>
+          <TableHead className="text-right">Retirado</TableHead>
+          <TableHead className="text-right">Saldo en caja</TableHead>
           <TableHead></TableHead>
         </TableRow></TableHeader>
         <TableBody>
@@ -455,6 +471,9 @@ function Historial({ sucId, sucNombre }: { sucId: string; sucNombre: string }) {
                 Number(s.total_diferencia) === 0 ? "text-success" : "text-destructive"
               }`}>
                 {Number(s.total_diferencia) > 0 ? "+" : ""}{fmtMoney(s.total_diferencia)}
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums">
+                {fmtMoney(efectivoRetiradoRegistrado(Number(s.contado?.EFECTIVO ?? 0), Number(s.efectivo_dejado ?? 0)))}
               </TableCell>
               <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.efectivo_dejado ?? 0)}</TableCell>
               <TableCell className="text-right">

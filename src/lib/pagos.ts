@@ -37,6 +37,7 @@ const ELECTRONICO = new Set([
   "TRANSFERENCIA",
   "TARJETA_CREDITO",
   "TARJETA_DEBITO",
+  "QR",
   "MERCADO_PAGO",
   "CHEQUE",
 ]);

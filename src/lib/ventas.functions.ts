@@ -41,6 +41,8 @@ const pagoSchema = z.object({
     "TRANSFERENCIA",
     "TARJETA_DEBITO",
     "TARJETA_CREDITO",
+    "QR",
+    "CANJE",
     "MERCADO_PAGO",
     "CHEQUE",
     "CTA_CTE",

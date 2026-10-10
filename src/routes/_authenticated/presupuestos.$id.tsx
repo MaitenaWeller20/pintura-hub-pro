@@ -31,7 +31,7 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { fmtMoney, fmtDate, formaPagoLabel } from "@/lib/format";
+import { fmtMoney, fmtDate, formaPagoLabel, formasCobro } from "@/lib/format";
 import { conIva } from "@/lib/fiscal/iva";
 import { tablaDeItemsPresupuesto } from "@/lib/presupuesto-pdf";
 import { toast } from "sonner";
@@ -383,14 +383,7 @@ function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[
-                    "EFECTIVO",
-                    "TRANSFERENCIA",
-                    "TARJETA_DEBITO",
-                    "TARJETA_CREDITO",
-                    "MERCADO_PAGO",
-                    "CHEQUE",
-                  ].map((f) => (
+                  {formasCobro.map((f) => (
                     <SelectItem key={f} value={f}>
                       {formaPagoLabel[f] ?? f}
                     </SelectItem>

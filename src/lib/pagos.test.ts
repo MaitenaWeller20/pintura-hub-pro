@@ -47,6 +47,18 @@ describe("totalesPorMedio", () => {
 });
 
 describe("resumenPagos", () => {
+  it("cuenta QR como electrónico y deja canje separado de efectivo", () => {
+    const pagos = normalizarCobros([
+      { ...ventas[0], pagos: [
+        { forma_pago: "QR", monto: 700 },
+        { forma_pago: "CANJE", monto: 300 },
+      ] },
+    ], []);
+    const resumen = resumenPagos(pagos);
+    expect(resumen.totalNeto).toBe(1000);
+    expect(resumen.electronico).toBe(700);
+    expect(resumen.efectivo).toBe(0);
+  });
   it("net total, ticket excludes devoluciones", () => {
     const r = resumenPagos(normalizarCobros(ventas as any, cobranzas as any));
     expect(r.totalNeto).toBe(1100); // 1000 - 400 + 500

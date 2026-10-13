@@ -35,6 +35,11 @@ export const conIva = (
   ivaPorcentaje: number | string | null | undefined,
 ): number => round2(Number(neto ?? 0) * (1 + Number(ivaPorcentaje ?? 0) / 100));
 
+export const sinIva = (
+  precioFinal: number | string | null | undefined,
+  ivaPorcentaje: number | string | null | undefined,
+): number => round2(Number(precioFinal ?? 0) / (1 + Number(ivaPorcentaje ?? 0) / 100));
+
 /** Traduce el precio final que escribe el operador al neto unitario persistido. */
 export function netoDesdePrecioFinal(
   precioFinal: number | null,
@@ -111,4 +116,20 @@ export function calcularTotales(items: ItemFiscal[], percepciones = 0): TotalesF
     }));
 
   return { neto, iva, tributos, total, alicuotas };
+}
+
+/** Precio final de una unidad con descuento, usando el redondeo fiscal de la línea. */
+export function precioFinalConDescuento(
+  neto: number | string | null | undefined,
+  descuentoPorcentaje: number | string | null | undefined,
+  ivaPorcentaje: number | string | null | undefined,
+): number {
+  return calcularTotales([
+    {
+      cantidad: 1,
+      precio_unitario_sin_iva: Number(neto ?? 0),
+      descuento_porcentaje: Number(descuentoPorcentaje ?? 0),
+      iva_porcentaje: Number(ivaPorcentaje ?? 0),
+    },
+  ]).total;
 }

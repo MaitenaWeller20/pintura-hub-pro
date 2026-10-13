@@ -772,10 +772,28 @@ export const anularVenta = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
-    const { data: r, error } = await supabase.rpc("anular_venta", {
-      p_venta_id: data.venta_id,
-      p_idempotency_key: data.idempotency_key,
-    });
+    const { data: venta, error: lecturaError } = await supabase
+      .from("ventas")
+      .select("tipo_comprobante,cae,afip_cbte_asoc_id,periodo_asoc_desde,periodo_asoc_hasta")
+      .eq("id", data.venta_id)
+      .single();
+    if (lecturaError || !venta) throw new Error("Comprobante no encontrado o sin acceso.");
+
+    const esNotaInterna = venta.tipo_comprobante === "NOTA_CREDITO";
+    if (esNotaInterna && (
+      venta.cae || venta.afip_cbte_asoc_id || venta.periodo_asoc_desde || venta.periodo_asoc_hasta
+    )) {
+      throw new Error("Esta nota requiere una corrección fiscal y no puede anularse desde Ventas.");
+    }
+
+    // La NC manual interna usa la RPC separada desplegada en octubre. La venta
+    // neutral conserva su anulación fiscal con clave de idempotencia.
+    const { data: r, error } = esNotaInterna
+      ? await supabase.rpc("anular_nota_credito", { p_venta_id: data.venta_id })
+      : await supabase.rpc("anular_venta", {
+          p_venta_id: data.venta_id,
+          p_idempotency_key: data.idempotency_key,
+        });
 
     if (error) throw new Error(error.message);
 

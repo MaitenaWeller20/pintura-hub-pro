@@ -253,7 +253,7 @@ function VentasList() {
           duration: 10000,
         });
       } else {
-        toast.success("Venta anulada");
+        toast.success(anulada.tipo_comprobante === "NOTA_CREDITO" ? "Nota de crédito anulada" : "Venta anulada");
       }
       qc.invalidateQueries({ queryKey: ["ventas"] });
       qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });

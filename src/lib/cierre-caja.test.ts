@@ -26,6 +26,12 @@ describe("cierre de efectivo", () => {
       dejado: 21_581.07,
       retiroValido: true,
     });
+    expect(calcularCierreDesdeRetiro(477_154.96, 477_154.96, 430_000)).toEqual({
+      diferencia: 0,
+      retirado: 430_000,
+      dejado: 47_154.96,
+      retiroValido: true,
+    });
   });
 
   it("rechaza retirar más efectivo del que se contó", () => {

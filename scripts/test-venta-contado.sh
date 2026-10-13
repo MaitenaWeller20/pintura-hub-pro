@@ -10,7 +10,9 @@
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PSQL="docker exec -i supabase_db_local psql -U postgres -d postgres -v ON_ERROR_STOP=1"
+PROJECT_ID="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' supabase/config.toml)"
+DB="${DB:-supabase_db_${PROJECT_ID}}"
+PSQL="docker exec -i $DB psql -U postgres -d postgres -v ON_ERROR_STOP=1"
 fallos=0
 chequear() {
   if [[ "$2" == "$3" ]]; then echo "  ✓ $1"; else echo "  ✗ $1 — esperaba '$2', obtuvo '$3'"; fallos=$((fallos+1)); fi
@@ -43,6 +45,27 @@ DELETE FROM public.stock_sucursal s USING public.productos p
  WHERE p.id=s.producto_id AND p.codigo IN ('CONT-TEST','CONT-CERO');
 DELETE FROM public.productos WHERE codigo IN ('CONT-TEST','CONT-CERO');
 DELETE FROM public.clientes WHERE razon_social = 'CLIENTE CONTADO TEST';
+DELETE FROM public.caja_movimientos WHERE caja_sesion_id IN (
+  SELECT id FROM public.caja_sesiones WHERE abierta_por='a5000000-0000-0000-0000-000000000001'
+);
+DELETE FROM public.caja_sesiones WHERE abierta_por='a5000000-0000-0000-0000-000000000001';
+DELETE FROM public.user_roles WHERE user_id='a5000000-0000-0000-0000-000000000001';
+DELETE FROM public.profiles WHERE id='a5000000-0000-0000-0000-000000000001';
+DELETE FROM auth.users WHERE id='a5000000-0000-0000-0000-000000000001';
+
+INSERT INTO auth.users(
+  id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at
+) VALUES (
+  'a5000000-0000-0000-0000-000000000001',
+  '00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+  'contado-admin@local.test','x',now(),now(),now()
+);
+UPDATE public.profiles
+   SET username='t5-admin',nombre_completo='Admin test',
+       sucursal_id=(SELECT id FROM public.sucursales ORDER BY numero LIMIT 1),activo=true
+ WHERE id='a5000000-0000-0000-0000-000000000001';
+INSERT INTO public.user_roles(user_id,role)
+VALUES ('a5000000-0000-0000-0000-000000000001','admin');
 
 INSERT INTO public.clientes (razon_social, condicion_cta_cte) VALUES ('CLIENTE CONTADO TEST', true);
 INSERT INTO public.productos (codigo,nombre,precio_sin_iva,iva_porcentaje)
@@ -63,7 +86,7 @@ ITEMS="jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',2))
 
 venta() {  # condicion, pagos, tipo
   $PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'${3:-FACTURA_B}'::public.tipo_comprobante,
   '$1'::public.condicion_venta, $ITEMS, $2, 0, 'TEST-CONTADO', NULL, NULL, NULL, gen_random_uuid());
 SQL
@@ -107,7 +130,7 @@ chequear "la plata entró a la caja" "2420.00" \
 echo "── 4. Lo que NO se toca ──────────────────────────────────"
 # Cuenta corriente sin pagos: es exactamente para lo que está.
 $PSQL > /dev/null <<SQL
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA_B'::public.tipo_comprobante,
   'CTA_CTE'::public.condicion_venta, $ITEMS, '[]'::jsonb, 0, 'TEST-CONTADO', NULL, NULL, NULL, gen_random_uuid());
 SQL
@@ -122,7 +145,7 @@ if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un p
 
 # Un comprobante en cero no necesita cobro.
 out=$($PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FAC_INTERNA_CTA_CTE'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$CERO','cantidad',1)),
@@ -134,7 +157,7 @@ if echo "$out" | grep -qi "aunque sea una parte"; then echo "  ✗ rechazó un c
 # Una nota de crédito a CUENTA CORRIENTE se acredita al saldo: no se paga en el
 # momento y no pide cobro.
 FAC=$($PSQL -tA <<SQL 2>&1 | tail -1
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT venta_id::text FROM public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA_B'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
@@ -143,7 +166,7 @@ SELECT venta_id::text FROM public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'FACTURA
 SQL
 )
 out=$($PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_comprobante,
   'CTA_CTE'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
@@ -161,7 +184,7 @@ if echo "$out" | grep -qi "ERROR"; then echo "  ✗ rechazó una nota de crédit
 # afirmando lo contrario de lo que pasaba. Ahora se busca el mensaje que
 # corresponde.
 out=$($PSQL <<SQL 2>&1 || true
-$(auth admin@local.test)
+$(auth contado-admin@local.test)
 SELECT public.crear_venta('$SUC'::uuid,'$CLI'::uuid,'NOTA_CREDITO'::public.tipo_comprobante,
   'CONTADO'::public.condicion_venta,
   jsonb_build_array(jsonb_build_object('producto_id','$PROD','cantidad',1)),
@@ -185,6 +208,13 @@ DELETE FROM public.stock_sucursal s USING public.productos p
  WHERE p.id=s.producto_id AND p.codigo IN ('CONT-TEST','CONT-CERO');
 DELETE FROM public.productos WHERE codigo IN ('CONT-TEST','CONT-CERO');
 DELETE FROM public.clientes WHERE razon_social = 'CLIENTE CONTADO TEST';
+DELETE FROM public.caja_movimientos WHERE caja_sesion_id IN (
+  SELECT id FROM public.caja_sesiones WHERE abierta_por='a5000000-0000-0000-0000-000000000001'
+);
+DELETE FROM public.caja_sesiones WHERE abierta_por='a5000000-0000-0000-0000-000000000001';
+DELETE FROM public.user_roles WHERE user_id='a5000000-0000-0000-0000-000000000001';
+DELETE FROM public.profiles WHERE id='a5000000-0000-0000-0000-000000000001';
+DELETE FROM auth.users WHERE id='a5000000-0000-0000-0000-000000000001';
 SQL
 
 if [[ $fallos -eq 0 ]]; then echo "✅ Todo verde."; else echo "❌ $fallos fallo(s)."; exit 1; fi

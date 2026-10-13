@@ -43,7 +43,14 @@ try {
   // Rutas nuevas: sin sesión tienen que mandar al login, no tirar 404 ni
   // pantalla en blanco. Que el router las conozca prueba que el bundle nuevo
   // es el que está sirviendo.
-  for (const ruta of ["/presupuestos", "/presupuestos/nuevo", "/pagos-proveedores"]) {
+  for (const ruta of [
+    "/presupuestos",
+    "/presupuestos/nuevo",
+    "/pagos-proveedores",
+    "/facturacion",
+    "/facturacion/cola",
+    "/facturacion/configuracion",
+  ]) {
     const res = await page.goto(`${BASE}${ruta}`, { waitUntil: "networkidle", timeout: 60000 });
     await page.waitForTimeout(1500);
     const enLogin = await page
@@ -57,9 +64,7 @@ try {
     );
   }
 
-  const ruido = errores.filter(
-    (e) => !/401|403|Failed to load resource|JWT|favicon/i.test(e),
-  );
+  const ruido = errores.filter((e) => !/401|403|Failed to load resource|JWT|favicon/i.test(e));
   chequear("sin errores de JS en el arranque", ruido.length === 0, ruido.slice(0, 3).join(" | "));
 } finally {
   await browser.close();

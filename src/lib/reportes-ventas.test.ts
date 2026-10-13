@@ -69,6 +69,55 @@ describe("facturación en reportes", () => {
     ).toBe("SIN_FACTURAR");
   });
 
+  it("incluye las ventas VENTA autorizadas por ARCA en el IVA y los cobros facturados", () => {
+    const venta = {
+      tipo_comprobante: "VENTA",
+      cae: "74123456789012",
+      afip_estado: "APROBADO",
+      afip_modo: "PRODUCCION",
+      afip_validez: "PRODUCCION",
+      afip_simulado: false,
+    };
+
+    expect(clasificarFacturacion(venta)).toBe("FACTURADO");
+    expect(resumirVentas([{ ...venta, estado: "ACTIVA", total: 121, iva_total: 21 }]).ivaConCae).toBe(21);
+    expect(resumirCobros([{ monto: 121, forma_pago: "EFECTIVO", venta }], []).facturado).toBe(121);
+  });
+
+  it("separa una emisión VENTA fallida de una venta todavía sin facturar", () => {
+    const venta = {
+      tipo_comprobante: "VENTA",
+      cae: null,
+      afip_modo: null,
+      afip_simulado: false,
+    };
+
+    expect(clasificarFacturacion({ ...venta, afip_estado: "ERROR_CORREGIBLE" })).toBe("SIN_CAE");
+    expect(clasificarFacturacion({ ...venta, afip_estado: "SIN_FACTURAR" })).toBe("SIN_FACTURAR");
+  });
+
+  it("cuenta una nota de crédito de período con CAE real aunque no tenga factura asociada", () => {
+    expect(clasificarFacturacion({
+      tipo_comprobante: "NOTA_CREDITO",
+      afip_cbte_asoc_id: null,
+      cae: "74123456789012",
+      afip_estado: "APROBADO",
+      afip_modo: "PRODUCCION",
+      afip_simulado: false,
+    })).toBe("FACTURADO");
+  });
+
+  it("no cuenta como real un CAE marcado como simulado aunque el modo diga producción", () => {
+    expect(clasificarFacturacion({
+      tipo_comprobante: "VENTA",
+      cae: "74123456789012",
+      afip_estado: "APROBADO",
+      afip_modo: "PRODUCCION",
+      afip_validez: "SIMULADA",
+      afip_simulado: false,
+    })).toBe("SIN_CAE");
+  });
+
   it("separa los pagos directos por estado fiscal y deja las cobranzas de cuenta corriente aparte", () => {
     const cobros = resumirCobros(
       [

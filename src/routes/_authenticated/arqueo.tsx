@@ -21,89 +21,64 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { NumberInput } from "@/components/ui/number-input";
 import {
+  DialogoCorreccionCierre,
+  DialogoHistorialCorrecciones,
+  type CierreCajaCorregible,
+} from "@/components/caja/correccion-cierre";
+import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDate, fmtDateTime, formaPagoLabel, formasCobro, tipoComprobanteLabel } from "@/lib/format";
-import { calcularCierreEfectivo, construirCierreCajaRpc, efectivoRetiradoRegistrado } from "@/lib/cierre-caja";
-import { LockOpen, Lock, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
+import {
+  fmtMoney,
+  fmtDate,
+  fmtDateTime,
+  formaPagoLabel,
+  formasCobro,
+  formasEgreso,
+} from "@/lib/format";
+import {
+  calcularCierreDesdeRetiro,
+  calcularEfectivoCierre,
+  generarCierreCajaPdf,
+} from "@/lib/cierre-caja";
+import { History, LockOpen, Lock, Pencil, Plus, Wallet, TrendingUp, TrendingDown, Printer } from "lucide-react";
 import { toast } from "sonner";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 export const Route = createFileRoute("/_authenticated/arqueo")({
   component: ArqueoPage,
 });
 
-// Formas de pago que son plata en la caja (todas menos cuenta corriente).
+// Formas registradas en caja; incluye Mercado Pago para movimientos históricos.
 const FORMAS = [...formasCobro, "MERCADO_PAGO"] as const;
 type CajaForma = { entra: number; sale: number; neto: number };
+type SucursalResumen = { id: string; nombre: string };
 const neto = (c?: CajaForma) => Number(c?.neto ?? 0);
 const TIPO_MOV_LABEL: Record<string, string> = { INGRESO: "Ingreso", GASTO: "Gasto", RETIRO: "Retiro", INICIAL: "Fondo inicial" };
 
-// PDF del cierre: conteo, retiro, saldo y ventas del turno.
+// PDF del cierre de una sesión: arqueo, ventas y cobranzas de cuenta corriente.
 async function pdfCierre(s: any, sucNombre: string) {
-  const doc = new jsPDF();
-  const W = doc.internal.pageSize.getWidth();
-  doc.setFontSize(14); doc.text("CASAFORMA", 14, 16);
-  doc.setFontSize(11); doc.text("Cierre de caja", W / 2, 16, { align: "center" });
-  doc.setFontSize(9);
-  doc.text(`Sucursal: ${sucNombre}`, 14, 24);
-  doc.text(`Abierta: ${fmtDateTime(s.abierta_en)}`, 14, 29);
-  doc.text(`Cerrada: ${fmtDateTime(s.cerrada_en)}`, 14, 34);
-  doc.text(`Fondo inicial: ${fmtMoney(s.fondo_inicial)}`, 14, 39);
-
-  const esperado = s.esperado ?? {}, contado = s.contado ?? {}, diferencia = s.diferencia ?? {};
-  const formas = Array.from(new Set([...Object.keys(esperado), ...Object.keys(contado)]));
-  autoTable(doc, {
-    startY: 44,
-    head: [["Forma", "Esperado", "Contado", "Diferencia"]],
-    body: formas.map((f) => [
-      formaPagoLabel[f] ?? f,
-      fmtMoney(Number(esperado[f]?.neto ?? 0)),
-      fmtMoney(Number(contado[f] ?? 0)),
-      fmtMoney(Number(diferencia[f] ?? 0)),
-    ]),
-    foot: [["TOTAL", fmtMoney(s.total_esperado), fmtMoney(s.total_contado), fmtMoney(s.total_diferencia)]],
-    styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
-  });
-  let y = (doc as any).lastAutoTable.finalY + 8;
-  const efectivoDejado = Number(s.efectivo_dejado ?? 0);
-  const efectivoRetirado = efectivoRetiradoRegistrado(Number(contado.EFECTIVO ?? 0), efectivoDejado);
-  doc.setFontSize(10);
-  doc.text(`Efectivo retirado: ${fmtMoney(efectivoRetirado)}`, 14, y);
-  doc.text(`Saldo que quedó en caja: ${fmtMoney(efectivoDejado)}`, 14, y + 6);
-  y += 6;
-  if (s.notas) { doc.setFontSize(9); doc.text(`Observaciones: ${s.notas}`, 14, y + 6); y += 6; }
-
-  // R12.a: detalle de las ventas del turno con su forma de pago. Best-effort: si
-  // la consulta falla, el PDF igual se genera con las tablas de arriba.
-  try {
-    const { data: ventasSesion } = await supabase.from("ventas")
+  const [ventasResultado, cobranzasResultado] = await Promise.all([
+    supabase.from("ventas")
       .select("numero_comprobante,tipo_comprobante,total,condicion_venta,cliente:clientes(razon_social),pagos:venta_pagos(forma_pago,monto)")
       .eq("caja_sesion_id", s.id)
-      .order("fecha", { ascending: true });
-    if (ventasSesion && ventasSesion.length) {
-      const startY = y + 10;
-      doc.setFontSize(10); doc.text("Ventas del turno", 14, startY);
-      autoTable(doc, {
-        startY: startY + 3,
-        head: [["Comprobante", "Tipo", "Cliente", "Total", "Forma de pago"]],
-        body: ventasSesion.map((v: any) => [
-          v.numero_comprobante,
-          tipoComprobanteLabel[v.tipo_comprobante] ?? v.tipo_comprobante,
-          v.cliente?.razon_social ?? "—",
-          fmtMoney(v.total),
-          v.pagos?.length
-            ? v.pagos.map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago).join(", ")
-            : (v.condicion_venta === "CTA_CTE" ? "Cuenta Corriente" : "—"),
-        ]),
-        styles: { fontSize: 8 }, margin: { left: 14, right: 14 },
-      });
-    }
-  } catch { /* PDF sin el detalle si la consulta falla */ }
+      .order("fecha", { ascending: true }),
+    supabase.from("cobranzas_cta_cte")
+      .select("fecha,monto,forma_pago,detalle,observaciones,cliente:clientes(razon_social)")
+      .eq("caja_sesion_id", s.id)
+      .order("fecha", { ascending: true }),
+  ]);
 
+  if (ventasResultado.error) throw ventasResultado.error;
+  if (cobranzasResultado.error) throw cobranzasResultado.error;
+
+  const doc = generarCierreCajaPdf({
+    sesion: s,
+    sucursalNombre: sucNombre,
+    ventas: ventasResultado.data ?? [],
+    cobranzas: cobranzasResultado.data ?? [],
+  });
   doc.save(`cierre-caja-${fmtDate(s.cerrada_en)}.pdf`);
 }
 
@@ -115,19 +90,27 @@ function ArqueoPage() {
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
-    queryFn: async () => ((await supabase.from("sucursales").select("id,nombre").order("nombre")).data ?? []) as any[],
+    queryFn: async (): Promise<SucursalResumen[]> =>
+      (await supabase.from("sucursales").select("id,nombre").order("nombre")).data ?? [],
   });
-  const sucNombre = useMemo(() => sucs.find((s: any) => s.id === effSucId)?.nombre ?? "", [sucs, effSucId]);
+  const sucNombre = useMemo(
+    () => sucs.find((s) => s.id === effSucId)?.nombre ?? "",
+    [sucs, effSucId],
+  );
 
   // Sesión abierta de la sucursal (si hay).
   const { data: sesion, isLoading } = useQuery({
     queryKey: ["caja-sesion-activa", effSucId],
     enabled: !!effSucId,
     queryFn: async () => {
-      const { data } = await supabase.from("caja_sesiones")
+      const { data } = await supabase
+        .from("caja_sesiones")
         .select("*")
-        .eq("sucursal_id", effSucId).eq("estado", "ABIERTA")
-        .order("abierta_en", { ascending: false }).limit(1).maybeSingle();
+        .eq("sucursal_id", effSucId)
+        .eq("estado", "ABIERTA")
+        .order("abierta_en", { ascending: false })
+        .limit(1)
+        .maybeSingle();
       return data as any;
     },
   });
@@ -137,33 +120,64 @@ function ArqueoPage() {
       <PageHeader
         title="Rendición de caja"
         subtitle="La caja se abre sola con la primera venta del día. Al cerrar, declarás lo contado y cuánto efectivo retirás."
-        badge={sesion ? <StatusPill tone="success" icon={<LockOpen className="h-3 w-3" />}>Caja abierta</StatusPill>
-                      : <StatusPill tone="neutral" icon={<Lock className="h-3 w-3" />}>Sin movimientos hoy</StatusPill>}
-        actions={cu?.isAdmin && (
-          <Select value={sucId} onValueChange={setSucId}>
-            <SelectTrigger className="w-52"><SelectValue placeholder="Mi sucursal" /></SelectTrigger>
-            <SelectContent>{sucs.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}</SelectContent>
-          </Select>
-        )}
+        badge={
+          sesion ? (
+            <StatusPill tone="success" icon={<LockOpen className="h-3 w-3" />}>
+              Caja abierta
+            </StatusPill>
+          ) : (
+            <StatusPill tone="neutral" icon={<Lock className="h-3 w-3" />}>
+              Sin movimientos hoy
+            </StatusPill>
+          )
+        }
+        actions={
+          cu?.isAdmin && (
+            <Select value={sucId} onValueChange={setSucId}>
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="Mi sucursal" />
+              </SelectTrigger>
+              <SelectContent>
+                {sucs.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.nombre}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )
+        }
       />
 
       {isLoading ? (
-        <SectionCard><p className="text-sm text-muted-foreground">Cargando…</p></SectionCard>
+        <SectionCard>
+          <p className="text-sm text-muted-foreground">Cargando…</p>
+        </SectionCard>
       ) : sesion ? (
-        <CajaAbierta sesion={sesion} sucId={effSucId} onChange={() => {
-          qc.invalidateQueries({ queryKey: ["caja-sesion-activa"] });
-          qc.invalidateQueries({ queryKey: ["caja-historial"] });
-        }} />
+        <CajaAbierta
+          sesion={sesion}
+          sucId={effSucId}
+          onChange={() => {
+            qc.invalidateQueries({ queryKey: ["caja-sesion-activa"] });
+            qc.invalidateQueries({ queryKey: ["caja-historial"] });
+          }}
+        />
       ) : (
         <SectionCard title="Caja del día">
           <p className="text-sm text-muted-foreground">
-            Todavía no hubo movimientos hoy en esta sucursal. La caja se abre sola con la primera venta,
-            cobranza o pago; el fondo inicial es el saldo que quedó después del retiro anterior.
+            Todavía no hubo movimientos hoy en esta sucursal. La caja se abre sola con la primera
+            venta, cobranza o pago; el fondo inicial es el saldo que quedó en caja después del
+            retiro anterior.
           </p>
         </SectionCard>
       )}
 
-      <Historial sucId={effSucId} sucNombre={sucNombre} />
+      <Historial
+        sucId={effSucId}
+        sucNombre={sucNombre}
+        esAdmin={cu?.isAdmin === true}
+        haySesionAbierta={Boolean(sesion)}
+      />
     </div>
   );
 }
@@ -191,8 +205,14 @@ function CajaAbierta({ sesion, sucId, onChange }: { sesion: any; sucId: string; 
 
   const { data: movs = [] } = useQuery({
     queryKey: ["caja-movs", sesion.id],
-    queryFn: async () => ((await supabase.from("caja_movimientos")
-      .select("*").eq("caja_sesion_id", sesion.id).order("created_at")).data ?? []) as any[],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("caja_movimientos")
+          .select("*")
+          .eq("caja_sesion_id", sesion.id)
+          .order("created_at")
+      ).data ?? [],
   });
 
   const totalEsperado = useMemo(
@@ -238,10 +258,13 @@ function CajaAbierta({ sesion, sucId, onChange }: { sesion: any; sucId: string; 
         </div>
         {movs.length > 0 && (
           <Table className="mt-3">
-            <TableHeader><TableRow>
-              <TableHead>Movimiento</TableHead><TableHead>Forma</TableHead>
-              <TableHead className="text-right">Monto</TableHead>
-            </TableRow></TableHeader>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Movimiento</TableHead>
+                <TableHead>Forma</TableHead>
+                <TableHead className="text-right">Monto</TableHead>
+              </TableRow>
+            </TableHeader>
             <TableBody>
               {movs.map((m) => {
                 const sale = m.tipo === "GASTO" || m.tipo === "RETIRO";
@@ -266,8 +289,27 @@ function CajaAbierta({ sesion, sucId, onChange }: { sesion: any; sucId: string; 
         )}
       </SectionCard>
 
-      {movOpen && <MovimientoDialog sesionId={sesion.id} onClose={() => setMovOpen(false)} onSaved={() => { setMovOpen(false); invalidate(); }} />}
-      {cerrarOpen && <CerrarDialog sesion={sesion} esperado={esperado} onClose={() => setCerrarOpen(false)} onClosed={() => { setCerrarOpen(false); invalidate(); }} />}
+      {movOpen && (
+        <MovimientoDialog
+          sesionId={sesion.id}
+          onClose={() => setMovOpen(false)}
+          onSaved={() => {
+            setMovOpen(false);
+            invalidate();
+          }}
+        />
+      )}
+      {cerrarOpen && (
+        <CerrarDialog
+          sesion={sesion}
+          esperado={esperado}
+          onClose={() => setCerrarOpen(false)}
+          onClosed={() => {
+            setCerrarOpen(false);
+            invalidate();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -292,13 +334,23 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Registrar movimiento de caja</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Registrar movimiento de caja</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Tipo</Label>
-              <Select value={tipo} onValueChange={setTipo}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <Select
+                value={tipo}
+                onValueChange={(value) => {
+                  setTipo(value);
+                  setForma("EFECTIVO");
+                }}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="GASTO">Gasto (sale plata)</SelectItem>
                   <SelectItem value="RETIRO">Retiro a tesorería</SelectItem>
@@ -309,8 +361,18 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
             <div>
               <Label>Forma</Label>
               <Select value={forma} onValueChange={setForma}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{FORMAS.map((f) => <SelectItem key={f} value={f}>{formaPagoLabel[f]}</SelectItem>)}</SelectContent>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(tipo === "INGRESO"
+                    ? formasCobro.filter((f) => f !== "RETENCIONES")
+                    : formasEgreso).map((f) => (
+                    <SelectItem key={f} value={f}>
+                      {formaPagoLabel[f]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
           </div>
@@ -320,12 +382,21 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
           </div>
           <div>
             <Label>Descripción (para qué fue)</Label>
-            <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Ej: flete, pago proveedor, retiro al banco" className="mt-1" />
+            <Input
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Ej: flete, pago proveedor, retiro al banco"
+              className="mt-1"
+            />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={m.isPending || !monto || !desc.trim()}>Registrar</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={() => m.mutate()} disabled={m.isPending || !monto || !desc.trim()}>
+            Registrar
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -333,29 +404,61 @@ function MovimientoDialog({ sesionId, onClose, onSaved }: { sesionId: string; on
 }
 
 // ---------------- Cierre con conteo ----------------
-function CerrarDialog({ sesion, esperado, onClose, onClosed }:
-  { sesion: any; esperado: Record<string, CajaForma>; onClose: () => void; onClosed: () => void }) {
+function CerrarDialog({
+  sesion,
+  esperado,
+  onClose,
+  onClosed,
+}: {
+  sesion: CierreCajaCorregible;
+  esperado: Record<string, CajaForma>;
+  onClose: () => void;
+  onClosed: () => void;
+}) {
   const [contado, setContado] = useState<Record<string, number | null>>({});
   const [notas, setNotas] = useState("");
   const [efectivoRetirado, setEfectivoRetirado] = useState<number | null>(null);
-  const cierreEfectivo = calcularCierreEfectivo(contado.EFECTIVO ?? null, efectivoRetirado);
+  const resumenEfectivo =
+    contado.EFECTIVO == null || efectivoRetirado == null
+      ? null
+      : calcularCierreDesdeRetiro(
+          neto(esperado.EFECTIVO),
+          Number(contado.EFECTIVO),
+          Number(efectivoRetirado),
+        );
 
   const cerrar = useMutation({
     mutationFn: async () => {
+      if (contado.EFECTIVO == null || efectivoRetirado == null) {
+        throw new Error("Completá el efectivo contado y el efectivo retirado.");
+      }
+      const efectivo = calcularCierreDesdeRetiro(
+        neto(esperado.EFECTIVO),
+        Number(contado.EFECTIVO),
+        Number(efectivoRetirado),
+      );
+      if (!efectivo.retiroValido) {
+        throw new Error(
+          "El efectivo retirado no puede superar al contado ni contener valores negativos.",
+        );
+      }
       // R11: mandamos SÓLO el efectivo (lo único que se cuenta a mano). El resto de
       // las formas las completa cerrar_caja con el esperado que recalcula en la
       // misma transacción, así no hay diferencia fantasma por una carrera con un
       // esperado cacheado (ver migración 20260721160000).
-      const payload = construirCierreCajaRpc({
-        sesionId: sesion.id,
-        efectivoContado: contado.EFECTIVO ?? null,
-        efectivoRetirado,
-        notas,
+      const payload: Record<string, number> = { EFECTIVO: Number(contado.EFECTIVO) };
+      const { error } = await supabase.rpc("cerrar_caja", {
+        p_sesion_id: sesion.id,
+        p_contado: payload,
+        p_notas: notas || undefined,
+        p_efectivo_dejado: efectivo.dejado,
       });
-      const { error } = await supabase.rpc("cerrar_caja", payload);
       if (error) throw error;
     },
-    onSuccess: () => { toast.success("Caja cerrada"); onClosed(); },
+    onSuccess: () => {
+      toast.success("Caja cerrada");
+      onClosed();
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -370,12 +473,16 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           <DialogTitle>Cerrar caja — conteo</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Contá el <strong>efectivo</strong> que hay físicamente en la caja. El resto de las formas ya viene con el monto
-          esperado por el sistema (lo que entró menos lo que salió: compras, pagos a proveedor, gastos), no se cuenta a mano.
+          Contá <strong>todo el efectivo antes de separar lo que vas a retirar</strong>. El resto de
+          las formas ya viene con el monto esperado por el sistema (lo que entró menos lo que salió:
+          compras, pagos a proveedor, gastos), no se cuenta a mano.
         </p>
         <div className="space-y-2 mt-1">
           <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center text-xs text-muted-foreground font-medium px-1">
-            <span>Forma</span><span className="w-24 text-right">Esperado</span><span className="w-28 text-right">Contado</span><span className="w-24 text-right">Diferencia</span>
+            <span>Forma</span>
+            <span className="w-24 text-right">Esperado</span>
+            <span className="w-28 text-right">Contado</span>
+            <span className="w-24 text-right">Diferencia</span>
           </div>
           {formasCierre.map((f) => {
             const esp = neto(esperado[f]);
@@ -386,18 +493,28 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
             return (
               <div key={f} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
                 <span className="text-sm">{formaPagoLabel[f]}</span>
-                <span className="w-24 text-right font-mono tabular-nums text-sm text-muted-foreground">{fmtMoney(esp)}</span>
+                <span className="w-24 text-right font-mono tabular-nums text-sm text-muted-foreground">
+                  {fmtMoney(esp)}
+                </span>
                 <div className="w-28">
                   <NumberInput
                     value={esEfectivo ? (contado[f] ?? null) : esp}
-                    onValueChange={(v) => { if (esEfectivo) setContado((c) => ({ ...c, [f]: v })); }}
+                    onValueChange={(v) => {
+                      if (esEfectivo) setContado((c) => ({ ...c, [f]: v }));
+                    }}
                     disabled={!esEfectivo}
                     className={`h-8 text-right ${!esEfectivo ? "opacity-60" : ""}`}
                   />
                 </div>
-                <span className={`w-24 text-right font-mono tabular-nums text-sm ${
-                  dif == null ? "text-muted-foreground" : dif === 0 ? "text-success" : "text-destructive"
-                }`}>
+                <span
+                  className={`w-24 text-right font-mono tabular-nums text-sm ${
+                    dif == null
+                      ? "text-muted-foreground"
+                      : dif === 0
+                        ? "text-success"
+                        : "text-destructive"
+                  }`}
+                >
                   {dif == null ? "—" : `${dif > 0 ? "+" : ""}${fmtMoney(dif)}`}
                 </span>
               </div>
@@ -405,30 +522,58 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
           })}
         </div>
         <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
-          <Label className="font-medium">Efectivo que sacás de la caja</Label>
+          <Label className="font-medium">Efectivo que retirás al cerrar</Label>
           <div className="flex items-center gap-2 mt-1">
-            <NumberInput value={efectivoRetirado} onValueChange={setEfectivoRetirado} className="h-9 w-40 text-right" />
+            <NumberInput
+              value={efectivoRetirado ?? null}
+              onValueChange={setEfectivoRetirado}
+              className="h-9 w-40 text-right"
+            />
             <p className="text-[11px] text-muted-foreground">
-              Se descuenta del efectivo contado. Si no sacás dinero, poné 0.
+              Se descuenta del efectivo contado. Si no retirás nada, poné 0.
             </p>
           </div>
-          {cierreEfectivo.error ? (
-            <p role="alert" className="mt-2 text-xs text-destructive">{cierreEfectivo.error}</p>
-          ) : cierreEfectivo.efectivoDejado !== null ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Queda en caja: <strong className="text-foreground">{fmtMoney(cierreEfectivo.efectivoDejado)}</strong>.
-              Ese será el fondo inicial del próximo turno.
-            </p>
-          ) : null}
+          {resumenEfectivo && (
+            <div
+              className={`mt-2 text-sm ${resumenEfectivo.retiroValido ? "text-foreground" : "text-destructive"}`}
+            >
+              <span>Saldo que queda en caja: </span>
+              <strong className="tabular-nums">{fmtMoney(resumenEfectivo.dejado)}</strong>
+              <span className="text-muted-foreground">
+                {" "}
+                — será el fondo inicial del próximo turno.
+              </span>
+              {!resumenEfectivo.retiroValido && (
+                <p className="mt-1 text-xs">
+                  El efectivo retirado no puede superar al contado ni contener valores negativos.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="mt-2">
           <Label>Observaciones</Label>
-          <Textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={2} className="mt-1"
-            placeholder="Ej: faltante justificado por vuelto mal dado" />
+          <Textarea
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            rows={2}
+            className="mt-1"
+            placeholder="Ej: faltante justificado por vuelto mal dado"
+          />
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => cerrar.mutate()} disabled={cerrar.isPending || !cierreEfectivo.valido}>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => cerrar.mutate()}
+            disabled={
+              cerrar.isPending ||
+              contado.EFECTIVO == null ||
+              efectivoRetirado == null ||
+              !resumenEfectivo?.retiroValido
+            }
+          >
             <Lock className="h-4 w-4 mr-1" /> Confirmar cierre
           </Button>
         </DialogFooter>
@@ -437,54 +582,155 @@ function CerrarDialog({ sesion, esperado, onClose, onClosed }:
   );
 }
 
+function efectivoRetiradoEnCierre(sesion: CierreCajaCorregible) {
+  const contado = sesion.contado;
+  const efectivoContado =
+    contado && typeof contado === "object" && !Array.isArray(contado)
+      ? Number(contado.EFECTIVO ?? 0)
+      : 0;
+
+  return calcularEfectivoCierre(0, efectivoContado, Number(sesion.efectivo_dejado ?? 0)).retirado;
+}
+
 // ---------------- Historial ----------------
-function Historial({ sucId, sucNombre }: { sucId: string; sucNombre: string }) {
+function Historial({ sucId, sucNombre, esAdmin, haySesionAbierta }: {
+  sucId: string; sucNombre: string; esAdmin: boolean; haySesionAbierta: boolean;
+}) {
+  const qc = useQueryClient();
+  const [corrigiendo, setCorrigiendo] = useState<{
+    sesion: CierreCajaCorregible; tieneTurnoPosterior: boolean;
+  } | null>(null);
+  const [viendoHistorial, setViendoHistorial] = useState<CierreCajaCorregible | null>(null);
   const { data: sesiones = [] } = useQuery({
     queryKey: ["caja-historial", sucId],
     enabled: !!sucId,
-    queryFn: async () => ((await supabase.from("caja_sesiones")
-      .select("*").eq("sucursal_id", sucId).eq("estado", "CERRADA")
-      .order("cerrada_en", { ascending: false }).limit(20)).data ?? []) as any[],
+    queryFn: async () =>
+      ((
+        await supabase
+          .from("caja_sesiones")
+          .select("*")
+          .eq("sucursal_id", sucId)
+          .eq("estado", "CERRADA")
+          .order("cerrada_en", { ascending: false })
+          .limit(20)
+      ).data ?? []) as CierreCajaCorregible[],
   });
 
   if (!sesiones.length) return null;
   return (
-    <SectionCard title="Cierres anteriores" className="mt-4">
-      <Table>
-        <TableHeader><TableRow>
-          <TableHead>Abierta</TableHead><TableHead>Cerrada</TableHead>
-          <TableHead className="text-right">Esperado</TableHead>
-          <TableHead className="text-right">Contado</TableHead>
-          <TableHead className="text-right">Diferencia</TableHead>
-          <TableHead className="text-right">Retirado</TableHead>
-          <TableHead className="text-right">Saldo en caja</TableHead>
-          <TableHead></TableHead>
-        </TableRow></TableHeader>
-        <TableBody>
-          {sesiones.map((s) => (
-            <TableRow key={s.id}>
-              <TableCell className="text-xs">{fmtDateTime(s.abierta_en)}</TableCell>
-              <TableCell className="text-xs">{fmtDateTime(s.cerrada_en)}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.total_esperado)}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.total_contado)}</TableCell>
-              <TableCell className={`text-right font-mono tabular-nums ${
-                Number(s.total_diferencia) === 0 ? "text-success" : "text-destructive"
-              }`}>
-                {Number(s.total_diferencia) > 0 ? "+" : ""}{fmtMoney(s.total_diferencia)}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {fmtMoney(efectivoRetiradoRegistrado(Number(s.contado?.EFECTIVO ?? 0), Number(s.efectivo_dejado ?? 0)))}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{fmtMoney(s.efectivo_dejado ?? 0)}</TableCell>
-              <TableCell className="text-right">
-                <Button size="sm" variant="ghost" onClick={() => { pdfCierre(s, sucNombre).catch((e) => toast.error("No se pudo generar el PDF: " + e.message)); }} title="Descargar PDF del cierre">
-                  <Printer className="h-3.5 w-3.5" />
-                </Button>
-              </TableCell>
+    <>
+      <SectionCard title="Cierres anteriores" className="mt-4">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Abierta</TableHead>
+              <TableHead>Cerrada</TableHead>
+              <TableHead className="text-right">Esperado</TableHead>
+              <TableHead className="text-right">Contado</TableHead>
+              <TableHead className="text-right">Diferencia</TableHead>
+              <TableHead className="text-right">Retirado</TableHead>
+              <TableHead className="text-right">Saldo en caja</TableHead>
+              <TableHead className="text-center">Correcciones</TableHead>
+              <TableHead></TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </SectionCard>
+          </TableHeader>
+          <TableBody>
+            {sesiones.map((s, index) => (
+              <TableRow key={s.id}>
+                <TableCell className="text-xs">{fmtDateTime(s.abierta_en)}</TableCell>
+                <TableCell className="text-xs">{fmtDateTime(s.cerrada_en)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtMoney(s.total_esperado)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtMoney(s.total_contado)}
+                </TableCell>
+                <TableCell
+                  className={`text-right font-mono tabular-nums ${
+                    Number(s.total_diferencia) === 0 ? "text-success" : "text-destructive"
+                  }`}
+                >
+                  {Number(s.total_diferencia) > 0 ? "+" : ""}
+                  {fmtMoney(s.total_diferencia)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtMoney(efectivoRetiradoEnCierre(s))}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtMoney(s.efectivo_dejado ?? 0)}
+                </TableCell>
+                <TableCell className="text-center text-xs text-muted-foreground">
+                  {s.correccion_version > 0
+                    ? `${s.correccion_version} registrada${s.correccion_version === 1 ? "" : "s"}`
+                    : "Sin correcciones"}
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    {esAdmin ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Corregir cierre"
+                        aria-label={`Corregir cierre del ${fmtDateTime(s.cerrada_en)}`}
+                        onClick={() =>
+                          setCorrigiendo({
+                            sesion: s,
+                            tieneTurnoPosterior: index > 0 || haySesionAbierta,
+                          })
+                        }
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    {esAdmin && s.correccion_version > 0 ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Ver historial de correcciones"
+                        aria-label={`Ver correcciones del cierre del ${fmtDateTime(s.cerrada_en)}`}
+                        onClick={() => setViendoHistorial(s)}
+                      >
+                        <History className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        pdfCierre(s, sucNombre).catch((e) =>
+                          toast.error("No se pudo generar el PDF: " + e.message),
+                        );
+                      }}
+                      title="Descargar PDF del cierre"
+                      aria-label={`Descargar PDF del cierre del ${fmtDateTime(s.cerrada_en)}`}
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </SectionCard>
+
+      {corrigiendo ? (
+        <DialogoCorreccionCierre
+          sesion={corrigiendo.sesion}
+          tieneTurnoPosterior={corrigiendo.tieneTurnoPosterior}
+          onClose={() => setCorrigiendo(null)}
+          onSaved={() => {
+            setCorrigiendo(null);
+            void qc.invalidateQueries({ queryKey: ["caja-historial", sucId] });
+          }}
+        />
+      ) : null}
+      {viendoHistorial ? (
+        <DialogoHistorialCorrecciones
+          sesion={viendoHistorial}
+          onClose={() => setViendoHistorial(null)}
+        />
+      ) : null}
+    </>
   );
 }

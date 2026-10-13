@@ -1,8 +1,16 @@
 import { test, expect, ingresar } from "./apoyo";
+import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fiscal";
+
+test.beforeAll(async () => {
+  await prepararFixturesFiscales();
+});
+test.afterAll(async () => {
+  await limpiarFixturesFiscales();
+});
 
 test.beforeEach(async ({ page }) => {
-  await ingresar(page);
-  await page.goto("/facturacion");
+  await ingresar(page, "fiscalAdmin");
+  await page.goto("/facturacion/configuracion");
 });
 
 test("separa CSR, certificado y PV por CUIT", async ({ page }) => {
@@ -17,10 +25,11 @@ test("separa CSR, certificado y PV por CUIT", async ({ page }) => {
   await expect(grupo).toContainText("GRUPO CASA FORMA S.A.S.");
   await expect(grupo).toContainText("30-71732246-7");
   await expect(grupo).toContainText("CasaForma O'Higgins");
-  await expect(grupo).toContainText(/bloquead|inactiv|pendiente/i);
+  await expect(grupo).toContainText(/configuración en curso|falta generar csr/i);
 
   await expect(aplicaciones.getByRole("button", { name: /CSR de producción/i })).toHaveCount(1);
-  await expect(grupo.getByRole("button", { name: /CSR de producción/i })).toHaveCount(1);
+  await expect(grupo.getByRole("button", { name: /^Deshabilitar producción$/i })).toHaveCount(1);
+  await expect(grupo.getByRole("button", { name: /CSR de producción/i })).toHaveCount(0);
 });
 
 test("un PV inválido no se puede guardar", async ({ page }) => {

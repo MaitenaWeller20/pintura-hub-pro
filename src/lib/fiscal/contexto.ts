@@ -1,6 +1,9 @@
 import { cuitValido, type CondicionIva } from "./codigos";
+import { crearErrorFiscalUsuario } from "./error-usuario";
+import { fechaFiscalHoyAr } from "./fecha";
 
 export type AmbienteArca = "HOMOLOGACION" | "PRODUCCION";
+export type ModalidadFacturaA = "DESCONOCIDA" | "ESTANDAR_CONFIRMADA" | "NO_SOPORTADA";
 
 export type SucursalFiscalRow = {
   id: string;
@@ -18,6 +21,8 @@ export type EmisorFiscalRow = {
   condicion_iva: CondicionIva | null;
   ingresos_brutos: string | null;
   inicio_actividades: string | null;
+  factura_a_modalidad: ModalidadFacturaA;
+  factura_a_revalidar_at: string | null;
 };
 
 export type PuntoVentaFiscalRow = {
@@ -34,6 +39,8 @@ export type CredencialFiscalRow = {
   arca_key_enc: string | null;
   arca_cert_enc: string | null;
   habilitada: boolean;
+  padron_probado_at: string | null;
+  padron_validacion_activa: boolean;
 };
 
 export type ContextoFiscalInput = {
@@ -62,7 +69,64 @@ export type ContextoFiscal = {
   };
   pv: { numero: number; modo: AmbienteArca };
   sucursal: SucursalFiscalRow;
+  facturaA: {
+    modalidad: ModalidadFacturaA;
+    revalidar_at: string | null;
+  };
+  padron: {
+    probadoAt: string | null;
+    validacionActiva: boolean;
+  };
 };
+
+const MODALIDADES_FACTURA_A = new Set<ModalidadFacturaA>([
+  "DESCONOCIDA",
+  "ESTANDAR_CONFIRMADA",
+  "NO_SOPORTADA",
+]);
+
+function fechaIsoValida(fecha: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fecha);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const comprobacion = new Date(Date.UTC(year, month - 1, day));
+  return (
+    comprobacion.getUTCFullYear() === year &&
+    comprobacion.getUTCMonth() === month - 1 &&
+    comprobacion.getUTCDate() === day
+  );
+}
+
+/**
+ * La conectividad con WSFE no demuestra que el contribuyente pueda emitir la
+ * variante A estándar. Esa decisión es administrativa y vence: sólo se aplica
+ * después de haber derivado la letra real del receptor.
+ */
+export function validarModalidadFacturaA(
+  letra: "A" | "B" | "C",
+  modalidad: ModalidadFacturaA,
+  revalidarAt: string | null,
+  ahora = new Date(),
+): void {
+  if (letra !== "A") return;
+  if (!MODALIDADES_FACTURA_A.has(modalidad)) {
+    throw new Error("La modalidad de Factura A guardada no es válida.");
+  }
+  if (modalidad === "NO_SOPORTADA") {
+    throw new Error("Este emisor figura sin soporte para Factura A estándar.");
+  }
+  if (modalidad !== "ESTANDAR_CONFIRMADA") {
+    throw new Error("Falta confirmar administrativamente la modalidad de Factura A estándar.");
+  }
+  if (!revalidarAt || !fechaIsoValida(revalidarAt)) {
+    throw new Error("La confirmación de Factura A no tiene una fecha de revalidación válida.");
+  }
+  if (revalidarAt < fechaFiscalHoyAr(() => ahora)) {
+    throw new Error("La confirmación de Factura A está vencida y debe revalidarse.");
+  }
+}
 
 export function construirContextoFiscal(
   input: ContextoFiscalInput,
@@ -93,6 +157,9 @@ export function construirContextoFiscal(
   if (!cuitValido(emisor.cuit)) {
     throw new Error("El CUIT del emisor es inválido.");
   }
+  if (!MODALIDADES_FACTURA_A.has(emisor.factura_a_modalidad)) {
+    throw new Error("La modalidad de Factura A guardada no es válida.");
+  }
   if (!credencial || credencial.ambiente !== pv.modo || credencial.emisor_id !== emisor.id) {
     const ambiente = pv.modo === "PRODUCCION" ? "producción" : "homologación";
     throw new Error(`Falta la credencial de ${ambiente} para este emisor.`);
@@ -105,6 +172,9 @@ export function construirContextoFiscal(
   }
   if (opciones.exigirHabilitada && !credencial.habilitada) {
     throw new Error("La facturación electrónica de este emisor está deshabilitada.");
+  }
+  if (credencial.padron_validacion_activa && !credencial.padron_probado_at) {
+    throw crearErrorFiscalUsuario("PADRON_CONFIG_INVALIDA");
   }
 
   return {
@@ -126,5 +196,13 @@ export function construirContextoFiscal(
     },
     pv: { numero: pv.numero, modo: pv.modo },
     sucursal,
+    facturaA: {
+      modalidad: emisor.factura_a_modalidad,
+      revalidar_at: emisor.factura_a_revalidar_at,
+    },
+    padron: {
+      probadoAt: credencial.padron_probado_at,
+      validacionActiva: credencial.padron_validacion_activa,
+    },
   };
 }

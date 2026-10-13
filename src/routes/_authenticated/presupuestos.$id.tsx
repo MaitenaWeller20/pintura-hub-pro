@@ -1,28 +1,13 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
-import { ClientePicker } from "@/components/cliente-picker";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import {
   Table,
   TableHeader,
@@ -31,18 +16,43 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { fmtMoney, fmtDate, formaPagoLabel, formasCobro } from "@/lib/format";
+import { fmtMoney, fmtDate } from "@/lib/format";
 import { conIva } from "@/lib/fiscal/iva";
 import { tablaDeItemsPresupuesto } from "@/lib/presupuesto-pdf";
 import { toast } from "sonner";
-import { ArrowLeft, Printer, Loader2, AlertTriangle, Pencil } from "lucide-react";
+import { ArrowLeft, Printer, AlertTriangle, Pencil } from "lucide-react";
 import jsPDF from "jspdf";
 import { dibujarEncabezado, traerLogo, SELECT_SUCURSAL_IMPRESA } from "@/lib/impresos/encabezado";
 import autoTable from "jspdf-autotable";
+import {
+  DialogoConvertirPresupuesto,
+  type PresupuestoConvertido,
+} from "@/components/presupuestos/dialogo-convertir-presupuesto";
+import { DialogoEmisionFiscal } from "@/components/fiscal/dialogo-emision-fiscal";
+import { parseRespuestaConfirmacionFiscal } from "@/components/fiscal/dialogo-emision-contract";
+import { listarReceptoresFiscales } from "@/lib/fiscal/cola.functions";
+import { emitirComprobante, previsualizarEmisionFiscal } from "@/lib/fiscal.functions";
+import { resultadoColaDespuesDeEmision } from "@/lib/ventas-ui";
+import { CONDICION_IVA_CLIENTE } from "@/lib/fiscal/codigos";
+import { mensajeCodigoErrorFiscalUsuario } from "@/lib/fiscal/error-usuario";
+import {
+  accionFiscalDespuesDeConvertirPresupuesto,
+  destinoColaFiscalVentaConvertida,
+} from "@/lib/presupuesto-ui";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/$id")({
   component: DetallePresupuesto,
 });
+
+function esMantenimiento(value: unknown): value is { estado: "MANTENIMIENTO"; mensaje: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).estado === "MANTENIMIENTO" &&
+    typeof (value as Record<string, unknown>).mensaje === "string"
+  );
+}
 
 function DetallePresupuesto() {
   const { id } = Route.useParams();
@@ -50,6 +60,13 @@ function DetallePresupuesto() {
   const qc = useQueryClient();
   const { data: cu } = useCurrentUser();
   const [abrirConv, setAbrirConv] = useState(false);
+  const [conversionParaFacturar, setConversionParaFacturar] =
+    useState<PresupuestoConvertido | null>(null);
+  const botonConvertirRef = useRef<HTMLButtonElement>(null);
+  const navegacionFiscalRef = useRef(false);
+  const listarFavoritos = useServerFn(listarReceptoresFiscales);
+  const previsualizarFiscal = useServerFn(previsualizarEmisionFiscal);
+  const emitirFiscal = useServerFn(emitirComprobante);
 
   const { data: p } = useQuery({
     queryKey: ["presupuesto", id],
@@ -70,10 +87,23 @@ function DetallePresupuesto() {
       ((await supabase.from("presupuesto_items").select("*").eq("presupuesto_id", id)).data ??
         []) as any[],
   });
-  const { data: fiscal } = useQuery({
-    queryKey: ["fiscal-publica"],
-    queryFn: async () =>
-      (await supabase.from("fiscal_config_publica").select("*").maybeSingle()).data,
+  const { data: clienteFiscal } = useQuery({
+    queryKey: ["cliente-fiscal-presupuesto", conversionParaFacturar?.clienteId],
+    enabled: !!conversionParaFacturar,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("id,razon_social,cuit_dni,tipo")
+        .eq("id", conversionParaFacturar!.clienteId)
+        .maybeSingle();
+      if (error || !data) throw new Error("No se pudo leer el comprador de la venta convertida.");
+      return data;
+    },
+  });
+  const { data: favoritosFiscales = [] } = useQuery({
+    queryKey: ["receptores-fiscales", p?.sucursal_id ?? null],
+    enabled: !!conversionParaFacturar && !!p?.sucursal_id,
+    queryFn: () => listarFavoritos({ data: { sucursal_id: p!.sucursal_id } }),
   });
 
   const vencido =
@@ -119,7 +149,7 @@ function DetallePresupuesto() {
     // que se pueda confundir con una factura es un problema con AFIP.
     doc.setFontSize(8);
     doc.text(
-      "PRESUPUESTO - No válido como factura. Los precios pueden cambiar sin previo aviso.",
+      "PRESUPUESTO — No válido como factura. Los precios pueden cambiar sin previo aviso.",
       14,
       fin + 20,
     );
@@ -141,7 +171,24 @@ function DetallePresupuesto() {
     onError: (e: any) => toast.error(e.message),
   });
 
+  const navegarACola = (
+    ventaId: string,
+    resultado:
+      | "venta_creada_factura_pendiente"
+      | "venta_creada_requiere_revision"
+      | "factura_aprobada",
+  ) => {
+    navegacionFiscalRef.current = true;
+    window.location.assign(
+      `/facturacion/cola?venta=${encodeURIComponent(ventaId)}&resultado=${resultado}`,
+    );
+  };
+
   if (!cu || !p) return null;
+
+  const destinoColaVentaConvertida = p.venta_id
+    ? destinoColaFiscalVentaConvertida(p.venta_id, cu)
+    : null;
 
   return (
     <div className="space-y-4">
@@ -177,7 +224,11 @@ function DetallePresupuesto() {
                 >
                   Anular
                 </Button>
-                <Button onClick={() => setAbrirConv(true)} data-testid="convertir">
+                <Button
+                  ref={botonConvertirRef}
+                  onClick={() => setAbrirConv(true)}
+                  data-testid="convertir"
+                >
                   Convertir en venta
                 </Button>
               </>
@@ -189,11 +240,17 @@ function DetallePresupuesto() {
       {p.estado === "CONVERTIDO" && (
         <SectionCard>
           <p className="text-sm">
-            Este presupuesto ya se convirtió en una venta. Buscala en{" "}
-            <Link to="/ventas" className="underline">
-              Ventas
-            </Link>{" "}
-            por <strong>{p.numero}</strong>: la venta lleva ese número en sus observaciones.
+            Este presupuesto ya se convirtió una vez. La venta vinculada es{" "}
+            {p.venta_id && destinoColaVentaConvertida ? (
+              <a href={destinoColaVentaConvertida} className="font-semibold text-primary underline">
+                {p.venta_id}
+              </a>
+            ) : p.venta_id ? (
+              <strong>{p.venta_id}</strong>
+            ) : (
+              <strong>no identificable; requiere revisión administrativa</strong>
+            )}
+            . No vuelvas a convertirlo ni busques otra venta por las observaciones.
           </p>
         </SectionCard>
       )}
@@ -217,11 +274,11 @@ function DetallePresupuesto() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Producto</TableHead>
+                <TableHead>Descripción</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Precio de lista</TableHead>
                 <TableHead className="text-right">Desc.</TableHead>
-                <TableHead className="text-right">Precio final</TableHead>
+                <TableHead className="text-right">Precio</TableHead>
                 {/* Los precios van CON IVA: es el número que se le dice al
                     cliente. Mostrar el neto y el IVA por separado confundía, y
                     hay clientes a los que no se les quiere mostrar el desglose.
@@ -245,6 +302,9 @@ function DetallePresupuesto() {
                   </TableCell>
                   <TableCell className="text-right font-mono">
                     {fmtMoney(conIva(i.precio_sin_iva, i.iva_porcentaje))}
+                    {i.precio_personalizado_sin_iva != null ? (
+                      <span className="block text-[10px] text-warning">Precio ajustado</span>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
                     {fmtMoney(i.subtotal_con_iva)}
@@ -271,138 +331,123 @@ function DetallePresupuesto() {
           </div>
           <div className="text-right">
             <p className="text-xl font-bold font-mono">{fmtMoney(p.total)}</p>
+            <p className="text-[11px] text-muted-foreground">IVA incluido</p>
           </div>
         </div>
       </SectionCard>
 
-      <DialogoConvertir
+      <DialogoConvertirPresupuesto
         open={abrirConv}
-        onClose={() => setAbrirConv(false)}
         presupuesto={p}
-        onDone={() => {
-          qc.invalidateQueries({ queryKey: ["presupuesto", id] });
-          qc.invalidateQueries({ queryKey: ["presupuestos"] });
+        facturacionV2Habilitada={cu.facturacionV2Habilitada}
+        facturacionLegacyHabilitada={cu.facturacionLegacyHabilitada}
+        puedeFacturar={cu.puedeFacturar}
+        returnFocusRef={botonConvertirRef}
+        onOpenChange={setAbrirConv}
+        onConvertida={(resultado: PresupuestoConvertido) => {
+          toast.success("Venta creada una sola vez con los precios del presupuesto.");
+          void qc.invalidateQueries({ queryKey: ["presupuesto", id] });
+          void qc.invalidateQueries({ queryKey: ["presupuestos"] });
           setAbrirConv(false);
+          const accion = accionFiscalDespuesDeConvertirPresupuesto(resultado, cu);
+          if (accion === "FACTURAR_AHORA") {
+            setConversionParaFacturar(resultado);
+          } else if (accion === "ABRIR_COLA") {
+            navegarACola(resultado.ventaId, "venta_creada_factura_pendiente");
+          }
         }}
       />
+
+      {conversionParaFacturar ? (
+        <DialogoEmisionFiscal
+          open
+          contexto={{
+            comprador: {
+              razonSocial: clienteFiscal?.razon_social ?? "Cliente de la venta convertida",
+              documento: clienteFiscal?.cuit_dni ?? null,
+              condicionIva: CONDICION_IVA_CLIENTE[clienteFiscal?.tipo ?? ""] ?? null,
+            },
+            emisor: {
+              razonSocial: p.sucursal?.emisor?.razon_social ?? "Emisor de la sucursal",
+              cuit: p.sucursal?.emisor?.cuit ?? "a confirmar",
+            },
+            sucursal: {
+              id: p.sucursal_id,
+              nombre: p.sucursal?.nombre ?? "Sucursal del presupuesto",
+              puntoVenta: null,
+              modo: null,
+            },
+            tipoComprobante: "VENTA",
+          }}
+          favoritos={favoritosFiscales}
+          puedeConfirmarVentaAntigua={cu.isAdmin}
+          returnFocusRef={botonConvertirRef}
+          onOpenChange={(open) => {
+            if (open) return;
+            setConversionParaFacturar(null);
+            if (!navegacionFiscalRef.current) {
+              navegarACola(conversionParaFacturar.ventaId, "venta_creada_factura_pendiente");
+            }
+          }}
+          onPrevisualizar={({ receptor, letraSolicitada }) =>
+            previsualizarFiscal({
+              data: {
+                origen: "VENTA_EXISTENTE",
+                venta_id: conversionParaFacturar.ventaId,
+                receptor,
+                letra_solicitada: letraSolicitada,
+              },
+            }).then((respuesta) => {
+              if (esMantenimiento(respuesta)) throw new Error(respuesta.mensaje);
+              return respuesta;
+            })
+          }
+          onConfirmar={async ({
+            receptor,
+            letraSolicitada,
+            confirmaVentaAntigua,
+            huellaConfirmacion,
+          }) => {
+            try {
+              const respuesta = await emitirFiscal({
+                data: {
+                  venta_id: conversionParaFacturar.ventaId,
+                  receptor,
+                  letra_solicitada: letraSolicitada,
+                  confirma_venta_antigua: confirmaVentaAntigua,
+                  huella_confirmacion: huellaConfirmacion,
+                },
+              });
+              if (esMantenimiento(respuesta)) {
+                return parseRespuestaConfirmacionFiscal({
+                  estado: "ERROR_CORREGIBLE" as const,
+                  codigo: "MANTENIMIENTO_POST_VENTA" as const,
+                  mensaje: mensajeCodigoErrorFiscalUsuario("MANTENIMIENTO_POST_VENTA"),
+                });
+              }
+              return parseRespuestaConfirmacionFiscal(respuesta);
+            } catch {
+              return parseRespuestaConfirmacionFiscal({
+                estado: "RECONCILIAR" as const,
+                mensaje:
+                  "El presupuesto quedó convertido, pero no se pudo confirmar la respuesta fiscal. No repitas la conversión ni el cobro.",
+              });
+            }
+          }}
+          onCompletada={(resultado) => {
+            const resultadoCola = resultadoColaDespuesDeEmision(resultado.estado);
+            if (resultado.estado === "APROBADO") {
+              toast.success(`Factura aprobada. CAE ${resultado.cae}.`);
+            } else {
+              toast.warning(
+                "El presupuesto quedó convertido en la misma venta. No repitas la conversión ni el cobro.",
+                { duration: 12_000 },
+              );
+            }
+            navegarACola(conversionParaFacturar.ventaId, resultadoCola);
+          }}
+        />
+      ) : null}
     </div>
-  );
-}
-
-function DialogoConvertir({ open, onClose, presupuesto, onDone }: any) {
-  const [clienteId, setClienteId] = useState(presupuesto?.cliente_id ?? "");
-  const [tipo, setTipo] = useState("FACTURA_B");
-  const [condicion, setCondicion] = useState("CONTADO");
-  // El pago se registraba SIEMPRE como efectivo. El arqueo compara el bucket
-  // EFECTIVO contra la plata contada, así que cada conversión cobrada por
-  // transferencia dejaba un faltante de caja por ese monto.
-  const [formaPago, setFormaPago] = useState("EFECTIVO");
-
-  const m = useMutation({
-    mutationFn: async () => {
-      if (!clienteId) throw new Error("Elegí el cliente.");
-      const { error } = await supabase.rpc("convertir_presupuesto_en_venta", {
-        p_presupuesto_id: presupuesto.id,
-        p_cliente_id: clienteId,
-        p_tipo_comprobante: tipo as any,
-        p_condicion_venta: condicion as any,
-        p_pagos:
-          condicion === "CTA_CTE"
-            ? []
-            : ([{ forma_pago: formaPago, monto: Number(presupuesto.total) }] as any),
-        // La clave de idempotencia la deriva la RPC del propio presupuesto:
-        // mandarla desde acá permitía que dos presupuestos compartieran venta.
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      toast.success("Venta creada con los precios del presupuesto.");
-      onDone();
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Convertir en venta</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Se va a crear una venta con{" "}
-            <strong>los productos y los precios de este presupuesto</strong>, aunque los precios del
-            catálogo hayan cambiado. Recién ahí se descuenta el stock y entra la plata.
-          </p>
-          <div>
-            <Label>Cliente *</Label>
-            <ClientePicker
-              value={clienteId}
-              onChange={setClienteId}
-              testId="conv-cliente"
-              placeholder="Elegí…"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Comprobante</Label>
-              <Select value={tipo} onValueChange={setTipo}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                {/* Sólo facturas. REMITO y FAC_INTERNA_CTA_CTE tienen condición
-                    FORZADA en crear_venta (remito va siempre a cuenta corriente e
-                    ignora los pagos; la factura interna va siempre a contado), así
-                    que ofrecerlas acá dejaba elegir combinaciones que el servidor
-                    pisa: un pago que se ignora, o una venta sin caja ni deuda.
-                    Para esos comprobantes está el flujo normal de Ventas. */}
-                <SelectContent>
-                  <SelectItem value="FACTURA_B">Factura B</SelectItem>
-                  <SelectItem value="FACTURA_A">Factura A</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Condición</Label>
-              <Select value={condicion} onValueChange={setCondicion}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CONTADO">Contado</SelectItem>
-                  <SelectItem value="CTA_CTE">Cuenta corriente</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          {condicion === "CONTADO" && (
-            <div>
-              <Label>Cómo paga</Label>
-              <Select value={formaPago} onValueChange={setFormaPago}>
-                <SelectTrigger data-testid="conv-forma-pago">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {formasCobro.map((f) => (
-                    <SelectItem key={f} value={f}>
-                      {formaPagoLabel[f] ?? f}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={m.isPending}>
-            Cancelar
-          </Button>
-          <Button onClick={() => m.mutate()} disabled={m.isPending} data-testid="conv-confirmar">
-            {m.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
-            Crear la venta por {fmtMoney(presupuesto?.total ?? 0)}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

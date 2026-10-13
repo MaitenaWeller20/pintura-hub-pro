@@ -1,99 +1,203 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { TableRow, TableCell } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { StatusPill } from "@/components/app/status-pill";
 import { SectionCard } from "@/components/app/section-card";
-import { VentaItemsDetalle } from "@/components/ventas/venta-items-detalle";
+import { EstadoFiscalPill } from "@/components/fiscal/estado-fiscal-pill";
+import { ValidezFiscal } from "@/components/fiscal/validez-fiscal";
+import { DialogoDetalleVenta, type VentaDetalle } from "@/components/ventas/dialogo-detalle-venta";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
-import { fmtDocumento } from "@/lib/documento";
-import { Plus, Eye, Ban, Printer, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
+import { Plus, Eye, Ban, FileSpreadsheet, FileCheck2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { anularVenta } from "@/lib/ventas.functions";
-import { sePuedeAnularVenta } from "@/lib/anulacion-venta";
-import {
-  emitirComprobante,
-  datosFiscalesComprobante,
-} from "@/lib/fiscal.functions";
-import { obtenerConfigFiscal } from "@/lib/fiscal/config.functions";
+import { anularVenta, listarVentasSeguras } from "@/lib/ventas.functions";
+import { detalleVentaFiscalSegura, emitirComprobante } from "@/lib/fiscal.functions";
+import { obtenerEstadoFiscalPublico } from "@/lib/fiscal/config.functions";
+import { QUERY_KEY_ESTADO_FISCAL_PUBLICO } from "@/lib/fiscal/config";
 import { esComprobanteFiscal, esNotaInterna } from "@/lib/fiscal/codigos";
-import { diasRestantesVentanaAfip, fueraDeVentanaAfip, VENTANA_AFIP_DIAS } from "@/lib/fiscal/fecha";
-import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
+import {
+  diasRestantesVentanaAfip,
+  fueraDeVentanaAfip,
+  VENTANA_AFIP_DIAS,
+} from "@/lib/fiscal/fecha";
+import { CBTE_INFO } from "@/lib/fiscal/codigos";
+import { numeroFiscal } from "@/lib/fiscal/comprobante-pdf";
+import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
+import {
+  camposExportacionReceptorFiscal,
+  describirCaeLegacy,
+  puedeOfrecerEmisionLegacy,
+  receptorFiscalDifiereDelComprador,
+  requiereAdvertenciaAnulacionProduccion,
+  ventaCoincideBusqueda,
+} from "@/lib/ventas-ui";
+import {
+  adquirirBloqueoAnulacion,
+  crearIntentoAnulacion,
+  liberarBloqueoAnulacion,
+  solicitudAnulacion,
+  type IntentoAnulacion,
+} from "@/lib/anulacion-venta-ui";
+import { esVentaVisibleEnListadoComercial } from "@/lib/nota-credito-periodo-ui";
+import { crearSecuenciadorDetalleVenta } from "@/lib/ventas-detalle-concurrencia";
 import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/ventas/")({
   component: VentasList,
 });
 
+/** Los comprobantes que `anular_venta` acepta. */
+const ANULABLES = [
+  "VENTA",
+  "FACTURA_A",
+  "FACTURA_B",
+  "FACTURA_C",
+  "REMITO",
+  "REMITO_OBRA",
+  "FAC_INTERNA_CTA_CTE",
+];
+
+/**
+ * Las notas FISCALES no se anulan: se corrigen con otra nota.
+ *
+ * La excepción es la nota de crédito INTERNA cargada A MANO —sin CAE y sin
+ * factura asociada—, que nunca se declaró a AFIP: no hay nada que rectificar con
+ * un documento compensatorio, así que se revierte y listo. Sin esto, una nota
+ * cargada por error quedaba para siempre, con el stock ya repuesto y el crédito
+ * ya dado, y el único arreglo era SQL a mano contra producción.
+ *
+ * Quedan afuera las notas internas que generó una ANULACIÓN: esas no son un
+ * documento aparte sino la mitad de una anulación que ya devolvió el stock y ya
+ * resolvió la plata. Revertirlas descuadraría las dos cosas. Cuáles son las
+ * averigua `generadasPorAnulacion` (ver más abajo). El mismo criterio está en
+ * `anular_venta`, que es donde manda de verdad: esto sólo evita ofrecer un botón
+ * que va a fallar.
+ */
+function sePuedeAnular(v: any, generadasPorAnulacion: Set<string>): boolean {
+  // La RPC sólo puede derivar una NC automática desde evidencia de producción.
+  // Un CAE de prueba no se ofrece como anulable porque homologación/simulación
+  // no pueden presentarse como comprobantes con validez legal.
+  if (v.cae && !requiereAdvertenciaAnulacionProduccion(v)) return false;
+  if (ANULABLES.includes(v.tipo_comprobante)) return true;
+  return (
+    v.tipo_comprobante === "NOTA_CREDITO" &&
+    !v.cae &&
+    esNotaInterna(
+      v.tipo_comprobante,
+      v.afip_cbte_asoc_id,
+      v.periodo_asoc_desde,
+      v.periodo_asoc_hasta,
+    ) &&
+    !generadasPorAnulacion.has(v.id)
+  );
+}
+
+function comprobanteFiscalVisible(venta: {
+  afip_cbte_tipo: number | null;
+  afip_punto_venta: number | null;
+  afip_numero: number | null;
+}): string | null {
+  if (!venta.afip_cbte_tipo || !venta.afip_punto_venta || !venta.afip_numero) return null;
+  const info = CBTE_INFO[venta.afip_cbte_tipo];
+  if (!info) return null;
+  const tipo = [1, 6, 11].includes(venta.afip_cbte_tipo)
+    ? "Factura"
+    : [3, 8, 13].includes(venta.afip_cbte_tipo)
+      ? "Nota de crédito"
+      : "Comprobante";
+  return `${tipo} ${info.letra} ${numeroFiscal(venta.afip_punto_venta, venta.afip_numero)}`;
+}
+
 function VentasList() {
   const { data: cu } = useCurrentUser();
   const qc = useQueryClient();
   const [sucFilter, setSucFilter] = useState("");
   const [pagoFilter, setPagoFilter] = useState("all");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
   const [q, setQ] = useState("");
-  const [verVenta, setVerVenta] = useState<any>(null);
-  const [anularDlg, setAnularDlg] = useState<any>(null);
+  const [verVenta, setVerVenta] = useState<VentaDetalle | null>(null);
+  const [detalleCargandoId, setDetalleCargandoId] = useState<string | null>(null);
+  const [anularDlg, setAnularDlg] = useState<IntentoAnulacion<VentaDetalle> | null>(null);
+  const anulandoRef = useRef(false);
+  const secuenciadorDetalleRef = useRef(crearSecuenciadorDetalleVenta());
+  const [anulacionBloqueada, setAnulacionBloqueada] = useState(false);
   const anularFn = useServerFn(anularVenta);
+  const detalleVentaFn = useServerFn(detalleVentaFiscalSegura);
+  const listarVentasFn = useServerFn(listarVentasSeguras);
+
+  useEffect(() => {
+    const secuenciador = secuenciadorDetalleRef.current;
+    return () => secuenciador.invalidar();
+  }, []);
+
+  const cargarDetalle = async (ventaId: string) => {
+    const solicitud = secuenciadorDetalleRef.current.iniciar();
+    setDetalleCargandoId(ventaId);
+    try {
+      const venta = await detalleVentaFn({ data: { venta_id: ventaId } });
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) setVerVenta(venta);
+    } catch (error) {
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) {
+        toast.error(mensajeErrorFiscal(error, "CONSULTA"), { duration: 12000 });
+      }
+    } finally {
+      if (secuenciadorDetalleRef.current.esVigente(solicitud)) setDetalleCargandoId(null);
+    }
+  };
 
   const { data: sucs = [] } = useQuery({
     queryKey: ["sucs"],
     queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[],
   });
 
-  const { data: ventasResult, isLoading: loadingVentas, error: ventasError } = useQuery({
-    queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter],
-    enabled: !!cu,
-    queryFn: async () => {
-      // Los pagos sólo hacen falta al exportar. Incluirlos acá obliga a PostgREST
-      // a resolver la relación y su RLS para cada una de las 200 ventas; si esa
-      // consulta falla, antes se convertía el error en "0 comprobantes".
-      const cargar = async (conRelaciones: boolean) => {
-        let consulta = supabase.from("ventas")
-          .select(conRelaciones
-            ? "*, cliente:clientes(razon_social,cuit_dni), sucursal:sucursales(nombre,codigo,telefono)"
-            : "*")
-          .order("fecha", { ascending: false })
-          .limit(200);
-        if (sucFilter) consulta = consulta.eq("sucursal_id", sucFilter);
-        if (pagoFilter !== "all") consulta = consulta.eq("estado_pago", pagoFilter as any);
-        return consulta;
-      };
-
-      const principal = await cargar(true);
-      if (!principal.error && principal.data?.length) {
-        return { filas: principal.data as any[], aviso: null as string | null };
-      }
-
-      // La consulta simple conserva el listado aunque falle una relación.
-      const simple = await cargar(false);
-      if (simple.error) throw new Error(simple.error.message);
-      const filas = (simple.data ?? []) as any[];
-      return {
-        filas,
-        aviso: filas.length > 0
-          ? `No se pudieron cargar los datos relacionados: ${principal.error?.message ?? "consulta incompleta"}`
-          : null,
-      };
-    },
+  const { data: ventas = [], isLoading: loadingVentas } = useQuery({
+    queryKey: ["ventas", cu?.user.id, sucFilter, pagoFilter, fechaDesde, fechaHasta],
+    enabled: !!cu && (!fechaDesde || !fechaHasta || fechaDesde <= fechaHasta),
+    queryFn: () =>
+      listarVentasFn({
+        data: {
+          sucursal_id: sucFilter || undefined,
+          estado_pago:
+            pagoFilter === "all" ? undefined : (pagoFilter as "PAGADO" | "PARCIAL" | "PENDIENTE"),
+          fecha_desde: fechaDesde || undefined,
+          fecha_hasta: fechaHasta || undefined,
+        },
+      }),
   });
-  const ventas = ventasResult?.filas ?? [];
 
-  const filtered = useMemo(() => ventas.filter((v:any) =>
-    !q || `${v.numero_comprobante} ${v.cliente?.razon_social ?? ""}`.toLowerCase().includes(q.toLowerCase())
-  ), [ventas, q]);
+  const filtered = useMemo(
+    () =>
+      ventas.filter(
+        (v) => esVentaVisibleEnListadoComercial(v.estado) && ventaCoincideBusqueda(v, q),
+      ),
+    [ventas, q],
+  );
 
   /**
-   * Cuáles de las notas sin CAE real en pantalla las generó una ANULACIÓN.
+   * Cuáles de las notas internas en pantalla las generó una ANULACIÓN.
    *
    * Esas no se pueden anular (ver sePuedeAnular). Va en una consulta aparte y no
    * en un embed de la principal porque PostgREST no resuelve la auto-referencia
@@ -101,29 +205,36 @@ function VentasList() {
    * se cae la pantalla entera. Acá se pregunta al revés y sólo por los ids
    * candidatos, así que es una consulta chica y sólo cuando hace falta.
    */
-  const idsNotasSinCaeReal = useMemo(
+  const idsNotasInternas = useMemo(
     () =>
       ventas
         .filter(
-          (v: any) => v.tipo_comprobante === "NOTA_CREDITO" && (!v.cae || v.afip_simulado),
+          (v: any) =>
+            !v.cae &&
+            esNotaInterna(
+              v.tipo_comprobante,
+              v.afip_cbte_asoc_id,
+              v.periodo_asoc_desde,
+              v.periodo_asoc_hasta,
+            ),
         )
         .map((v: any) => v.id as string),
     [ventas],
   );
-  const { data: generadasPorAnulacion = new Set<string>(), isSuccess: anulacionesConsultadas } = useQuery({
-    queryKey: ["nc-de-anulacion", idsNotasSinCaeReal],
-    enabled: idsNotasSinCaeReal.length > 0,
+  const { data: generadasPorAnulacion = new Set<string>() } = useQuery({
+    queryKey: ["nc-de-anulacion", idsNotasInternas],
+    enabled: idsNotasInternas.length > 0,
     queryFn: async () => {
       // De a 50. Un `.in()` con los 200 ids de la página son ~7,4 KB sólo de
       // UUIDs en la URL, y hay proxies que cortan la request line en 8 KB: el
       // día que la lista se llene de notas internas volvería a romperse
       // /ventas, que es justo lo que pasó con el embed que había acá antes.
       const encontradas = new Set<string>();
-      for (let i = 0; i < idsNotasSinCaeReal.length; i += 50) {
+      for (let i = 0; i < idsNotasInternas.length; i += 50) {
         const { data } = await supabase
           .from("ventas")
           .select("venta_anulada_por")
-          .in("venta_anulada_por", idsNotasSinCaeReal.slice(i, i + 50));
+          .in("venta_anulada_por", idsNotasInternas.slice(i, i + 50));
         for (const r of data ?? []) encontradas.add((r as any).venta_anulada_por as string);
       }
       return encontradas;
@@ -131,27 +242,53 @@ function VentasList() {
   });
 
   const anular = useMutation({
-    mutationFn: async (id: string) => anularFn({ data: { venta_id: id } }),
-    onSuccess: (_r, id) => {
+    mutationFn: async (intento: IntentoAnulacion<VentaDetalle>) =>
+      anularFn({ data: solicitudAnulacion(intento) }),
+    onSuccess: (_r, intento) => {
       // Si el comprobante estaba declarado, la anulación todavía no terminó: falta
       // emitirle la NC a AFIP. Que el toast lo diga, no un "listo" que engañe.
-      const anulada = ventas.find((v: any) => v.id === id);
-      if (anulada?.cae && !anulada?.afip_simulado) {
-        toast.warning("Venta anulada. Falta emitir la nota de crédito en AFIP.", { duration: 10000 });
+      const anulada = intento.venta;
+      if (requiereAdvertenciaAnulacionProduccion(anulada)) {
+        toast.warning("Venta anulada. Falta emitir la nota de crédito en AFIP.", {
+          duration: 10000,
+        });
       } else {
-        toast.success(anulada?.tipo_comprobante === "NOTA_CREDITO" ? "Nota de crédito anulada" : "Venta anulada");
+        toast.success(anulada.tipo_comprobante === "NOTA_CREDITO" ? "Nota de crédito anulada" : "Venta anulada");
       }
       qc.invalidateQueries({ queryKey: ["ventas"] });
+      qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });
       setAnularDlg(null);
     },
-    onError: (e:any) => toast.error(e.message),
+    onError: () => {
+      // La RPC es idempotente. Si se perdió la respuesta después del commit,
+      // conservar este diálogo conserva también la clave: el siguiente click
+      // recupera la misma NC en vez de intentar crear otra.
+      qc.invalidateQueries({ queryKey: ["ventas"] });
+      qc.invalidateQueries({ queryKey: ["nc-de-anulacion"] });
+      toast.error(
+        "No se pudo confirmar la respuesta de la anulación. Reintentá desde este mismo diálogo para recuperar la operación; no abras otra anulación.",
+        { duration: 12000 },
+      );
+    },
+    onSettled: () => {
+      liberarBloqueoAnulacion(anulandoRef);
+      setAnulacionBloqueada(false);
+    },
   });
+
+  const confirmarAnulacion = () => {
+    if (!anularDlg || !adquirirBloqueoAnulacion(anulandoRef)) return;
+    setAnulacionBloqueada(true);
+    anular.mutate(anularDlg);
+  };
+
+  const bloqueoAnulacion = anulacionBloqueada || anular.isPending;
 
   // Sólo interesa el flag de modo simulado, para no avisar de un plazo que en
   // mock no se aplica. La respuesta pública no contiene claves ni certificados.
-  const cargarCfg = useServerFn(obtenerConfigFiscal);
+  const cargarCfg = useServerFn(obtenerEstadoFiscalPublico);
   const { data: cfgFiscal } = useQuery({
-    queryKey: ["fiscal-config-multiemisor"],
+    queryKey: QUERY_KEY_ESTADO_FISCAL_PUBLICO,
     queryFn: () => cargarCfg(),
     staleTime: 5 * 60_000,
   });
@@ -168,49 +305,32 @@ function VentasList() {
       );
       qc.invalidateQueries({ queryKey: ["ventas"] });
     },
-    // Los errores de AFIP son largos y hay que poder leerlos.
-    onError: (e: any) => toast.error(e.message, { duration: 12000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "EMISION"), { duration: 12000 }),
   });
 
-  const exportar = async () => {
-    const pagosPorVenta = new Map<string, any[]>();
-    const ids = filtered.map((v: any) => v.id as string);
-    for (let i = 0; i < ids.length; i += 50) {
-      const { data, error } = await supabase
-        .from("venta_pagos")
-        .select("venta_id, forma_pago")
-        .in("venta_id", ids.slice(i, i + 50));
-      if (error) {
-        toast.error(`No se pudo exportar la forma de pago: ${error.message}`);
-        return;
-      }
-      for (const pago of data ?? []) {
-        const existentes = pagosPorVenta.get(pago.venta_id) ?? [];
-        existentes.push(pago);
-        pagosPorVenta.set(pago.venta_id, existentes);
-      }
-    }
+  const exportar = () => {
     const ws = XLSX.utils.json_to_sheet(
       filtered.map((v: any) => ({
         Comprobante: v.numero_comprobante,
         Tipo: tipoComprobanteLabel[v.tipo_comprobante],
         Fecha: v.fecha,
         Sucursal: v.sucursal?.nombre,
-        Cliente: v.cliente?.razon_social,
-        "Total final": v.total,
+        Comprador: v.cliente?.razon_social,
+        ...camposExportacionReceptorFiscal(v),
+        "Total final (IVA incluido)": v.total,
         Pagado: v.total_pagado,
         Estado: v.estado_pago,
         // R12.b: forma(s) de pago. Cta cte no tiene venta_pagos (se cobra por cobranzas).
-        "Forma de pago": pagosPorVenta.get(v.id)?.length
-          ? pagosPorVenta.get(v.id)!
-              .map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago)
-              .join(", ")
+        "Forma de pago": v.pagos?.length
+          ? v.pagos.map((p: any) => formaPagoLabel[p.forma_pago] ?? p.forma_pago).join(", ")
           : v.condicion_venta === "CTA_CTE"
             ? "Cuenta Corriente"
             : "—",
       })),
     );
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Ventas");
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Ventas");
     XLSX.writeFile(wb, "ventas.xlsx");
   };
 
@@ -221,36 +341,48 @@ function VentasList() {
         subtitle={`${filtered.length} comprobantes`}
         actions={
           <>
-            <Button variant="outline" onClick={exportar}><FileSpreadsheet className="h-4 w-4 mr-1"/> Excel</Button>
-            <Button asChild><Link to="/ventas/nueva"><Plus className="h-4 w-4 mr-1"/> Nueva venta</Link></Button>
+            <Button variant="outline" onClick={exportar}>
+              <FileSpreadsheet className="h-4 w-4 mr-1" /> Excel
+            </Button>
+            <Button asChild>
+              <Link to="/ventas/nueva">
+                <Plus className="h-4 w-4 mr-1" /> Nueva venta
+              </Link>
+            </Button>
           </>
         }
       />
 
-      {(ventasError || ventasResult?.aviso) && (
-        <SectionCard>
-          <p className="text-sm text-destructive">
-            {ventasError
-              ? `No se pudieron cargar los comprobantes: ${ventasError.message}`
-              : ventasResult?.aviso}
-          </p>
-        </SectionCard>
-      )}
-
       <SectionCard>
         <div className="flex flex-wrap gap-2">
-          <Input placeholder="Buscar comprobante o cliente…" value={q} onChange={(e)=>setQ(e.target.value)} className="max-w-xs"/>
+          <Input
+            placeholder="Buscar comprobante, comprador o receptor…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="max-w-xs"
+          />
           {cu?.isAdmin && (
-            <Select value={sucFilter || "__all__"} onValueChange={(v)=>setSucFilter(v==="__all__"?"":v)}>
-              <SelectTrigger className="w-44"><SelectValue/></SelectTrigger>
+            <Select
+              value={sucFilter || "__all__"}
+              onValueChange={(v) => setSucFilter(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">Todas las sucursales</SelectItem>
-                {sucs.map((s:any)=>(<SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>))}
+                {sucs.map((s: any) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.nombre}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}
           <Select value={pagoFilter} onValueChange={setPagoFilter}>
-            <SelectTrigger className="w-44"><SelectValue/></SelectTrigger>
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos los estados</SelectItem>
               <SelectItem value="PAGADO">Pagado</SelectItem>
@@ -258,112 +390,290 @@ function VentasList() {
               <SelectItem value="PENDIENTE">Pendiente</SelectItem>
             </SelectContent>
           </Select>
+          <div className="space-y-1">
+            <Label htmlFor="ventas-fecha-desde" className="text-xs">
+              Desde
+            </Label>
+            <Input
+              id="ventas-fecha-desde"
+              type="date"
+              value={fechaDesde}
+              max={fechaHasta || undefined}
+              onChange={(e) => setFechaDesde(e.target.value)}
+              className="w-auto"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="ventas-fecha-hasta" className="text-xs">
+              Hasta
+            </Label>
+            <Input
+              id="ventas-fecha-hasta"
+              type="date"
+              value={fechaHasta}
+              min={fechaDesde || undefined}
+              onChange={(e) => setFechaHasta(e.target.value)}
+              className="w-auto"
+            />
+          </div>
+          {(fechaDesde || fechaHasta) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-end"
+              onClick={() => {
+                setFechaDesde("");
+                setFechaHasta("");
+              }}
+            >
+              Limpiar fechas
+            </Button>
+          )}
         </div>
+        {fechaDesde && fechaHasta && fechaDesde > fechaHasta && (
+          <p className="mt-2 text-xs text-destructive">
+            La fecha desde no puede ser posterior a la fecha hasta.
+          </p>
+        )}
       </SectionCard>
 
       <DataTable
-        columns={cu?.isAdmin
-          ? ["Comprobante", "Tipo", "Fecha", "Cliente", "Sucursal", "Total", "Estado", "AFIP", ""]
-          : ["Comprobante", "Tipo", "Fecha", "Cliente", "Total", "Estado", "AFIP", ""]}
+        columns={
+          cu?.isAdmin
+            ? [
+                "Venta",
+                "Comprobante fiscal",
+                "Tipo",
+                "Fecha",
+                "Cliente",
+                "Sucursal",
+                "Total",
+                "Estado",
+                "Fiscal",
+                "",
+              ]
+            : [
+                "Venta",
+                "Comprobante fiscal",
+                "Tipo",
+                "Fecha",
+                "Cliente",
+                "Total",
+                "Estado",
+                "Fiscal",
+                "",
+              ]
+        }
         loading={loadingVentas}
         isEmpty={filtered.length === 0}
-        empty={{ text: ventasError ? "No se pudieron cargar los comprobantes." : "No hay comprobantes para este filtro.", icon: <FileSpreadsheet className="h-7 w-7" /> }}
+        empty={{
+          text: "No hay comprobantes para este filtro.",
+          icon: <FileSpreadsheet className="h-7 w-7" />,
+        }}
       >
-        {filtered.map((v:any) => (
+        {filtered.map((v: any) => (
           <TableRow key={v.id} className={v.estado === "ANULADA" ? "opacity-50" : ""}>
-            <TableCell className="font-mono text-xs">{v.numero_comprobante}</TableCell>
+            <TableCell className="font-mono text-xs">Venta {v.numero_comprobante}</TableCell>
+            <TableCell className="text-xs">
+              {comprobanteFiscalVisible(v) ?? <span className="text-muted-foreground">—</span>}
+            </TableCell>
             <TableCell>{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
             <TableCell className="text-xs">{fmtDateTime(v.fecha)}</TableCell>
-            <TableCell>{v.cliente?.razon_social}</TableCell>
-            {cu?.isAdmin && <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>}
+            <TableCell>
+              <p>{v.cliente?.razon_social}</p>
+              {receptorFiscalDifiereDelComprador(v) ? (
+                <p className="text-xs text-muted-foreground" data-testid={`receptor-${v.id}`}>
+                  → {v.fiscalPresentacion?.receptor?.razonSocial}
+                </p>
+              ) : null}
+            </TableCell>
+            {cu?.isAdmin && (
+              <TableCell className="text-xs text-muted-foreground">{v.sucursal?.nombre}</TableCell>
+            )}
             <TableCell className="text-right font-mono">{fmtMoney(v.total)}</TableCell>
             <TableCell>
-              {v.estado === "ANULADA" ? <StatusPill tone="danger">ANULADA</StatusPill>
-                : v.tipo_comprobante === "NOTA_CREDITO" ? <StatusPill tone="neutral">N. Crédito</StatusPill>
-                : v.condicion_venta === "CTA_CTE" ? <StatusPill tone="info">Cta Cte</StatusPill>
-                : (
+              {v.estado === "ANULADA" ? (
+                <StatusPill tone="danger">ANULADA</StatusPill>
+              ) : v.tipo_comprobante === "NOTA_CREDITO" ? (
+                <StatusPill tone="neutral">N. Crédito</StatusPill>
+              ) : v.condicion_venta === "CTA_CTE" ? (
+                <StatusPill tone="info">Cta Cte</StatusPill>
+              ) : (
                 <StatusPill tone={v.estado_pago === "PAGADO" ? "success" : "warning"}>
                   {v.estado_pago}
                 </StatusPill>
               )}
             </TableCell>
-            <TableCell><EstadoAfip venta={v} mock={mockMode} /></TableCell>
             <TableCell>
-              <Button size="sm" variant="ghost" onClick={()=>setVerVenta(v)}><Eye className="h-3.5 w-3.5"/></Button>
+              {cu?.facturacionV2Habilitada ? (
+                <div className="space-y-1">
+                  <EstadoFiscalPill estado={v.afip_estado} />
+                  <div>
+                    <ValidezFiscal validez={v.afip_validez} estado={v.afip_estado} compacta />
+                  </div>
+                </div>
+              ) : (
+                <EstadoAfip venta={v} mock={mockMode} />
+              )}
+            </TableCell>
+            <TableCell>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="min-h-11 min-w-11"
+                aria-label={`Ver detalle de ${v.numero_comprobante}`}
+                title="Ver detalle"
+                onClick={() => void cargarDetalle(v.id)}
+                disabled={detalleCargandoId === v.id}
+              >
+                {detalleCargandoId === v.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </Button>
               {/* Sólo se factura lo que es un comprobante fiscal. Los remitos, la
                   factura interna y las notas que revierten algo nunca declarado
                   son documentos internos: no van a AFIP. */}
-              {v.estado === "ACTIVA" && esComprobanteFiscal(v.tipo_comprobante)
-                && !esNotaInterna(v.tipo_comprobante, v.afip_cbte_asoc_id) && !v.cae && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  title="Emitir en AFIP"
-                  onClick={() => emitir.mutate(v.id)}
-                  disabled={emitir.isPending}
-                >
-                  {emitir.isPending && emitir.variables === v.id
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <FileCheck2 className="h-3.5 w-3.5 text-primary" />}
-                </Button>
-              )}
               {v.estado === "ACTIVA" &&
-                (v.tipo_comprobante !== "NOTA_CREDITO" || anulacionesConsultadas) &&
-                sePuedeAnularVenta(v, generadasPorAnulacion) && (
+                cu?.facturacionLegacyHabilitada &&
+                puedeOfrecerEmisionLegacy({
+                  puedeFacturar: cu.puedeFacturar,
+                  isAdmin: cu.isAdmin,
+                  fecha: v.fecha,
+                }) &&
+                ["FACTURA_A", "FACTURA_B", "FACTURA_C", "NOTA_CREDITO"].includes(
+                  v.tipo_comprobante,
+                ) &&
+                !esNotaInterna(
+                  v.tipo_comprobante,
+                  v.afip_cbte_asoc_id,
+                  v.periodo_asoc_desde,
+                  v.periodo_asoc_hasta,
+                ) &&
+                !v.cae && (
                   <Button
                     size="sm"
                     variant="ghost"
-                    title={v.tipo_comprobante === "NOTA_CREDITO" ? "Anular nota de crédito" : "Anular venta"}
-                    aria-label={v.tipo_comprobante === "NOTA_CREDITO" ? "Anular nota de crédito" : "Anular venta"}
-                    onClick={() => setAnularDlg(v)}
+                    className="min-h-11 min-w-11"
+                    aria-label={`Emitir ${v.numero_comprobante} en AFIP`}
+                    title="Emitir en AFIP"
+                    onClick={() => emitir.mutate(v.id)}
+                    disabled={emitir.isPending}
                   >
-                    <Ban className="h-3.5 w-3.5 text-destructive" />
+                    {emitir.isPending && emitir.variables === v.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <FileCheck2 className="h-3.5 w-3.5 text-primary" />
+                    )}
                   </Button>
                 )}
+              {v.estado === "ACTIVA" &&
+              cu?.facturacionV2Habilitada &&
+              cu?.puedeFacturar &&
+              ["VENTA", "NOTA_CREDITO"].includes(v.tipo_comprobante) &&
+              !esNotaInterna(
+                v.tipo_comprobante,
+                v.afip_cbte_asoc_id,
+                v.periodo_asoc_desde,
+                v.periodo_asoc_hasta,
+              ) &&
+              !v.cae ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-11 min-w-11"
+                  aria-label={`Revisar y facturar ${v.numero_comprobante}`}
+                  title="Revisar y facturar"
+                  asChild
+                >
+                  <a href={`/facturacion/cola?venta=${encodeURIComponent(v.id)}`}>
+                    <FileCheck2 className="h-3.5 w-3.5 text-primary" />
+                  </a>
+                </Button>
+              ) : null}
+              {v.estado === "ACTIVA" && sePuedeAnular(v, generadasPorAnulacion) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-11 min-w-11"
+                  aria-label={`Anular ${v.numero_comprobante}`}
+                  title="Anular"
+                  onClick={() => setAnularDlg(crearIntentoAnulacion(v))}
+                >
+                  <Ban className="h-3.5 w-3.5 text-destructive" />
+                </Button>
+              )}
             </TableCell>
           </TableRow>
         ))}
       </DataTable>
 
-      <DetalleVenta venta={verVenta} onClose={()=>setVerVenta(null)}/>
+      <DialogoDetalleVenta
+        venta={verVenta}
+        puedeCorregirPagos={cu?.isAdmin === true}
+        onClose={() => setVerVenta(null)}
+        onVentaActualizada={() => (verVenta ? cargarDetalle(verVenta.id) : undefined)}
+      />
 
-      <Dialog open={!!anularDlg} onOpenChange={(v)=>!v && setAnularDlg(null)}>
-        <DialogContent>
+      <Dialog
+        open={!!anularDlg}
+        onOpenChange={(open) => !open && !bloqueoAnulacion && setAnularDlg(null)}
+      >
+        <DialogContent closeDisabled={bloqueoAnulacion} aria-busy={bloqueoAnulacion}>
           <DialogHeader>
             <DialogTitle>
-              Anular {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? "nota de crédito" : "venta"}
+              Anular{" "}
+              {anularDlg?.venta.tipo_comprobante === "NOTA_CREDITO" ? "nota de crédito" : "venta"}
             </DialogTitle>
           </DialogHeader>
-          {/* Anular una nota sin CAE real NO genera otra nota: la revierte. Decir lo
+          {/* Anular una nota interna NO genera otra nota: la revierte. Decir lo
               contrario haría buscar en el listado un comprobante que no existe. */}
-          {anularDlg?.tipo_comprobante === "NOTA_CREDITO" ? (
+          {anularDlg?.venta.tipo_comprobante === "NOTA_CREDITO" ? (
             <p className="text-sm">
-              ¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se va a revertir
-              todo lo que hizo: sale de nuevo el stock que había devuelto y{" "}
-              {anularDlg?.condicion_venta === "CTA_CTE"
-                ? "se elimina el crédito de la cuenta corriente del cliente. No se mueve la caja."
-                : "la plata devuelta vuelve a la caja de hoy."} No se genera ningún comprobante nuevo.
+              ¿Confirmás anular <strong>{anularDlg?.venta.numero_comprobante}</strong>? Se va a
+              revertir todo lo que hizo: sale de nuevo el stock que había devuelto, se le saca el
+              crédito al cliente y la plata devuelta vuelve a la caja de hoy. No se genera ningún
+              comprobante nuevo.
             </p>
           ) : (
-            <p className="text-sm">¿Confirmás anular <strong>{anularDlg?.numero_comprobante}</strong>? Se generará una nota de crédito y se devolverá el stock automáticamente.</p>
+            <p className="text-sm">
+              ¿Confirmás anular <strong>{anularDlg?.venta.numero_comprobante}</strong>? Se generará
+              una nota de crédito y se devolverá el stock automáticamente.
+            </p>
           )}
           {/* Si el comprobante ya se declaró, anularlo acá NO lo anula ante AFIP:
               eso lo hace la nota de crédito, que es un segundo paso y hay que
               emitirla. Mientras tanto AFIP sigue teniendo la factura como válida. */}
-          {anularDlg?.cae && !anularDlg?.afip_simulado && (
+          {anularDlg?.venta && requiereAdvertenciaAnulacionProduccion(anularDlg.venta) && (
             <div className="flex items-start gap-2 p-3 rounded border border-warning/40 bg-warning/5 text-sm">
               <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
               <div>
                 Esta factura ya tiene CAE. Para AFIP sigue siendo válida hasta que{" "}
-                <strong>emitas la nota de crédito</strong>, que te va a quedar en el listado
-                como pendiente. Acordate de hacerlo: AFIP sólo la acepta dentro de los{" "}
+                <strong>emitas la nota de crédito</strong>, que te va a quedar en el listado como
+                pendiente. Acordate de hacerlo: AFIP sólo la acepta dentro de los{" "}
                 {VENTANA_AFIP_DIAS} días.
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={()=>setAnularDlg(null)}>Cancelar</Button>
-            <Button variant="destructive" onClick={()=>anular.mutate(anularDlg.id)} disabled={anular.isPending}>Anular</Button>
+            <Button
+              variant="outline"
+              onClick={() => setAnularDlg(null)}
+              disabled={bloqueoAnulacion}
+              className="min-h-11 min-w-11"
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmarAnulacion}
+              disabled={bloqueoAnulacion || !anularDlg}
+              className="min-h-11 min-w-11"
+            >
+              Anular
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -375,7 +685,12 @@ function VentasList() {
 function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
   if (
     !esComprobanteFiscal(venta.tipo_comprobante) ||
-    esNotaInterna(venta.tipo_comprobante, venta.afip_cbte_asoc_id)
+    esNotaInterna(
+      venta.tipo_comprobante,
+      venta.afip_cbte_asoc_id,
+      venta.periodo_asoc_desde,
+      venta.periodo_asoc_hasta,
+    )
   ) {
     return (
       <span title="Documento interno: no se declara a AFIP">
@@ -384,30 +699,25 @@ function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
     );
   }
   if (venta.cae) {
-    // Un CAE simulado se parece a uno real (14 dígitos) pero no vale nada. Que se
-    // note a simple vista: si no, en el listado conviven mezclados y no hay forma
-    // de saber cuáles se declararon de verdad.
-    if (venta.afip_simulado) {
-      return (
-        <div className="text-xs space-y-0.5" title="CAE generado en modo simulado: no se declaró a AFIP y no tiene validez legal.">
-          <StatusPill tone="warning"><span className="font-mono">{venta.cae}</span></StatusPill>
-          <div className="text-muted-foreground">simulado — sin validez</div>
-        </div>
-      );
-    }
+    // Un CAE de homologación o simulado también tiene 14 dígitos. La validez
+    // efectiva —no la apariencia del número— define color y texto.
+    const descripcion = describirCaeLegacy(venta);
+    if (!descripcion) return <StatusPill tone="neutral">Sin emitir</StatusPill>;
     return (
-      <div className="text-xs space-y-0.5">
-        <StatusPill tone="success"><span className="font-mono">{venta.cae}</span></StatusPill>
-        <div className="text-muted-foreground">
-          {venta.afip_modo === "HOMOLOGACION" ? "homologación" : `PV ${venta.afip_punto_venta}-${venta.afip_numero}`}
-        </div>
+      <div className="space-y-0.5 text-xs" title={descripcion.title ?? undefined}>
+        <StatusPill tone={descripcion.tone}>
+          <span className="font-mono">{venta.cae}</span>
+        </StatusPill>
+        <div className="text-muted-foreground">{descripcion.detalle}</div>
       </div>
     );
   }
   if (venta.afip_estado === "ERROR") {
     return (
-      <span title={venta.afip_error ?? ""}>
-        <StatusPill tone="danger" icon={<AlertTriangle className="h-2.5 w-2.5" />}>ERROR</StatusPill>
+      <span title="La emisión fiscal requiere revisión. Abrí la cola fiscal para ver el estado y la acción recomendada.">
+        <StatusPill tone="danger" icon={<AlertTriangle className="h-2.5 w-2.5" />}>
+          ERROR
+        </StatusPill>
       </span>
     );
   }
@@ -447,118 +757,11 @@ function EstadoAfip({ venta, mock }: { venta: any; mock: boolean }) {
   if (restantes <= 2) {
     return (
       <span title={`AFIP deja de aceptar esta fecha en ${restantes} día(s). Emitila ya.`}>
-        <StatusPill tone="warning">{restantes === 0 ? "Último día" : `Quedan ${restantes} días`}</StatusPill>
+        <StatusPill tone="warning">
+          {restantes === 0 ? "Último día" : `Quedan ${restantes} días`}
+        </StatusPill>
       </span>
     );
   }
   return <StatusPill tone="neutral">Sin emitir</StatusPill>;
-}
-
-function DetalleVenta({ venta, onClose }: { venta: any; onClose: () => void }) {
-  const { data: detail } = useQuery({
-    queryKey: ["venta-detail", venta?.id],
-    enabled: !!venta,
-    queryFn: async () => {
-      const [{ data: items = [] }, { data: pagos = [] }] = await Promise.all([
-        supabase.from("venta_items").select("*").eq("venta_id", venta.id),
-        supabase.from("venta_pagos").select("*").eq("venta_id", venta.id),
-      ]);
-      return { items: (items ?? []) as any[], pagos: (pagos ?? []) as any[] };
-    },
-  });
-  const datosFiscalesFn = useServerFn(datosFiscalesComprobante);
-
-  const imprimir = async () => {
-    if (!venta) return;
-
-    // Los datos fiscales (CAE, QR, y el emisor/receptor CONGELADOS al emitir) sólo
-    // existen si el comprobante está autorizado. Sin ellos se imprime la misma
-    // hoja pero marcada como documento interno.
-    let fiscal: any = null;
-    if (venta.cae && esComprobanteFiscal(venta.tipo_comprobante)) {
-      try {
-        fiscal = await datosFiscalesFn({ data: { venta_id: venta.id } });
-      } catch {
-        fiscal = null;
-      }
-    }
-
-    const { doc, nombre } = generarComprobantePdf(venta, detail?.items ?? [], fiscal);
-    doc.save(nombre);
-  };
-
-  return (
-    <Dialog open={!!venta} onOpenChange={(v)=>!v && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-auto">
-        {venta && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex items-center justify-between">
-                <span>{tipoComprobanteLabel[venta.tipo_comprobante]} · {venta.numero_comprobante}</span>
-                <Button size="sm" variant="outline" onClick={imprimir}><Printer className="h-4 w-4 mr-1"/> PDF</Button>
-              </DialogTitle>
-            </DialogHeader>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <div><strong>Fecha:</strong> {fmtDateTime(venta.fecha)}</div>
-              <div><strong>Sucursal:</strong> {venta.sucursal?.nombre}</div>
-              <div><strong>Cliente:</strong> {venta.cliente?.razon_social}</div>
-              <div><strong>CUIT/DNI:</strong> {fmtDocumento(venta.cliente?.cuit_dni)}</div>
-            </div>
-            <div className="mt-2">
-              <VentaItemsDetalle
-                tipoComprobante={venta.tipo_comprobante}
-                items={detail?.items ?? []}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
-              <Card className="p-3">
-                <h4 className="font-semibold text-sm mb-2">Pagos</h4>
-                {venta.condicion_venta === "CTA_CTE" ? (
-                  <p className="text-xs text-muted-foreground">
-                    Venta a cuenta corriente. Los cobros de esta venta se registran y se ven en{" "}
-                    <Link to="/cuentas-corrientes" className="text-primary underline">Cuentas Corrientes</Link>.
-                  </p>
-                ) : (detail?.pagos ?? []).length === 0 ? <p className="text-xs text-muted-foreground">Sin pagos registrados.</p> :
-                  <ul className="space-y-1 text-sm">
-                    {detail!.pagos.map((p:any,i)=>(
-                      <li key={i} className="flex justify-between">
-                        <span>{formaPagoLabel[p.forma_pago]}{p.detalle && Object.keys(p.detalle).length ? ` (${Object.values(p.detalle).join(", ")})` : ""}</span>
-                        <span className="font-mono">{fmtMoney(p.monto)}</span>
-                      </li>
-                    ))}
-                  </ul>}
-              </Card>
-              <Card className="p-3">
-                <h4 className="font-semibold text-sm mb-2">Totales</h4>
-                <ul className="space-y-1 text-sm">
-                  {Number(venta.percepciones) > 0 && (
-                    <li className="flex justify-between">
-                      <span>Percepciones:</span>
-                      <span className="font-mono">{fmtMoney(venta.percepciones)}</span>
-                    </li>
-                  )}
-                  <li className="flex justify-between font-bold">
-                    <span>TOTAL:</span>
-                    <span className="font-mono">{fmtMoney(venta.total)}</span>
-                  </li>
-                  {venta.condicion_venta === "CTA_CTE" ? (
-                    <li className="flex justify-between text-warning"><span>Condición:</span><span>A cuenta corriente</span></li>
-                  ) : (
-                    <>
-                      <li className="flex justify-between text-success"><span>Pagado:</span><span className="font-mono">{fmtMoney(venta.total_pagado)}</span></li>
-                      {Number(venta.total) - Number(venta.total_pagado) > 0.01 && (
-                        <li className="flex justify-between text-destructive"><span>Pendiente:</span><span className="font-mono">{fmtMoney(Number(venta.total)-Number(venta.total_pagado))}</span></li>
-                      )}
-                    </>
-                  )}
-                </ul>
-              </Card>
-            </div>
-            {venta.observaciones && <p className="text-xs text-muted-foreground mt-2"><strong>Obs:</strong> {venta.observaciones}</p>}
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
 }

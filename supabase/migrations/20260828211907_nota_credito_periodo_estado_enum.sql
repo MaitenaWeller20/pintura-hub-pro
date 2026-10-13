@@ -1,0 +1,2 @@
+ALTER TYPE public.estado_venta
+  ADD VALUE IF NOT EXISTS 'PENDIENTE_FISCAL';

@@ -13,8 +13,10 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { bytesDeDataUrl, medirImagen } from "@/lib/impresos/imagen";
 import { validarCuitEmisor } from "@/lib/fiscal/cert";
+import { autorizarAntesDeClientePrivilegiado } from "@/lib/fiscal/config";
 import type { Database } from "@/integrations/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parsearEntradaFiscal } from "@/lib/fiscal/error-usuario";
 
 // Los mismos dos helpers que usa fiscal.functions: el cliente de servicio para
 // escribir, y el chequeo de admin por la RPC `is_admin`, que es la que manda.
@@ -32,13 +34,24 @@ async function exigirAdmin(supabase: SupabaseClient<Database>, userId: string) {
 export const listarEmisores = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { data, error } = await context.supabase
+    const sb = await autorizarAntesDeClientePrivilegiado(
+      () => exigirAdmin(context.supabase, context.userId),
+      admin,
+    );
+    const { data, error } = await sb
       .from("emisores")
       .select(
-        "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, sucursales(id, nombre, direccion, telefono)",
+        "id, razon_social, nombre_fantasia, cuit, domicilio_fiscal, condicion_iva, ingresos_brutos, inicio_actividades, logo, factura_a_modalidad, factura_a_confirmada_at, factura_a_confirmada_por, factura_a_revalidar_at, factura_a_evidencia, sucursales(id, nombre, direccion, telefono)",
       )
       .order("razon_social");
-    if (error) throw new Error(`No se pudieron traer los emisores: ${error.message}`);
+    if (error) {
+      console.error("[Emisores] no se pudieron cargar", {
+        codigo: error.code,
+        mensaje: error.message,
+      });
+      throw new Error(`No se pudieron traer los emisores: ${error.message}`);
+    }
+    console.info("[Emisores] cargados", { cantidad: data?.length ?? 0 });
     return data ?? [];
   });
 
@@ -76,8 +89,8 @@ const logoValido = z
 export const guardarEmisor = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
+    parsearEntradaFiscal(
+      z.object({
         id: z.string().uuid(),
         // Los topes no son burocracia: esto va en el encabezado de cada
         // impreso, y un texto pegado de cientos de caracteres empuja el título
@@ -101,12 +114,14 @@ export const guardarEmisor = createServerFn({ method: "POST" })
           .optional()
           .nullable(),
         logo: logoValido.optional(),
-      })
-      .parse(d),
+      }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
     await exigirAdmin(context.supabase, context.userId);
+    const sb = await admin();
     const { id, ...camposEntrada } = data;
     const cuit = camposEntrada.cuit?.trim() ? validarCuitEmisor(camposEntrada.cuit) : null;
     const campos = { ...camposEntrada, cuit };
@@ -119,8 +134,8 @@ export const guardarEmisor = createServerFn({ method: "POST" })
 export const guardarContactoSucursal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
+    parsearEntradaFiscal(
+      z.object({
         id: z.string().uuid(),
         direccion: z
           .string()
@@ -132,12 +147,14 @@ export const guardarContactoSucursal = createServerFn({ method: "POST" })
           .max(40, "El teléfono no puede pasar de 40 caracteres.")
           .optional()
           .nullable(),
-      })
-      .parse(d),
+      }),
+      d,
+      "CONFIGURACION",
+    ),
   )
   .handler(async ({ data, context }) => {
-    const sb = await admin();
     await exigirAdmin(context.supabase, context.userId);
+    const sb = await admin();
     const { id, ...campos } = data;
     const { error } = await sb.from("sucursales").update(campos).eq("id", id);
     if (error) throw new Error(`No se pudo guardar: ${error.message}`);

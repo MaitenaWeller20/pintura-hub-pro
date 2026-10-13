@@ -33,6 +33,8 @@ export type Seccion = {
    * donde todo falla.
    */
   soloAdmin?: boolean;
+  /** Capacidad operativa independiente de las secciones otorgables. */
+  requiereCapacidad?: "facturar";
 };
 
 export const SECCIONES: Seccion[] = [
@@ -70,19 +72,31 @@ export const SECCIONES: Seccion[] = [
   },
   { key: "arqueo", ruta: "/arqueo", label: "Rendición de caja", grupo: "Cobranzas" },
 
-  { key: "reportes", ruta: "/reportes", label: "Reportes", grupo: "Administración", soloAdmin: true },
+  {
+    key: "reportes",
+    ruta: "/reportes",
+    label: "Reportes",
+    grupo: "Administración",
+    soloAdmin: true,
+  },
   {
     key: "facturacion",
     ruta: "/facturacion",
     label: "Facturación AFIP",
     grupo: "Administración",
+    requiereCapacidad: "facturar",
+  },
+  {
+    key: "usuarios",
+    ruta: "/usuarios",
+    label: "Usuarios",
+    grupo: "Administración",
     soloAdmin: true,
   },
-  { key: "usuarios", ruta: "/usuarios", label: "Usuarios", grupo: "Administración", soloAdmin: true },
 ];
 
 /** Las secciones que se pueden marcar en la pantalla de permisos. */
-export const SECCIONES_OTORGABLES = SECCIONES.filter((s) => !s.soloAdmin);
+export const SECCIONES_OTORGABLES = SECCIONES.filter((s) => !s.soloAdmin && !s.requiereCapacidad);
 
 /**
  * Lo que ve un empleado si nadie le tocó los permisos.
@@ -117,6 +131,9 @@ export type UsuarioPermisos = {
   isAdmin: boolean;
   /** `null` = "las de siempre". Ver la tabla de la spec §4.2. */
   secciones?: string[] | null;
+  /** Capacidad efectiva de rol/perfil; la ruta además exige el flag v2. */
+  puedeFacturar?: boolean;
+  facturacionV2Habilitada?: boolean;
 };
 
 /**
@@ -130,11 +147,38 @@ export function seccionesDe(cu: UsuarioPermisos): string[] {
   const propias = cu.secciones ?? SECCIONES_DEFAULT;
   // Se filtra contra el catálogo: una key vieja o basura guardada en la base no
   // puede abrir nada ni romper el menú.
-  return SECCIONES_OTORGABLES.filter((s) => propias.includes(s.key)).map((s) => s.key);
+  const normales = SECCIONES_OTORGABLES.filter((s) => propias.includes(s.key)).map((s) => s.key);
+  if (cu.puedeFacturar === true && cu.facturacionV2Habilitada === true) {
+    const fiscal = SECCIONES.find((s) => s.requiereCapacidad === "facturar");
+    if (fiscal) normales.push(fiscal.key);
+  }
+  return normales;
 }
 
 export function puedeVer(key: string, cu: UsuarioPermisos): boolean {
   return seccionesDe(cu).includes(key);
+}
+
+/**
+ * Guarda de navegación compartida por layout y menú.
+ *
+ * Las rutas desconocidas fallan cerrado. `/caja` es la única excepción: no
+ * renderiza una pantalla y redirige intencionalmente a `/arqueo`.
+ */
+export function puedeAbrirRuta(path: string, cu: UsuarioPermisos): boolean {
+  if (path === "/caja") return puedeVer("arqueo", cu);
+
+  if (path === "/facturacion/configuracion") return cu.isAdmin;
+  if (path === "/facturacion/cola") {
+    return cu.facturacionV2Habilitada === true && (cu.isAdmin || cu.puedeFacturar === true);
+  }
+  if (path === "/facturacion" || path === "/facturacion/") {
+    return cu.isAdmin || (cu.facturacionV2Habilitada === true && cu.puedeFacturar === true);
+  }
+  if (path.startsWith("/facturacion/")) return false;
+
+  const seccion = seccionDeRuta(path);
+  return seccion ? puedeVer(seccion.key, cu) : false;
 }
 
 /** A dónde mandarlo al entrar, si no tiene el dashboard. `null` = no tiene nada. */
@@ -147,8 +191,8 @@ export function primeraSeccion(cu: UsuarioPermisos): Seccion | null {
  * Limpia una lista de secciones antes de guardarla.
  *
  * `null` entra y sale como `null` (es "las de siempre", no una lista vacía).
- * Descarta keys inexistentes y las `soloAdmin`, para que no se guarde en la base
- * algo que después nadie sabe de dónde salió.
+ * Descarta keys inexistentes, `soloAdmin` y capacidades independientes, para
+ * que no se guarde en la base algo que después nadie sabe de dónde salió.
  */
 export function normalizarSecciones(v: unknown): string[] | null {
   if (v === null || v === undefined) return null;

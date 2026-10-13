@@ -13,11 +13,11 @@ vuelve a pasar.
 
 ## Las tres capas
 
-| Capa | Qué cubre | Cómo se corre | Cuánto tarda |
-|---|---|---|---|
-| Unitarias (vitest) | Cálculos: IVA, totales, CUIT, importaciones, filtros | `bun run test` | ~1 s |
-| End-to-end (Playwright) | Que las pantallas abran, los diálogos se puedan usar y los ABMC funcionen | `bun run e2e` | ~2,5 min |
-| Verificación en la base | Que las migraciones hagan lo que dicen | SQL a mano contra local antes de ir a producción | — |
+| Capa                    | Qué cubre                                                                 | Cómo se corre                                    | Cuánto tarda |
+| ----------------------- | ------------------------------------------------------------------------- | ------------------------------------------------ | ------------ |
+| Unitarias (vitest)      | Cálculos: IVA, totales, CUIT, importaciones, filtros                      | `bun run test`                                   | ~1 s         |
+| End-to-end (Playwright) | Que las pantallas abran, los diálogos se puedan usar y los ABMC funcionen | `bun run e2e`                                    | ~2,5 min     |
+| Verificación en la base | Que las migraciones hagan lo que dicen                                    | SQL a mano contra local antes de ir a producción | —            |
 
 ```bash
 bun run test        # unitarias
@@ -32,16 +32,19 @@ Están en `e2e/` y corren **siempre contra el entorno local**, nunca contra
 producción: varias escriben datos.
 
 ### `humo.spec.ts` — las 24 pantallas
+
 Cada pantalla detrás del login: abre, muestra contenido, no tira errores de
 consola y no se desborda a lo ancho. Es barato y agarra lo que más duele.
 
 ### `dialogos.spec.ts` — los diálogos en pantalla baja
+
 Corre a **1366×768**, la resolución de la máquina de la sucursal donde
 aparecieron los problemas. En un monitor grande estos bugs no se ven. Verifica
 que el diálogo no se derrame fuera de la ventana, que el botón de cerrar siga
 alcanzable después de scrollear, y que el botón de guardar se pueda tocar.
 
 ### `pedidos-may.spec.ts` — un test por reclamo
+
 Uno por cada cosa que reportó la clienta, para que no vuelva:
 buscar un CUIT escrito con o sin guiones, que el error de duplicado diga de quién
 es, que el buscador de presupuestos no esconda productos, que los precios salgan
@@ -49,10 +52,12 @@ con IVA incluido, que un remito de obra no exija cliente, y que se pueda ver qu�
 se cargó en un ingreso.
 
 ### `abmc.spec.ts` — alta, búsqueda, edición
+
 Clientes y proveedores de punta a punta. Crean fichas marcadas `ZZ-E2E-…` para
 que se distingan de datos reales de un vistazo.
 
 ### `nota-credito.spec.ts` y `nota-credito-guardar.spec.ts`
+
 Que una nota de crédito se pueda hacer **sin factura asociada**, que la pantalla
 diga la verdad sobre lo que eso significa (queda como documento interno, no va a
 AFIP), que la nota de DÉBITO siga exigiendo la factura, y que una nota al contado
@@ -61,6 +66,7 @@ completo y escribe en la base: es el que prueba el pedido tal como se hizo
 ("que me deje guardar").
 
 ### `responsive.spec.ts` + el proyecto `celular`
+
 La suite corre en dos proyectos: `escritorio` (1366×768, la máquina de la
 sucursal) y `celular` (un iPhone). El de celular corre sólo humo, diálogos y
 responsive: los ABMC y los flujos largos ya se cubren en escritorio y duplicarlos
@@ -119,13 +125,11 @@ datos. Son los que hay que correr cuando se toca una RPC.
   antes intentar reproducirlo aislado**: si se reproduce, es un bug de verdad.
   La cura de fondo sería correr la suite contra el build de producción, pero
   `vite preview` no sirve para este proyecto (el build sale con nitro).
-- **Si algo ajeno ocupa el puerto 8080**, la suite lo tomaba por el dev server
-  (`reuseExistingServer: true`) y las 100 pruebas fallaban en el login con un
-  timeout que no decía nada. Pasó con un `python -m http.server` de otro
-  proyecto. Ahora `e2e/verificar-servidor.ts` corre antes que todo y corta con un
-  mensaje que dice qué pasa y cómo mirarlo. Para correr en otro puerto sin tocar
-  nada: `E2E_PUERTO=8123 npx playwright test`.
-- **Correr la suite con `caffeinate -dimsu`** (`caffeinate -dimsu npx playwright
-  test`). Si la laptop se suspende en el medio, los timeouts fallan en masa y
+- **Si algo ajeno ocupa el puerto 8080**, la suite no reutiliza ese proceso:
+  cada invocación levanta su propio servidor y `e2e/verificar-servidor.ts`
+  valida tanto PinturaGest como el fingerprint fiscal estricto del runner. Para
+  correr en otro puerto sin tocar nada: `E2E_PUERTO=8123 npm run e2e`.
+- **Correr la suite con `caffeinate -dimsu`** (`caffeinate -dimsu npm run e2e`).
+  Si la laptop se suspende en el medio, los timeouts fallan en masa y
   parece un desastre: una corrida dio 34 fallas en 5,4 horas y con `caffeinate`
   dio 2 en 2,9 minutos.

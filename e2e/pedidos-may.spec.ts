@@ -1,13 +1,52 @@
 import { readFile } from "node:fs/promises";
 import { test, expect, ingresar, campo } from "./apoyo";
+import { limpiarFixturesFiscales, prepararFixturesFiscales } from "./fixtures/fiscal";
+import {
+  leerEstadoIngresoLocalE2E,
+  limpiarIngresoLocalE2E,
+  MOTIVO_CORRECCION_INGRESO_E2E,
+  prepararIngresoLocalE2E,
+  PRODUCTO_INGRESO_E2E,
+  PROVEEDOR_INGRESO_E2E,
+} from "./fixtures/ingreso-local";
 
 /**
  * Un test por cada cosa que reportó la clienta, para que si alguna se rompe de
  * nuevo se sepa antes de que lo note ella.
  */
 
+test.describe.configure({ mode: "serial" });
+test.beforeAll(async () => {
+  // También limpia una corrida interrumpida antes de que el fixture fiscal
+  // intente borrar el producto referenciado por ese ingreso.
+  await limpiarIngresoLocalE2E();
+  const fiscal = await prepararFixturesFiscales();
+  try {
+    await prepararIngresoLocalE2E({
+      productoId: fiscal.productoId,
+      sucursalId: fiscal.sucursalPrincipalId,
+      usuarioAdmin: fiscal.usuarioAdmin,
+    });
+  } catch (error) {
+    await limpiarFixturesFiscales();
+    throw error;
+  }
+});
+test.afterAll(async () => {
+  const errores: unknown[] = [];
+  for (const limpiar of [limpiarIngresoLocalE2E, limpiarFixturesFiscales]) {
+    try {
+      await limpiar();
+    } catch (error) {
+      errores.push(error);
+    }
+  }
+  if (errores.length > 0) {
+    throw new Error(`Falló el cleanup de pedidos-may:\n${errores.map(String).join("\n")}`);
+  }
+});
 test.beforeEach(async ({ page }) => {
-  await ingresar(page);
+  await ingresar(page, "fiscalAdmin");
 });
 
 /** Los dígitos del primer CUIT de 11 que aparezca en la grilla de clientes. */
@@ -148,13 +187,37 @@ test("ventas: carga precios finales y descuentos sin mostrar IVA", async ({ page
   await expect(cabecera).not.toContainText(/iva/i);
 });
 
+test("presupuestos: el PDF muestra precio de lista y precio final", async ({ page }, testInfo) => {
+  await page.goto("/presupuestos");
+  const hay = await page
+    .locator("tbody tr")
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  test.skip(!hay, "no hay presupuestos cargados para descargar");
+
+  await page.locator('tbody tr a[href*="/presupuestos/"]').first().click();
+  const descarga = page.waitForEvent("download");
+  await page.getByRole("button", { name: /imprimir pdf/i }).click();
+  const archivo = await descarga;
+  const ruta = testInfo.outputPath("presupuesto.pdf");
+  await archivo.saveAs(ruta);
+
+  const texto = (await readFile(ruta, "latin1")).replace(/\\(\d{3})/g, (_m, octal) =>
+    String.fromCharCode(parseInt(octal, 8)),
+  );
+  expect(texto).toContain("Precio de lista");
+  expect(texto).toContain("Precio final");
+});
+
 test("ventas: un remito de obra se guarda sin elegir cliente", async ({ page }) => {
   await page.goto("/ventas/nueva");
 
   // Tipo de comprobante = Remito de Obra
   await page
     .getByRole("combobox")
-    .filter({ hasText: /factura b/i })
+    .filter({ hasText: /^venta$/i })
     .click();
   await page.getByRole("option", { name: /remito de obra/i }).click();
 
@@ -166,18 +229,87 @@ test("ventas: un remito de obra se guarda sin elegir cliente", async ({ page }) 
 
 test("ingresos: se puede ver qué se cargó en un ingreso", async ({ page }) => {
   await page.goto("/ingresos-mercaderia");
-  const hay = await page
-    .locator("tbody tr")
-    .first()
-    .waitFor({ state: "visible", timeout: 15_000 })
-    .then(() => true)
-    .catch(() => false);
-  test.skip(!hay, "no hay ingresos cargados");
-
-  await page.locator('button[title="Ver qué se cargó"]').first().click();
+  await expect(page.locator("thead")).toContainText(/sucursal/i);
+  const fila = page.locator("tbody tr").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await expect(fila).toHaveCount(1);
+  await fila.getByTitle("Ver qué se cargó").click();
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
-  await expect(dialogo).toContainText(/ingreso de/i);
+  await expect(dialogo).toContainText(PROVEEDOR_INGRESO_E2E);
+  await expect(dialogo).toContainText(/sucursal/i);
   // La grilla de productos con sus cantidades.
   await expect(dialogo.locator("thead")).toContainText(/cantidad/i);
+  await expect(dialogo).toContainText(PRODUCTO_INGRESO_E2E);
+  await expect(dialogo.locator("tbody tr")).toContainText("4");
+});
+
+test("ingresos: un administrador corrige la cantidad confirmada y queda auditada", async ({
+  page,
+}) => {
+  const antes = await leerEstadoIngresoLocalE2E();
+  expect(antes).toMatchObject({
+    estado: "CONFIRMADO",
+    cantidadItem: 4,
+    stock: 504,
+    correcciones: [],
+  });
+
+  await page.goto("/ingresos-mercaderia");
+  const filaIngreso = page.locator("tbody tr").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await filaIngreso.getByTitle("Ver qué se cargó").click();
+  const detalle = page.getByRole("dialog").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await expect(detalle).toBeVisible();
+  await detalle.getByRole("button", { name: /corregir cantidades/i }).click();
+
+  const correccion = page
+    .getByRole("dialog")
+    .filter({ hasText: /corregir cantidades/i })
+    .last();
+  await expect(correccion).toBeVisible();
+  const filaProducto = correccion.locator("tr").filter({ hasText: PRODUCTO_INGRESO_E2E });
+  await expect(filaProducto).toContainText("4");
+  await filaProducto.getByRole("spinbutton").fill("2");
+  await correccion.locator("textarea").fill(MOTIVO_CORRECCION_INGRESO_E2E);
+  await correccion.getByRole("button", { name: /aplicar corrección/i }).click();
+  await expect(page.locator("[data-sonner-toaster]")).toContainText(
+    /cantidades corregidas|corrección guardada/i,
+  );
+
+  // Se vuelve a abrir desde la lista para comprobar que no sea estado local del
+  // diálogo: la cantidad y el historial tienen que venir persistidos de la BD.
+  await page.goto("/ingresos-mercaderia");
+  const filaActualizada = page.locator("tbody tr").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  await filaActualizada.getByTitle("Ver qué se cargó").click();
+  const detalleActualizado = page.getByRole("dialog").filter({ hasText: PROVEEDOR_INGRESO_E2E });
+  const productoActualizado = detalleActualizado
+    .locator("tbody tr")
+    .filter({ hasText: PRODUCTO_INGRESO_E2E });
+  await expect(productoActualizado).toContainText("2");
+  await expect(detalleActualizado).toContainText(/historial de correcciones/i);
+  await expect(detalleActualizado).toContainText("T13 Admin fiscal descartable");
+  await expect(detalleActualizado).toContainText(MOTIVO_CORRECCION_INGRESO_E2E);
+  await expect(detalleActualizado).toContainText(/4\s*→\s*2/);
+  await expect(detalleActualizado).toContainText(/(?:−|-)2/);
+
+  const despues = await leerEstadoIngresoLocalE2E();
+  expect(despues).toMatchObject({
+    estado: "CONFIRMADO",
+    cantidadItem: 2,
+    stock: 502,
+    correcciones: [
+      {
+        motivo: MOTIVO_CORRECCION_INGRESO_E2E,
+        usuarioNombre: "T13 Admin fiscal descartable",
+        cantidadAnterior: 4,
+        cantidadNueva: 2,
+        diferencia: -2,
+        movimiento: {
+          tipo: "CORRECCION_INGRESO_MERCADERIA",
+          cantidad: -2,
+          cantidadAnterior: 504,
+          cantidadNueva: 502,
+        },
+      },
+    ],
+  });
 });

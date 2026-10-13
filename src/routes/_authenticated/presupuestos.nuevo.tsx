@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { ClientePicker } from "@/components/cliente-picker";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -32,9 +33,12 @@ import {
   ordenarProductosPorRelevancia,
   TOPE_BUSQUEDA_PRODUCTOS,
 } from "@/lib/postgrest";
-import { calcularTotales, conIva } from "@/lib/fiscal/iva";
+import { conIva, netoDesdePrecioFinal, round2 } from "@/lib/fiscal/iva";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Search, Trash2 } from "lucide-react";
+import { descripcionItemParaPayload, estadoDescripcionItem } from "@/lib/item-descripcion";
+import { calcularLineaPresupuesto } from "@/lib/presupuestos-precios";
+import { crearPresupuesto } from "@/lib/presupuestos.functions";
 
 export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
   component: NuevoPresupuesto,
@@ -47,8 +51,10 @@ export const Route = createFileRoute("/_authenticated/presupuestos/nuevo")({
 type Fila = {
   producto_id: string;
   codigo: string;
-  nombre: string;
+  descripcion: string;
+  descripcionBase: string;
   precio_lista: number;
+  precio_manual: number | null;
   iva: number;
   cantidad: number | null;
   descuento: number | null;
@@ -56,6 +62,7 @@ type Fila = {
 
 function NuevoPresupuesto() {
   const navigate = useNavigate();
+  const crear = useServerFn(crearPresupuesto);
   const { data: cu } = useCurrentUser();
   const [sucursalId, setSucursalId] = useState("");
   const [clienteId, setClienteId] = useState("");
@@ -87,7 +94,9 @@ function NuevoPresupuesto() {
       const filas = ((
         await supabase
           .from("productos")
-          .select("id, codigo, nombre, precio_sin_iva, iva_porcentaje")
+          .select(
+            "id, codigo, nombre, precio_sin_iva, iva_porcentaje, proveedor:proveedores(razon_social)",
+          )
           .or(filtro)
           .eq("activo", true)
           .eq("archivado", false)
@@ -110,8 +119,10 @@ function NuevoPresupuesto() {
       {
         producto_id: p.id,
         codigo: p.codigo,
-        nombre: p.nombre,
+        descripcion: p.nombre,
+        descripcionBase: p.nombre,
         precio_lista: Number(p.precio_sin_iva),
+        precio_manual: null,
         iva: Number(p.iva_porcentaje),
         cantidad: 1,
         descuento: 0,
@@ -124,18 +135,20 @@ function NuevoPresupuesto() {
   const borrar = (id: string) => setFilas((prev) => prev.filter((f) => f.producto_id !== id));
 
   // Espejo del cálculo del servidor, sólo para mostrar el total mientras se carga.
-  // El que manda es `crear_presupuesto`, que recalcula desde el catálogo.
   const totales = useMemo(() => {
-    const r2 = (n: number) => +n.toFixed(2);
     let sub = 0,
       iva = 0;
     for (const f of filas) {
-      const precio = r2(f.precio_lista * (1 - Number(f.descuento || 0) / 100));
-      const si = r2(precio * Number(f.cantidad || 0));
-      sub += si;
-      iva += r2((si * f.iva) / 100);
+      const linea = calcularLineaPresupuesto(
+        f.precio_manual ?? f.precio_lista,
+        Number(f.descuento || 0),
+        Number(f.cantidad || 0),
+        f.iva,
+      );
+      sub += linea.subtotalSinIva;
+      iva += linea.iva;
     }
-    return { sub: r2(sub), iva: r2(iva), total: r2(sub + iva) };
+    return { sub: round2(sub), iva: round2(iva), total: round2(sub + iva) };
   }, [filas]);
 
   const m = useMutation({
@@ -144,20 +157,24 @@ function NuevoPresupuesto() {
       if (filas.length === 0) throw new Error("Agregá al menos un producto.");
       if (filas.some((f) => !(Number(f.cantidad) > 0)))
         throw new Error("Hay productos sin cantidad.");
-      const { data, error } = await supabase.rpc("crear_presupuesto", {
-        p_sucursal_id: effSucursal,
-        p_items: filas.map((f) => ({
-          producto_id: f.producto_id,
-          cantidad: Number(f.cantidad),
-          descuento_porcentaje: Number(f.descuento || 0),
-        })) as any,
-        p_cliente_id: clienteId || undefined,
-        p_nombre_cliente: nombreCliente.trim() || undefined,
-        p_validez_hasta: validez || undefined,
-        p_observaciones: observaciones.trim() || undefined,
+      const resultado = await crear({
+        data: {
+          p_sucursal_id: effSucursal,
+          p_items: filas.map((f) => ({
+            producto_id: f.producto_id,
+            cantidad: Number(f.cantidad),
+            descuento_porcentaje: Number(f.descuento || 0),
+            ...(f.precio_manual !== null ? { precio_unitario_sin_iva: f.precio_manual } : {}),
+            ...descripcionItemParaPayload(f.descripcion, f.descripcionBase),
+          })),
+          p_cliente_id: clienteId || undefined,
+          p_nombre_cliente: nombreCliente.trim() || undefined,
+          p_validez_hasta: validez || undefined,
+          p_observaciones: observaciones.trim() || undefined,
+        },
       });
-      if (error) throw new Error(error.message);
-      return (Array.isArray(data) ? data[0] : data) as any;
+      if (!resultado.ok) throw new Error(resultado.error.mensaje);
+      return resultado.valor;
     },
     onSuccess: (r: any) => {
       toast.success(`Presupuesto ${r?.numero ?? ""} guardado.`);
@@ -271,6 +288,9 @@ function NuevoPresupuesto() {
               >
                 <span className="font-mono text-xs w-32 shrink-0">{p.codigo}</span>
                 <span className="truncate flex-1">{p.nombre}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {p.proveedor?.razon_social ?? "Sin proveedor"}
+                </span>
                 <span className="font-mono text-xs">
                   {fmtMoney(conIva(p.precio_sin_iva, p.iva_porcentaje))}
                 </span>
@@ -306,11 +326,10 @@ function NuevoPresupuesto() {
             <TableHeader>
               <TableRow>
                 <TableHead>Código</TableHead>
-                <TableHead>Producto</TableHead>
+                <TableHead>Descripción</TableHead>
+                <TableHead>Precio unit. final</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
-                <TableHead className="text-right">Precio de lista</TableHead>
                 <TableHead className="text-right">Desc. %</TableHead>
-                <TableHead className="text-right">Precio final</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -318,55 +337,96 @@ function NuevoPresupuesto() {
             <TableBody>
               {filas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     Buscá un producto arriba para agregarlo.
                   </TableCell>
                 </TableRow>
               ) : (
                 filas.map((f) => {
-                  const precio = +(f.precio_lista * (1 - Number(f.descuento || 0) / 100)).toFixed(
-                    2,
+                  const estadoDescripcion = estadoDescripcionItem(f.descripcion, f.descripcionBase);
+                  const base = f.precio_manual ?? f.precio_lista;
+                  const linea = calcularLineaPresupuesto(
+                    base,
+                    Number(f.descuento || 0),
+                    Number(f.cantidad || 0),
+                    f.iva,
                   );
                   // Se muestra con IVA: el presupuesto se cotiza con el precio
                   // final. Lo que se manda a guardar sigue siendo el neto.
-                  const precioFinal = conIva(precio, f.iva);
-                  const precioListaFinal = conIva(f.precio_lista, f.iva);
-                  const subtotalFinal = calcularTotales([
-                    {
-                      cantidad: Number(f.cantidad || 0),
-                      precio_unitario_sin_iva: precio,
-                      descuento_porcentaje: 0,
-                      iva_porcentaje: f.iva,
-                    },
-                  ]).total;
+                  const precioFinal = conIva(linea.precioNeto, f.iva);
                   return (
                     <TableRow key={f.producto_id} data-testid="fila-presupuesto">
                       <TableCell className="font-mono text-xs">{f.codigo}</TableCell>
-                      <TableCell>{f.nombre}</TableCell>
+                      <TableCell className="min-w-64">
+                        <Input
+                          aria-label={`Descripción de ${f.codigo}`}
+                          aria-describedby={`descripcion-ayuda-${f.producto_id}`}
+                          aria-invalid={!estadoDescripcion.valida}
+                          value={f.descripcion}
+                          onChange={(event) =>
+                            upd(f.producto_id, { descripcion: event.target.value })
+                          }
+                        />
+                        <p
+                          id={`descripcion-ayuda-${f.producto_id}`}
+                          role={estadoDescripcion.valida ? undefined : "alert"}
+                          className={`mt-1 text-xs ${estadoDescripcion.valida ? "text-muted-foreground" : "text-destructive"}`}
+                        >
+                          {estadoDescripcion.mensaje ??
+                            (!estadoDescripcion.personalizada &&
+                            estadoDescripcion.caracteres > 160 ? (
+                              "Descripción histórica sin cambios; se conservará completa"
+                            ) : (
+                              <>
+                                <span>Sólo cambia esta línea; no modifica el catálogo</span>
+                                <span> · {estadoDescripcion.caracteres}/160 caracteres</span>
+                              </>
+                            ))}
+                        </p>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        <NumberInput
+                          className="h-8 w-28"
+                          aria-label={`Precio final de ${f.codigo}`}
+                          value={conIva(base, f.iva)}
+                          onValueChange={(valor) =>
+                            upd(f.producto_id, {
+                              precio_manual: netoDesdePrecioFinal(valor, f.iva),
+                            })
+                          }
+                        />
+                        {f.precio_manual !== null &&
+                        Math.abs(f.precio_manual - f.precio_lista) > 0.005 ? (
+                          <span className="block text-[10px] text-warning">
+                            lista: {fmtMoney(conIva(f.precio_lista, f.iva))}
+                          </span>
+                        ) : null}
+                        {Number(f.descuento || 0) > 0 ? (
+                          <span className="block text-[10px] text-muted-foreground">
+                            con descuento: {fmtMoney(precioFinal)}
+                          </span>
+                        ) : null}
+                      </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
+                          aria-label={`Cantidad de ${f.codigo}`}
                           value={f.cantidad}
                           onValueChange={(v) => upd(f.producto_id, { cantidad: v })}
                         />
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                        {fmtMoney(precioListaFinal)}
-                      </TableCell>
                       <TableCell className="text-right">
                         <NumberInput
                           className="max-w-20 ml-auto"
+                          aria-label={`Descuento de ${f.codigo}`}
                           value={f.descuento}
                           onValueChange={(v) =>
                             upd(f.producto_id, { descuento: Math.min(Math.max(v ?? 0, 0), 100) })
                           }
                         />
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs font-medium">
-                        {fmtMoney(precioFinal)}
-                      </TableCell>
                       <TableCell className="text-right font-mono">
-                        {fmtMoney(subtotalFinal)}
+                        {fmtMoney(linea.total)}
                       </TableCell>
                       <TableCell>
                         <Button
@@ -395,10 +455,17 @@ function NuevoPresupuesto() {
             placeholder="Lo que quieras que salga en el presupuesto…"
           />
         </SectionCard>
+        {/* Sin desglose de IVA: los precios de arriba ya son finales, así que
+            repetir neto + IVA acá daría números que no cierran con la grilla.
+            El presupuesto no es un comprobante fiscal; la venta que salga de él
+            sí discrimina, que es donde importa. */}
         <SectionCard title="Total">
           <div className="flex items-baseline justify-between">
             <span className="text-sm">TOTAL:</span>
-            <p className="font-mono text-lg font-bold">{fmtMoney(totales.total)}</p>
+            <div className="text-right">
+              <p className="font-mono text-lg font-bold">{fmtMoney(totales.total)}</p>
+              <p className="text-[11px] text-muted-foreground">IVA incluido</p>
+            </div>
           </div>
         </SectionCard>
       </div>

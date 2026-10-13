@@ -27,25 +27,35 @@ import { Plus, Power, KeyRound, Loader2, RefreshCw, ShieldCheck } from "lucide-r
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  administrarPuedeEmitirNcPeriodo,
   crearUsuario,
   toggleUsuarioActivo,
   resetearPassword,
+  setPuedeGestionarCreditoClientes,
+  setPuedeFacturar,
   setPermiteVentaSinStock,
   setSeccionesUsuario,
 } from "@/lib/usuarios.functions";
 import { GRUPOS, SECCIONES_DEFAULT, SECCIONES_OTORGABLES } from "@/lib/secciones";
 import { faltanteUsuario, generarPassword, PASSWORD_MINIMO } from "@/lib/alta-usuario";
+import {
+  almacenSesionToggleUsuario,
+  estadoInicialToggleUsuario,
+  etiquetaReconciliacionToggleUsuario,
+  objetivoToggleUsuario,
+  RegistroOperacionesToggleUsuario,
+  type EstadoToggleUsuario,
+} from "@/lib/usuario-toggle-durable";
 
 export const Route = createFileRoute("/_authenticated/usuarios")({
   ssr: false,
   beforeLoad: async () => {
     const { data } = await supabase.auth.getUser();
     if (!data.user) throw redirect({ to: "/auth" });
-    const { data: roles } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", data.user.id);
-    if (!roles?.some((r) => r.role === "admin")) throw redirect({ to: "/" });
+    const { data: esAdmin, error } = await supabase.rpc("is_admin", {
+      _user_id: data.user.id,
+    });
+    if (error || esAdmin !== true) throw redirect({ to: "/" });
   },
   component: UsuariosPage,
 });
@@ -53,6 +63,15 @@ export const Route = createFileRoute("/_authenticated/usuarios")({
 function UsuariosPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [togglesPendientes, setTogglesPendientes] = useState<Set<string>>(() => new Set());
+  const [registroToggles] = useState(
+    () =>
+      new RegistroOperacionesToggleUsuario(almacenSesionToggleUsuario(), () => crypto.randomUUID()),
+  );
+  const [estadosToggle, setEstadosToggle] = useState<Record<string, EstadoToggleUsuario>>(() =>
+    estadoInicialToggleUsuario(registroToggles),
+  );
+  const etiquetaReconciliacion = etiquetaReconciliacionToggleUsuario();
   const crear = useServerFn(crearUsuario);
   const toggle = useServerFn(toggleUsuarioActivo);
 
@@ -97,13 +116,45 @@ function UsuariosPage() {
     queryFn: async () => ((await supabase.from("sucursales").select("*")).data ?? []) as any[],
   });
 
-  const togg = useMutation({
-    mutationFn: async (d: any) => toggle({ data: d }),
-    onSuccess: () => {
-      toast.success("Estado actualizado");
-      qc.invalidateQueries({ queryKey: ["usuarios"] });
+  const togg = useMutation<
+    unknown,
+    Error,
+    { user_id: string; activo: boolean; operacion_id: string }
+  >({
+    mutationFn: async (d) => toggle({ data: d }),
+    onMutate: (d) => {
+      setTogglesPendientes((actuales) => new Set(actuales).add(d.user_id));
+      setEstadosToggle((actuales) => ({
+        ...actuales,
+        [d.user_id]: { tipo: "pendiente", activoDeseado: d.activo },
+      }));
     },
-    onError: (e: any) => toast.error(e.message),
+    onSuccess: async (_data, variables) => {
+      registroToggles.confirmarExito(variables.user_id, variables.activo);
+      toast.success("Estado actualizado");
+      await qc.invalidateQueries({ queryKey: ["usuarios"] });
+      setEstadosToggle((actuales) => {
+        const siguientes = { ...actuales };
+        delete siguientes[variables.user_id];
+        return siguientes;
+      });
+    },
+    onError: async (error, variables) => {
+      const tipo = registroToggles.resolverError(variables.user_id, variables.activo, error);
+      setEstadosToggle((actuales) => ({
+        ...actuales,
+        [variables.user_id]: { tipo, activoDeseado: variables.activo },
+      }));
+      toast.error(error.message);
+      await qc.invalidateQueries({ queryKey: ["usuarios"] });
+    },
+    onSettled: (_data, _error, variables) => {
+      setTogglesPendientes((actuales) => {
+        const siguientes = new Set(actuales);
+        siguientes.delete(variables.user_id);
+        return siguientes;
+      });
+    },
   });
 
   // Antes esto venía precargado con "emp1234" — la misma contraseña débil que
@@ -126,7 +177,14 @@ function UsuariosPage() {
       toast.success("Usuario creado");
       qc.invalidateQueries({ queryKey: ["usuarios"] });
       setOpen(false);
-      const creado = { ...form, id: r?.id, secciones: null };
+      const creado = {
+        ...form,
+        id: r?.id,
+        secciones: null,
+        puede_facturar: false,
+        puede_emitir_nc_periodo: false,
+        puede_gestionar_credito_clientes: false,
+      };
       setForm(formVacio);
       // Se abre solo el diálogo de permisos: crear el usuario y elegir qué ve
       // son un mismo momento, y si no se ofrece nadie va a ir a buscarlo.
@@ -175,11 +233,28 @@ function UsuariosPage() {
               {u.sucursal?.nombre ?? "—"}
             </TableCell>
             <TableCell>
-              {u.activo ? (
-                <StatusPill tone="success">Activo</StatusPill>
-              ) : (
-                <StatusPill tone="neutral">Inactivo</StatusPill>
-              )}
+              <div className="space-y-1">
+                {u.activo ? (
+                  <StatusPill tone="success">Activo</StatusPill>
+                ) : (
+                  <StatusPill tone="neutral">Inactivo</StatusPill>
+                )}
+                {estadosToggle[u.id]?.tipo === "pendiente" && (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    Aplicando {estadosToggle[u.id].activoDeseado ? "activación" : "desactivación"}…
+                  </p>
+                )}
+                {estadosToggle[u.id]?.tipo === "requiere_reintento" && (
+                  <p className="text-xs text-amber-700" role="status">
+                    {etiquetaReconciliacion.estado}
+                  </p>
+                )}
+                {estadosToggle[u.id]?.tipo === "supersedida" && (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    Reemplazada por un cambio más nuevo
+                  </p>
+                )}
+              </div>
             </TableCell>
             <TableCell className="flex gap-1">
               {/* El permiso de venta sin stock vivía acá como un ícono cuyo
@@ -206,10 +281,29 @@ function UsuariosPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                title={u.activo ? "Desactivar" : "Activar"}
-                onClick={() => togg.mutate({ user_id: u.id, activo: !u.activo })}
+                title={
+                  estadosToggle[u.id]?.tipo === "requiere_reintento"
+                    ? etiquetaReconciliacion.accion
+                    : u.activo
+                      ? "Desactivar"
+                      : "Activar"
+                }
+                disabled={togglesPendientes.has(u.id)}
+                aria-busy={togglesPendientes.has(u.id)}
+                onClick={() => {
+                  const activo = objetivoToggleUsuario(u.activo, estadosToggle[u.id]);
+                  togg.mutate({
+                    user_id: u.id,
+                    activo,
+                    operacion_id: registroToggles.obtenerOCrear(u.id, activo),
+                  });
+                }}
               >
-                <Power className="h-3.5 w-3.5" />
+                {togglesPendientes.has(u.id) ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Power className="h-3.5 w-3.5" />
+                )}
               </Button>
             </TableCell>
           </TableRow>
@@ -366,12 +460,24 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
   const qc = useQueryClient();
   const guardarSecciones = useServerFn(setSeccionesUsuario);
   const guardarSinStock = useServerFn(setPermiteVentaSinStock);
+  const guardarPuedeFacturar = useServerFn(setPuedeFacturar);
+  const guardarPuedeEmitirNcPeriodo = useServerFn(administrarPuedeEmitirNcPeriodo);
+  const guardarPuedeGestionarCredito = useServerFn(setPuedeGestionarCreditoClientes);
   const esAdmin = usuario.role === "admin";
 
   // null = "las de siempre". El radio es el que decide entre null y una lista.
   const [aMano, setAMano] = useState<boolean>(usuario.secciones != null);
   const [elegidas, setElegidas] = useState<string[]>(usuario.secciones ?? SECCIONES_DEFAULT);
   const [sinStock, setSinStock] = useState<boolean>(!!usuario.permite_venta_sin_stock);
+  const [puedeFacturar, setPuedeFacturarLocal] = useState<boolean>(
+    esAdmin || usuario.puede_facturar === true,
+  );
+  const [puedeEmitirNcPeriodo, setPuedeEmitirNcPeriodo] = useState<boolean>(
+    esAdmin || usuario.puede_emitir_nc_periodo === true,
+  );
+  const [puedeGestionarCredito, setPuedeGestionarCredito] = useState<boolean>(
+    esAdmin || usuario.puede_gestionar_credito_clientes === true,
+  );
 
   const toggle = (key: string) =>
     setElegidas((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
@@ -387,8 +493,23 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
       const cambiaronSecciones =
         JSON.stringify(seccionesNuevas) !== JSON.stringify(usuario.secciones ?? null);
 
-      // El permiso de negocio primero: si algo falla, es preferible que quede
+      // Los permisos de negocio primero: si algo falla, es preferible que quede
       // sin aplicar el cambio cosmético y no al revés.
+      if (!esAdmin && puedeFacturar !== !!usuario.puede_facturar) {
+        await guardarPuedeFacturar({
+          data: { user_id: usuario.id, value: puedeFacturar },
+        });
+      }
+      if (!esAdmin && puedeEmitirNcPeriodo !== !!usuario.puede_emitir_nc_periodo) {
+        await guardarPuedeEmitirNcPeriodo({
+          data: { user_id: usuario.id, value: puedeEmitirNcPeriodo },
+        });
+      }
+      if (!esAdmin && puedeGestionarCredito !== !!usuario.puede_gestionar_credito_clientes) {
+        await guardarPuedeGestionarCredito({
+          data: { user_id: usuario.id, value: puedeGestionarCredito },
+        });
+      }
       if (sinStock !== !!usuario.permite_venta_sin_stock) {
         await guardarSinStock({ data: { user_id: usuario.id, valor: sinStock } });
       }
@@ -406,7 +527,7 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" aria-busy={m.isPending}>
         <DialogHeader>
           <DialogTitle>Permisos de {usuario.username}</DialogTitle>
         </DialogHeader>
@@ -498,8 +619,92 @@ function PermisosDialog({ usuario, onClose }: { usuario: any; onClose: () => voi
                 </span>
               </span>
             </label>
+
+            <label className="flex items-start gap-2 text-sm border border-border rounded p-2 bg-muted/30 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={puedeGestionarCredito}
+                onChange={(e) => setPuedeGestionarCredito(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <strong>Puede gestionar cuenta corriente de clientes</strong>
+                <span className="block text-xs text-muted-foreground">
+                  Permite crear o modificar clientes con cuenta corriente y definir su límite de
+                  crédito. No le da permisos de administrador.
+                </span>
+              </span>
+            </label>
           </div>
         )}
+
+        <fieldset
+          className="rounded-lg border border-primary/25 bg-primary/5 p-3"
+          disabled={m.isPending || esAdmin}
+        >
+          <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Capacidad fiscal
+          </legend>
+          <label
+            htmlFor="usuario-puede-facturar"
+            className="flex min-h-11 cursor-pointer items-start gap-2 text-sm disabled:cursor-not-allowed"
+          >
+            <input
+              id="usuario-puede-facturar"
+              type="checkbox"
+              className="mt-1"
+              checked={puedeFacturar}
+              aria-describedby="usuario-puede-facturar-ayuda"
+              onChange={(event) => setPuedeFacturarLocal(event.target.checked)}
+            />
+            <span>
+              <strong>Puede facturar</strong>
+              <span
+                id="usuario-puede-facturar-ayuda"
+                className="block text-xs text-muted-foreground"
+              >
+                {esAdmin
+                  ? "Los administradores siempre tienen esta capacidad y no se puede desactivar."
+                  : "Permite entrar a la cola y emitir sólo cuando Facturación v2 está habilitada."}
+              </span>
+            </span>
+          </label>
+          <label
+            htmlFor="usuario-puede-emitir-nc-periodo"
+            className="mt-3 flex min-h-11 cursor-pointer items-start gap-2 text-sm disabled:cursor-not-allowed"
+          >
+            <input
+              id="usuario-puede-emitir-nc-periodo"
+              type="checkbox"
+              className="mt-1"
+              checked={puedeEmitirNcPeriodo}
+              disabled={m.isPending || esAdmin || !puedeFacturar}
+              aria-describedby="usuario-puede-emitir-nc-periodo-ayuda"
+              onChange={(event) => setPuedeEmitirNcPeriodo(event.target.checked)}
+            />
+            <span>
+              <strong>Emitir NC por período</strong>
+              <span
+                id="usuario-puede-emitir-nc-periodo-ayuda"
+                className="block text-xs text-muted-foreground"
+              >
+                {esAdmin
+                  ? "Los administradores siempre tienen acceso efectivo a esta capacidad."
+                  : puedeFacturar
+                    ? "Habilita esta operación especial; el servidor vuelve a verificar ambos permisos."
+                    : "Primero habilitá Puede facturar: un empleado necesita ambos permisos activos."}
+              </span>
+            </span>
+          </label>
+        </fieldset>
+
+        <div aria-live="assertive">
+          {m.error ? (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              {(m.error as Error).message || "No se pudieron guardar los permisos."}
+            </p>
+          ) : null}
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

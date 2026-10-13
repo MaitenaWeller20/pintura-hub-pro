@@ -1,16 +1,17 @@
 # Facturación electrónica: puesta en marcha por empresa
 
-**Actualizado:** 2026-08-19
+**Actualizado:** 2026-08-23
+
 **Alcance:** APLICACIONES Y SERVICIOS S.R.L. (General Paz) y GRUPO CASA FORMA S.A.S. (O'Higgins).
 
 ## 1. Regla principal
 
 Cada persona jurídica se configura por separado:
 
-| Local | Emisor | CUIT | Estado inicial |
-|---|---|---|---|
-| CasaForma General Paz | APLICACIONES Y SERVICIOS S.R.L. | 30-71419966-4 | PV 00005 de producción confirmado; CSR de producción generado |
-| CasaForma O'Higgins | GRUPO CASA FORMA S.A.S. | 30-71732246-7 | PV 00001 de homologación inactivo; falta confirmar PV productivo y generar su CSR |
+| Local                 | Emisor                          | CUIT          | Estado inicial                                                                    |
+| --------------------- | ------------------------------- | ------------- | --------------------------------------------------------------------------------- |
+| CasaForma General Paz | APLICACIONES Y SERVICIOS S.R.L. | 30-71419966-4 | PV 00005 de producción confirmado; CSR de producción generado                     |
+| CasaForma O'Higgins   | GRUPO CASA FORMA S.A.S.         | 30-71732246-7 | PV 00001 de homologación inactivo; falta confirmar PV productivo y generar su CSR |
 
 Cada CUIT tiene su propia clave privada, CSR, certificado, habilitación y numeración. Nunca hay que cargar el certificado de una empresa en la tarjeta de la otra.
 
@@ -20,7 +21,7 @@ Producción y homologación también tienen credenciales separadas y pueden conv
 
 ## 2. Antes del trámite
 
-En `/facturacion`, revisar la tarjeta de cada empresa:
+En `/facturacion/configuracion`, revisar la tarjeta de cada empresa:
 
 - razón social y CUIT exactos;
 - condición frente al IVA;
@@ -33,11 +34,20 @@ La fecha de inicio de actividades todavía debe confirmarse con la contadora. No
 
 `ARCA_ENCRYPTION_KEY` no debe cambiarse: cifra las claves privadas. Si se pierde o se pisa, los certificados dejan de ser utilizables.
 
-Mientras `INVOICING_MOCK_MODE=true`, el sistema no llama a ARCA, no registra una conexión como verificada y no permite habilitar credenciales reales.
+La simulación fiscal no es un interruptor del entorno desplegado. Sólo existe en los runners locales
+de prueba cuando coinciden las tres condiciones: `NODE_ENV=test`, el marcador de runner
+(`INVOICING_MOCK_TEST_RUNNER=playwright` o Vitest) e `INVOICING_MOCK_MODE=true`. Poner únicamente
+`INVOICING_MOCK_MODE=true` en Vercel **no** protege contra llamadas reales y no debe usarse como
+mecanismo de seguridad.
+
+Fuera de ese runner aislado, el sistema usa el ambiente configurado en el PV. Una prueba desplegada
+en **Homologación** contacta la homologación real de ARCA; una prueba desplegada en **Producción**
+contacta ARCA producción.
 
 ## 3. CSR que recibe la contadora
 
-En `/facturacion` → **ARCA por empresa** → tarjeta del CUIT correcto → **Producción**:
+En `/facturacion/configuracion` → **ARCA por empresa** → tarjeta del CUIT correcto →
+**Producción**:
 
 - Si ya existe una clave, aparece **Descargar CSR de producción**. Descargarlo de nuevo no rota ni reemplaza la clave privada.
 - Si no existe, aparece **Generar CSR de producción**. El botón se habilita cuando el emisor tiene CUIT y razón social, y la sucursal tiene un PV productivo activo.
@@ -63,15 +73,33 @@ ARCA indica oficialmente que los certificados de producción se gestionan con Ad
 
 ## 5. De vuelta en el sistema
 
+### Después de cargar el certificado: tres controles distintos
+
+No confundir estas operaciones:
+
+- **Probar conexión WSFE:** comprueba el acceso al servicio de facturación electrónica del punto de
+  venta y del ambiente seleccionados.
+- **Asociar el servicio de padrón:** se realiza externamente en el Administrador de Relaciones de
+  ARCA, reutilizando el certificado actual y seleccionando el servicio exacto
+  `ws_sr_constancia_inscripcion`.
+- **Probar y activar padrón:** se ejecuta después desde `/facturacion/configuracion`; consulta
+  realmente el CUIT propio y activa sólo esa combinación de emisor y ambiente.
+
+La migración y el despliegue no activan el padrón por sí solos. El procedimiento completo, incluida
+la operación ante caídas y la vuelta atrás, está en
+[Operación del padrón de ARCA para receptores](./facturacion-padron-arca-operacion.md).
+
 Para cada empresa:
 
 1. Confirmar el número de PV y elegir **Producción (legal)**.
 2. Activar **Sucursal habilitada para facturación electrónica** y guardar el PV.
 3. En la credencial de producción, cargar el certificado devuelto por ARCA.
 4. El sistema valida que el certificado corresponda a la clave privada de ese CSR. Si pertenece al otro CUIT o a otra clave, lo rechaza.
-5. Apagar el modo simulado en el entorno desplegado (`INVOICING_MOCK_MODE=false`) y volver a desplegar.
-6. Usar el botón de enchufe del PV para probar una conexión real.
-7. Sólo después de una prueba real exitosa, presionar **Habilitar producción**.
+5. Verificar que el despliegue normal no use `NODE_ENV=test` ni el marcador del runner. No confiar en
+   una variable de mock como corte de seguridad.
+6. Usar el botón de enchufe del PV para probar la conexión del ambiente seleccionado. En un
+   despliegue normal esa consulta siempre llega al ambiente real de ARCA correspondiente.
+7. Sólo después de una prueba de **Producción** exitosa, presionar **Habilitar producción**.
 
 Cambiar el número, ambiente o estado de un PV borra la verificación y deshabilita la credencial. Hay que probarla de nuevo; es intencional.
 
@@ -98,6 +126,15 @@ No hace falta que las dos empresas queden listas el mismo día: el sistema bloqu
 
 ## 7. Primera factura real
 
+La operación diaria y los pendientes fiscales se administran en `/facturacion/cola`. El detalle de
+venta, receptor fiscal, letra calculada y manejo seguro de errores está documentado en
+[Venta y facturación con receptor fiscal](./facturacion-receptor-fiscal-operacion.md).
+
+La v2 debe permanecer apagada y el escritor legado encendido hasta completar el despliegue
+compatible, el drenaje, la conciliación y una autorización separada. Las migraciones de Supabase las
+ejecuta manualmente el responsable del proyecto; esta guía no autoriza desplegar, migrar producción
+ni habilitar la v2.
+
 Hacer una operación pequeña por cada CUIT habilitado y verificar:
 
 1. que la venta muestre CAE y vencimiento;
@@ -109,15 +146,15 @@ ARCA exige correlatividad dentro de cada punto de venta y que el PV usado para W
 
 ## 8. Diagnóstico rápido
 
-| Mensaje o estado | Qué falta |
-|---|---|
-| `Falta generar CSR` | CUIT/razón social/PV activo del ambiente, o generar la clave |
-| `Esperando certificado` | la contadora debe devolver el certificado de ese CSR |
-| `Falta probar conexión` | apagar mock y ejecutar la prueba real con ese PV |
-| `Lista, deshabilitada` | habilitar manualmente la credencial |
-| `Bloqueada: PV inactivo` | confirmar, activar y guardar el PV de esa empresa |
-| `Mock mode activo` | no hubo llamada a ARCA; no cuenta como prueba |
-| `El certificado no corresponde a la clave privada` | se cargó otro certificado, posiblemente el del otro CUIT |
-| `La nota no puede asociarse a un comprobante emitido por otro CUIT` | el comprobante original pertenece a la otra empresa |
+| Mensaje o estado                                                    | Qué falta                                                                                             |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Falta generar CSR`                                                 | CUIT/razón social/PV activo del ambiente, o generar la clave                                          |
+| `Esperando certificado`                                             | la contadora debe devolver el certificado de ese CSR                                                  |
+| `Falta probar conexión`                                             | ejecutar la prueba real con el PV y ambiente correctos                                                |
+| `Lista, deshabilitada`                                              | habilitar manualmente la credencial                                                                   |
+| `Bloqueada: PV inactivo`                                            | confirmar, activar y guardar el PV de esa empresa                                                     |
+| `Mock mode activo`                                                  | sólo es válido dentro del runner local aislado; no cuenta como prueba ni como protección de un deploy |
+| `El certificado no corresponde a la clave privada`                  | se cargó otro certificado, posiblemente el del otro CUIT                                              |
+| `La nota no puede asociarse a un comprobante emitido por otro CUIT` | el comprobante original pertenece a la otra empresa                                                   |
 
 La renovación de certificados es un flujo separado. No se borra ni rota una clave desde esta pantalla para evitar invalidar por accidente un certificado vigente.

@@ -1,10 +1,14 @@
+import { validezFiscalVenta } from "./ventas-ui";
+
 type ComprobanteFiscal = {
   tipo_comprobante: string;
   afip_cbte_asoc_id?: string | null;
+  afip_cbte_tipo?: number | null;
   cae: string | null;
   afip_estado: string;
   afip_simulado: boolean;
   afip_modo?: string | null;
+  afip_validez?: string | null;
 };
 
 export type EstadoFacturacion = "FACTURADO" | "SIN_CAE" | "SIN_FACTURAR";
@@ -18,22 +22,23 @@ const TIPOS_FISCALES = new Set([
 ]);
 
 export function clasificarFacturacion(venta: ComprobanteFiscal): EstadoFacturacion {
-  if (!TIPOS_FISCALES.has(venta.tipo_comprobante)) return "SIN_FACTURAR";
-  if (
-    (venta.tipo_comprobante === "NOTA_CREDITO" || venta.tipo_comprobante === "NOTA_DEBITO") &&
-    !venta.afip_cbte_asoc_id
-  ) {
-    return "SIN_FACTURAR";
-  }
   if (
     venta.afip_estado === "APROBADO" &&
     venta.cae?.trim() &&
     !venta.afip_simulado &&
-    venta.afip_modo?.toUpperCase() !== "HOMOLOGACION"
+    validezFiscalVenta(venta) === "PRODUCCION"
   ) {
     return "FACTURADO";
   }
-  return "SIN_CAE";
+
+  const notaSinAsociacion =
+    (venta.tipo_comprobante === "NOTA_CREDITO" || venta.tipo_comprobante === "NOTA_DEBITO") &&
+    !venta.afip_cbte_asoc_id;
+  const tipoFiscal = TIPOS_FISCALES.has(venta.tipo_comprobante) && !notaSinAsociacion;
+  const intentoFiscal =
+    venta.afip_cbte_tipo != null ||
+    (venta.afip_estado !== "NO_APLICA" && venta.afip_estado !== "SIN_FACTURAR");
+  return tipoFiscal || intentoFiscal ? "SIN_CAE" : "SIN_FACTURAR";
 }
 
 export function resumirVentas(

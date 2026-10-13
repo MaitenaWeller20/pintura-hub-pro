@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { SectionCard } from "@/components/app/section-card";
+import { PadronArcaConfig } from "@/components/app/padron-arca-config";
 import { fmtDate } from "@/lib/format";
 import {
   generarCsr,
@@ -32,9 +33,12 @@ import {
   guardarPuntoVenta,
   obtenerConfigFiscal,
   probarConexionAfip,
+  probarYActivarPadronArca,
   type ConfigFiscalPublica,
 } from "@/lib/fiscal/config.functions";
 import type { AmbienteArca } from "@/lib/fiscal/contexto";
+import { QUERY_KEY_CONFIG_FISCAL_ADMIN } from "@/lib/fiscal/config";
+import { mensajeErrorFiscal } from "@/lib/fiscal/error-usuario";
 
 type Emisor = ConfigFiscalPublica["emisores"][number];
 type Sucursal = Emisor["sucursales"][number];
@@ -85,14 +89,15 @@ export function CredencialesArcaConfig() {
   const generar = useServerFn(generarCsr);
   const guardarCert = useServerFn(guardarCertificado);
   const probar = useServerFn(probarConexionAfip);
+  const probarPadron = useServerFn(probarYActivarPadronArca);
   const habilitar = useServerFn(guardarHabilitacionCredencial);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["fiscal-config-multiemisor"],
+    queryKey: QUERY_KEY_CONFIG_FISCAL_ADMIN,
     queryFn: () => cargar(),
   });
 
-  const refrescar = () => qc.invalidateQueries({ queryKey: ["fiscal-config-multiemisor"] });
+  const refrescar = () => qc.invalidateQueries({ queryKey: QUERY_KEY_CONFIG_FISCAL_ADMIN });
 
   const mPv = useMutation({
     mutationFn: (entrada: {
@@ -105,7 +110,7 @@ export function CredencialesArcaConfig() {
       toast.success("Punto de venta guardado");
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: unknown) => toast.error(mensajeErrorFiscal(error, "CONFIGURACION")),
   });
 
   const mCsr = useMutation({
@@ -119,7 +124,8 @@ export function CredencialesArcaConfig() {
       toast.success("CSR descargado. Podés enviárselo a la contadora.");
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 8_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 8_000 }),
   });
 
   const mCert = useMutation({
@@ -129,17 +135,31 @@ export function CredencialesArcaConfig() {
       toast.success(`Certificado cargado. Vence el ${fmtDate(r.vence)}.`);
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 10_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 10_000 }),
   });
 
   const mPrueba = useMutation({
     mutationFn: (sucursalId: string) => probar({ data: { sucursal_id: sucursalId } }),
     onSuccess: (r) => {
-      if (r.mock) toast.warning(r.mensaje);
-      else toast.success(r.mensaje);
+      const mensaje = `Acceso a secuencia A/B: A ${r.secuencia_a.ultimo}, B ${r.secuencia_b.ultimo}.`;
+      if (data?.mock_mode) toast.warning(`Modo simulado. ${mensaje}`);
+      else toast.success(mensaje);
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 10_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 10_000 }),
+  });
+
+  const mPadron = useMutation({
+    mutationFn: (entrada: { emisor_id: string; ambiente: AmbienteArca }) =>
+      probarPadron({ data: entrada }),
+    onSuccess: (resultado) => {
+      toast.success(`Padrón activo. ARCA verificó ${resultado.razon_social}.`);
+      refrescar();
+    },
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 10_000 }),
   });
 
   const mHabilitar = useMutation({
@@ -149,14 +169,17 @@ export function CredencialesArcaConfig() {
       toast.success(r.habilitada ? "Credencial habilitada" : "Credencial deshabilitada");
       refrescar();
     },
-    onError: (e: Error) => toast.error(e.message, { duration: 8_000 }),
+    onError: (error: unknown) =>
+      toast.error(mensajeErrorFiscal(error, "CONFIGURACION"), { duration: 8_000 }),
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Cargando ARCA…</p>;
   if (error || !data) {
     return (
       <SectionCard>
-        <p className="text-sm text-destructive">No se pudo cargar la configuración de ARCA.</p>
+        <p role="alert" className="text-sm font-medium text-destructive">
+          {mensajeErrorFiscal(error, "CONFIGURACION")}
+        </p>
       </SectionCard>
     );
   }
@@ -243,6 +266,7 @@ export function CredencialesArcaConfig() {
                     generando={mCsr.isPending}
                     subiendo={mCert.isPending}
                     cambiandoEstado={mHabilitar.isPending}
+                    probandoPadron={mPadron.isPending}
                     onCsr={(ambiente) => mCsr.mutate({ emisor, ambiente })}
                     onCertificado={(ambiente, pem) =>
                       mCert.mutate({ emisor_id: emisor.id, ambiente, pem })
@@ -250,6 +274,7 @@ export function CredencialesArcaConfig() {
                     onHabilitar={(ambiente, habilitada) =>
                       mHabilitar.mutate({ emisor_id: emisor.id, ambiente, habilitada })
                     }
+                    onProbarPadron={(entrada) => mPadron.mutate(entrada)}
                   />
                 ))}
               </div>
@@ -345,8 +370,8 @@ function PuntoVentaEditor({
           <Button
             size="icon"
             variant="outline"
-            title="Probar conexión con ARCA"
-            aria-label="Probar conexión con ARCA"
+            title="Probar acceso a secuencia A/B"
+            aria-label="Probar acceso a secuencia A/B"
             disabled={!pv?.activo || cambio || probando}
             onClick={onProbar}
           >
@@ -372,9 +397,11 @@ function CredencialEditor({
   generando,
   subiendo,
   cambiandoEstado,
+  probandoPadron,
   onCsr,
   onCertificado,
   onHabilitar,
+  onProbarPadron,
 }: {
   emisor: Emisor;
   credencial: Credencial;
@@ -382,9 +409,11 @@ function CredencialEditor({
   generando: boolean;
   subiendo: boolean;
   cambiandoEstado: boolean;
+  probandoPadron: boolean;
   onCsr: (ambiente: AmbienteArca) => void;
   onCertificado: (ambiente: AmbienteArca, pem: string) => void;
   onHabilitar: (ambiente: AmbienteArca, habilitada: boolean) => void;
+  onProbarPadron: (entrada: { emisor_id: string; ambiente: AmbienteArca }) => void;
 }) {
   const etiqueta = ambienteLabel[credencial.ambiente];
   const pvConfirmado = emisor.sucursales.some(
@@ -477,6 +506,14 @@ function CredencialEditor({
             />
           </div>
         )}
+
+        <PadronArcaConfig
+          emisorId={emisor.id}
+          credencial={credencial}
+          mockMode={mockMode}
+          probando={probandoPadron}
+          onProbar={onProbarPadron}
+        />
       </div>
     </div>
   );

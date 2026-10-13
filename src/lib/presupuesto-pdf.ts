@@ -20,7 +20,7 @@ export function tablaDeItemsPresupuesto(items: ItemPresupuestoPdf[]) {
       item.descripcion,
       String(Number(item.cantidad)),
       fmtMoney(conIva(item.precio_lista_sin_iva, item.iva_porcentaje)),
-      Number(item.descuento_porcentaje) > 0 ? `${Number(item.descuento_porcentaje)}%` : "-",
+      Number(item.descuento_porcentaje) > 0 ? `${Number(item.descuento_porcentaje)}%` : "—",
       fmtMoney(conIva(item.precio_sin_iva, item.iva_porcentaje)),
       fmtMoney(item.subtotal_con_iva),
     ]),

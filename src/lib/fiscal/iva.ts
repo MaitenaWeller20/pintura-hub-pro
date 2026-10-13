@@ -35,15 +35,19 @@ export const conIva = (
   ivaPorcentaje: number | string | null | undefined,
 ): number => round2(Number(neto ?? 0) * (1 + Number(ivaPorcentaje ?? 0) / 100));
 
-/**
- * Convierte el precio final que tipea la usuaria al neto que guarda el sistema.
- * Es la operación inversa de `conIva`: la interfaz trabaja siempre con importes
- * finales, pero AFIP y las RPC siguen recibiendo el neto sin alterar.
- */
 export const sinIva = (
   precioFinal: number | string | null | undefined,
   ivaPorcentaje: number | string | null | undefined,
 ): number => round2(Number(precioFinal ?? 0) / (1 + Number(ivaPorcentaje ?? 0) / 100));
+
+/** Traduce el precio final que escribe el operador al neto unitario persistido. */
+export function netoDesdePrecioFinal(
+  precioFinal: number | null,
+  ivaPorcentaje: number,
+): number | null {
+  if (precioFinal === null) return null;
+  return round2(precioFinal / (1 + ivaPorcentaje / 100));
+}
 
 export interface ItemFiscal {
   cantidad: number;
@@ -114,10 +118,7 @@ export function calcularTotales(items: ItemFiscal[], percepciones = 0): TotalesF
   return { neto, iva, tributos, total, alicuotas };
 }
 
-/**
- * Precio unitario final después del descuento, con el mismo orden de redondeo
- * que una línea real: primero la base descontada y después su impuesto.
- */
+/** Precio final de una unidad con descuento, usando el redondeo fiscal de la línea. */
 export function precioFinalConDescuento(
   neto: number | string | null | undefined,
   descuentoPorcentaje: number | string | null | undefined,

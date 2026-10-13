@@ -1,4 +1,13 @@
 import { test, expect, ingresar } from "./apoyo";
+import {
+  CLIENTE_NOTAS_E2E,
+  MARCA_VENTA_NC_E2E,
+  PRODUCTO_NC_CODIGO_E2E,
+  limpiarEfectosNotasRemitosE2E,
+  limpiarFixtureNotasRemitosE2E,
+  leerVentaNotaCreditoE2E,
+  prepararFixtureNotasRemitosE2E,
+} from "./fixtures/nota-credito-remitos";
 
 /**
  * El pedido de Leo, de punta a punta: que una nota de crédito SIN factura se
@@ -8,6 +17,18 @@ import { test, expect, ingresar } from "./apoyo";
  * salida y diga la verdad. Este hace el recorrido completo y escribe en la base,
  * que es lo que se rompía: el botón Guardar quedaba gris para siempre.
  */
+
+test.beforeAll(async () => {
+  await prepararFixtureNotasRemitosE2E();
+});
+
+test.afterEach(async () => {
+  await limpiarEfectosNotasRemitosE2E();
+});
+
+test.afterAll(async () => {
+  await limpiarFixtureNotasRemitosE2E();
+});
 
 test.beforeEach(async ({ page }) => {
   await ingresar(page);
@@ -29,41 +50,40 @@ async function elegirEnSelect(
   await page.getByRole("option", { name: opcion }).first().click();
 }
 
-test("se guarda una nota de crédito sin factura, a cuenta corriente", async ({ page }) => {
+test("el writer fiscal retirado no guarda una nota interna ni deja efectos", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto("/ventas/nueva");
 
   await elegirEnSelect(page, "Tipo comprobante", /nota de cr[eé]dito/i);
   await elegirEnSelect(page, "Condición", /cuenta corriente|cta/i);
 
-  // Cliente: el primero que ofrezca el buscador.
   await page.getByRole("button", { name: /buscar cliente/i }).click();
-  await page.getByPlaceholder(/nombre o cuit/i).fill("a");
-  const primerCliente = page.locator("div[role=dialog], [data-radix-popper-content-wrapper]").getByRole("button").first();
-  await primerCliente.waitFor({ state: "visible", timeout: 15_000 });
-  await primerCliente.click();
+  await page.getByPlaceholder(/nombre o cuit/i).fill(CLIENTE_NOTAS_E2E);
+  const cliente = page.getByRole("button", { name: new RegExp(CLIENTE_NOTAS_E2E) });
+  await cliente.waitFor({ state: "visible", timeout: 15_000 });
+  await cliente.click();
 
-  // Sin factura: es el punto de todo el cambio.
-  await elegirEnSelect(page, "Factura que rectifica", /sin factura/i);
-  await expect(page.getByText(/no se manda a AFIP/i)).toBeVisible();
+  // En v2 ya no hay selector: el alta manual es siempre interna.
+  await expect(page.getByText(/factura que rectifica/i)).toHaveCount(0);
+  await expect(page.getByTestId("aviso-nota-credito-interna")).toContainText(
+    /no se informa a ARCA/i,
+  );
 
-  // Un producto cualquiera.
-  await page.getByTestId("venta-buscar-producto").fill("a");
-  const resultado = page.locator("div.max-h-\\[min\\(60vh\\,32rem\\)\\] > button").first();
+  await page.getByTestId("venta-buscar-producto").fill(PRODUCTO_NC_CODIGO_E2E);
+  const resultado = page.getByRole("button", { name: new RegExp(PRODUCTO_NC_CODIGO_E2E) });
   await resultado.waitFor({ state: "visible", timeout: 15_000 });
   await resultado.click();
+  await page.locator('label:has-text("Observaciones") + textarea').fill(MARCA_VENTA_NC_E2E);
 
   const guardar = page.getByRole("button", { name: /^Guardar$/ });
-  await expect(guardar, "Guardar tiene que habilitarse sin factura asociada").toBeEnabled({
-    timeout: 15_000,
-  });
+  await expect(guardar).toBeEnabled();
   await guardar.click();
-
-  // Termina en el listado y la nota está.
-  await expect(page).toHaveURL(/\/ventas\/?$/, { timeout: 30_000 });
-  await expect(page.locator("tbody tr").first()).toContainText(/Nota de Cr[eé]dito/i, {
-    timeout: 20_000,
-  });
+  await expect(
+    page.getByText("La facturación está en mantenimiento. No se registró ningún comprobante."),
+  ).toBeVisible();
+  await expect(leerVentaNotaCreditoE2E()).rejects.toThrow(
+    "La UI debía crear una única nota de crédito T14",
+  );
 });
 
 test("al contado sin cobrar nada, la pantalla explica qué falta", async ({ page }) => {
@@ -71,13 +91,13 @@ test("al contado sin cobrar nada, la pantalla explica qué falta", async ({ page
   await elegirEnSelect(page, "Tipo comprobante", /nota de cr[eé]dito/i);
 
   await page.getByRole("button", { name: /buscar cliente/i }).click();
-  await page.getByPlaceholder(/nombre o cuit/i).fill("a");
-  const primerCliente = page.locator("[data-radix-popper-content-wrapper]").getByRole("button").first();
-  await primerCliente.waitFor({ state: "visible", timeout: 15_000 });
-  await primerCliente.click();
+  await page.getByPlaceholder(/nombre o cuit/i).fill(CLIENTE_NOTAS_E2E);
+  const cliente = page.getByRole("button", { name: new RegExp(CLIENTE_NOTAS_E2E) });
+  await cliente.waitFor({ state: "visible", timeout: 15_000 });
+  await cliente.click();
 
-  await page.getByTestId("venta-buscar-producto").fill("a");
-  const resultado = page.locator("div.max-h-\\[min\\(60vh\\,32rem\\)\\] > button").first();
+  await page.getByTestId("venta-buscar-producto").fill(PRODUCTO_NC_CODIGO_E2E);
+  const resultado = page.getByRole("button", { name: new RegExp(PRODUCTO_NC_CODIGO_E2E) });
   await resultado.waitFor({ state: "visible", timeout: 15_000 });
   await resultado.click();
 

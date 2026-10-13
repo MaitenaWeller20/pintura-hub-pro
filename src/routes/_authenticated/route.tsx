@@ -7,7 +7,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
-import { useCurrentUser } from "@/hooks/use-current-user";
+import { perfilHabilitaSesion, useCurrentUser } from "@/hooks/use-current-user";
 import {
   Sidebar,
   SidebarContent,
@@ -56,13 +56,29 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Cargando } from "@/components/app/cargando";
-import { GRUPOS, SECCIONES, primeraSeccion, seccionDeRuta, seccionesDe } from "@/lib/secciones";
+import {
+  GRUPOS,
+  SECCIONES,
+  primeraSeccion,
+  puedeAbrirRuta,
+  seccionDeRuta,
+  seccionesDe,
+} from "@/lib/secciones";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async () => {
     const { data, error } = await supabase.auth.getUser();
     if (error || !data.user) throw redirect({ to: "/auth" });
+    const { data: perfil, error: perfilError } = await supabase
+      .from("profiles")
+      .select("activo")
+      .eq("id", data.user.id)
+      .maybeSingle();
+    if (!perfilHabilitaSesion(perfil, perfilError)) {
+      await supabase.auth.signOut();
+      throw redirect({ to: "/auth" });
+    }
   },
   component: AuthenticatedLayout,
   pendingComponent: Cargando,
@@ -150,12 +166,17 @@ function AuthenticatedLayout() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
 
-  const permisos = { isAdmin: !!cu?.isAdmin, secciones: cu?.secciones ?? null };
+  const permisos = {
+    isAdmin: !!cu?.isAdmin,
+    secciones: cu?.secciones ?? null,
+    puedeFacturar: cu?.puedeFacturar ?? false,
+    facturacionV2Habilitada: cu?.facturacionV2Habilitada ?? false,
+  };
   const permitidas = cu ? new Set(seccionesDe(permisos)) : new Set<string>();
   const seccionActual = seccionDeRuta(path);
-  // Una ruta que no está en el catálogo (no hay ninguna hoy) no se bloquea: es
-  // más seguro mostrarla que dejar a alguien afuera por un olvido del catálogo.
-  const sinAcceso = !!cu && !!seccionActual && !permitidas.has(seccionActual.key);
+  // Una ruta nueva sin catálogo ni capacidad explícita falla cerrado. La única
+  // excepción es /caja, alias intencional de /arqueo resuelto por puedeAbrirRuta.
+  const sinAcceso = !!cu && !puedeAbrirRuta(path, permisos);
   const aterrizaje = cu ? primeraSeccion(permisos) : null;
 
   // Si entra a "/" y no tiene el dashboard, se lo manda a la primera pantalla

@@ -24,7 +24,12 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { NumberInput } from "@/components/ui/number-input";
-import { buscarProductosIngreso } from "@/lib/ingresos.functions";
+import {
+  buscarProductosIngreso,
+  prepararBusquedaProductosIngreso,
+  type ProductoBusquedaIngreso,
+} from "@/lib/ingresos.functions";
+import { TOPE_BUSQUEDA_PRODUCTOS } from "@/lib/postgrest";
 import { uuidv4 } from "@/lib/uuid";
 import { ArrowLeft, Loader2, Search, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -65,6 +70,11 @@ type Fila = {
   codigo_proveedor: string;
 };
 
+type ProveedorOpcion = {
+  id: string;
+  razon_social: string;
+};
+
 function NuevoIngreso() {
   const navigate = useNavigate();
   const { data: cu } = useCurrentUser();
@@ -98,8 +108,12 @@ function NuevoIngreso() {
           .select("id, razon_social")
           .eq("activo", true)
           .order("razon_social")
-      ).data ?? []) as any[],
+      ).data ?? []) as ProveedorOpcion[],
   });
+  const proveedorSeleccionado = useMemo(
+    () => proveedores.find((proveedor) => proveedor.id === proveedorId),
+    [proveedorId, proveedores],
+  );
 
   // Retomar un borrador. Puede ser uno viejo que quedó de la extracción con IA, y
   // ahí hay dos trampas que costaron caro:
@@ -157,19 +171,27 @@ function NuevoIngreso() {
   // que sería la lista de precios que cargamos".
   //
   // Se manda lo tipeado en los DOS parámetros: `buscar_productos_similares` busca
-  // por nombre en `p_texto` y por código sólo en `p_codigo`, así que mandando uno
-  // solo la mitad de las búsquedas no encuentra nada. Buscar "4000-00400" tiene
-  // que traer el producto igual que buscar "membrana".
+  // por nombre en `p_texto` y por código sólo en `p_codigo`. El proveedor también
+  // viaja a PostgreSQL para filtrar ANTES del límite; filtrar los resultados acá
+  // dejaría afuera productos válidos si otros proveedores llenaran primero el cupo.
+  const criterioBusqueda = useMemo(
+    () => prepararBusquedaProductosIngreso(proveedorId, busqueda),
+    [busqueda, proveedorId],
+  );
   const { data: resultados = [], isFetching: buscando } = useQuery({
-    queryKey: ["buscar-producto-ingreso", busqueda],
-    enabled: busqueda.trim().length >= 2,
-    queryFn: async () =>
-      (await buscarProductosIngreso({
-        data: { texto: busqueda.trim(), codigo: busqueda.trim() },
-      })) as any[],
+    queryKey: [
+      "buscar-producto-ingreso",
+      criterioBusqueda?.proveedor_id ?? null,
+      criterioBusqueda?.texto ?? "",
+    ],
+    enabled: criterioBusqueda !== null,
+    queryFn: async () => {
+      if (!criterioBusqueda) return [];
+      return buscarProductosIngreso({ data: criterioBusqueda });
+    },
   });
 
-  const agregar = (p: any) => {
+  const agregar = (p: ProductoBusquedaIngreso) => {
     if (filas.some((f) => f.producto_id === p.id)) {
       toast.info("Ese producto ya está en la lista.");
       return;
@@ -352,12 +374,18 @@ function NuevoIngreso() {
           </div>
           <div>
             <Label>Proveedor *</Label>
-            <Select value={proveedorId} onValueChange={setProveedorId}>
+            <Select
+              value={proveedorId}
+              onValueChange={(siguiente) => {
+                if (siguiente !== proveedorId) setBusqueda("");
+                setProveedorId(siguiente);
+              }}
+            >
               <SelectTrigger data-testid="select-proveedor">
                 <SelectValue placeholder="Elegí…" />
               </SelectTrigger>
               <SelectContent>
-                {proveedores.map((p: any) => (
+                {proveedores.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.razon_social}
                   </SelectItem>
@@ -383,40 +411,61 @@ function NuevoIngreso() {
       <SectionCard>
         <div className="space-y-3">
           <div>
-            <Label>Buscar producto por código o nombre</Label>
+            <Label>
+              {proveedorSeleccionado
+                ? `Buscar productos de ${proveedorSeleccionado.razon_social}`
+                : "Buscar producto por código o nombre"}
+            </Label>
             <div className="relative max-w-xl">
               <Search className="h-4 w-4 absolute left-2 top-3 text-muted-foreground" />
               <Input
                 className="pl-8"
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
-                placeholder="Ej: 4000-00400 o membrana"
+                placeholder={
+                  proveedorId ? "Ej: 4000-00400 o membrana" : "Elegí primero el proveedor"
+                }
+                disabled={!proveedorId}
                 data-testid="buscar-producto"
               />
               {buscando && <Loader2 className="h-4 w-4 animate-spin absolute right-2 top-3" />}
             </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {proveedorSeleccionado
+                ? `Sólo se muestran artículos de ${proveedorSeleccionado.razon_social}.`
+                : "El proveedor define qué catálogo se busca."}
+            </p>
           </div>
 
-          {busqueda.trim().length >= 2 && (
-            <div className="rounded-lg border border-border max-h-56 overflow-auto">
-              {resultados.length === 0 && !buscando ? (
-                <p className="p-3 text-sm text-muted-foreground">
-                  No hay productos que coincidan. Si el producto no está en el catálogo, cargalo
-                  primero en Productos.
+          {criterioBusqueda && (
+            <div className="space-y-1">
+              {!buscando && resultados.length > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {resultados.length === TOPE_BUSQUEDA_PRODUCTOS
+                    ? `Mostrando las primeras ${TOPE_BUSQUEDA_PRODUCTOS} coincidencias; escribí un poco más para afinar.`
+                    : `${resultados.length} coincidencia${resultados.length === 1 ? "" : "s"}.`}
                 </p>
-              ) : (
-                resultados.map((p: any) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex gap-3"
-                    onClick={() => agregar(p)}
-                  >
-                    <span className="font-mono text-xs w-32 shrink-0">{p.codigo}</span>
-                    <span className="truncate">{p.nombre}</span>
-                  </button>
-                ))
-              )}
+              ) : null}
+              <div className="max-h-56 overflow-auto rounded-lg border border-border">
+                {resultados.length === 0 && !buscando ? (
+                  <p className="p-3 text-sm text-muted-foreground">
+                    No hay productos de este proveedor que coincidan. Si el producto no está en el
+                    catálogo, cargalo primero en Productos.
+                  </p>
+                ) : (
+                  resultados.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex gap-3"
+                      onClick={() => agregar(p)}
+                    >
+                      <span className="font-mono text-xs w-32 shrink-0">{p.codigo}</span>
+                      <span className="truncate">{p.nombre}</span>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>

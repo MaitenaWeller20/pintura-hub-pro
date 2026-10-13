@@ -26,7 +26,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { TableRow, TableCell } from "@/components/ui/table";
-import { fmtMoney, fmtDateTime, formaPagoLabel } from "@/lib/format";
+import { fmtMoney, fmtDateTime, formaPagoLabel, formasEgreso } from "@/lib/format";
 import { fmtDocumento } from "@/lib/documento";
 import { montoEnLetras } from "@/lib/letras";
 import { toast } from "sonner";
@@ -372,14 +372,7 @@ function DialogoPago({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[
-                  "EFECTIVO",
-                  "TRANSFERENCIA",
-                  "CHEQUE",
-                  "TARJETA_DEBITO",
-                  "TARJETA_CREDITO",
-                  "MERCADO_PAGO",
-                ].map((f) => (
+                {formasEgreso.map((f) => (
                   <SelectItem key={f} value={f}>
                     {formaPagoLabel[f] ?? f}
                   </SelectItem>

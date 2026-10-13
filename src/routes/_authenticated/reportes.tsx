@@ -13,6 +13,7 @@ import { DataTable } from "@/components/app/data-table";
 import { fmtMoney, fmtDateTime, formaPagoLabel, tipoComprobanteLabel } from "@/lib/format";
 import { fmtDocumento } from "@/lib/documento";
 import { rangeToUtc, todayLocalISO } from "@/lib/dates";
+import { COLUMNAS_VENTA_REPORTE } from "@/lib/ventas-proyeccion";
 import { clasificarFacturacion, resumirCobros, resumirVentas } from "@/lib/reportes-ventas";
 import { traerTodo } from "@/lib/supabase-paginado";
 import { FileSpreadsheet, FileText, TrendingUp, Wallet, Receipt, CircleDollarSign, Hash, Undo2, ChevronDown, ChevronRight } from "lucide-react";
@@ -28,8 +29,8 @@ export const Route = createFileRoute("/_authenticated/reportes")({
   beforeLoad: async () => {
     const { data } = await supabase.auth.getUser();
     if (!data.user) throw redirect({ to: "/auth" });
-    const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user.id);
-    if (!roles?.some((r) => r.role === "admin")) throw redirect({ to: "/" });
+    const { data: esAdmin, error } = await supabase.rpc("is_admin", { _user_id: data.user.id });
+    if (error || esAdmin !== true) throw redirect({ to: "/" });
   },
   component: ReportesPage,
 });
@@ -37,6 +38,8 @@ export const Route = createFileRoute("/_authenticated/reportes")({
 const MEDIO_COLOR: Record<string, string> = {
   EFECTIVO: "var(--color-chart-3)", TRANSFERENCIA: "var(--color-chart-2)",
   TARJETA_CREDITO: "var(--color-chart-1)", TARJETA_DEBITO: "var(--color-chart-4)",
+  QR: "var(--color-primary)",
+  CANJE: "var(--color-chart-5)",
   MERCADO_PAGO: "var(--color-chart-5)", CHEQUE: "var(--color-muted-foreground)",
 };
 const medioColor = (x: string) => MEDIO_COLOR[x] ?? "var(--color-muted-foreground)";
@@ -65,7 +68,8 @@ function ReportesPage() {
       const { gte, lt } = rangeToUtc(desde, hasta);
       const { filas, truncado } = await traerTodo(async (inicio, fin) => {
         let q = supabase.from("ventas").select(`
-          *, cliente:clientes(razon_social), sucursal:sucursales(nombre)
+          ${COLUMNAS_VENTA_REPORTE},percepciones,estado,cae,afip_estado,afip_simulado,afip_modo,afip_cbte_asoc_id,
+          cliente:clientes(razon_social),sucursal:sucursales(nombre)
         `, { count: "exact" }).gte("fecha", gte).lt("fecha", lt)
           .order("fecha", { ascending: false }).order("id", { ascending: false }).range(inicio, fin);
         if (sucId) q = q.eq("sucursal_id", sucId);
@@ -83,7 +87,7 @@ function ReportesPage() {
       const { filas, truncado } = await traerTodo(async (inicio, fin) => {
         let q = supabase.from("venta_pagos").select(`
           id, monto, forma_pago, created_at,
-          venta:ventas!inner(estado, sucursal_id, tipo_comprobante, afip_cbte_asoc_id, cae, afip_estado, afip_simulado, afip_modo)
+          venta:ventas!inner(estado, sucursal_id, tipo_comprobante, afip_cbte_asoc_id, afip_cbte_tipo, cae, afip_estado, afip_simulado, afip_modo, afip_validez)
         `, { count: "exact" }).gte("created_at", gte).lt("created_at", lt)
           .order("created_at", { ascending: false }).order("id", { ascending: false }).range(inicio, fin);
         if (sucId) q = q.eq("venta.sucursal_id", sucId);

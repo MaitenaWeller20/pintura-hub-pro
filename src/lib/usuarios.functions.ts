@@ -5,6 +5,142 @@ import { z } from "zod";
 import { normalizarSecciones } from "@/lib/secciones";
 import { PASSWORD_MINIMO } from "@/lib/alta-usuario";
 
+type ErrorRpc = {
+  message?: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+};
+type RespuestaRpc = { data: unknown; error: ErrorRpc | null };
+export type ClienteCapacidadFiscal = {
+  rpc(nombre: string, args: Record<string, unknown>): Promise<RespuestaRpc>;
+};
+
+export type CodigoErrorAdministracionUsuario =
+  | "DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO"
+  | "PERFIL_NC_PERIODO_INEXISTENTE"
+  | "NO_SE_PUDO_ACTUALIZAR_NC_PERIODO";
+
+const MENSAJE_ERROR_ADMINISTRACION_USUARIO: Record<CodigoErrorAdministracionUsuario, string> = {
+  DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO:
+    "El permiso de NC por período sólo se puede asignar a empleados.",
+  PERFIL_NC_PERIODO_INEXISTENTE: "No se encontró el usuario al que querés cambiarle el permiso.",
+  NO_SE_PUDO_ACTUALIZAR_NC_PERIODO:
+    "No se pudo actualizar el permiso de NC por período. Volvé a cargar la pantalla antes de intentar nuevamente.",
+};
+
+// La causa queda retenida en el proceso servidor sin transformarse en una
+// propiedad serializable del error que recibirá el navegador.
+const causasAdministracionUsuario = new WeakMap<ErrorAdministracionUsuario, ErrorRpc>();
+
+export class ErrorAdministracionUsuario extends Error {
+  readonly codigo: CodigoErrorAdministracionUsuario;
+
+  constructor(codigo: CodigoErrorAdministracionUsuario, causa: ErrorRpc) {
+    super(MENSAJE_ERROR_ADMINISTRACION_USUARIO[codigo]);
+    this.name = "ErrorAdministracionUsuario";
+    this.codigo = codigo;
+    causasAdministracionUsuario.set(this, causa);
+  }
+}
+
+function traducirErrorAdministrarNcPeriodo(error: ErrorRpc): ErrorAdministracionUsuario {
+  const codigo: CodigoErrorAdministracionUsuario =
+    error.code === "PNC01"
+      ? "DESTINATARIO_NC_PERIODO_NO_ES_EMPLEADO"
+      : error.code === "PNC02"
+        ? "PERFIL_NC_PERIODO_INEXISTENTE"
+        : "NO_SE_PUDO_ACTUALIZAR_NC_PERIODO";
+  return new ErrorAdministracionUsuario(codigo, error);
+}
+
+export async function requireAdmin(
+  supabase: ClienteCapacidadFiscal,
+  userId: string,
+): Promise<void> {
+  const { data, error } = await supabase.rpc("is_admin", { _user_id: userId });
+  if (error || data !== true) throw new Error("Solo admin");
+}
+
+export async function ejecutarSetPuedeFacturar(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_facturar", {
+    p_profile_id: input.user_id,
+    p_puede_facturar: input.value,
+  });
+  if (error) throw new Error(error.message ?? "No se pudo actualizar la capacidad fiscal");
+  return { ok: true };
+}
+
+export const setPuedeFacturar = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarSetPuedeFacturar(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
+export async function ejecutarAdministrarPuedeEmitirNcPeriodo(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_emitir_nc_periodo", {
+    p_profile_id: input.user_id,
+    p_habilitado: input.value,
+  });
+  if (error) {
+    throw traducirErrorAdministrarNcPeriodo(error);
+  }
+  return { ok: true };
+}
+
+export const administrarPuedeEmitirNcPeriodo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarAdministrarPuedeEmitirNcPeriodo(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
+export async function ejecutarSetPuedeGestionarCreditoClientes(
+  input: { actorId: string; user_id: string; value: boolean },
+  supabase: ClienteCapacidadFiscal,
+): Promise<{ ok: true }> {
+  await requireAdmin(supabase, input.actorId);
+  const { error } = await supabase.rpc("administrar_puede_gestionar_credito_clientes", {
+    p_profile_id: input.user_id,
+    p_puede: input.value,
+  });
+  if (error) {
+    throw new Error(error.message ?? "No se pudo actualizar el permiso de cuenta corriente");
+  }
+  return { ok: true };
+}
+
+export const setPuedeGestionarCreditoClientes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ user_id: z.string().uuid(), value: z.boolean() }).strict().parse(d),
+  )
+  .handler(async ({ data, context }) =>
+    ejecutarSetPuedeGestionarCreditoClientes(
+      { actorId: context.userId, ...data },
+      context.supabase as unknown as ClienteCapacidadFiscal,
+    ),
+  );
+
 export const crearUsuario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
@@ -152,21 +288,372 @@ export const crearUsuario = createServerFn({ method: "POST" })
     return { id: nuevoId };
   });
 
+type ErrorOperacionUsuario = { message?: string } | null;
+
+export type OperacionesToggleUsuario = {
+  iniciar(
+    userId: string,
+    activo: boolean,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  finalizar(
+    userId: string,
+    version: number,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  reclamarReconciliacion(
+    userId: string,
+    versionObservada: number,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  forzarCierreFailSafe(
+    userId: string,
+    operacionId: string,
+  ): Promise<{ data: unknown; error: ErrorOperacionUsuario }>;
+  actualizarAuth(
+    userId: string,
+    banDuration: "none" | "876000h",
+  ): Promise<{ error: ErrorOperacionUsuario }>;
+  leerAuthBloqueado(
+    userId: string,
+  ): Promise<{ bloqueado: boolean | null; error: ErrorOperacionUsuario }>;
+  generarOperacionId(): string;
+};
+
+type EstadoToggleUsuario = {
+  version: number;
+  activoDeseado: boolean;
+  pendiente: boolean;
+  activoActual: boolean;
+  operacionId: string;
+  aplicada: boolean;
+  supersedida: boolean;
+  reclamada: boolean;
+  forzada: boolean;
+};
+
+function mensajeErrorUsuario(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    error.message.trim()
+  ) {
+    return error.message;
+  }
+  return fallback;
+}
+
+export async function ejecutarToggleUsuarioActivo(
+  input: { user_id: string; activo: boolean; operacion_id: string },
+  operaciones: OperacionesToggleUsuario,
+): Promise<{ ok: true }> {
+  const parsearEstado = (data: unknown, fallback: string): EstadoToggleUsuario => {
+    if (typeof data !== "object" || data === null) throw new Error(fallback);
+    const value = data as Record<string, unknown>;
+    if (
+      typeof value.version !== "number" ||
+      !Number.isSafeInteger(value.version) ||
+      value.version < 0 ||
+      typeof value.activo_deseado !== "boolean" ||
+      typeof value.pendiente !== "boolean" ||
+      typeof value.activo_actual !== "boolean" ||
+      typeof value.operacion_id !== "string"
+    ) {
+      throw new Error(fallback);
+    }
+    return {
+      version: value.version,
+      activoDeseado: value.activo_deseado,
+      pendiente: value.pendiente,
+      activoActual: value.activo_actual,
+      operacionId: value.operacion_id,
+      aplicada: value.aplicada === true,
+      supersedida: value.supersedida === true,
+      reclamada: value.reclamada === true,
+      forzada: value.forzada === true,
+    };
+  };
+
+  const rpcConReintento = async (
+    ejecutar: () => Promise<{ data: unknown; error: ErrorOperacionUsuario }>,
+    fallback: string,
+  ): Promise<EstadoToggleUsuario> => {
+    let ultimoError: unknown = null;
+    // Las RPC son idempotentes por operacion/version. Repetir una vez cubre el
+    // timeout posterior al COMMIT sin crear una intención nueva.
+    for (let intento = 0; intento < 2; intento += 1) {
+      try {
+        const { data, error } = await ejecutar();
+        if (!error) return parsearEstado(data, fallback);
+        ultimoError = error;
+      } catch (error) {
+        ultimoError = error;
+      }
+    }
+    throw new Error(mensajeErrorUsuario(ultimoError, fallback));
+  };
+
+  const actualizarAuthValidado = async (banDuration: "none" | "876000h"): Promise<void> => {
+    let ultimoError: unknown = null;
+    // updateUserById con el mismo ban_duration es idempotente. Un segundo
+    // intento resuelve el caso en que GoTrue aplicó el cambio pero se perdió la
+    // respuesta.
+    for (let intento = 0; intento < 2; intento += 1) {
+      try {
+        const { error } = await operaciones.actualizarAuth(input.user_id, banDuration);
+        if (!error) return;
+        ultimoError = error;
+      } catch (error) {
+        ultimoError = error;
+      }
+    }
+    throw new Error(
+      mensajeErrorUsuario(
+        ultimoError,
+        banDuration === "none"
+          ? "No se pudo quitar el bloqueo de acceso"
+          : "No se pudo bloquear el acceso",
+      ),
+    );
+  };
+
+  const leerAuthBloqueadoValidado = async (): Promise<boolean> => {
+    let ultimoError: unknown = null;
+    for (let intento = 0; intento < 2; intento += 1) {
+      try {
+        const { bloqueado, error } = await operaciones.leerAuthBloqueado(input.user_id);
+        if (!error && typeof bloqueado === "boolean") return bloqueado;
+        ultimoError = error;
+      } catch (error) {
+        ultimoError = error;
+      }
+    }
+    throw new Error(
+      mensajeErrorUsuario(ultimoError, "No se pudo verificar el bloqueo actual del usuario"),
+    );
+  };
+
+  const imponerCierreFailSafe = async (causa: unknown): Promise<never> => {
+    let dbCerrada = false;
+    let authCerrado = false;
+    let ultimoErrorCierre: unknown = null;
+
+    // Esta RPC usa service_role y no vuelve a autorizar al actor original. Es
+    // deliberado: si el admin fue desactivado mientras GoTrue estaba en vuelo,
+    // el cierre de emergencia tiene que seguir disponible. Se reusa la misma
+    // clave en el retry para cubrir un COMMIT cuya respuesta se perdió.
+    for (let ronda = 0; ronda < 3 && !dbCerrada; ronda += 1) {
+      let cierreId: string;
+      try {
+        cierreId = operaciones.generarOperacionId();
+      } catch (error) {
+        ultimoErrorCierre = error;
+        break;
+      }
+      for (let intento = 0; intento < 2 && !dbCerrada; intento += 1) {
+        try {
+          const { data, error } = await operaciones.forzarCierreFailSafe(input.user_id, cierreId);
+          if (error) {
+            ultimoErrorCierre = error;
+            continue;
+          }
+          const cierre = parsearEstado(
+            data,
+            "No se pudo interpretar el cierre de emergencia del usuario",
+          );
+          estado = cierre;
+          // Una operación concurrente puede superseder la clave del cierre,
+          // pero mientras el estado vigente permanezca pending/profile=false
+          // el acceso de PostgREST ya está cerrado de forma global.
+          dbCerrada = cierre.pendiente && !cierre.activoActual;
+        } catch (error) {
+          ultimoErrorCierre = error;
+        }
+      }
+    }
+
+    // Bloquear también GoTrue evita depender únicamente del pre-request de DB
+    // durante una incidencia. Si Auth no responde pero DB quedó cerrada, sigue
+    // siendo fail-closed; si DB falló pero el ban entró, tampoco queda acceso.
+    try {
+      await actualizarAuthValidado("876000h");
+      authCerrado = true;
+    } catch (error) {
+      ultimoErrorCierre = ultimoErrorCierre ?? error;
+    }
+
+    const motivo = mensajeErrorUsuario(causa, "No se pudo reconciliar el acceso del usuario");
+    if (!dbCerrada && !authCerrado) {
+      throw new Error(
+        `${motivo}. Además falló el cierre de emergencia: ${mensajeErrorUsuario(
+          ultimoErrorCierre,
+          "requiere revisión administrativa inmediata",
+        )}`,
+      );
+    }
+    throw new Error(
+      `${motivo}. El acceso quedó cerrado de forma preventiva y requiere reintento administrativo.`,
+    );
+  };
+
+  let estado = await rpcConReintento(
+    () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
+    "No se pudo iniciar el cambio de acceso",
+  );
+  if (
+    !estado.supersedida &&
+    (estado.operacionId !== input.operacion_id || estado.activoDeseado !== input.activo)
+  ) {
+    throw new Error("La transición de acceso no coincide con la operación solicitada");
+  }
+
+  // Estado DB y estado Auth forman un único protocolo aunque GoTrue sea una
+  // llamada externa. Toda respuesta estable se contrasta con Auth; si difiere,
+  // primero se reclama una versión CAS que vuelve a cerrar el perfil y recién
+  // después se repara Auth. Así un retry histórico tampoco confía sólo en
+  // `profiles.activo` ni puede dejar un usuario abierto con desired=false.
+  let escriturasAuth = 0;
+  for (let paso = 0; paso < 24 && escriturasAuth < 9; paso += 1) {
+    if (!estado.pendiente) {
+      if (estado.activoActual !== estado.activoDeseado) {
+        return imponerCierreFailSafe(
+          new Error("El acceso resuelto no coincide con la intención vigente"),
+        );
+      }
+      let authBloqueado: boolean;
+      try {
+        authBloqueado = await leerAuthBloqueadoValidado();
+      } catch (error) {
+        return imponerCierreFailSafe(error);
+      }
+      if (authBloqueado === !estado.activoDeseado) {
+        if (estado.activoDeseado === input.activo) return { ok: true };
+        throw new Error(
+          "La operación fue reemplazada por un cambio más nuevo; se conservó el estado más reciente.",
+        );
+      }
+
+      const reconciliacionId = operaciones.generarOperacionId();
+      try {
+        estado = await rpcConReintento(
+          () => operaciones.reclamarReconciliacion(input.user_id, estado.version, reconciliacionId),
+          "No se pudo reconciliar el cambio de acceso más reciente",
+        );
+      } catch (error) {
+        return imponerCierreFailSafe(error);
+      }
+      continue;
+    }
+
+    const intentado = estado;
+    await actualizarAuthValidado(intentado.activoDeseado ? "none" : "876000h");
+    escriturasAuth += 1;
+    try {
+      estado = await rpcConReintento(
+        () => operaciones.finalizar(input.user_id, intentado.version, intentado.operacionId),
+        "No se pudo finalizar el cambio de acceso",
+      );
+    } catch (errorFinalizar) {
+      // `finalizar` pudo hacer COMMIT y perder ambas respuestas. Releer la RPC
+      // idempotente original devuelve el CAS vigente sin crear otra intención.
+      // Si sigue exactamente el mismo pending, el perfil ya está fail-closed y
+      // se conserva el error real. Si avanzó, el loop repara el desired actual.
+      let observado: EstadoToggleUsuario;
+      try {
+        observado = await rpcConReintento(
+          () => operaciones.iniciar(input.user_id, input.activo, input.operacion_id),
+          "No se pudo consultar el estado vigente después de finalizar",
+        );
+      } catch (errorRecuperacion) {
+        return imponerCierreFailSafe(errorRecuperacion);
+      }
+      if (
+        observado.pendiente &&
+        observado.version === intentado.version &&
+        observado.operacionId === intentado.operacionId
+      ) {
+        throw errorFinalizar;
+      }
+      estado = observado;
+    }
+  }
+
+  return imponerCierreFailSafe(
+    new Error(
+      "La operación fue reemplazada varias veces. El acceso quedó cerrado y pendiente; reintentá la misma acción para reconciliarlo",
+    ),
+  );
+}
+
 export const toggleUsuarioActivo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ user_id: z.string().uuid(), activo: z.boolean() }).parse(d),
+    z
+      .object({
+        user_id: z.string().uuid(),
+        activo: z.boolean(),
+        operacion_id: z.string().uuid(),
+      })
+      .strict()
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { data: isAdmin } = await supabase.rpc("is_admin", { _user_id: userId });
-    if (!isAdmin) throw new Error("Solo admin");
+    await requireAdmin(supabase as unknown as ClienteCapacidadFiscal, userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    await supabaseAdmin.from("profiles").update({ activo: data.activo }).eq("id", data.user_id);
-    await supabaseAdmin.auth.admin.updateUserById(data.user_id, {
-      ban_duration: data.activo ? "none" : "876000h",
+    return ejecutarToggleUsuarioActivo(data, {
+      async iniciar(targetUserId, activo, operacionId) {
+        return supabaseAdmin.rpc("iniciar_transicion_usuario_activo", {
+          p_actor_id: userId,
+          p_profile_id: targetUserId,
+          p_activo: activo,
+          p_operacion_id: operacionId,
+        });
+      },
+      async finalizar(targetUserId, version, operacionId) {
+        return supabaseAdmin.rpc("finalizar_transicion_usuario_activo", {
+          p_profile_id: targetUserId,
+          p_version: version,
+          p_operacion_id: operacionId,
+        });
+      },
+      async reclamarReconciliacion(targetUserId, versionObservada, operacionId) {
+        return supabaseAdmin.rpc("reclamar_reconciliacion_usuario_activo", {
+          p_profile_id: targetUserId,
+          p_version_observada: versionObservada,
+          p_operacion_id: operacionId,
+        });
+      },
+      async forzarCierreFailSafe(targetUserId, operacionId) {
+        return supabaseAdmin.rpc("forzar_cierre_usuario_activo_fail_safe", {
+          p_profile_id: targetUserId,
+          p_operacion_id: operacionId,
+        });
+      },
+      async actualizarAuth(targetUserId, banDuration) {
+        const { error } = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+          ban_duration: banDuration,
+        });
+        return { error };
+      },
+      async leerAuthBloqueado(targetUserId) {
+        const { data, error } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+        const bannedUntil = data.user?.banned_until;
+        return {
+          bloqueado:
+            !error && typeof bannedUntil === "string"
+              ? Date.parse(bannedUntil) > Date.now()
+              : error
+                ? null
+                : false,
+          error,
+        };
+      },
+      generarOperacionId: () => crypto.randomUUID(),
     });
-    return { ok: true };
   });
 
 /** Server fn admin: habilita/deshabilita que un usuario venda productos sin stock (R6). */

@@ -1,22 +1,42 @@
 // ============================================================
 // e2e de "al contado se cobra entero" desde la pantalla de ventas.
-//   bun run dev && PW_DIR=… node scripts/test-venta-contado-e2e.mjs
+//   NODE_ENV=test INVOICING_MOCK_TEST_RUNNER=playwright INVOICING_MOCK_MODE=true \
+//     INVOICING_MOCK_SCENARIO=OK bun run dev
+//   NODE_ENV=test INVOICING_MOCK_TEST_RUNNER=playwright INVOICING_MOCK_MODE=true \
+//     INVOICING_MOCK_SCENARIO=OK PW_DIR=… node scripts/test-venta-contado-e2e.mjs
 //
 // La regla vive en crear_venta, pero lo que importa es que el cajero NO llegue
 // a apretar Guardar para comerse el error: la pantalla tiene que frenarlo antes
 // y decirle qué hacer.
 // ============================================================
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8080";
+const baseUrl = new URL(BASE);
+if (!/^(127\.0\.0\.1|localhost)$/.test(baseUrl.hostname)) {
+  throw new Error("El E2E de venta sólo puede abrir una app local.");
+}
+if (
+  process.env.NODE_ENV !== "test" ||
+  process.env.INVOICING_MOCK_TEST_RUNNER !== "playwright" ||
+  process.env.INVOICING_MOCK_MODE !== "true" ||
+  process.env.INVOICING_MOCK_SCENARIO !== "OK"
+) {
+  throw new Error("El E2E exige NODE_ENV=test + runner Playwright + mock=true + escenario OK.");
+}
 const require = createRequire(`${process.env.PW_DIR ?? "/tmp/pw"}/index.js`);
 const { chromium } = require("playwright");
+const configSupabase = readFileSync(new URL("../supabase/config.toml", import.meta.url), "utf8");
+const projectId = configSupabase.match(/^project_id\s*=\s*"([a-z0-9_-]+)"/m)?.[1];
+if (!projectId) throw new Error("No se pudo resolver el project_id del Supabase local.");
+const dbContainer = `supabase_db_${projectId}`;
 
 const psql = (sql) =>
   execFileSync(
     "docker",
-    ["exec", "-i", "supabase_db_local", "psql", "-U", "postgres", "-d", "postgres", "-tAc", sql],
+    ["exec", "-i", dbContainer, "psql", "-U", "postgres", "-d", "postgres", "-tAc", sql],
     { encoding: "utf8" },
   ).trim();
 
@@ -26,24 +46,42 @@ const chequear = (n, ok, d) => {
   if (!ok) fallos.push(n);
 };
 
-const limpiar = () =>
+const verificarServidorAislado = async () => {
+  const response = await fetch(`${BASE}/api/e2e-fingerprint`, { cache: "no-store" });
+  const body = await response.json().catch(() => null);
+  if (
+    response.status !== 200 ||
+    body?.app !== "PinturaGest" ||
+    body?.nodeEnv !== "test" ||
+    body?.runner !== "playwright" ||
+    body?.mockMode !== true ||
+    body?.scenario !== "OK"
+  ) {
+    throw new Error("El servidor local no confirmó el fingerprint fiscal E2E estricto.");
+  }
+};
+
+const limpiar = () => {
+  const ventas = psql(`select coalesce(string_agg(quote_literal(v.id::text), ','), '')
+    from public.ventas v join public.venta_items vi on vi.venta_id=v.id
+    join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`);
+  const ids = ventas ? `(${ventas})` : "(NULL)";
   psql(`
-    DELETE FROM public.venta_pagos vp USING public.ventas v
-     WHERE v.id=vp.venta_id AND v.observaciones='E2E CONTADO';
-    DELETE FROM public.cuenta_corriente_movimientos c USING public.ventas v
-     WHERE v.id=c.venta_id AND v.observaciones='E2E CONTADO';
-    DELETE FROM public.venta_items vi USING public.ventas v
-     WHERE v.id=vi.venta_id AND v.observaciones='E2E CONTADO';
-    DELETE FROM public.venta_items vi USING public.productos p
-     WHERE p.id=vi.producto_id AND p.codigo='E2E-CONT';
-    DELETE FROM public.ventas WHERE observaciones='E2E CONTADO';
+    DELETE FROM public.emision_fiscal_intentos WHERE venta_id IN ${ids};
+    DELETE FROM public.venta_pagos WHERE venta_id IN ${ids};
+    DELETE FROM public.cuenta_corriente_movimientos WHERE venta_id IN ${ids};
+    DELETE FROM public.stock_movimientos WHERE referencia_id IN ${ids};
+    DELETE FROM public.venta_items WHERE venta_id IN ${ids};
+    DELETE FROM public.ventas WHERE id IN ${ids};
     DELETE FROM public.stock_movimientos m USING public.productos p
      WHERE p.id=m.producto_id AND p.codigo='E2E-CONT';
     DELETE FROM public.stock_sucursal s USING public.productos p
      WHERE p.id=s.producto_id AND p.codigo='E2E-CONT';
     DELETE FROM public.productos WHERE codigo='E2E-CONT';
   `);
+};
 
+await verificarServidorAislado();
 const browser = await chromium.launch();
 const page = await browser.newPage();
 page.on("pageerror", (e) => fallos.push(`error de página: ${e.message}`));
@@ -82,10 +120,10 @@ try {
   await page.getByText("PRODUCTO E2E CONTADO").first().click();
   await page.waitForTimeout(800);
 
-  const guardar = page.getByRole("button", { name: "Guardar" });
+  const registrar = page.getByTestId("registrar-sin-facturar");
   chequear(
-    "sin cobrar un peso, Guardar está bloqueado",
-    await guardar.isDisabled(),
+    "sin cobrar un peso, Registrar sin facturar está bloqueado",
+    await registrar.isDisabled(),
     "el botón está habilitado con la venta sin pagar",
   );
   chequear(
@@ -95,7 +133,10 @@ try {
   );
 
   console.log("── Cobrando una parte (el fiado del mostrador) ──────────");
-  await page.getByRole("button", { name: /Agregar pago|Pago/i }).first().click();
+  await page
+    .getByRole("button", { name: /Agregar pago|Pago/i })
+    .first()
+    .click();
   await page.waitForTimeout(600);
   // El pago viene con el total; lo bajo a una seña.
   const monto = page.locator("text=Monto").locator("..").locator("input");
@@ -104,12 +145,20 @@ try {
   await page.waitForTimeout(600);
   chequear(
     "con una parte cobrada ya se puede guardar",
-    await guardar.isEnabled(),
+    await registrar.isEnabled(),
     "sigue bloqueado con el pago parcial",
   );
 
-  await guardar.click();
-  await page.waitForTimeout(4000);
+  await registrar.click();
+  await page.waitForURL(
+    /\/facturacion\/cola\?venta=[0-9a-f-]+&resultado=venta_creada_factura_pendiente/,
+    { timeout: 30000 },
+  );
+  chequear(
+    "registrar sin facturar no abrió receptor",
+    (await page.getByTestId("dialogo-emision-fiscal").count()) === 0,
+    "se abrió el diálogo fiscal",
+  );
   const venta = psql(
     `select count(*)::text from public.ventas v join public.venta_items vi on vi.venta_id=v.id
       join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`,
@@ -120,11 +169,23 @@ try {
               join public.venta_items vi on vi.venta_id=v.id
               join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`);
     chequear("quedó PARCIAL, no PAGADA", estado === "PARCIAL", estado);
+    const fiscal = psql(`select v.afip_estado::text from public.ventas v
+              join public.venta_items vi on vi.venta_id=v.id
+              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`);
+    chequear("quedó SIN_FACTURAR", fiscal === "SIN_FACTURAR", fiscal);
+    chequear(
+      "registrar sin facturar no creó intento fiscal",
+      psql(`select count(*)::text from public.emision_fiscal_intentos i
+              join public.venta_items vi on vi.venta_id=i.venta_id
+              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`) === "0",
+      "apareció un intento fiscal",
+    );
     chequear(
       "y guardó los 500 cobrados",
       psql(`select v.total_pagado::text from public.ventas v
               join public.venta_items vi on vi.venta_id=v.id
-              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`) === "500.00",
+              join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`) ===
+        "500.00",
       psql(`select v.total_pagado::text from public.ventas v
               join public.venta_items vi on vi.venta_id=v.id
               join public.productos p on p.id=vi.producto_id where p.codigo='E2E-CONT'`),

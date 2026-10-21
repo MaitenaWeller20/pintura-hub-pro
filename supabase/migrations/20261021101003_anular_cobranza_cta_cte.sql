@@ -2,7 +2,7 @@
 -- El cobro original permanece visible; la reversa y una copia auditada conservan el rastro.
 -- Las FK restringen borrados posteriores de cualquiera de los dos asientos;
 -- cualquier reset transaccional debe tratar explícitamente esta auditoría.
-CREATE TABLE public.cobranza_anulaciones (
+CREATE TABLE IF NOT EXISTS public.cobranza_anulaciones (
   cobranza_id uuid PRIMARY KEY REFERENCES public.cobranzas_cta_cte(id),
   reversa_id uuid NOT NULL UNIQUE REFERENCES public.cobranzas_cta_cte(id),
   cobranza jsonb NOT NULL,
@@ -16,7 +16,7 @@ ALTER TABLE public.cobranza_anulaciones ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cobranza_anulaciones FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.cobranza_anulaciones TO service_role;
 
-CREATE FUNCTION public.anular_cobranza(
+CREATE OR REPLACE FUNCTION public.anular_cobranza(
   p_cobranza_id uuid,
   p_cliente_id uuid,
   p_monto numeric,

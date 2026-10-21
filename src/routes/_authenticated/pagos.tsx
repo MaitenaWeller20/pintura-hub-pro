@@ -74,12 +74,14 @@ async function fetchCobros(
 
   let cobrQ = supabase
     .from("cobranzas_cta_cte")
-    .select("fecha, sucursal_id, forma_pago, monto, cliente:clientes(razon_social)")
+    .select("fecha, sucursal_id, forma_pago, monto, detalle, cliente:clientes(razon_social), movimiento:cuenta_corriente_movimientos(estado)")
     .gte("fecha", gte)
     .lt("fecha", lt);
   if (sucursalId) cobrQ = cobrQ.eq("sucursal_id", sucursalId);
 
-  const [{ data: ventas }, { data: cobranzas }] = await Promise.all([ventasQ, cobrQ]);
+  const [{ data: ventas, error: ventasError }, { data: cobranzas, error: cobranzasError }] = await Promise.all([ventasQ, cobrQ]);
+  if (ventasError) throw ventasError;
+  if (cobranzasError) throw cobranzasError;
   return normalizarCobros((ventas ?? []) as unknown as VentaRow[], (cobranzas ?? []) as unknown as CobranzaRow[]);
 }
 
@@ -142,6 +144,7 @@ function PagosPage() {
       Cliente: c.cliente ?? "",
       Sucursal: sucNombre(c.sucursalId),
       Medio: medioLabel(c.formaPago),
+      Tipo: c.tipo === "ANULACION" ? "Reversa de cobro anulado" : c.tipo === "DEVOLUCION" ? "Devolución" : c.anulado ? "Cobro anulado" : "Cobro",
       Monto: c.monto,
     }));
     const ws = XLSX.utils.json_to_sheet(data);
@@ -215,24 +218,19 @@ function PagosPage() {
         </div>
       </PeriodFilters>
 
-      {/* R10: las devoluciones se muestran como un total SEPARADO, no como un pago
-          negativo embebido en un medio. Efectivo/Electrónico son brutos (positivos);
-          el neto = cobrado bruto − devoluciones. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+      {/* Efectivo/Electrónico muestran montos registrados positivos;
+          el neto descuenta devoluciones y anulaciones. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-4">
         <StatCard label="Total neto cobrado" value={fmtMoney(resumen.totalNeto)} icon={Wallet} tone="success"
-          spark={sparkSerie} trend={trend(resumen.totalNeto, resumenPrev.totalNeto)} hint="cobrado − devoluciones" />
+          spark={sparkSerie} trend={trend(resumen.totalNeto, resumenPrev.totalNeto)} hint="cobros − devoluciones − anulaciones" />
         <StatCard label="Efectivo" value={fmtMoney(resumen.efectivoBruto)} icon={Coins} tone="warning"
-          trend={trend(resumen.efectivoBruto, resumenPrev.efectivoBruto)} hint="cobrado en efectivo" />
-        <StatCard
-          label="Electrónico"
-          value={fmtMoney(resumen.electronicoBruto)}
-          icon={CreditCard}
-          tone="info"
-          trend={trend(resumen.electronicoBruto, resumenPrev.electronicoBruto)}
-          hint="transf. + tarjetas + QR + MP histórico + cheque"
-        />
+          trend={trend(resumen.efectivoBruto, resumenPrev.efectivoBruto)} hint="cobros positivos registrados" />
+        <StatCard label="Electrónico" value={fmtMoney(resumen.electronicoBruto)} icon={CreditCard} tone="info"
+          trend={trend(resumen.electronicoBruto, resumenPrev.electronicoBruto)} hint="cobros positivos: transf. + tarjetas + QR + MP + cheque" />
         <StatCard label="Devoluciones" value={fmtMoney(resumen.devoluciones)} icon={Receipt} tone="destructive"
           trend={trend(resumen.devoluciones, resumenPrev.devoluciones)} hint="notas de crédito del período" />
+        <StatCard label="Anulaciones" value={fmtMoney(resumen.anulaciones)} icon={Receipt} tone="warning"
+          trend={trend(resumen.anulaciones, resumenPrev.anulaciones)} hint="cobros cargados por error" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 mb-4">
@@ -309,6 +307,8 @@ function PagosPage() {
             <TableCell className={`text-right font-mono ${c.monto < 0 ? "text-destructive" : ""}`}>
               {fmtMoney(c.monto)}
               {c.tipo === "DEVOLUCION" && <span className="ml-1"><StatusPill tone="danger">Devol.</StatusPill></span>}
+              {c.tipo === "ANULACION" && <span className="ml-1"><StatusPill tone="neutral">Reversa</StatusPill></span>}
+              {c.anulado && <span className="ml-1"><StatusPill tone="neutral">Anulado</StatusPill></span>}
             </TableCell>
           </TableRow>
         ))}

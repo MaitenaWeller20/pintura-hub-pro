@@ -631,9 +631,12 @@ function PagoProveedorDialog({ open, onClose, proveedor, onSaved }: any) {
 }
 
 function DetalleCliente({ cliente, onClose, onPagar }: any) {
+  const qc = useQueryClient();
   const { data: cu } = useCurrentUser();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [imprimiendoId, setImprimiendoId] = useState<string | null>(null);
+  const [cobroAAnular, setCobroAAnular] = useState<any>(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState("");
   const toggle = (id: string) =>
     setExpanded((s) => {
       const n = new Set(s);
@@ -650,7 +653,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       const { data, error } = await supabase
         .from("cuenta_corriente_movimientos")
         .select(
-          "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante)",
+          "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, cobranza_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante)",
         )
         .eq("cliente_id", cliente.id)
         .order("created_at", { ascending: false });
@@ -720,6 +723,24 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
   const totalDebe = Number(resumen?.total_debe ?? 0);
   const totalPagado = Number(resumen?.total_pagado ?? 0);
   const saldo = Number(resumen?.saldo ?? 0);
+  const anularCobro = useMutation({
+    mutationFn: async (movimiento: any) => {
+      const { error } = await supabase.rpc("anular_cobranza", {
+        p_cobranza_id: movimiento.cobranza_id,
+        p_cliente_id: cliente.id,
+        p_monto: Number(movimiento.monto),
+        p_motivo: motivoAnulacion.trim(),
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Cobro anulado");
+      setCobroAAnular(null);
+      setMotivoAnulacion("");
+      qc.invalidateQueries();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
 
   return (
     <Dialog open={true} onOpenChange={(v) => !v && onClose()}>
@@ -756,7 +777,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
         )}
         <h4 className="font-semibold">Movimientos de la cuenta</h4>
         <DataTable
-          columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber"]}
+          columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber", ""]}
           isEmpty={movs.length === 0}
           empty={{ text: movsError ? "No se pudieron cargar los movimientos." : "Sin movimientos" }}
         >
@@ -803,10 +824,15 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                   <TableCell className="text-muted-foreground text-xs">{m.sucursal?.nombre}</TableCell>
                   <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                   <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
+                  <TableCell>
+                    {!anulado && m.cobranza_id && cu?.isAdmin && (
+                      <Button size="sm" variant="ghost" onClick={() => setCobroAAnular(m)}>Anular cobro</Button>
+                    )}
+                  </TableCell>
                 </TableRow>
                 {tieneVenta && abierto && (
                   <TableRow>
-                    <TableCell colSpan={5} className="bg-muted/40 p-0">
+                    <TableCell colSpan={6} className="bg-muted/40 p-0">
                       <ItemsVenta ventaId={m.venta_id} />
                     </TableCell>
                   </TableRow>
@@ -815,6 +841,26 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
             );
           })}
         </DataTable>
+        <Dialog open={!!cobroAAnular} onOpenChange={(open) => { if (!open) { setCobroAAnular(null); setMotivoAnulacion(""); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Anular cobro</DialogTitle></DialogHeader>
+            <p className="text-sm">
+              ¿Anular el cobro de {cobroAAnular && fmtMoney(cobroAAnular.monto)} del {cobroAAnular && fmtDate(cobroAAnular.created_at)}
+              {cobroAAnular?.forma_pago && ` (${formaPagoLabel[cobroAAnular.forma_pago] ?? cobroAAnular.forma_pago})`}?
+              El cobro quedará visible como anulado y se registrará una reversa en la caja abierta de la sucursal. Si la caja original ya cerró, ese cierre no se modificará.
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor="motivo-anular-cobro">Motivo de la anulación *</Label>
+              <Input id="motivo-anular-cobro" value={motivoAnulacion} onChange={(e) => setMotivoAnulacion(e.target.value)} maxLength={200} />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setCobroAAnular(null); setMotivoAnulacion(""); }} disabled={anularCobro.isPending}>Cancelar</Button>
+              <Button variant="destructive" onClick={() => cobroAAnular && anularCobro.mutate(cobroAAnular)} disabled={anularCobro.isPending || motivoAnulacion.trim().length < 3}>
+                {anularCobro.isPending ? "Anulando…" : "Confirmar anulación"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <DialogFooter><Button variant="outline" onClick={onClose}>Cerrar</Button></DialogFooter>
       </DialogContent>
     </Dialog>

@@ -93,6 +93,22 @@ describe("resumenPagos", () => {
     // El neto sigue siendo bruto menos devoluciones.
     expect(r.cobradoBruto - r.devoluciones).toBe(r.totalNeto);
   });
+
+  it("clasifica una reversa de cuenta corriente como anulación y conserva el neto", () => {
+    const cobros = normalizarCobros([], [
+      { fecha: "2026-10-21T12:00:00Z", sucursal_id: "s1", forma_pago: "CHEQUE", monto: 179646.15,
+        movimiento: { estado: "ANULADO" } },
+      { fecha: "2026-10-21T13:00:00Z", sucursal_id: "s1", forma_pago: "CHEQUE", monto: -179646.15,
+        detalle: { anulacion_de: "cobro-original", motivo: "Duplicado" } },
+    ]);
+    expect(cobros.map((c) => c.tipo)).toEqual(["ANULACION", "COBRO"]);
+    expect(cobros[1].anulado).toBe(true);
+    const r = resumenPagos(cobros);
+    expect(r.totalNeto).toBe(0);
+    expect(r.anulaciones).toBe(179646.15);
+    expect(r.devoluciones).toBe(0);
+    expect(r.cobradoBruto - r.devoluciones - r.anulaciones).toBe(r.totalNeto);
+  });
 });
 
 describe("serieDiaria", () => {

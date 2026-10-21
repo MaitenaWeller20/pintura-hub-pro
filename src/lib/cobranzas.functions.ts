@@ -1,10 +1,8 @@
 /** Cobranza de cuenta corriente: registra el pago de un cliente sobre su deuda.
  *  - NO toca stock (la mercadería ya salió al emitir el remito / factura interna).
  *  - SÍ entra a la caja del día con su forma de pago.
- *  - IMPUTA contra los comprobantes abiertos del cliente, del más viejo al más
- *    nuevo (FIFO). Antes no lo hacía: el cobro quedaba en un libro paralelo que
- *    nunca tocaba ventas.total_pagado, así que la solapa "Cuentas corrientes" de
- *    Reportes mostraba deuda que no bajaba nunca aunque el cliente pagara todo.
+ *  - El saldo de cuenta corriente se actualiza con un crédito en el libro de
+ *    movimientos. No modifica ventas.total_pagado ni imputa por factura.
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";

@@ -3805,6 +3805,10 @@ export type Database = {
         Returns: Json;
       };
       anular_compra: { Args: { p_compra_id: string }; Returns: undefined };
+      anular_cobranza: {
+        Args: { p_cliente_id: string; p_cobranza_id: string; p_monto: number; p_motivo: string };
+        Returns: number;
+      };
       anular_nota_credito: {
         Args: { p_venta_id: string };
         Returns: {

@@ -12,8 +12,9 @@ export type Cobro = {
   cliente?: string;
   sucursalId: string;
   formaPago: string;
-  monto: number; // firmado: negativo = devolución (NC)
-  tipo: "COBRO" | "DEVOLUCION";
+  monto: number; // firmado: negativo = devolución o anulación
+  tipo: "COBRO" | "DEVOLUCION" | "ANULACION";
+  anulado?: boolean;
   comprobante?: string;
 };
 
@@ -30,6 +31,8 @@ export type CobranzaRow = {
   sucursal_id: string;
   forma_pago: string;
   monto: number | string;
+  detalle?: unknown;
+  movimiento?: { estado: string } | Array<{ estado: string }> | null;
   cliente?: { razon_social?: string | null } | null;
 };
 
@@ -68,6 +71,9 @@ export function normalizarCobros(ventas: VentaRow[], cobranzas: CobranzaRow[]): 
 
   for (const c of cobranzas) {
     const monto = toNum(c.monto);
+    const esAnulacion = monto < 0 && c.detalle !== null && typeof c.detalle === "object" &&
+      !Array.isArray(c.detalle) && "anulacion_de" in c.detalle;
+    const movimiento = Array.isArray(c.movimiento) ? c.movimiento[0] : c.movimiento;
     cobros.push({
       fecha: c.fecha,
       origen: "CTA_CTE",
@@ -75,7 +81,8 @@ export function normalizarCobros(ventas: VentaRow[], cobranzas: CobranzaRow[]): 
       sucursalId: c.sucursal_id,
       formaPago: c.forma_pago,
       monto,
-      tipo: monto >= 0 ? "COBRO" : "DEVOLUCION",
+      tipo: monto >= 0 ? "COBRO" : esAnulacion ? "ANULACION" : "DEVOLUCION",
+      anulado: monto > 0 && movimiento?.estado === "ANULADO",
     });
   }
 
@@ -99,12 +106,12 @@ export function resumenPagos(cobros: Cobro[]): {
   totalNeto: number;
   efectivo: number;
   electronico: number;
-  // R10: montos BRUTOS (sólo cobros positivos) y devoluciones segregadas, para
-  // no mostrar una devolución como un pago negativo embebido en un medio.
+  // Montos brutos de cobros positivos y correcciones separadas por causa.
   cobradoBruto: number;
   efectivoBruto: number;
   electronicoBruto: number;
   devoluciones: number;
+  anulaciones: number;
   ticketPromedio: number;
   cantidad: number;
 } {
@@ -115,6 +122,7 @@ export function resumenPagos(cobros: Cobro[]): {
   let efectivoBruto = 0;
   let electronicoBruto = 0;
   let devoluciones = 0;
+  let anulaciones = 0;
   let sumPositivos = 0;
   let cantPositivos = 0;
 
@@ -129,7 +137,8 @@ export function resumenPagos(cobros: Cobro[]): {
       if (c.formaPago === "EFECTIVO") efectivoBruto += c.monto;
       else if (ELECTRONICO.has(c.formaPago)) electronicoBruto += c.monto;
     } else if (c.monto < 0) {
-      devoluciones += -c.monto; // valor absoluto
+      if (c.tipo === "ANULACION") anulaciones += -c.monto;
+      else devoluciones += -c.monto;
     }
   }
 
@@ -141,6 +150,7 @@ export function resumenPagos(cobros: Cobro[]): {
     efectivoBruto,
     electronicoBruto,
     devoluciones,
+    anulaciones,
     ticketPromedio: cantPositivos > 0 ? sumPositivos / cantPositivos : 0,
     cantidad: cantPositivos,
   };

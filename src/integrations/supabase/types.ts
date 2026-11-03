@@ -3258,6 +3258,8 @@ export type Database = {
           percepciones: number;
           periodo_asoc_desde: string | null;
           periodo_asoc_hasta: string | null;
+          remito_facturado_at: string | null;
+          remito_facturado_por: string | null;
           subtotal_sin_iva: number;
           sucursal_id: string;
           tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"];
@@ -3320,6 +3322,8 @@ export type Database = {
           percepciones?: number;
           periodo_asoc_desde?: string | null;
           periodo_asoc_hasta?: string | null;
+          remito_facturado_at?: string | null;
+          remito_facturado_por?: string | null;
           subtotal_sin_iva?: number;
           sucursal_id: string;
           tipo_comprobante: Database["public"]["Enums"]["tipo_comprobante"];
@@ -3382,6 +3386,8 @@ export type Database = {
           percepciones?: number;
           periodo_asoc_desde?: string | null;
           periodo_asoc_hasta?: string | null;
+          remito_facturado_at?: string | null;
+          remito_facturado_por?: string | null;
           subtotal_sin_iva?: number;
           sucursal_id?: string;
           tipo_comprobante?: Database["public"]["Enums"]["tipo_comprobante"];
@@ -3657,6 +3663,10 @@ export type Database = {
       };
     };
     Functions: {
+      convertir_remito_a_venta: {
+        Args: { p_venta_id: string };
+        Returns: Json;
+      };
       _anular_venta_core_20260823: {
         Args: { p_venta_id: string };
         Returns: {
@@ -4320,6 +4330,14 @@ export type Database = {
           cobranza_id: string;
           saldo: number;
         }[];
+      };
+      emitir_recibo_cobranza: {
+        Args: { p_cobranza_id: string };
+        Returns: Json;
+      };
+      recibos_cobranza_emitidos: {
+        Args: { p_cobranza_ids: string[] };
+        Returns: string[];
       };
       registrar_gasto: {
         Args: {

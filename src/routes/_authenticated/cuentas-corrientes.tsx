@@ -25,6 +25,7 @@ import { uuidv4 } from "@/lib/uuid";
 import { useServerFn } from "@tanstack/react-start";
 import { registrarCobranza } from "@/lib/cobranzas.functions";
 import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
+import { generarReciboCobranzaPdf, type ReciboCobranza } from "@/lib/impresos/recibo-cobranza";
 
 export const Route = createFileRoute("/_authenticated/cuentas-corrientes")({
   // Permite entrar directo a la cuenta de un cliente: /cuentas-corrientes?cliente=<id>
@@ -635,6 +636,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
   const { data: cu } = useCurrentUser();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [imprimiendoId, setImprimiendoId] = useState<string | null>(null);
+  const [facturandoId, setFacturandoId] = useState<string | null>(null);
   const [cobroAAnular, setCobroAAnular] = useState<any>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState("");
   const toggle = (id: string) =>
@@ -653,12 +655,30 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       const { data, error } = await supabase
         .from("cuenta_corriente_movimientos")
         .select(
-          "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, cobranza_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante)",
+          "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, cobranza_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante,remito_facturado_at)",
         )
         .eq("cliente_id", cliente.id)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data ?? [];
+    },
+  });
+  const idsCobrosAnulados = movs
+    .filter((m: any) => m.estado === "ANULADO" && m.cobranza_id && Number(m.monto) > 0)
+    .map((m: any) => m.cobranza_id as string);
+  const {
+    data: recibosEmitidos = new Set<string>(),
+    error: recibosError,
+    refetch: reintentarRecibos,
+  } = useQuery({
+    queryKey: ["recibos-cobranza-anulados", idsCobrosAnulados],
+    enabled: idsCobrosAnulados.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("recibos_cobranza_emitidos", {
+        p_cobranza_ids: idsCobrosAnulados,
+      });
+      if (error) throw error;
+      return new Set(data ?? []);
     },
   });
 
@@ -681,7 +701,9 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       if (
         venta.cliente_id !== cliente.id ||
         venta.estado === "ANULADA" ||
-        (venta.tipo_comprobante !== "REMITO" && venta.tipo_comprobante !== "REMITO_OBRA")
+        (venta.tipo_comprobante !== "REMITO" &&
+          venta.tipo_comprobante !== "REMITO_OBRA" &&
+          !(venta.tipo_comprobante === "VENTA" && venta.remito_facturado_at))
       ) {
         throw new Error("Este movimiento no corresponde a un remito activo del cliente.");
       }
@@ -692,7 +714,8 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       if (itemsError || !items) throw new Error("No se pudieron cargar los productos del remito.");
       if (items.length === 0) throw new Error("El remito no tiene productos para imprimir.");
 
-      const { doc, nombre } = generarComprobantePdf(venta, items, null);
+      const remito = venta.remito_facturado_at ? { ...venta, tipo_comprobante: "REMITO" } : venta;
+      const { doc, nombre } = generarComprobantePdf(remito, items, null);
       if (ventana) {
         doc.autoPrint();
         const url = URL.createObjectURL(doc.output("blob"));
@@ -707,6 +730,52 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       toast.error(error instanceof Error ? error.message : "No se pudo imprimir el remito.");
     } finally {
       setImprimiendoId(null);
+    }
+  };
+
+  const descargarRecibo = async (movimientoId: string, cobranzaId: string) => {
+    if (imprimiendoId) return;
+    setImprimiendoId(movimientoId);
+    try {
+      const { data, error } = await supabase.rpc("emitir_recibo_cobranza", {
+        p_cobranza_id: cobranzaId,
+      });
+      if (error) throw error;
+      const { doc, nombre } = generarReciboCobranzaPdf(data as unknown as ReciboCobranza);
+      doc.save(nombre);
+      toast.success("Recibo X descargado. Podés imprimirlo o enviarlo como PDF.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo generar el recibo.");
+    } finally {
+      setImprimiendoId(null);
+    }
+  };
+
+  const facturarRemito = async (
+    movimientoId: string,
+    ventaId: string,
+    descripcion: string,
+    monto: number,
+  ) => {
+    if (facturandoId) return;
+    if (
+      !window.confirm(
+        `¿Facturar ${descripcion} por ${fmtMoney(monto)}?\n\nEl stock y la deuda ya están registrados. La factura se emitirá desde la cola fiscal.`,
+      )
+    ) {
+      return;
+    }
+    setFacturandoId(movimientoId);
+    try {
+      const { error } = await supabase.rpc("convertir_remito_a_venta", { p_venta_id: ventaId });
+      if (error) throw error;
+      void qc.invalidateQueries({ queryKey: ["ctacte-cliente", cliente.id] });
+      window.location.assign(`/facturacion/cola?venta=${encodeURIComponent(ventaId)}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "No se pudo preparar la factura del remito.",
+      );
+      setFacturandoId(null);
     }
   };
 
@@ -776,6 +845,14 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
           </p>
         )}
         <h4 className="font-semibold">Movimientos de la cuenta</h4>
+        {recibosError && (
+          <p role="alert" className="text-sm text-destructive">
+            No se pudieron consultar los recibos anulados.{" "}
+            <button type="button" className="underline" onClick={() => void reintentarRecibos()}>
+              Reintentar
+            </button>
+          </p>
+        )}
         <DataTable
           columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber", ""]}
           isEmpty={movs.length === 0}
@@ -787,7 +864,8 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
             const esRemito =
               tieneVenta &&
               (m.venta?.tipo_comprobante === "REMITO" ||
-                m.venta?.tipo_comprobante === "REMITO_OBRA");
+                m.venta?.tipo_comprobante === "REMITO_OBRA" ||
+                (m.venta?.tipo_comprobante === "VENTA" && !!m.venta?.remito_facturado_at));
             const abierto = expanded.has(m.id);
             return (
               <Fragment key={m.id}>
@@ -818,6 +896,32 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                         Imprimir
                       </Button>
                     )}
+                    {!anulado &&
+                      m.venta?.tipo_comprobante === "REMITO" &&
+                      cu?.isAdmin &&
+                      cu?.facturacionV2Habilitada && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="ml-2 h-7 gap-1 px-2"
+                          disabled={facturandoId !== null}
+                          onClick={() =>
+                            void facturarRemito(m.id, m.venta_id, m.descripcion, Number(m.monto))
+                          }
+                        >
+                          {facturandoId === m.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                          Facturar remito
+                        </Button>
+                      )}
+                    {!anulado && m.venta?.remito_facturado_at && (
+                      <a
+                        className="ml-2 text-xs text-primary underline"
+                        href={`/facturacion/cola?venta=${encodeURIComponent(m.venta_id)}`}
+                      >
+                        Ver estado fiscal
+                      </a>
+                    )}
                     {m.forma_pago && <span className="text-xs text-muted-foreground"> · {formaPagoLabel[m.forma_pago] ?? m.forma_pago}</span>}
                     {anulado && <span className="ml-2"><StatusPill tone="neutral">anulado</StatusPill></span>}
                   </TableCell>
@@ -825,6 +929,19 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                   <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                   <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                   <TableCell>
+                    {(!anulado || recibosEmitidos.has(m.cobranza_id)) && m.cobranza_id && m.tipo === "CREDITO" && Number(m.monto) > 0 && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-1"
+                        disabled={imprimiendoId !== null}
+                        onClick={() => void descargarRecibo(m.id, m.cobranza_id)}
+                        aria-label={`Descargar recibo del cobro de ${fmtMoney(m.monto)}`}
+                      >
+                        {imprimiendoId === m.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+                        {anulado ? "Recibo anulado" : "Recibo PDF"}
+                      </Button>
+                    )}
                     {!anulado && m.cobranza_id && cu?.isAdmin && (
                       <Button size="sm" variant="ghost" onClick={() => setCobroAAnular(m)}>Anular cobro</Button>
                     )}

@@ -478,7 +478,12 @@ function VentasList() {
             <TableCell className="text-xs">
               {comprobanteFiscalVisible(v) ?? <span className="text-muted-foreground">—</span>}
             </TableCell>
-            <TableCell>{tipoComprobanteLabel[v.tipo_comprobante]}</TableCell>
+            <TableCell>
+              {tipoComprobanteLabel[v.tipo_comprobante]}
+              {v.remito_facturado_at && (
+                <p className="text-xs text-muted-foreground">Del remito {v.numero_comprobante}</p>
+              )}
+            </TableCell>
             <TableCell className="text-xs">{fmtDateTime(v.fecha)}</TableCell>
             <TableCell>
               <p>{v.cliente?.razon_social}</p>

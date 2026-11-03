@@ -114,6 +114,23 @@ describe("dibujarEncabezado", () => {
     expect(con).toBeGreaterThan(sin);
   });
 
+  it("acepta el logo JPEG que también permite el editor de emisores", () => {
+    const doc = docFalso();
+    doc.addImage = vi.fn();
+    dibujarEncabezado(doc, {
+      ...generalPaz,
+      emisor: { ...generalPaz.emisor, logo: "data:image/jpeg;base64,AAAA" },
+    });
+    expect(doc.addImage).toHaveBeenCalledWith(
+      expect.any(String),
+      "JPEG",
+      expect.any(Number),
+      expect.any(Number),
+      32,
+      16,
+    );
+  });
+
   // Que no salga el comprobante por un logo corrupto sería peor que el logo.
   it("un logo roto no impide que salga el comprobante", () => {
     const doc = docFalso();

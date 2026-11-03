@@ -98,7 +98,14 @@ export function dibujarEncabezado(
 
   if (logo) {
     try {
-      doc.addImage(logo, "PNG", x, y - 6, ANCHO_LOGO, ALTO_LOGO);
+      doc.addImage(
+        logo,
+        logo.startsWith("data:image/jpeg") ? "JPEG" : "PNG",
+        x,
+        y - 6,
+        ANCHO_LOGO,
+        ALTO_LOGO,
+      );
       y += ALTO_LOGO + 2;
     } catch {
       // Un logo roto no puede impedir que salga el comprobante.

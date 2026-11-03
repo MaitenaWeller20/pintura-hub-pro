@@ -4321,6 +4321,14 @@ export type Database = {
           saldo: number;
         }[];
       };
+      emitir_recibo_cobranza: {
+        Args: { p_cobranza_id: string };
+        Returns: Json;
+      };
+      recibos_cobranza_emitidos: {
+        Args: { p_cobranza_ids: string[] };
+        Returns: string[];
+      };
       registrar_gasto: {
         Args: {
           p_descripcion: string;

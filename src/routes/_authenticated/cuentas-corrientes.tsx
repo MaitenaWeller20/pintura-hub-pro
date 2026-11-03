@@ -25,6 +25,7 @@ import { uuidv4 } from "@/lib/uuid";
 import { useServerFn } from "@tanstack/react-start";
 import { registrarCobranza } from "@/lib/cobranzas.functions";
 import { generarComprobantePdf } from "@/lib/fiscal/comprobante-pdf";
+import { generarReciboCobranzaPdf, type ReciboCobranza } from "@/lib/impresos/recibo-cobranza";
 
 export const Route = createFileRoute("/_authenticated/cuentas-corrientes")({
   // Permite entrar directo a la cuenta de un cliente: /cuentas-corrientes?cliente=<id>
@@ -661,6 +662,24 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       return data ?? [];
     },
   });
+  const idsCobrosAnulados = movs
+    .filter((m: any) => m.estado === "ANULADO" && m.cobranza_id && Number(m.monto) > 0)
+    .map((m: any) => m.cobranza_id as string);
+  const {
+    data: recibosEmitidos = new Set<string>(),
+    error: recibosError,
+    refetch: reintentarRecibos,
+  } = useQuery({
+    queryKey: ["recibos-cobranza-anulados", idsCobrosAnulados],
+    enabled: idsCobrosAnulados.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("recibos_cobranza_emitidos", {
+        p_cobranza_ids: idsCobrosAnulados,
+      });
+      if (error) throw error;
+      return new Set(data ?? []);
+    },
+  });
 
   const imprimirRemito = async (movimientoId: string, ventaId: string) => {
     if (imprimiendoId) return;
@@ -705,6 +724,24 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
     } catch (error) {
       ventana?.close();
       toast.error(error instanceof Error ? error.message : "No se pudo imprimir el remito.");
+    } finally {
+      setImprimiendoId(null);
+    }
+  };
+
+  const descargarRecibo = async (movimientoId: string, cobranzaId: string) => {
+    if (imprimiendoId) return;
+    setImprimiendoId(movimientoId);
+    try {
+      const { data, error } = await supabase.rpc("emitir_recibo_cobranza", {
+        p_cobranza_id: cobranzaId,
+      });
+      if (error) throw error;
+      const { doc, nombre } = generarReciboCobranzaPdf(data as unknown as ReciboCobranza);
+      doc.save(nombre);
+      toast.success("Recibo X descargado. Podés imprimirlo o enviarlo como PDF.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo generar el recibo.");
     } finally {
       setImprimiendoId(null);
     }
@@ -776,6 +813,14 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
           </p>
         )}
         <h4 className="font-semibold">Movimientos de la cuenta</h4>
+        {recibosError && (
+          <p role="alert" className="text-sm text-destructive">
+            No se pudieron consultar los recibos anulados.{" "}
+            <button type="button" className="underline" onClick={() => void reintentarRecibos()}>
+              Reintentar
+            </button>
+          </p>
+        )}
         <DataTable
           columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber", ""]}
           isEmpty={movs.length === 0}
@@ -825,6 +870,19 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                   <TableCell className="text-right font-mono">{m.tipo === "DEBITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                   <TableCell className="text-right font-mono text-success">{m.tipo === "CREDITO" ? fmtMoney(m.monto) : "—"}</TableCell>
                   <TableCell>
+                    {(!anulado || recibosEmitidos.has(m.cobranza_id)) && m.cobranza_id && m.tipo === "CREDITO" && Number(m.monto) > 0 && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-1"
+                        disabled={imprimiendoId !== null}
+                        onClick={() => void descargarRecibo(m.id, m.cobranza_id)}
+                        aria-label={`Descargar recibo del cobro de ${fmtMoney(m.monto)}`}
+                      >
+                        {imprimiendoId === m.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+                        {anulado ? "Recibo anulado" : "Recibo PDF"}
+                      </Button>
+                    )}
                     {!anulado && m.cobranza_id && cu?.isAdmin && (
                       <Button size="sm" variant="ghost" onClick={() => setCobroAAnular(m)}>Anular cobro</Button>
                     )}

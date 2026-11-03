@@ -69,11 +69,19 @@ SELECT pg_temp.assert_true(
   (SELECT count(*) = 1 AND min(numero) = 'GPZ-REM-0058' FROM t_remito),
   'se creó el remito GPZ-REM-0058 en el esquema real'
 );
+CREATE TEMP TABLE t_cobro AS
+SELECT * FROM public.registrar_cobranza(
+  'bb110000-0000-4000-8000-000000000001',
+  (SELECT id FROM public.sucursales WHERE codigo = 'GENERALPAZ'),
+  5000, 'TRANSFERENCIA', '{"banco":"Banco de prueba","numero":"TEST-001"}'::jsonb,
+  'Prueba de recibo sobre remito facturado'
+);
 CREATE TEMP TABLE t_antes AS
 SELECT
   (SELECT count(*) FROM public.ventas) AS ventas,
   (SELECT count(*) FROM public.stock_movimientos) AS stock_movimientos,
   (SELECT count(*) FROM public.cuenta_corriente_movimientos) AS cuenta_movimientos,
+  (SELECT total_pagado FROM public.ventas WHERE id = (SELECT venta_id FROM t_remito)) AS total_pagado,
   (SELECT cantidad FROM public.stock_sucursal
    WHERE producto_id = 'cc110000-0000-4000-8000-000000000001'
      AND sucursal_id = (SELECT id FROM public.sucursales WHERE codigo = 'GENERALPAZ')) AS stock;
@@ -99,6 +107,8 @@ SELECT pg_temp.assert_true(
   (SELECT a.ventas = (SELECT count(*) FROM public.ventas)
       AND a.stock_movimientos = (SELECT count(*) FROM public.stock_movimientos)
       AND a.cuenta_movimientos = (SELECT count(*) FROM public.cuenta_corriente_movimientos)
+      AND a.total_pagado = (SELECT total_pagado FROM public.ventas
+                            WHERE id = (SELECT venta_id FROM t_remito))
       AND a.stock = (SELECT cantidad FROM public.stock_sucursal
         WHERE producto_id = 'cc110000-0000-4000-8000-000000000001'
           AND sucursal_id = (SELECT id FROM public.sucursales WHERE codigo = 'GENERALPAZ'))
@@ -118,13 +128,6 @@ SELECT pg_temp.assert_true(
   'la cola fiscal encuentra el remito convertido por ID aunque sea antiguo'
 );
 
-CREATE TEMP TABLE t_cobro AS
-SELECT * FROM public.registrar_cobranza(
-  'bb110000-0000-4000-8000-000000000001',
-  (SELECT id FROM public.sucursales WHERE codigo = 'GENERALPAZ'),
-  5000, 'TRANSFERENCIA', '{"banco":"Banco de prueba","numero":"TEST-001"}'::jsonb,
-  'Prueba de recibo sobre remito facturado'
-);
 CREATE TEMP TABLE t_despues_cobro AS
 SELECT
   (SELECT count(*) FROM public.cobranzas_cta_cte) AS cobranzas,

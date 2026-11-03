@@ -80,4 +80,48 @@ describe("Recibo X de cobranza", () => {
     expect(doc.output()).toContain("Detalle de forma de cobro:");
     expect(doc.getNumberOfPages()).toBeGreaterThan(1);
   });
+
+  it("muestra los comprobantes realmente imputados y el resto a cuenta", () => {
+    const { doc } = generarReciboCobranzaPdf({
+      ...recibo,
+      datos: { ...recibo.datos, version: 2,
+        imputaciones: [{
+          venta_id: "11111111-1111-1111-1111-111111111111",
+          monto: 150000.64, fecha: "2026-10-20T12:00:00Z",
+          numero: "GPZ-REM-0058", tipo: "VENTA", total: 583218.37,
+          afip_estado: "APROBADO", afip_modo: "PRODUCCION",
+          afip_simulado: false, afip_cbte_tipo: 1,
+          afip_punto_venta: 5, afip_numero: 123,
+        }],
+        a_cuenta: 50000,
+      },
+    });
+    const pdf = doc.output();
+    expect(pdf).toContain("Factura A 00005-00000123");
+    expect(pdf).toContain("GPZ-REM-0058");
+    expect(pdf).toContain("(Comprobante)");
+    expect(pdf).toContain("(Fecha)");
+    expect(pdf).toContain("(Aplicado)");
+    expect(pdf).toContain("Pago a cuenta corriente");
+    expect(pdf).toContain("sin imputar");
+    expect(pdf).toContain("(Total cobrado)");
+  });
+
+  it("pagina muchos comprobantes sin perder el total y rechaza importes incoherentes", () => {
+    const imputaciones = Array.from({ length: 40 }, (_, n) => ({
+      venta_id: `11111111-1111-1111-1111-${String(n).padStart(12, "0")}`,
+      monto: 100, fecha: "2026-10-20T12:00:00Z",
+      numero: `GPZ-FAIV-${String(n).padStart(4, "0")}`,
+      tipo: "FAC_INTERNA_CTA_CTE", total: 100,
+    }));
+    const { doc } = generarReciboCobranzaPdf({ ...recibo,
+      datos: { ...recibo.datos, monto: 4000, version: 2, imputaciones, a_cuenta: 0 },
+    });
+    expect(doc.getNumberOfPages()).toBeGreaterThan(1);
+    expect(doc.output()).toContain("GPZ-FAIV-0039");
+    expect(doc.output()).toContain("(Total cobrado)");
+    expect(() => generarReciboCobranzaPdf({ ...recibo,
+      datos: { ...recibo.datos, monto: 3000, imputaciones, a_cuenta: 0 },
+    })).toThrow("no coinciden");
+  });
 });

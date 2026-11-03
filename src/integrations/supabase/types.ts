@@ -4323,12 +4323,50 @@ export type Database = {
           p_detalle?: Json;
           p_forma_pago: string;
           p_monto: number;
-          p_observaciones?: string;
+          p_observaciones?: string | null;
           p_sucursal_id: string;
         };
         Returns: {
           cobranza_id: string;
           saldo: number;
+        }[];
+      };
+      registrar_cobranza_imputada: {
+        Args: {
+          p_cliente_id: string;
+          p_sucursal_id: string;
+          p_monto: number;
+          p_forma_pago: string;
+          p_detalle: Json;
+          p_observaciones: string | null;
+          p_imputaciones: Json;
+        };
+        Returns: { cobranza_id: string; saldo: number }[];
+      };
+      imputar_cobranza: {
+        Args: { p_cobranza_id: string; p_imputaciones: Json };
+        Returns: number;
+      };
+      cc_comprobantes_imputables: {
+        Args: { p_cliente_id: string; p_sucursal_id: string };
+        Returns: {
+          venta_id: string;
+          numero: string;
+          tipo: string;
+          fecha: string;
+          total: number;
+          disponible: number;
+        }[];
+      };
+      cc_imputaciones_cliente: {
+        Args: { p_cliente_id: string };
+        Returns: {
+          cobranza_id: string;
+          venta_id: string;
+          monto: number;
+          numero: string;
+          tipo: string;
+          activa: boolean;
         }[];
       };
       emitir_recibo_cobranza: {

@@ -8,6 +8,22 @@ export type ReciboCobranza = {
   emitido_at: string;
   anulado: boolean;
   datos: {
+    version?: number;
+    imputaciones?: {
+      venta_id: string;
+      monto: number;
+      fecha: string;
+      numero: string;
+      tipo: string;
+      total: number;
+      afip_numero?: number | null;
+      afip_punto_venta?: number | null;
+      afip_cbte_tipo?: number | null;
+      afip_estado?: string | null;
+      afip_modo?: string | null;
+      afip_simulado?: boolean | null;
+    }[];
+    a_cuenta?: number;
     cobranza_id: string;
     fecha_cobro: string;
     monto: number;
@@ -37,8 +53,26 @@ const fechaHora = (fecha: string) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(fecha));
+const fechaCorta = (fecha: string) =>
+  new Intl.DateTimeFormat("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    day: "2-digit", month: "2-digit", year: "numeric",
+  }).format(new Date(fecha));
 
 const texto = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+function nombreComprobante(i: NonNullable<ReciboCobranza["datos"]["imputaciones"]>[number]) {
+  const tipoFiscal: Record<number, string> = { 1: "Factura A", 6: "Factura B", 11: "Factura C" };
+  if (i.afip_estado === "APROBADO" && i.afip_modo === "PRODUCCION"
+    && !i.afip_simulado && i.afip_numero && i.afip_punto_venta && i.afip_cbte_tipo
+    && tipoFiscal[i.afip_cbte_tipo]) {
+    return `${tipoFiscal[i.afip_cbte_tipo]} ${String(i.afip_punto_venta).padStart(5, "0")}-${String(i.afip_numero).padStart(8, "0")} (${i.numero})`;
+  }
+  const tipo = i.tipo === "VENTA" && i.numero.includes("-REM-")
+    ? "Remito"
+    : i.tipo.replaceAll("_", " ");
+  return `${tipo} ${i.numero}`;
+}
 
 export function generarReciboCobranzaPdf(recibo: ReciboCobranza) {
   const datos = recibo?.datos;
@@ -54,6 +88,13 @@ export function generarReciboCobranzaPdf(recibo: ReciboCobranza) {
     monto > MAXIMO_EN_LETRAS
   ) {
     throw new Error("El recibo tiene datos incompletos. No se puede imprimir.");
+  }
+  const imputaciones = datos.imputaciones ?? [];
+  const imputado = imputaciones.reduce((sum, i) => sum + Number(i.monto), 0);
+  if (imputaciones.some((i) => !i.venta_id || !i.numero || !Number.isFinite(Number(i.monto)) || Number(i.monto) <= 0)
+    || imputado > monto + 0.001
+    || (datos.a_cuenta !== undefined && Math.abs(monto - imputado - Number(datos.a_cuenta)) > 0.001)) {
+    throw new Error("Las imputaciones del recibo no coinciden con el cobro.");
   }
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -165,18 +206,47 @@ export function generarReciboCobranzaPdf(recibo: ReciboCobranza) {
   }
   y += altoCliente + 5;
 
-  doc.setFillColor(225, 225, 225);
-  doc.rect(14, y, 182, 8, "FD");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.text("Detalle de la cobranza", 18, y + 5.5);
-  doc.text("Importe", 191, y + 5.5, { align: "right" });
-  y += 8;
-  doc.rect(14, y, 182, 12);
-  doc.setFont("helvetica", "normal");
-  doc.text("Pago a cuenta corriente (sin imputación por comprobante)", 18, y + 7);
-  doc.text(fmtMoney(monto), 191, y + 7, { align: "right" });
-  y += 19;
+  const encabezadoDetalle = () => {
+    doc.setFillColor(225, 225, 225);
+    doc.rect(14, y, 182, 8, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.text(imputaciones.length ? "Comprobante" : "Detalle de la cobranza", 18, y + 5.5);
+    if (imputaciones.length) {
+      doc.text("Fecha", 112, y + 5.5);
+      doc.text("Total", 158, y + 5.5, { align: "right" });
+    }
+    doc.text(imputaciones.length ? "Aplicado" : "Importe", 191, y + 5.5, { align: "right" });
+    y += 8;
+  };
+  encabezadoDetalle();
+  const renglones = imputaciones.length
+    ? [...imputaciones.map((i) => ({ concepto: nombreComprobante(i), importe: Number(i.monto),
+         fecha: fechaCorta(i.fecha), total: Number(i.total) })),
+       ...(monto - imputado > 0.001 ? [{ concepto: "Pago a cuenta corriente (sin imputar)", importe: monto - imputado }] : [])]
+    : [{ concepto: "Pago a cuenta corriente (sin imputación por comprobante)", importe: monto }];
+  for (const renglon of renglones) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    const lineas = doc.splitTextToSize(renglon.concepto, imputaciones.length ? 86 : 135) as string[];
+    const alto = Math.max(12, lineas.length * 4.5 + 4);
+    if (y + alto > 255) {
+      doc.addPage();
+      y = 20;
+      encabezadoDetalle();
+    }
+    doc.rect(14, y, 182, alto);
+    doc.text(lineas, 18, y + 6);
+    if ("fecha" in renglon && renglon.fecha) doc.text(renglon.fecha, 112, y + 6);
+    if ("total" in renglon && renglon.total !== undefined) {
+      doc.text(fmtMoney(renglon.total), 158, y + 6, { align: "right" });
+    }
+    doc.text(fmtMoney(renglon.importe), 191, y + 6, { align: "right" });
+    y += alto;
+  }
+  y += 7;
+
+  if (y > 250) { doc.addPage(); y = 20; }
 
   doc.setFont("helvetica", "bold");
   doc.text("Total cobrado", 150, y, { align: "right" });
@@ -185,6 +255,7 @@ export function generarReciboCobranzaPdf(recibo: ReciboCobranza) {
 
   const letras = doc.splitTextToSize(montoEnLetras(monto).toUpperCase(), 104) as string[];
   const altoLetras = Math.max(15, letras.length * 5 + 5);
+  if (y + altoLetras > 255) { doc.addPage(); y = 20; }
   doc.setFont("helvetica", "normal");
   doc.text("Total cobrado en letras:", 14, y + 6);
   doc.roundedRect(82, y, 114, altoLetras, 2, 2);

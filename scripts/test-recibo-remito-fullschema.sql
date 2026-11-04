@@ -86,6 +86,26 @@ SELECT
    WHERE producto_id = 'cc110000-0000-4000-8000-000000000001'
      AND sucursal_id = (SELECT id FROM public.sucursales WHERE codigo = 'GENERALPAZ')) AS stock;
 
+CREATE TEMP TABLE t_imputacion AS
+SELECT public.imputar_cobranza(
+  (SELECT cobranza_id FROM t_cobro),
+  jsonb_build_array(jsonb_build_object(
+    'venta_id', (SELECT venta_id FROM t_remito), 'monto', 3000
+  ))
+) AS monto;
+SELECT pg_temp.assert_true(
+  (SELECT monto = 3000 FROM t_imputacion)
+  AND (SELECT count(*) = 1 FROM public.cobranza_imputaciones i
+       WHERE i.cobranza_id = (SELECT cobranza_id FROM t_cobro)
+         AND i.venta_id = (SELECT venta_id FROM t_remito))
+  AND (SELECT a.cuenta_movimientos = (SELECT count(*) FROM public.cuenta_corriente_movimientos)
+       AND a.stock_movimientos = (SELECT count(*) FROM public.stock_movimientos)
+       AND a.total_pagado = (SELECT total_pagado FROM public.ventas
+                              WHERE id = (SELECT venta_id FROM t_remito))
+       FROM t_antes a),
+  'el cobro se imputó al remito sin alterar saldo, stock ni total_pagado'
+);
+
 CREATE TEMP TABLE t_conversion AS
 SELECT public.convertir_remito_a_venta((SELECT venta_id FROM t_remito)) AS datos;
 SELECT pg_temp.assert_true(
@@ -127,6 +147,33 @@ SELECT pg_temp.assert_true(
   )),
   'la cola fiscal encuentra el remito convertido por ID aunque sea antiguo'
 );
+SELECT pg_temp.assert_true(
+  (SELECT count(*) = 1 FROM public.cobranza_imputaciones i
+   WHERE i.venta_id = (SELECT venta_id FROM t_remito)
+     AND i.cobranza_id = (SELECT cobranza_id FROM t_cobro)),
+  'la conversión conserva la imputación por el mismo venta_id'
+);
+
+CREATE TEMP TABLE t_cobro_imputado AS
+SELECT * FROM public.registrar_cobranza_imputada(
+  'bb110000-0000-4000-8000-000000000001',
+  (SELECT id FROM public.sucursales WHERE codigo = 'GENERALPAZ'),
+  1000, 'TRANSFERENCIA', '{}'::jsonb, NULL,
+  jsonb_build_array(jsonb_build_object(
+    'venta_id', (SELECT venta_id FROM t_remito), 'monto', 1000
+  ))
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*) = 1 FROM t_cobro_imputado)
+  AND (SELECT c.caja_sesion_id IS NOT NULL AND m.monto = 1000
+       FROM public.cobranzas_cta_cte c
+       JOIN public.cuenta_corriente_movimientos m ON m.cobranza_id = c.id
+       WHERE c.id = (SELECT cobranza_id FROM t_cobro_imputado))
+  AND (SELECT count(*) = 1 FROM public.cobranza_imputaciones
+       WHERE cobranza_id = (SELECT cobranza_id FROM t_cobro_imputado))
+  AND (SELECT total_pagado = 0 FROM public.ventas WHERE id = (SELECT venta_id FROM t_remito)),
+  'el nuevo cobro se registró en caja y libro con imputación atómica sin tocar ventas.total_pagado'
+);
 
 CREATE TEMP TABLE t_despues_cobro AS
 SELECT
@@ -138,6 +185,9 @@ SELECT public.emitir_recibo_cobranza((SELECT cobranza_id FROM t_cobro)) AS datos
 SELECT pg_temp.assert_true(
   (SELECT datos->>'numero' LIKE 'GPZ-RX-%'
       AND (datos#>>'{datos,monto}')::numeric = 5000
+      AND (datos#>>'{datos,a_cuenta}')::numeric = 2000
+      AND jsonb_array_length(datos#>'{datos,imputaciones}') = 1
+      AND datos#>>'{datos,imputaciones,0,numero}' = 'GPZ-REM-0058'
       AND datos#>>'{datos,cliente,razon_social}' = 'CLIENTE PRUEBA REMITO FACTURABLE'
     FROM t_recibo),
   'recibo numerado con cliente, importe y sucursal correctos'
@@ -153,6 +203,33 @@ SELECT pg_temp.assert_true(
   (SELECT public.emitir_recibo_cobranza(cobranza_id) =
     (SELECT datos FROM t_recibo) FROM t_cobro),
   'reimpresión conserva número y snapshot'
+);
+
+CREATE TEMP TABLE t_recibo_imputado AS
+SELECT public.emitir_recibo_cobranza((SELECT cobranza_id FROM t_cobro_imputado)) AS datos;
+SELECT pg_temp.assert_true(
+  (SELECT (datos#>>'{datos,a_cuenta}')::numeric = 0
+      AND jsonb_array_length(datos#>'{datos,imputaciones}') = 1
+      FROM t_recibo_imputado),
+  'el segundo recibo lista la factura realmente imputada'
+);
+CREATE TEMP TABLE t_saldo_antes_anular AS
+SELECT public.cc_saldo('bb110000-0000-4000-8000-000000000001') AS saldo;
+SELECT public.anular_cobranza(
+  (SELECT cobranza_id FROM t_cobro_imputado),
+  'bb110000-0000-4000-8000-000000000001', 1000,
+  'Prueba de anulación de cobro imputado'
+);
+SELECT pg_temp.assert_true(
+  (SELECT public.cc_saldo('bb110000-0000-4000-8000-000000000001') = saldo + 1000
+   FROM t_saldo_antes_anular)
+  AND (SELECT i.monto = 1000 AND NOT i.activa
+       FROM public.cc_imputaciones_cliente('bb110000-0000-4000-8000-000000000001') i
+       WHERE i.cobranza_id = (SELECT cobranza_id FROM t_cobro_imputado))
+  AND (SELECT r.datos->'datos' = (SELECT datos->'datos' FROM t_recibo_imputado)
+       AND (r.datos->>'anulado')::boolean
+       FROM (SELECT public.emitir_recibo_cobranza((SELECT cobranza_id FROM t_cobro_imputado)) AS datos) r),
+  'anular el cobro libera su imputación, restaura saldo y preserva el snapshot del recibo'
 );
 
 SET LOCAL ROLE authenticated;

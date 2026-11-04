@@ -229,6 +229,9 @@ function CtaCtePage() {
             qc.invalidateQueries({ queryKey: ["ctacte-saldos"] });
             qc.invalidateQueries({ queryKey: ["ctacte-cliente", sel.id] });
             qc.invalidateQueries({ queryKey: ["ctacte-resumen", sel.id] });
+            qc.invalidateQueries({ queryKey: ["cc-imputaciones-cliente", sel.id] });
+            qc.invalidateQueries({ queryKey: ["cc-comprobantes-imputables", sel.id] });
+            qc.invalidateQueries({ queryKey: ["recibos-cobranza-emitidos"] });
             setOpenPago(false);
           }}
         />
@@ -638,6 +641,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
   const [imprimiendoId, setImprimiendoId] = useState<string | null>(null);
   const [facturandoId, setFacturandoId] = useState<string | null>(null);
   const [cobroAAnular, setCobroAAnular] = useState<any>(null);
+  const [cobroAImputar, setCobroAImputar] = useState<any>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState("");
   const toggle = (id: string) =>
     setExpanded((s) => {
@@ -655,7 +659,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       const { data, error } = await supabase
         .from("cuenta_corriente_movimientos")
         .select(
-          "id, created_at, tipo, monto, estado, forma_pago, descripcion, venta_id, cobranza_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante,remito_facturado_at)",
+          "id, created_at, tipo, monto, estado, forma_pago, descripcion, sucursal_id, venta_id, cobranza_id, sucursal:sucursales(nombre), venta:ventas(tipo_comprobante,remito_facturado_at)",
         )
         .eq("cliente_id", cliente.id)
         .order("created_at", { ascending: false });
@@ -663,22 +667,31 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       return data ?? [];
     },
   });
-  const idsCobrosAnulados = movs
-    .filter((m: any) => m.estado === "ANULADO" && m.cobranza_id && Number(m.monto) > 0)
+  const idsCobros = movs
+    .filter((m: any) => m.cobranza_id && Number(m.monto) > 0)
     .map((m: any) => m.cobranza_id as string);
   const {
     data: recibosEmitidos = new Set<string>(),
     error: recibosError,
+    isFetching: consultandoRecibos,
     refetch: reintentarRecibos,
   } = useQuery({
-    queryKey: ["recibos-cobranza-anulados", idsCobrosAnulados],
-    enabled: idsCobrosAnulados.length > 0,
+    queryKey: ["recibos-cobranza-emitidos", idsCobros],
+    enabled: idsCobros.length > 0,
     queryFn: async () => {
       const { data, error } = await supabase.rpc("recibos_cobranza_emitidos", {
-        p_cobranza_ids: idsCobrosAnulados,
+        p_cobranza_ids: idsCobros,
       });
       if (error) throw error;
       return new Set(data ?? []);
+    },
+  });
+  const { data: imputaciones = [], error: imputacionesError, isFetching: consultandoImputaciones } = useQuery({
+    queryKey: ["cc-imputaciones-cliente", cliente.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("cc_imputaciones_cliente", { p_cliente_id: cliente.id });
+      if (error) throw error;
+      return data ?? [];
     },
   });
 
@@ -743,6 +756,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
       if (error) throw error;
       const { doc, nombre } = generarReciboCobranzaPdf(data as unknown as ReciboCobranza);
       doc.save(nombre);
+      void qc.invalidateQueries({ queryKey: ["recibos-cobranza-emitidos"] });
       toast.success("Recibo X descargado. Podés imprimirlo o enviarlo como PDF.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo generar el recibo.");
@@ -847,12 +861,13 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
         <h4 className="font-semibold">Movimientos de la cuenta</h4>
         {recibosError && (
           <p role="alert" className="text-sm text-destructive">
-            No se pudieron consultar los recibos anulados.{" "}
+            No se pudieron consultar los recibos emitidos.{" "}
             <button type="button" className="underline" onClick={() => void reintentarRecibos()}>
               Reintentar
             </button>
           </p>
         )}
+        {imputacionesError && <p role="alert" className="text-sm text-destructive">No se pudieron consultar las imputaciones.</p>}
         <DataTable
           columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber", ""]}
           isEmpty={movs.length === 0}
@@ -878,6 +893,23 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                         {m.descripcion}
                       </button>
                     ) : m.descripcion}
+                    {m.venta_id && imputaciones.some((i) => i.venta_id === m.venta_id && i.activa) && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Cobros imputados: {fmtMoney(imputaciones.filter((i) => i.venta_id === m.venta_id && i.activa)
+                          .reduce((total, i) => total + Number(i.monto), 0))}
+                      </div>
+                    )}
+                    {m.cobranza_id && imputaciones.some((i) => i.cobranza_id === m.cobranza_id) && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Aplicado a: {imputaciones.filter((i) => i.cobranza_id === m.cobranza_id).map((i) =>
+                          `${i.tipo.replaceAll("_", " ")} ${i.numero}: ${fmtMoney(i.monto)}${anulado ? " (cobro anulado)" : i.activa ? "" : " (comprobante anulado)"}`,
+                        ).join(" · ")}
+                      </div>
+                    )}
+                    {m.cobranza_id && !anulado && !imputacionesError && !consultandoImputaciones
+                      && !imputaciones.some((i) => i.cobranza_id === m.cobranza_id) && (
+                        <div className="text-xs text-muted-foreground mt-1">Sin imputar · pago a cuenta</div>
+                      )}
                     {esRemito && !anulado && (
                       <Button
                         type="button"
@@ -945,6 +977,11 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
                     {!anulado && m.cobranza_id && cu?.isAdmin && (
                       <Button size="sm" variant="ghost" onClick={() => setCobroAAnular(m)}>Anular cobro</Button>
                     )}
+                    {!anulado && m.cobranza_id && cu?.isAdmin && !recibosEmitidos.has(m.cobranza_id)
+                      && !imputaciones.some((i) => i.cobranza_id === m.cobranza_id)
+                      && !imputacionesError && !recibosError && !consultandoImputaciones && !consultandoRecibos && (
+                      <Button size="sm" variant="outline" onClick={() => setCobroAImputar(m)}>Imputar</Button>
+                    )}
                   </TableCell>
                 </TableRow>
                 {tieneVenta && abierto && (
@@ -958,6 +995,14 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
             );
           })}
         </DataTable>
+        {cobroAImputar && (
+          <ImputarCobroDialog
+            movimiento={cobroAImputar}
+            clienteId={cliente.id}
+            onClose={() => setCobroAImputar(null)}
+            onSaved={() => { setCobroAImputar(null); void qc.invalidateQueries(); }}
+          />
+        )}
         <Dialog open={!!cobroAAnular} onOpenChange={(open) => { if (!open) { setCobroAAnular(null); setMotivoAnulacion(""); } }}>
           <DialogContent>
             <DialogHeader><DialogTitle>Anular cobro</DialogTitle></DialogHeader>
@@ -1023,9 +1068,34 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
   const [forma, setForma] = useState<string>("EFECTIVO");
   const [detalle, setDetalle] = useState<Record<string, any>>({});
   const [obs, setObs] = useState("");
+  const [imputaciones, setImputaciones] = useState<ImputacionElegida[]>([]);
   const cobrarFn = useServerFn(registrarCobranza);
 
   const effSuc = sucId || cu?.sucursal?.id || "";
+  const { data: comprobantes = [], error: comprobantesError, isLoading: cargandoComprobantes,
+    isFetching: consultandoComprobantes } = useQuery({
+    queryKey: ["cc-comprobantes-imputables", cliente.id, effSuc],
+    enabled: open && !!effSuc,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("cc_comprobantes_imputables", {
+        p_cliente_id: cliente.id, p_sucursal_id: effSuc,
+      });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  useEffect(() => {
+    if (!open) setImputaciones([]);
+  }, [open]);
+  useEffect(() => {
+    if (!cargandoComprobantes && !comprobantesError) {
+      setImputaciones((actuales) => {
+        const vigentes = actuales.filter((i) => comprobantes.some((c) => c.venta_id === i.venta_id));
+        return vigentes.length === actuales.length ? actuales : vigentes;
+      });
+    }
+  }, [comprobantes, cargandoComprobantes, comprobantesError]);
+  const errorImputacion = validarImputaciones(imputaciones, comprobantes, Number(monto ?? 0));
   const m = useMutation({
     mutationFn: async () =>
       cobrarFn({
@@ -1036,6 +1106,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
           forma_pago: forma as (typeof formasCobro)[number],
           detalle,
           observaciones: obs || null,
+          imputaciones,
         },
       }),
     onSuccess: (r: any) => {
@@ -1045,7 +1116,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
           ? `Cobro registrado. Queda ${fmtMoney(Math.abs(saldo))} a favor del cliente.`
           : `Cobro registrado. Saldo: ${fmtMoney(saldo)}.`,
       );
-      onSaved(); setMonto(null); setObs(""); setDetalle({});
+      onSaved(); setMonto(null); setObs(""); setDetalle({}); setImputaciones([]);
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -1061,7 +1132,7 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
             {cu?.isAdmin && (
               <div className="col-span-2">
                 <Label>Sucursal (caja donde entra)</Label>
-                <Select value={sucId} onValueChange={setSucId}>
+                <Select value={sucId} onValueChange={(id) => { setSucId(id); setImputaciones([]); }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccionar…" />
                   </SelectTrigger>
@@ -1142,18 +1213,180 @@ function PagoDialog({ open, onClose, cliente, onSaved }: any) {
             </div>
           </div>
         </SectionCard>
+        <SectionCard title="Aplicación del cobro">
+          <p className="text-xs text-muted-foreground mb-2">
+            Elegí los comprobantes y el importe de cada uno. El resto queda a cuenta; no cambia el saldo ni el stock.
+            El importe disponible por comprobante no es la deuda exigible: puede haber cobros anteriores sin imputar.
+          </p>
+          <AvisoSaldoGeneral clienteId={cliente.id} />
+          <ImputacionesEditor
+            comprobantes={comprobantes}
+            valor={imputaciones}
+            onChange={setImputaciones}
+            monto={Number(monto ?? 0)}
+            cargando={cargandoComprobantes}
+            errorCarga={!!comprobantesError}
+          />
+          {errorImputacion && <p role="alert" className="text-xs text-destructive mt-2">{errorImputacion}</p>}
+        </SectionCard>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancelar
           </Button>
           <Button
             onClick={() => m.mutate()}
-            disabled={!effSuc || !monto || monto <= 0 || m.isPending}
+            disabled={!effSuc || !monto || monto <= 0 || m.isPending || !!errorImputacion
+              || (imputaciones.length > 0 && (!!comprobantesError || consultandoComprobantes))}
           >
             Registrar cobro
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type ImputacionElegida = { venta_id: string; monto: number };
+type ComprobanteImputable = {
+  venta_id: string; numero: string; tipo: string; fecha: string;
+  total: number; disponible: number;
+};
+
+function validarImputaciones(
+  elegidas: ImputacionElegida[], comprobantes: ComprobanteImputable[], montoCobro: number,
+) {
+  if (elegidas.length > 100) return "Seleccioná como máximo 100 comprobantes.";
+  let centavos = 0;
+  const ids = new Set<string>();
+  for (const item of elegidas) {
+    const comprobante = comprobantes.find((c) => c.venta_id === item.venta_id);
+    const importe = Math.round(item.monto * 100);
+    if (!comprobante || ids.has(item.venta_id) || !Number.isSafeInteger(importe)
+      || importe <= 0 || Math.abs(item.monto * 100 - importe) > 0.000001
+      || importe > Math.round(Number(comprobante.disponible) * 100)) {
+      return "Revisá los importes: cada uno debe ser positivo y no superar lo disponible del comprobante.";
+    }
+    ids.add(item.venta_id);
+    centavos += importe;
+  }
+  if (centavos > Math.round(montoCobro * 100)) return "La suma imputada supera el cobro.";
+  return "";
+}
+
+function ImputacionesEditor({ comprobantes, valor, onChange, monto, cargando, errorCarga }: {
+  comprobantes: ComprobanteImputable[];
+  valor: ImputacionElegida[];
+  onChange: (items: ImputacionElegida[]) => void;
+  monto: number;
+  cargando: boolean;
+  errorCarga: boolean;
+}) {
+  const imputado = valor.reduce((s, i) => s + Math.round(i.monto * 100), 0) / 100;
+  const cambiar = (venta_id: string, nuevo: number | null) => {
+    onChange([
+      ...valor.filter((i) => i.venta_id !== venta_id),
+      ...(nuevo && nuevo > 0 ? [{ venta_id, monto: nuevo }] : []),
+    ]);
+  };
+  return (
+    <div className="space-y-2">
+      {cargando && <p className="text-xs text-muted-foreground">Cargando comprobantes…</p>}
+      {errorCarga && <p role="alert" className="text-xs text-destructive">No se pudieron cargar los comprobantes. Podés registrar el cobro a cuenta.</p>}
+      {!cargando && !errorCarga && comprobantes.length === 0 && (
+        <p className="text-xs text-muted-foreground">No hay comprobantes disponibles para imputar en esta sucursal.</p>
+      )}
+      {comprobantes.map((c) => (
+        <div key={c.venta_id} className="grid grid-cols-[1fr_120px] gap-3 items-center text-sm border-b py-1">
+          <div>
+            <div>{c.tipo.replaceAll("_", " ")} {c.numero}</div>
+            <div className="text-xs text-muted-foreground">{fmtDate(c.fecha)} · Disponible: {fmtMoney(c.disponible)}</div>
+          </div>
+          <div>
+            <Label htmlFor={`imputar-${c.venta_id}`} className="sr-only">Importe para {c.numero}</Label>
+            <NumberInput
+              id={`imputar-${c.venta_id}`}
+              value={valor.find((i) => i.venta_id === c.venta_id)?.monto ?? null}
+              onValueChange={(n) => cambiar(c.venta_id, n)}
+            />
+          </div>
+        </div>
+      ))}
+      <p className="text-xs font-medium">Imputado: {fmtMoney(imputado)} · A cuenta: {fmtMoney(Math.max(0, monto - imputado))}</p>
+    </div>
+  );
+}
+
+function ImputarCobroDialog({ movimiento, clienteId, onClose, onSaved }: {
+  movimiento: any; clienteId: string; onClose: () => void; onSaved: () => void;
+}) {
+  const [valor, setValor] = useState<ImputacionElegida[]>([]);
+  const monto = Number(movimiento.monto);
+  const { data: comprobantes = [], error, isLoading, isFetching } = useQuery({
+    queryKey: ["cc-comprobantes-imputables", clienteId, movimiento.sucursal_id],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("cc_comprobantes_imputables", {
+        p_cliente_id: clienteId, p_sucursal_id: movimiento.sucursal_id,
+      });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  useEffect(() => {
+    if (!isFetching && !error) {
+      setValor((actuales) => {
+        const vigentes = actuales.filter((i) => comprobantes.some((c) => c.venta_id === i.venta_id));
+        return vigentes.length === actuales.length ? actuales : vigentes;
+      });
+    }
+  }, [comprobantes, isFetching, error]);
+  const validacion = validarImputaciones(valor, comprobantes, monto);
+  const guardar = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.rpc("imputar_cobranza", {
+        p_cobranza_id: movimiento.cobranza_id,
+        p_imputaciones: valor,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Cobro imputado. Ya podés emitir el recibo con los comprobantes."); onSaved(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Imputar cobro de {fmtMoney(monto)}</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground">Podés imputarlo una sola vez, antes de emitir su recibo. El saldo no cambia.</p>
+        <AvisoSaldoGeneral clienteId={clienteId} />
+        <ImputacionesEditor comprobantes={comprobantes} valor={valor} onChange={setValor}
+          monto={monto} cargando={isLoading} errorCarga={!!error} />
+        {validacion && <p role="alert" className="text-xs text-destructive">{validacion}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => guardar.mutate()} disabled={guardar.isPending || isFetching || !!error || !!validacion || valor.length === 0}>
+            Guardar imputación
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AvisoSaldoGeneral({ clienteId }: { clienteId: string }) {
+  const { data, error } = useQuery({
+    queryKey: ["ctacte-resumen", clienteId],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("cc_resumen", { _cliente_id: clienteId });
+      if (error) throw error;
+      return Array.isArray(data) ? data[0] : data;
+    },
+  });
+  if (error) return <p className="text-xs text-warning">No se pudo consultar el saldo general. Verificá la cuenta antes de imputar.</p>;
+  if (!data) return null;
+  const saldo = Number(data.saldo ?? 0);
+  return (
+    <p className="text-xs text-muted-foreground mb-2">
+      Saldo general: {fmtMoney(Math.abs(saldo))}{saldo < 0 ? " a favor del cliente" : saldo > 0 ? " de deuda" : " (saldado)"}.
+      {saldo <= 0 && " Los importes disponibles por comprobante pueden estar cubiertos por créditos generales previos."}
+    </p>
   );
 }

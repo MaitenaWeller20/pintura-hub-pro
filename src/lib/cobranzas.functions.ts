@@ -1,9 +1,4 @@
-/** Cobranza de cuenta corriente: registra el pago de un cliente sobre su deuda.
- *  - NO toca stock (la mercadería ya salió al emitir el remito / factura interna).
- *  - SÍ entra a la caja del día con su forma de pago.
- *  - El saldo de cuenta corriente se actualiza con un crédito en el libro de
- *    movimientos. No modifica ventas.total_pagado ni imputa por factura.
- */
+/** El crédito del libro determina el saldo; la imputación solo documenta su destino. */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
@@ -16,6 +11,10 @@ const cobranzaSchema = z.object({
   forma_pago: z.enum(formasCobro),
   detalle: z.record(z.string(), z.any()).default({}),
   observaciones: z.string().optional().nullable(),
+  imputaciones: z.array(z.object({
+    venta_id: z.string().uuid(),
+    monto: z.number().positive().refine((n) => Math.abs(Math.round(n * 100) - n * 100) < 0.000001),
+  })).max(100).default([]),
 });
 
 export const registrarCobranza = createServerFn({ method: "POST" })
@@ -24,14 +23,19 @@ export const registrarCobranza = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
-    const { data: r, error } = await supabase.rpc("registrar_cobranza", {
+    const args = {
       p_cliente_id: data.cliente_id,
       p_sucursal_id: data.sucursal_id,
       p_monto: data.monto,
       p_forma_pago: data.forma_pago,
       p_detalle: data.detalle,
-      p_observaciones: data.observaciones ?? undefined,
-    });
+      p_observaciones: data.observaciones ?? null,
+    };
+    const { data: r, error } = data.imputaciones.length
+      ? await supabase.rpc("registrar_cobranza_imputada", {
+          ...args, p_imputaciones: data.imputaciones,
+        })
+      : await supabase.rpc("registrar_cobranza", args);
     if (error) throw new Error(error.message);
 
     const row: any = Array.isArray(r) ? r[0] : r;

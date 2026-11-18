@@ -827,7 +827,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
 
   return (
     <Dialog open={true} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span>{cliente.razon_social}</span>
@@ -868,6 +868,8 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
           </p>
         )}
         {imputacionesError && <p role="alert" className="text-sm text-destructive">No se pudieron consultar las imputaciones.</p>}
+        {/* La grilla encoge la tabla y su overflow-hidden recorta filas si no conserva su altura. */}
+        <div className="min-h-max">
         <DataTable
           columns={["Fecha", "Detalle", "Sucursal", "Debe", "Haber", ""]}
           isEmpty={movs.length === 0}
@@ -995,6 +997,7 @@ function DetalleCliente({ cliente, onClose, onPagar }: any) {
             );
           })}
         </DataTable>
+        </div>
         {cobroAImputar && (
           <ImputarCobroDialog
             movimiento={cobroAImputar}
